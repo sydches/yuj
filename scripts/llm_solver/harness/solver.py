@@ -1,0 +1,278 @@
+"""Pipeline integration — system prompt, checkpoint, task enumeration, provenance."""
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .._shared.checkpoints import collect_pending as _collect_pending
+from .._shared.paths import expand_user_path
+from ..config import Config, dump_config
+
+# Re-export for back-compat with ``from llm_solver.harness.solver import collect_pending``.
+collect_pending = _collect_pending
+
+
+# `@path/relative-or-absolute` import directive at start of a line.
+# This lets one prompt use several smaller files. Pure load-time concatenation —
+# no precedence/conflict-resolution magic, no globbing, no
+# variable substitution. Just `@path` → contents of file at path.
+_IMPORT_RE = re.compile(r"^@(\S+)\s*$", re.MULTILINE)
+_MAX_IMPORT_DEPTH = 5
+
+
+def _resolve_imports(
+    text: str, *, base_dir: Path, depth: int = 0,
+    seen: set[Path] | None = None,
+) -> str:
+    """Recursively expand `@path/file` lines in *text*.
+
+    Each line of the form `@<path>` (where `<path>` has no whitespace)
+    is replaced with the contents of `base_dir / <path>` (absolute paths
+    honoured as-is). The included file is itself processed for further
+    `@path` directives — depth-bounded to _MAX_IMPORT_DEPTH and
+    cycle-broken via the `seen` set.
+
+    Best-effort: a missing file leaves the directive in place with a
+    `[HARNESS: import failed: <path> — <reason>]` marker on the next
+    line so the operator notices but the prompt still loads.
+    """
+    if depth >= _MAX_IMPORT_DEPTH:
+        # Name the ceiling so an operator hitting the depth limit sees the marker
+        # instead of a silently-passed-through `@`-text. Cycle
+        # recursion is still caught by `seen` first.
+        return text + f"\n[HARNESS: import depth ceiling at depth={_MAX_IMPORT_DEPTH}]\n"
+    seen = seen if seen is not None else set()
+
+    def _sub(m: re.Match) -> str:
+        rel = m.group(1)
+        # Treat `@/abs/path` as absolute; otherwise resolve relative to
+        # base_dir (the directory of the importing file).
+        target = Path(rel) if Path(rel).is_absolute() else base_dir / rel
+        try:
+            target = target.resolve()
+        except OSError as e:
+            return f"@{rel}\n[HARNESS: import failed: {rel} — {e}]"
+        if target in seen:
+            return f"@{rel}\n[HARNESS: import cycle: {rel} already imported]"
+        if not target.is_file():
+            return f"@{rel}\n[HARNESS: import failed: {rel} — file not found]"
+        try:
+            body = target.read_text()
+        except OSError as e:
+            return f"@{rel}\n[HARNESS: import failed: {rel} — {e}]"
+        # Recurse with the imported file as the new base_dir so its
+        # @-references are relative to where the import lives.
+        return _resolve_imports(
+            body, base_dir=target.parent,
+            depth=depth + 1, seen=seen | {target},
+        )
+
+    return _IMPORT_RE.sub(_sub, text)
+
+
+def build_system_prompt(header: str, system_prompt_file: Path | None = None) -> str:
+    """Assemble system prompt: optional file content + header.
+
+    header: the harness header text (wired from cfg.system_header).
+    system_prompt_file: if provided, its content is prepended to the
+    header. The file is processed for `@path/file` import directives
+    with bounded depth and cycle detection. The harness still does not
+    INTERPRET the content — it could be any protocol — it only resolves
+    imports as a load-time concatenation.
+    """
+    if system_prompt_file is None:
+        return header
+    if not system_prompt_file.is_file():
+        raise FileNotFoundError(f"System prompt file not found: {system_prompt_file}")
+    raw = system_prompt_file.read_text()
+    expanded = _resolve_imports(raw, base_dir=system_prompt_file.parent)
+    return expanded.rstrip() + "\n\n" + header
+
+
+def write_checkpoint(repo_dir: Path, model: str, status: str) -> None:
+    """Write checkpoint.json compatible with collect_patches.sh and solve_bare.py."""
+    checkpoint = {
+        "status": status,
+        "model": model,
+        "solver": "llm_solver",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    (repo_dir / "checkpoint.json").write_text(json.dumps(checkpoint, indent=2) + "\n")
+
+
+def collect_provenance(
+    cfg: Config,
+    profile_path: Path | None = None,
+    *,
+    resolved_system_prompt: str | None = None,
+    run_metadata: dict | None = None,
+) -> dict:
+    """Gather reproducibility metadata for a run.
+
+    Includes the full resolved Config so a run's exact parameters can be
+    reconstructed from ``metrics.json`` after the fact (no reliance on the
+    current ``config.toml`` which may have since changed).
+
+    When the caller supplies the resolved system prompt, capture its
+    sha256[:16] in `provenance.system_prompt_sha256` so a later edit to
+    cfg.system_header / --system-prompt content is detectable in the
+    ledger without re-resolving _resolve_imports against a possibly-
+    moved file.
+    """
+    prov: dict = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "model": cfg.model,
+        "config": dump_config(cfg),
+        "pretest_enabled": True,
+    }
+    if run_metadata:
+        # Explicit run envelope threaded from the CLI. Keep these as
+        # top-level provenance fields so downstream ledgers can pin a task to
+        # regime/config/runtime with simple jq paths instead of re-reading the
+        # run-level session.json.
+        for key in (
+            "run_metadata_schema_version",
+            "session_started_at",
+            "run_dir",
+            "context_mode",
+            "system_prompt_path",
+            "config_paths",
+            "config_layers",
+            "config_path_hashes",
+            "cli_overrides",
+            "resolved_config_sha256",
+            "regime",
+            "model_runtime",
+            "model_runtime_sha256",
+            "server_metadata_path",
+            "server_metadata_sha256",
+        ):
+            if key in run_metadata:
+                prov[key] = run_metadata[key]
+    if resolved_system_prompt is not None:
+        prov["system_prompt_sha256"] = hashlib.sha256(
+            resolved_system_prompt.encode("utf-8", errors="ignore")
+        ).hexdigest()[:16]
+        prov["system_prompt_chars"] = len(resolved_system_prompt)
+
+    # Harness git commit
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            prov["harness_git_commit"] = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # llama.cpp version — path from config, not hardcoded
+    llama_bin = expand_user_path(cfg.llama_server_bin)
+    if llama_bin.exists():
+        try:
+            result = subprocess.run(
+                [str(llama_bin), "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                prov["llama_cpp_version"] = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    # Profile TOML hash + name + format/canonical version. The hash
+    # closes the "did the profile change between two replays" question;
+    # the name + format_version + canonical_version close the "which
+    # profile was active" question without re-resolving from cfg.
+    if profile_path is not None and profile_path.is_file():
+        prov["profile_toml_sha256"] = hashlib.sha256(
+            profile_path.read_bytes()
+        ).hexdigest()
+        # Name comes from the parent dir of profile.toml, mirroring the
+        # profile loader's convention.
+        try:
+            prov["profile_name"] = profile_path.parent.name
+        except Exception:
+            pass
+        # Format / canonical version come from the profile TOML itself.
+        try:
+            import tomllib as _tomllib
+            with open(profile_path, "rb") as _pf:
+                _ptoml = _tomllib.load(_pf)
+            if isinstance(_ptoml, dict):
+                fmt = _ptoml.get("format_version")
+                if fmt is not None:
+                    prov["profile_format_version"] = fmt
+                canon = _ptoml.get("canonical_version")
+                if canon is not None:
+                    prov["profile_canonical_version"] = canon
+        except Exception:
+            pass
+
+    # Store a hash for each quirk TOML so the ledger can detect later edits
+    # to bash quirks,
+    # redactions / language-runner config without diffing the files.
+    # Mirrors the same content stamps the runtime_envelope event already
+    # carries, but at the per-task ledger surface.
+    quirk_hashes: dict[str, str] = {}
+    try:
+        from .. import bash_quirks as _bq
+        from .. import tool_quirks as _tq
+        from .. import language_quirks as _lq
+        candidate_paths = [
+            ("bash_quirks/forbidden.toml", Path(_bq.__file__).parent / "forbidden.toml"),
+            ("bash_quirks/redactions.toml", Path(_bq.__file__).parent / "redactions.toml"),
+            ("bash_quirks/universal_rewrites.toml", Path(_bq.__file__).parent / "universal_rewrites.toml"),
+            ("tool_quirks/glob.toml", Path(_tq.__file__).parent / "glob.toml"),
+            (f"language_quirks/{cfg.analysis_task_format}.toml",
+             Path(_lq.__file__).parent / f"{cfg.analysis_task_format}.toml"),
+        ]
+        for label, path in candidate_paths:
+            if path.is_file():
+                quirk_hashes[label] = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except Exception:
+        pass
+    if quirk_hashes:
+        prov["quirk_hashes"] = quirk_hashes
+
+    # Search-tool binary versions. grep_files() prefers `rg` and falls
+    # back to GNU grep (BRE) when rg is absent; the two have different
+    # regex flavours (RE2 vs BRE), so a re-run on a different machine
+    # could see different match shapes. Stamp the resolved binary
+    # version here next to llama_cpp_version.
+    rg_path = shutil.which("rg")
+    if rg_path:
+        try:
+            result = subprocess.run(
+                [rg_path, "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                # rg --version prints multiple lines; the first is the
+                # canonical "ripgrep X.Y.Z (rev abc)" identifier.
+                prov["rg_version"] = result.stdout.splitlines()[0].strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+    else:
+        prov["rg_version"] = ""  # explicit absence — fallback path active
+    grep_path = shutil.which("grep")
+    if grep_path:
+        try:
+            result = subprocess.run(
+                [grep_path, "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                prov["grep_version"] = result.stdout.splitlines()[0].strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    return prov
+
+
+def write_run_metrics(repo_dir: Path, metrics: dict, provenance: dict) -> None:
+    """Write metrics.json with cost/efficiency metrics and provenance."""
+    data = {"metrics": metrics, "provenance": provenance}
+    (repo_dir / "metrics.json").write_text(json.dumps(data, indent=2) + "\n")

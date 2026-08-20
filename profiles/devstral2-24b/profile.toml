@@ -1,0 +1,57 @@
+[profile]
+format_version = 1
+canonical_version = "openai-v1"
+name = "devstral2-24b"
+family = "mistral-devstral"
+quant = "Q4_K_M"
+inherits = "_base"
+# Devstral Small 2 24B Instruct 2512; Mistral chat template.
+# This compatibility profile owns model and behavioral identity only.
+# Exact serving and sampling live in the paper runtime overlays.
+
+[model]
+context_size = 262144
+chat_template = "mistral"
+supports_tool_calls = true
+supports_system_role = true
+
+[tokens]
+method = "chars_div_4"
+tokenizer = ""
+
+[capacity]
+preamble = ""
+max_tools = 8
+simplify_schemas = false
+
+[normalize]
+rules = []
+modules = []
+
+[denormalize]
+rules = []
+modules = ["behavioral.py"]
+
+# Model-agnostic suffix held equal to the Qwen reference for the
+# no-retuning transfer comparison.
+[behavioral]
+tool_call_style = "openai_json"
+reminder_placement = "system"
+# Shared operational suffix. Keep this identical across the Qwen reference
+# and transfer profiles so profile adaptation does not change harness instructions.
+suffix = """
+
+## Operational rules
+
+Constraints, not advice.
+
+1. **Test suite is the only verdict.** Run it. `python -c`, imports, `echo` are not verification.
+2. **Test file = interface contract.** Read it once, early.
+3. **Never modify existing test files.**
+4. **Last action must be a test run.** No fresh verdict = not done.
+5. **First action: mutate or test.** Pretest verdict is in context. Do not list/read/grep first.
+6. **Iterate, not rewrite.** Read the error. Make a targeted edit. Do not start over.
+7. **No re-runs without intervening mutation.** Flag variations don't count.
+8. **Sessions resume.** Continue from where you stopped. Do not restart.
+9. **Batch independent reads.** You may emit multiple read/glob/grep calls in one turn; the harness runs them concurrently and returns all results together. One call per turn wastes context when you already know the set of files to inspect."""
+

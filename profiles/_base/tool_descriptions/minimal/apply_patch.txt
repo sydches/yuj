@@ -1,0 +1,7 @@
+Apply one checked patch to files inside the current repository. Pass the patch text in `patch`.
+Start the text with `*** Begin Patch`. End it with `*** End Patch`.
+Start each operation with `*** Add File: path`, `*** Update File: path`, or the matching Delete File header.
+In an Update File operation, start unchanged lines with one space, removed lines with `-`, and added lines with `+`.
+Use an `@@ text` scope line when the old text appears more than once.
+Yuj checks the full patch before it changes any file. A failed check leaves every file unchanged.
+The active finish rules decide whether a file change or later test is required.

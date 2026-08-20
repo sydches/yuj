@@ -1,0 +1,58 @@
+# Task format descriptor: JavaScript/TypeScript jest/mocha/vitest
+#
+# Matches the common JS test runners, either as standalone binaries or
+# via npm/yarn/pnpm script invocations.
+
+name = "jest"
+description = "jest / mocha / vitest / npm test invocations"
+
+verification_patterns = [
+    '''(?:^|[\s/'"])(?:jest|mocha|vitest)\b''',
+    '''(?:^|[\s/'"])(?:npm|yarn|pnpm)\s+(?:run\s+)?test\b''',
+    '''(?:^|[\s/'"])npx\s+(?:jest|mocha|vitest)\b''',
+]
+
+[output_control]
+failure_only_flag = ""
+passed_marker = "✓"
+failed_marker = "✕"
+
+# Structured output parsing for jest/mocha/vitest. Jest's default reporter
+# emits "Tests: N failed, M passed, X total"; per-test lines prefixed by
+# ✓ or ✕ on the default reporter, "PASS"/"FAIL" on CI-style reporters.
+[output_parser.summary]
+passed = '''(\d+)\s+passed'''
+failed = '''(\d+)\s+failed'''
+skipped = '''(\d+)\s+skipped'''
+
+[output_parser.per_test]
+# Covers both the default (✓/✕) and CI-style (PASS/FAIL) reporters. Verdict
+# emitted as-is (✓/✕/PASS/FAIL); see cargo.toml for the same normalization
+# caveat — consumers that need canonical PASSED/FAILED strings await a
+# normalization map in parse_structured.
+regex = '''^\s*(?P<verdict>✓|✕|PASS|FAIL)\s+(?P<test_id>\S[^\(]*?)(?:\s+\(\d+\s*ms\))?$'''
+
+# How run_tests should invoke this runner when the repo is detected as
+# JavaScript/TypeScript (package.json present in cwd). `npx --no-install`
+# avoids accidentally pulling jest from the network mid-task. We default
+# to jest because it's the most common SWE-bench-style runner; users on
+# vitest/mocha can override via `npm test` once that's wired through.
+[run_tests]
+detection_priority = 3
+env_activate_prefix = ""
+base_cmd = "npx --no-install jest --reporters=default"
+detect_files = ["package.json"]
+arg_path_style = "positional"
+arg_k_template = "-t {expr}"      # jest -t matches test-name patterns
+arg_last_failed = "--onlyFailures"
+
+# jest/mocha/vitest all use 0=pass, 1=some-tests-failed (or a config/
+# runtime error) as their exit-code contract; none of them share
+# pytest's 2/3/4/5 vocabulary. Mapping exit 1 straight to "failed"
+# instead of pytest's "collection_error" avoids mislabeling a normal
+# jest test failure.
+status_default = "failed"
+
+[run_tests.status_map]
+0 = "passed"
+1 = "failed"

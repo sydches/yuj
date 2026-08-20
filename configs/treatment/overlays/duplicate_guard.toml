@@ -1,0 +1,5 @@
+# Adaptive-control overlay.
+
+[loop]
+duplicate_guard_enabled = true
+duplicate_warn_count = 1

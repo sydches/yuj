@@ -1,0 +1,231 @@
+# Treatment settings. Launch with --context halflife.
+
+[loop]
+max_turns = 250
+max_sessions = 1
+max_transient_retries = 1
+retry_backoff = [10]
+min_turns_before_context = 2
+# Quiet start: nothing arms before turn 10.
+guardrails_arm_after_turn = 10
+
+require_intent = false
+intent_grace_turns = 0
+intent_abort_threshold = 0
+
+duplicate_guard_enabled = false
+duplicate_warn_count = 0
+duplicate_abort = 0
+
+done_guard_enabled = false
+done_require_mutation = false
+done_require_verify = false
+done_verified_bash_min_chars = 0
+done_require_pretest_parity = false
+done_parity_runs_required = 0
+allow_implicit_done = true
+
+error_ladder_enabled = false
+error_nudge_threshold = 0
+error_abort_threshold = 0
+error_same_class_threshold = 0
+
+loop_detect_enabled = false
+# Keep the working threshold while disabled. A response overlay changes only
+# the enable flag and inherits this value; zero would fire immediately.
+loop_detect_threshold = 5
+
+rumination_enabled = false
+rumination_nudge_threshold = 0
+rumination_gate_arm_threshold = 0
+rumination_gate_arm_threshold_abs = 0
+rumination_nudge_threshold_abs = 0
+rumination_nudge_threshold_abs_post_mutation = 0
+rumination_nudge_only_pre_mutation = false
+rumination_gate_max_blocks = 0
+rumination_gate_grace_calls = 0
+rumination_min_threshold = 0
+rumination_same_target_warn_count = 0
+rumination_same_target_arm_count = 0
+test_read_warn_after = 0
+context_inspect_repeat_threshold = 0
+
+pre_mutation_turn_cap = 0
+
+mutation_repeat_warn_after = 0
+mutation_repeat_block_after = 0
+mutation_repeat_abort_after = 0
+
+contract_commit_warn_after = 0
+contract_commit_block_after = 0
+contract_recovery_same_target_threshold = 0
+contract_recovery_verify_repeat_threshold = 0
+contract_invalid_repeat_abort_after = 0
+contract_abort_min_turns_since_commit_arm = 0
+contract_abort_min_turns_since_recovery_arm = 0
+contract_abort_requires_zero_mutation = false
+contract_equivalent_action_classes_enabled = false
+
+# Enable universal command transforms.
+bash_transforms_universal_enabled = true
+# Enable the pre-flight re-clip backstop.
+preflight_reclip_enabled = true
+bash_transforms_task_format_enabled = true
+bash_transforms_structured_output_enabled = false
+bash_transforms_sink_threshold_chars = 0
+bash_quirks_forbidden_enabled = true
+
+tools_output_dedup_enabled = false
+parallel_readonly_enabled = false
+parallel_max_workers = 1
+
+adaptive_policy_enabled = false
+adaptive_switch_min_turn = 0
+adaptive_requires_mutation = false
+adaptive_requires_test_signal = false
+adaptive_low_pressure_window = 0
+adaptive_low_pressure_max_events = 0
+adaptive_phase2_done_guard_enabled = false
+adaptive_phase2_bash_task_format_enabled = false
+adaptive_phase2_bash_structured_output_enabled = false
+adaptive_phase2_bash_sink_threshold_chars = 0
+
+[model]
+# Runtime/model identity is pinned separately. This file layers after the
+# runtime overlay, so it must not replace the model-specific tokenizer.
+
+[context]
+digest_compaction_safety_margin = 0.0
+digest_keep_recent_turns = 8
+# max_turns is 250, so this value disables digest compaction.
+digest_compaction_gate_min_mutations = 1000000
+
+[output]
+max_output_chars = 80000
+truncate_head_ratio = 0.4
+truncate_head_lines = 200
+truncate_tail_lines = 100
+args_summary_chars = 80
+trace_args_summary_chars = 200
+trace_reasoning_store_chars = 800
+trace_stub_chars = 200
+trace_reasoning_chars = 150
+solver_trace_lines = 50
+solver_evidence_lines = 30
+solver_inference_lines = 20
+recent_tool_results_chars = 30000
+
+# No automatic pretest block is provided. These budgets bound any pretest
+# text that a caller supplies.
+pretest_head_chars = 2000
+pretest_tail_chars = 1500
+
+# These values neutralize context-shaping renderers if another context mode
+# is selected.
+context_slot_max_candidates = 0
+context_slot_inline_files = 0
+focused_compound_trace_lines = 0
+focused_compound_evidence_lines = 0
+focused_compound_recent_tool_results_chars = 0
+focused_compound_include_resolved_evidence = false
+compound_selective_trace_lines = 0
+compound_selective_unresolved_evidence_lines = 0
+compound_selective_resolved_evidence_lines = 0
+compound_selective_resolved_evidence_stub_chars = 0
+compound_selective_recent_tool_results_chars = 0
+compound_selective_trace_action_repeat_cap = 0
+compound_selective_resolved_action_repeat_cap = 0
+compound_selective_trace_anchor_lines = 0
+compound_selective_resolved_anchor_lines = 0
+compound_selective_trace_source_anchor_lines = 0
+compound_selective_trace_test_anchor_lines = 0
+compound_selective_resolved_source_anchor_lines = 0
+compound_selective_resolved_test_anchor_lines = 0
+
+[tools]
+bash_timeout = 120
+grep_timeout = 30
+pretest_timeout = 240
+sandbox_bash = true
+sandbox_required = true
+strip_ansi = true
+collapse_blank_lines = true
+collapse_duplicate_lines = true
+collapse_similar_lines = true
+search_pagination_enabled = true
+grep_max_matches_per_page = 25
+glob_max_matches_per_page = 25
+glob_max_listed_paths = 50
+glob_refuse_unscoped_recursive = true
+edit_strict_match = true
+edit_fuzzy_cascade_enabled = false
+edit_candidate_count = 3
+sink_head_bytes = 1000
+sink_tail_bytes = 1000
+
+[tools.run_tests]
+enabled = false
+timeout = 240
+structured_output = true
+assertion_context_lines = 5
+assertion_context_max = 3
+
+[tools.apply_patch]
+enabled = false
+
+[tools.list_definitions]
+enabled = false
+
+[tools.unified_envelope]
+enabled = false
+
+[state]
+writer_enabled = false
+context_ignore = true
+
+[injections]
+enabled = false
+dir = ".harness/injections"
+
+[post_edit_check]
+enabled = false
+timeout = 10
+checks = []
+
+[experiment]
+prompt_addendum = ""
+variant_name = "treatment"
+tool_desc = "minimal"
+
+[prompts]
+system_header = "You are a software engineering solver. Work in the current directory. Use tools to read, write, edit, search, and run commands."
+
+
+# ── Detector and delivery settings ──
+
+[analysis]
+task_format = "auto"
+
+[adaptive_control]
+enabled = true
+model = "llm_detector_oscillation"
+ledger_path = "adaptive_control_ledger.jsonl"
+detector_backend = "trace_nets"
+lookup_table_path = "configs/treatment/medicine_ladder.v1.tsv"
+baseline_config_paths = ["configs/regimes/baselines/plain_long_solve.toml"]
+max_distinct_hurdle_episodes_per_attempt = 3
+disallow_repeat_intervention = true
+cooldown_after_apply_slots = 3
+watch_window_turns = 5
+delivery = "user_turn"
+
+[llm_hurdle_detector]
+enabled = true
+cadence_turns = 3
+# This key belongs in [llm_hurdle_detector]; the runtime does not read it
+# from [llm_hurdle_detector.trace_nets].
+atlas_dictionary_path = "configs/treatment/hurdle_dictionary.trace_nets.v1.tsv"
+
+[llm_hurdle_detector.trace_nets]
+# One universal reread gap is used for every task and benchmark.
+reread_min_gap = 7

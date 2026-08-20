@@ -1,0 +1,50 @@
+# Run Qwen3.8-27B with all layers on the GPU.
+# Disable thinking with chat_template_thinking_off.jinja.
+# Enable MTP self-speculation with the GGUF next-token head.
+
+schema_version = 1
+
+[model]
+name = "qwen38-27b"
+profile_name = "qwen38-27b"
+context_size = 20480
+tokenizer_id = "Qwen/Qwen3.8-27B"
+
+[launch]
+runtime = "llama_server"
+model_path = "~/models/gguf/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+served_name = "qwen38-27b"
+host = "127.0.0.1"
+port = 8080
+max_model_len = 20480
+max_num_seqs = 1
+chat_template_path = "profiles/qwen38-27b/chat_template_thinking_off.jinja"
+
+[launch.sampling]
+temperature = 0
+top_k = 1
+top_p = 1
+min_p = 0
+presence_penalty = 0
+repetition_penalty = 1.05
+seed = 42
+
+[launch.llama_server]
+cpu_mask = "0x00FF"
+cpu_strict = true
+threads = 8
+prio = 2
+n_gpu_layers = 99
+flash_attn = true
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+jinja = true
+no_context_shift = true
+batch = 2048
+ubatch = 1024
+mmap = true
+n_predict = 5120
+
+# ── MTP self-speculation ──
+spec_type = "draft-mtp"
+spec_draft_n_max = 3

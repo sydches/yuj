@@ -1,0 +1,196 @@
+"""Trace event schema — version, known event types, required fields, low-level emit."""
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass
+
+import orjson
+
+log = logging.getLogger(__name__)
+
+
+def _dumps(entry: dict) -> str:
+    """Serialize a trace entry to a JSON line.
+
+    orjson is 5–10× faster than the stdlib for the dict shapes
+    written here (str, int, bool, list, nested dict). Returns a
+    string (decoded) so the trace file can stay in text-mode append
+    for compatibility with existing read paths and tests that open
+    the trace as text.
+    """
+    return orjson.dumps(entry).decode("utf-8")
+
+
+# ── Trace event schema ──────────────────────────────────────────────
+#
+# Bumped on any non-additive change to the trace event envelope (the
+# event/trace_schema_version/payload-shape contract emitted by Session._emit
+# and emit_trace_event). Readers must allow unknown event types. Version 2
+# bounds result_summary and adds output_sha256 and output_full_path.
+TRACE_SCHEMA_VERSION = 2
+
+@dataclass(frozen=True)
+class TraceEventSpec:
+    """First-class schema metadata for one trace event type."""
+
+    event_type: str
+    required_fields: frozenset[str]
+
+
+TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
+    TraceEventSpec("session_start", frozenset({"session_number"})),
+    TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
+    TraceEventSpec(
+        "tool_call",
+        frozenset({"session_number", "turn_number", "tool_name"}),
+    ),
+    TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
+    TraceEventSpec(
+        "adaptive_phase_switch",
+        frozenset({"session_number", "phase"}),
+    ),
+    TraceEventSpec(
+        "harness_observation",
+        frozenset({
+            "session_number",
+            "turn_number",
+            "concern_id",
+            "concern_type",
+            "reason",
+        }),
+    ),
+    TraceEventSpec(
+        "runtime_envelope",
+        frozenset({"session", "sandbox_mode", "sandbox_engaged"}),
+    ),
+    TraceEventSpec("guardrail_init", frozenset({"session_number"})),
+    TraceEventSpec("trace_corrupt", frozenset({"session_number", "kind"})),
+    TraceEventSpec("pretest_run", frozenset({"session_number"})),
+    TraceEventSpec(
+        "approval_request",
+        frozenset({"session_number", "turn_number", "tool_name", "reason"}),
+    ),
+    # API errors include the HTTP detail in the trace.
+    TraceEventSpec(
+        "api_error",
+        frozenset({"session_number", "turn_number", "error_type", "detail"}),
+    ),
+)
+
+# Derived compatibility views. Additional fields are always allowed.
+KNOWN_TRACE_EVENT_TYPES = frozenset(
+    spec.event_type for spec in TRACE_EVENT_SPECS
+)
+TRACE_EVENT_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
+    spec.event_type: spec.required_fields for spec in TRACE_EVENT_SPECS
+}
+
+
+def _validate_event(event_type: str, fields_keys) -> None:
+    """Warn on unknown event_type or missing required fields. Never raises."""
+    if event_type not in KNOWN_TRACE_EVENT_TYPES:
+        log.warning("trace: unknown event_type %r — emitted with reduced validation", event_type)
+        return
+    required = TRACE_EVENT_REQUIRED_FIELDS.get(event_type, frozenset())
+    missing = required - set(fields_keys)
+    if missing:
+        log.warning("trace: %s event missing required fields: %s",
+                    event_type, sorted(missing))
+
+
+def write_trace(session, entry: dict) -> None:
+    """Session-level equivalent: write a single pre-built JSON line to the
+    session's trace file, append it to the in-memory event mirror, and
+    trigger the mechanical state writer.
+
+    Internal API. Most callers should use :func:`emit` which adds the
+    canonical envelope (``event``, ``trace_schema_version``) and validates
+    the event_type against the known set. ``write_trace`` is retained
+    for the rare case where a fully-formed entry is built elsewhere.
+
+    Side-effect: stamps ``session._last_trace_write_ms`` with this
+    write+projection cost in milliseconds so the per-turn loop can
+    surface trace IO time on the next emit.
+
+    Replay hooks live HERE because this is the single funnel every trace
+    event passes through (both Session._write_trace and emit()): the
+    trace-level fidelity gate compares each executed tool_call against the
+    recording, and the replay-stop capture fires when the stop turn's event
+    is written (docs/replay_mode_spec.md).
+    """
+    if entry.get("event") == "tool_call":
+        _verify = getattr(getattr(session, "client", None), "verify_executed_turn", None)
+        if _verify is not None:
+            _verify(entry)
+            from .replay_handover import maybe_capture_at_stop
+            maybe_capture_at_stop(session, entry)
+    _t0 = time.perf_counter()
+    if session._trace_file is not None:
+        line = _dumps(entry) + "\n"
+        # Async writer when available: hot path enqueues + returns,
+        # daemon thread does write+flush. Falls back to sync write
+        # when no writer is attached (e.g. tests that poke
+        # write_trace without going through Session.run).
+        writer = getattr(session, "_async_trace_writer", None)
+        if writer is not None:
+            writer.submit(line)
+        else:
+            session._trace_file.write(line)
+            session._trace_file.flush()
+    session._trace_events.append(entry)
+    session._refresh_state()
+    _elapsed_ms = (time.perf_counter() - _t0) * 1000
+    # Per-turn accumulator — run_step zeroes this at the top of each
+    # turn and reads it on the bottom emit. Robust to sessions that
+    # don't initialize it (tests), in which case we just stamp.
+    try:
+        session._turn_trace_write_ms = (
+            getattr(session, "_turn_trace_write_ms", 0.0) + _elapsed_ms
+        )
+    except AttributeError:
+        pass
+
+
+def emit(session, event_type: str, **fields) -> None:
+    """Centralized trace event emission with schema validation.
+
+    Constructs the canonical envelope:
+        {"event": <event_type>,
+         "trace_schema_version": TRACE_SCHEMA_VERSION,
+         **fields}
+
+    and writes it via :func:`write_trace`. Validation is best-effort
+    and warning-only — an unknown event_type or missing required field
+    logs but does not raise, so a typo doesn't break a session in flight.
+    """
+    _validate_event(event_type, fields.keys())
+    write_trace(session, {
+        "event": event_type,
+        "trace_schema_version": TRACE_SCHEMA_VERSION,
+        **fields,
+    })
+
+
+def emit_trace_event(trace_file, event_type: str, **fields) -> dict:
+    """Module-level equivalent of Session._emit for solve_task-level
+    writes that occur BEFORE any Session is constructed (e.g. the
+    session_start event written by the per-session-loop dispatch and
+    the runtime_envelope event written at task start).
+
+    Returns the entry dict it wrote, for callers that want to inspect
+    it. Validation behavior is identical to Session._emit (warn on
+    unknown / missing-required, never raise). Writes only when
+    trace_file is non-None — convenience for paths that may be running
+    without a trace target.
+    """
+    _validate_event(event_type, fields.keys())
+    entry = {
+        "event": event_type,
+        "trace_schema_version": TRACE_SCHEMA_VERSION,
+        **fields,
+    }
+    if trace_file is not None:
+        trace_file.write(_dumps(entry) + "\n")
+        trace_file.flush()
+    return entry

@@ -1,0 +1,3 @@
+dictionary_version	family	description	minimum_evidence	do_not_call_when
+hurdle_dictionary_trace_nets_v1	repeat_wall	identical-repeat plateau or recurring failing output hash; the run re-issues the same probe or re-meets the same failure	same (args, output sha) as previous turn, or same failing sha >=3x in window	turns produce novel outputs; source edits landing
+hurdle_dictionary_trace_nets_v1	reread_slump	varied wording, recurring outcomes: rereads of previously read regions, recurring passing hashes, no source writes	>=2 rereads with gap>=3, or same passing sha >=3x on no-write turns	novel files being read; edits landing

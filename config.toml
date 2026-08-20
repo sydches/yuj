@@ -1,0 +1,481 @@
+# config.toml — Central defaults for the yuj project.
+#
+# Layered config:
+#   1. config.toml        (this file, checked into git)
+#   2. config.local.toml  (user overrides, gitignored)
+#   3. CLI flags           (highest priority)
+#
+# User-local values (model paths, server endpoints, GPU settings) belong in
+# config.local.toml.  Experiment parameters (temperature, max_tokens, tool
+# schemas) belong here.
+
+# ---------------------------------------------------------------------------
+# Model aliases — short names → full model identifiers
+# ---------------------------------------------------------------------------
+
+[models.aliases]
+# Local models (llm_solver via llama-server)
+"qwen3-vl" = "qwen3-vl-8b"
+"qwen3" = "qwen3-8b"
+"qwen3.5" = "qwen3.5-9b"
+"glm" = "glm-4.7-flash"
+"gemma4" = "gemma-4-26b"
+"qwen3-coder" = "qwen3-coder-30b-a3b"
+
+# Cloud models (solve_bare.py via Agent SDK)
+"haiku" = "claude-haiku-4-5-20251001"
+"sonnet" = "claude-sonnet-4-6"
+"opus" = "claude-opus-4-6"
+
+# ---------------------------------------------------------------------------
+# SDK solver settings (solve_bare.py)
+# ---------------------------------------------------------------------------
+
+[sdk]
+tools = ["Read", "Edit", "Write", "Bash", "Glob", "Grep"]
+default_model = "sonnet"          # alias or full model ID
+default_concurrency = 10
+
+# ---------------------------------------------------------------------------
+# CLI solver settings (solve.sh)
+# ---------------------------------------------------------------------------
+
+[cli]
+default_model = "haiku"           # alias or full model ID
+tools = "Bash,Read,Edit,Write,Glob,Grep"
+
+# ---------------------------------------------------------------------------
+# llm_solver settings (local LLM harness via llama-server)
+# ---------------------------------------------------------------------------
+
+[server]
+base_url = "http://localhost:8080/v1"  # OpenAI-compatible endpoint (llama-server, vllm, etc.)
+api_key = "local"                      # API key sent in Authorization header; "local" for llama-server
+timeout_connect = 10                   # seconds to wait for TCP connection to model server
+timeout_read = 145                     # seconds to wait for a single chat completion response (2x + 10s backoff ≤ 5 min wasted)
+health_poll_interval = 2               # seconds between /health polls during launch/wait
+health_timeout = 2                     # per-attempt socket timeout for /health probe
+launch_timeout = 120                   # seconds to wait for server to become healthy on launch
+stop_settle = 2                        # seconds to wait after killing server processes
+
+[model]
+name = "qwen3-vl-8b"       # model identifier sent to the server; must match --model or alias
+context_size = 40960        # FALLBACK ONLY. The harness queries llama-server's /props at session start and overwrites this with the live n_ctx_per_slot. Used only when /props is unreachable (e.g. tests, dry-run).
+context_fill_ratio = 0.95   # fail-safe upper bound for end-of-turn pt vs context_size. With server-reported pt now driving the gate (no chars/4 undershoot), 0.95 leaves a small margin to avoid 400 errors. Primary mechanism is digest compaction in Session._maybe_compact_messages, which fires at 0.85 — well below this fail-safe.
+max_tokens_fraction = 0.25  # generation cap as a fraction of context_size. At ctx=65,536 → max_tokens=16,384 (preserves prior default). Scales correctly when context_size changes — a 32k server gets 8k generation cap, a 128k server gets 32k. Replaces the hardcoded max_tokens=16384 which was wrong-shape at any ctx ≠ 65,536.
+tokenizer_id = ""            # optional Hugging Face tokenizer ID or local path; empty uses the character-count estimate. Runtime files set this for exact experiment runs.
+
+[loop]
+max_turns = 200             # hard cap on tool-call turns per session before forced session end
+max_sessions = 10           # max session restarts (each session gets fresh context)
+duplicate_abort = 3         # abort session after N identical consecutive tool calls
+max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
+retry_backoff = [10]        # seconds between retries (index = attempt number)
+error_nudge_threshold = 3   # inject a "re-read the file" nudge after N consecutive tool errors
+error_same_class_threshold = 0  # 0 = disabled. End session after N errors with the same signature (exit code OR first-line body) regardless of intervening non-error turns. Catches "model repeats the same wrong fix" loops that error_abort_threshold misses because non-error tool calls reset its counter.
+bash_quirks_forbidden_enabled = true  # bash_quirks/forbidden.toml layer — refuse cd into paths outside the sandbox cwd (cd /, cd /home/<other>/, etc.).
+turn_snapshots_enabled = false  # invisible per-turn git snapshots (dangling commits, private index) after each source-write turn; turn->sha map in telemetry dir. Enables rewind/branch at any turn. See harness/turn_snapshots.py.
+preflight_reclip_enabled = true  # Pre-flight overflow backstop: instead of ending the session when the projected prompt exceeds context_fill_ratio, re-clip the single largest oversized message in token space (head+tail with a visible notice, targeting ctx/2 tokens for that message) and re-project once; only if the projection STILL exceeds the window does the session end context_full. Anomalies land in the per-run system_log.jsonl.
+pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls after N orientation turns if no mutation has occurred. 0 = disabled (default). Opt in via configs/toggles/orientation-cap-15.toml.
+# Symmetric to error_nudge: after N consecutive NON-write tool calls (no
+# write/edit between them), append a strong directive and activate the
+# rumination gate that rejects non-write tool calls until a successful
+# write/edit clears it. Also pauses duplicate_abort while armed so the
+# two protections don't fight.
+#
+# Value is a PERCENTAGE of max_turns (e.g. 20 = 20%). Derived to an
+# absolute turn count at session init: threshold = max_turns * N / 100.
+# At max_turns=50 and threshold=20, the gate arms after 10 non-write
+# calls. At max_turns=200 it arms after 40. Scales automatically.
+rumination_nudge_threshold = 20
+# After this many consecutive gate-blocked calls, end the session.
+# The model's current code becomes the final patch. Prevents both
+# infinite blocking and forced-write regressions. 0 = disabled.
+rumination_gate_max_blocks = 5
+# Optional same-target rumination path. Detects repeated inspection of the
+# same file or normalized bash target before the broad non-write threshold
+# triggers. 0 keeps the path disabled.
+rumination_same_target_warn_count = 0
+rumination_same_target_arm_count = 0
+test_read_warn_after = 0
+context_inspect_repeat_threshold = 0
+contract_commit_warn_after = 0
+contract_commit_block_after = 0
+contract_recovery_same_target_threshold = 0
+contract_recovery_verify_repeat_threshold = 0
+contract_invalid_repeat_abort_after = 0
+contract_abort_min_turns_since_commit_arm = 0
+contract_abort_min_turns_since_recovery_arm = 0
+contract_abort_requires_zero_mutation = false
+contract_equivalent_action_classes_enabled = false
+mutation_repeat_warn_after = 0
+mutation_repeat_block_after = 0
+mutation_repeat_abort_after = 0
+# Turns of raw message history before switching to stateful/compact context.
+# Turn 0 = model reads task, Turn 1 = model starts acting. Below this
+# threshold, context classes fall back to append-only raw messages.
+min_turns_before_context = 2
+# Grace period for the intent gate: skip enforcement for the first N
+# turns of each session so the model can orient before silent tool
+# calls start getting rejected.
+intent_grace_turns = 3
+
+[output]
+# Per-tool-result char cap applied in tools.py::truncate_output. The
+# Keep ordinary source files whole on the first read. Use read(offset,
+# limit) to page through a file that exceeds this limit.
+max_output_chars = 80000
+# Give more of the truncation budget to the tail, where errors, test
+# failures, and exit codes usually appear.
+truncate_head_ratio = 0.4   # fraction of truncation budget allocated to head (rest → tail)
+truncate_head_lines = 200   # minimum head lines preserved when char-budget truncation fires
+truncate_tail_lines = 100   # minimum tail lines preserved when char-budget truncation fires
+# Per-value char limit in tool-call args summaries (trace + context rendering).
+args_summary_chars = 80
+# Args-summary cap used in trace.jsonl events (tighter than the live
+# context rendering cap because trace storage is durable and lives
+# downstream of analysis tools).
+trace_args_summary_chars = 200
+# Max chars of model reasoning stored per tool call in .trace.jsonl.
+# Upstream cap: CompoundContext can only render what's stored here.
+trace_reasoning_store_chars = 800
+# Max chars of tool result text stored inline in each .trace.jsonl row.
+# Full retained outputs live under .tool_output/ with sha256/path metadata
+# on the row; raw agent-boundary send/receive lives in transcript logs.
+trace_result_summary_chars = 1200
+solver_trace_lines = 50       # tail entries kept from state.json "trace"
+solver_evidence_lines = 30    # tail entries kept from state.json "evidence"
+solver_inference_lines = 20   # tail entries kept from state.json "inference"
+
+# Rolling tool-result window: char budget for recent full tool results
+# visible to the model in stateful/compact context strategies. Must
+# hold a couple of code reads so the model doesn't lose memory of a
+# file between reading and editing it.
+recent_tool_results_chars = 30000
+
+# Focused compound is a sibling renderer to compound: same state source,
+# smaller budgets. These are renderer-only knobs; they do not change
+# guardrail policy or task semantics.
+focused_compound_trace_lines = 18
+focused_compound_evidence_lines = 8
+focused_compound_recent_tool_results_chars = 12000
+focused_compound_include_resolved_evidence = false
+
+# Compound selective keeps a bounded tail of resolved evidence, but
+# stubs the resolved payloads instead of ferrying them verbatim. This is
+# the next renderer-only experiment line after focused_compound.
+compound_selective_trace_lines = 24
+compound_selective_unresolved_evidence_lines = 12
+compound_selective_resolved_evidence_lines = 8
+compound_selective_resolved_evidence_stub_chars = 240
+compound_selective_recent_tool_results_chars = 18000
+compound_selective_trace_action_repeat_cap = 1
+compound_selective_resolved_action_repeat_cap = 1
+compound_selective_trace_anchor_lines = 6
+compound_selective_resolved_anchor_lines = 3
+compound_selective_trace_source_anchor_lines = 2
+compound_selective_trace_test_anchor_lines = 2
+compound_selective_resolved_source_anchor_lines = 1
+compound_selective_resolved_test_anchor_lines = 1
+
+# Per-entry stub length in the trace section of the prompt. Historical
+# steps are shown as 200-char stubs; full content lives in the rolling
+# tool-result window above.
+trace_stub_chars = 200
+
+# Reasoning snippet length in trace entries. CompactTranscript and
+# YujTranscript use this; CompoundContext uses it too (overridable by
+# the context class if needed).
+trace_reasoning_chars = 150
+context_slot_max_candidates = 1
+context_slot_inline_files = 1
+
+# Pretest output budget: head+tail chars injected into the first user
+# message at session start. Too small → miss failing assertion. Too
+# large → crowd out state.json and task prompt.
+pretest_head_chars = 2000
+pretest_tail_chars = 1500
+
+[context]
+# Digest-compaction settings.
+# The compaction threshold is derived, not configured directly:
+#     threshold = (1 - model.max_tokens_fraction) - digest_compaction_safety_margin
+# At max_tokens_fraction=0.25 + safety_margin=0.05 → threshold=0.70.
+# At max_tokens_fraction=0.10 + safety_margin=0.05 → threshold=0.85.
+# The derivation guarantees a non-firing turn never lands est_pt +
+# max_tokens past ctx (server-side OOM). Mutation gate at 0 means
+# fire regardless of mutation count; bump to 1+ to keep pathological
+# orientation stalls out of the compactor.
+digest_compaction_safety_margin = 0.05
+digest_keep_recent_turns = 8
+digest_compaction_gate_min_mutations = 0
+
+[harness_observation]
+# Live prefix-only mechanical concern packets. First implementation is
+# halflife-only, speaks rarely, and leaves projection modes unchanged.
+enabled = false
+grace_activity_turns = 2
+cadence_turns = 10
+packet_char_budget = 1200
+evidence_lines = 3
+
+[llm_hurdle_detector]
+# Separate no-tool LLM detector. The harness builds a live-prefix evidence
+# packet and logs the detector verdict; off by default.
+enabled = false
+cadence_turns = 1
+atlas_dictionary_path = ""
+input_contract_path = ""
+log_path = ""
+max_trace_events = 80
+max_field_chars = 800
+max_state_snapshots = 24
+prompt_version = "llm_hurdle_detector_prompt_v2"
+
+[tools]
+bash_timeout = 120          # seconds before a bash tool call is killed
+grep_timeout = 30           # seconds before a grep tool call is killed
+# Paginated search envelopes. When enabled, grep and glob wrap their
+# output in <search_result .../> with total/shown/page/next_page
+# attributes so the agent can check discovery scope and request
+# additional pages explicitly. Content-blind and universal — no
+# task-format vocabulary. Lines inside the envelope are the raw tool
+# output (path:line:content for grep, path per line for glob), so
+# downstream consumers that parse raw lines continue to work.
+search_pagination_enabled = true
+grep_max_matches_per_page = 25   # lines per grep page
+glob_max_matches_per_page = 25   # paths per glob page
+# tool_quirks/glob caps — refuse panic globs (`**/*` over the whole repo).
+glob_max_listed_paths = 50           # if total > N, refuse listing with hint envelope. 0 disables.
+glob_refuse_unscoped_recursive = true # if pattern starts with `**/` AND scope is `.`, refuse.
+# Sink-surface preview sizes. When a bash result exceeds
+# bash_transforms_sink_threshold_chars, the harness writes the full
+# output to .tool_output/... and shows the agent head+tail slices
+# with a structured <tool_result_meta/> pointer at the end.
+sink_head_bytes = 1000
+sink_tail_bytes = 1000
+# edit() match policy. Strict = exact match only; on miss, return a
+# ranked <candidates/> block with near-miss spans from the fuzzy
+# replacer cascade. Cascade-enabled = auto-apply the first passing
+# strategy.
+edit_strict_match = true
+edit_fuzzy_cascade_enabled = false
+edit_candidate_count = 3
+pretest_timeout = 240       # seconds before the pretest script is killed (docker test suites can be slow)
+# Bash output filters (applied in dispatch before truncation).
+# Every filter is content-blind: operates on universal properties of
+# text (terminal control protocol, whitespace, byte equality). No
+# task-format vocabulary is named — the harness does not know what a
+# "test", a "build", or a "compiler" looks like.
+strip_ansi = true             # strip ANSI escape sequences (terminal control)
+collapse_blank_lines = true   # collapse 3+ consecutive newlines to 2
+collapse_duplicate_lines = true  # collapse runs of byte-identical consecutive lines into '<line> [×N]'
+collapse_similar_lines = true   # collapse runs of structurally similar lines; only fires when output > 50% of max_output_chars
+# llama-server binary path. Override in config.local.toml. ~ and $VARS expanded.
+llama_server_bin = "~/.local/bin/llama-server"
+# bubblewrap binary path for bash sandboxing. Override if bwrap is installed elsewhere.
+bwrap_bin = "/usr/bin/bwrap"
+# Bash tool sandboxing via bubblewrap. When true, every bash tool call runs
+# inside a fresh mount namespace where the entire host filesystem is
+# read-only and only the session's cwd (the task dir) is writable. Closes
+# the last escape hatch after the file tools' path-remapping. Requires
+# /usr/bin/bwrap on PATH; Ubuntu 22.04 ships 0.6.1 in the default repos.
+# Falls back to unsandboxed execution if bwrap is missing or the sandbox
+# setup itself fails — that failure is logged but does not block the run
+# unless sandbox_required is also true (see below).
+sandbox_bash = true
+# Strict mode for the bwrap fall-back. When true, any first bash call that
+# would have to run unsandboxed (sandbox_bash=true but bwrap_bin missing,
+# or any later sandbox setup error) raises instead of silently degrading.
+# Default true: stop rather than silently run with host access if sandbox
+# setup fails. Set false only when another isolation layer protects the session.
+sandbox_required = true
+
+# Model-callable run_tests tool. When enabled, exposes a `run_tests`
+# tool that invokes pytest inside the same bwrap sandbox as `bash`
+# with deterministic flags (--tb=short -q --no-header). Off by default
+# — when false the schema is filtered out before being sent to the
+# model, so the model never sees a tool it cannot use. See knob
+# entries `tools.run_tests.*` for blast-radius and tag metadata.
+[tools.run_tests]
+enabled = false
+# Allow time for large packages to build and for slow test suites to start.
+# A 60-second limit stopped some valid tests before they finished.
+# Keep this value aligned with the default in config.py.
+timeout = 240              # seconds before pytest is killed
+# Structured output protocol (default on). When true, run_tests wraps
+# its result in <test_results status="..." exit_code="N">…</test_results>
+# where status is one of {passed, failed, collection_error,
+# internal_error, usage_error, no_tests_collected, timed_out, error}.
+# This discriminates pytest exit codes 1/2/5 — which are easy to
+# confuse in the raw text once output is collapsed — and separates a
+# hard timeout from any other failure path. Set false for the legacy
+# bash-string contract identical to bash(pytest ...).
+structured_output = true
+# Failing-assertion source-context auto-extraction. On `failed` /
+# `collection_error` verdicts, parse pytest --tb=short frames and
+# append surrounding source so the model has the failing code in the
+# same turn the verdict arrived. `_lines` is the radius (before/after);
+# `_max` caps how many frames get a context block.
+assertion_context_lines = 5
+assertion_context_max = 3
+
+# ---------------------------------------------------------------------------
+# Post-edit validation (harness hook; L5 invocation + declared policy)
+# ---------------------------------------------------------------------------
+# Declarative check list. Each [[post_edit_check.checks]] entry runs
+# after an edit/write that matches its trigger and when-predicate.
+# Empty by default — the harness has zero opinion about what "success"
+# means. Populate in config.local.toml or via configs/toggles/...
+#
+# Schema per check:
+#   name     — identifier used on the savings ledger (ctx.check)
+#   trigger  — "edit" | "write" | "edit|write"
+#   when     — safe-eval predicate over {path, ext}; "" (empty) = always
+#              allowed:  == != in not in and or not,  str.startswith /
+#              endswith / lower / upper,  constants
+#   cmd      — shell command; {path} substituted with shlex-quoted path
+#   on_fail  — "append" | "warn" | "block"
+#              append — stdout+stderr appended to tool result
+#              warn   — same as append + turn marked as pressured
+#              block  — edit reverted, tool call returns ERROR
+[post_edit_check]
+enabled = false              # master off-switch
+timeout = 10                 # seconds; runs per edit/write
+checks = []                  # no shipped defaults — user declares policy
+
+# ---------------------------------------------------------------------------
+# Injection subsystem (harness/injections.py)
+# ---------------------------------------------------------------------------
+# When enabled, the harness loads every *.md in `dir` at session
+# start. Each file is a <injected-fragment> block that fires either
+# always (once per session) or on keyword match against the most
+# recent user / tool-result message. See harness/injections.py for
+# the file format and LEAKAGE_RULES constraints on fragment content.
+[injections]
+enabled = false
+dir = ".harness/injections"
+
+# ---------------------------------------------------------------------------
+# Prompt addendum settings
+# ---------------------------------------------------------------------------
+
+[experiment]
+prompt_addendum = ""       # text appended to task prompt (set per-variant)
+variant_name = ""          # tag for this experiment variant (appears in provenance)
+tool_desc = "minimal"      # tool description mode; only "minimal" is shipped
+
+# ---------------------------------------------------------------------------
+# Task-format metadata
+# ---------------------------------------------------------------------------
+# Set the default task format. Override it with --task-format.
+[analysis]
+task_format = "pytest"     # default task format
+
+# ---------------------------------------------------------------------------
+# Harness prompt fragments — injected at session boundaries and gates.
+# These are model-steering text; different models respond differently
+# to imperative vs. explanatory tone.  Override in config.local.toml
+# to change the wording.
+# ---------------------------------------------------------------------------
+
+[prompts]
+# Harness system header. Injected as the system prompt when no
+# --system-prompt file is supplied; otherwise appended to the file's
+# contents. Task-agnostic — names no benchmark, test framework, or
+# tool invocation convention.
+system_header = """\
+You are a software engineering solver. Work in the current directory. Use tools to read, write, edit, search, and run commands."""
+
+# Suffix injected at the end of every stateful-context user message.
+# Reminds the model that the harness maintains state on its behalf.
+# Task-agnostic.
+state_context_suffix = "Continue. Progress tracked in .solver/state.json."
+
+# Intent gate rejection texts. intent_gate_first is used on the first
+# rejection of a session (full instruction); intent_gate_repeat is used
+# for subsequent rejections (short counter line to avoid context bloat).
+# Format placeholders: {count}, {first_turn}.
+intent_gate_first = "[harness] Silent tool call rejected. State what you are doing and why, then re-issue."
+intent_gate_repeat = "[intent gate: state reasoning — {count} silent since turn {first_turn}]"
+
+# Injected at every session boundary (session 2+) as the base continuation instruction.
+resume_base = "Continue. Review prior actions, do the next step."
+
+# Appended to tool result after error_nudge_threshold consecutive tool errors.
+# {count} is replaced with the actual error count at runtime.
+error_nudge = "[harness: {count} errors. Re-read the file.]"
+
+# Appended to tool result when rumination_nudge_threshold is crossed.
+# {count} is replaced with the non-write call count at runtime.
+rumination_nudge = "[HARNESS: {count} non-write calls. One more and all tools except write/edit are blocked. Write or edit now.]"
+
+# Returned as the tool result when the rumination gate blocks a non-write call.
+rumination_gate = "NOT EXECUTED. Only write/edit accepted. Blocked until a write or edit succeeds. Each blocked call wastes a turn."
+
+# Appended to tool result when the same file / normalized command target has
+# been inspected repeatedly without a write/edit.
+rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a write/edit ({target}). Stop rereading it; either edit, verify, or move to a different target.]"
+rumination_outside_cwd_nudge = "[HARNESS: repeated inspection is anchored outside the repo root ({target}). The working directory is already correct; search and read relative to it.]"
+test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]"
+contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: edit/write, read a test file, or run verification. Do not continue broad inspection.]"
+contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit/write, read a test file, or run verification.]"
+contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, edit/write, or run verification.]"
+
+# Appended to read() tool result when the caller's `limit` capped the
+# output (the file is larger than what was returned). Format
+# placeholders: {returned_lines}, {path}. Task-agnostic.
+read_truncated_reminder = "<system-reminder>Read returned the first {returned_lines} lines of {path}. The file is longer — re-read with a higher limit or a specific offset to see more.</system-reminder>"
+
+# Appended to read() tool result when the target file exists but is
+# empty. Format placeholder: {path}. Task-agnostic.
+read_empty_reminder = "<system-reminder>File {path} exists but is empty (0 bytes).</system-reminder>"
+
+# Returned as the read() tool result when the caller's `offset` is past
+# EOF on a non-empty file. Without this, the model received an empty
+# string and could mistake it for a harness fault. Format placeholders:
+# {offset}, {total}, {path}. Task-agnostic.
+read_offset_past_eof_reminder = "<system-reminder>Read offset {offset} is past EOF for {path} (file has {total} lines). No content returned — call read with a smaller offset to inspect the file.</system-reminder>"
+
+# Injected as a tool-result tail when loop_detect fires its WARN tier
+# (N consecutive identical tool-call signatures). Text should steer
+# the model to take stock and change approach rather than hard-abort.
+# Task-agnostic. Followed by loop_detect END on the next repeat.
+loop_detect_recovery = "<system-reminder>Loop detected: the last {streak} tool calls all have identical name and arguments. Stop repeating. Re-read the task, read a file you have not inspected yet, or change approach. One more repeat ends the session.</system-reminder>"
+
+# Sink-surface pointer. Rendered at the tail of truncated bash output
+# so the agent sees a structured handle to the full sink file. Format
+# placeholders: {path} (relative to cwd), {chars} (raw byte count),
+# {lines} (raw line count). Task-agnostic; attribute values are
+# emitted verbatim — callers overriding must keep XML-valid shape.
+sink_pointer = '<tool_result_meta truncated="true" original_bytes="{chars}" original_lines="{lines}" full_path="{path}"/>'
+
+# Body-truncation marker placed between head and tail slices of a
+# sunk bash output. Task-agnostic.
+sink_body_marker = "... [body truncated — full output available via full_path attribute] ..."
+
+# Session-end reason messages. {var} placeholders are filled at runtime.
+resume_duplicate_abort = "Last {n} calls identical: {call}. Change approach."
+resume_context_full = "Context {pct}% full. Fresh session."
+resume_max_turns = "Last {n} actions: {actions}. Budget exhausted — finish the most critical work."
+resume_length = "Response truncated. Use shorter responses."
+resume_gate_escalation = "{n} calls blocked by gate. Code preserved. Make targeted edits."
+
+# Number of recent actions shown in the max_turns resume message.
+resume_last_n_actions = 3
+
+# Optional host paths to hide inside bwrap. Patterns may be absolute and may
+# contain `**`. Prefix a pattern with `optional:` when absence is acceptable.
+# Add project-specific masks in config.local.toml.
+[sandbox]
+unreadable_paths = []
+
+# ---------------------------------------------------------------------------
+# File path conventions (not overridable — documented here for reference).
+# These are implicit contracts consumed by analysis tools downstream.
+# ---------------------------------------------------------------------------
+# .trace.jsonl       append-only event log per task (loop.py)
+# .solver/state.json mechanical projection of trace (state_writer.py)
+# transcript.log     raw HTTP request/response log (client.py)
+# checkpoint.json    last-known task state for resume (solver.py)
+# metrics.json       per-task provenance + timing (solver.py)

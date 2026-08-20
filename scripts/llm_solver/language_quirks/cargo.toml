@@ -1,0 +1,66 @@
+# Task format descriptor: Rust cargo
+#
+# Matches `cargo test`, `cargo check`, `cargo build` — any cargo
+# subcommand that produces a pass/fail verdict on task correctness.
+#
+# Analysis tools that accept --task-format load this file and use its
+# patterns as the definition of "verification command" for the run.
+
+name = "cargo"
+description = "Rust cargo test/check/build invocations"
+
+verification_patterns = [
+    '''(?:^|[\s/'"])cargo\s+(?:test|check|build|clippy)\b''',
+]
+
+[output_control]
+failure_only_flag = ""
+passed_marker = "ok"
+failed_marker = "FAILED"
+
+# Structured output parsing for cargo test runs. Matches terminal summary
+# line like `test result: FAILED. 2 passed; 1 failed; 0 ignored; …`
+# and per-test lines like `test tests::foo ... ok`.
+[output_parser.summary]
+passed = '''(\d+)\s+passed'''
+failed = '''(\d+)\s+failed'''
+ignored = '''(\d+)\s+ignored'''
+
+[output_parser.per_test]
+# Per-subtest lines: `test <path::name> ... <verdict>` where verdict is
+# ok|FAILED|ignored. Emitted verdicts are preserved as-is (uppercased);
+# consumers that need PASSED/FAILED/ERROR canonical strings will need a
+# verdict-normalization map in parse_structured (not wired yet — pytest
+# already emits canonical literals, so normalization stays deferred until
+# a non-pytest run needs done-parity mode).
+regex = '''^test\s+(?P<test_id>\S+)\s+\.{3}\s+(?P<verdict>ok|FAILED|ignored)'''
+
+# How run_tests should invoke this runner when the repo is detected as
+# Rust/Cargo (Cargo.toml present in cwd). Cargo finds its toolchain via
+# rustup automatically, so no env_activate_prefix is needed.
+[run_tests]
+detection_priority = 1
+env_activate_prefix = ""
+base_cmd = "cargo test --no-fail-fast --quiet"
+detect_files = ["Cargo.toml"]
+# `cargo test PATTERN` filters by test name; there is no path arg in
+# the same sense as pytest. We pass the model's `path` and `k` both as
+# positional name filters (cargo accepts the last positional as the
+# filter pattern).
+arg_path_style = "positional"
+arg_k_template = "{expr}"
+arg_last_failed = ""              # no built-in equivalent
+
+# Cargo exit-code semantics differ sharply from pytest's. `cargo test`
+# exits 101 (a Rust panic code, from the libtest harness) when any test
+# fails or the binary panics — NOT pytest's "usage_error" for exit 4/
+# "internal_error" for exit 3. `cargo build`/`check`/`clippy` failures
+# surface as exit 1. Without this table run_tests.py's old pytest-only
+# _PYTEST_STATUS map would mislabel 101 as `error_101` instead of
+# `failed`. status_default covers any other nonzero
+# exit (e.g. a killed process) with the same safe "failed" verdict.
+status_default = "failed"
+
+[run_tests.status_map]
+0 = "passed"
+101 = "failed"

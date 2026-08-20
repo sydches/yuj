@@ -1,0 +1,4 @@
+# Adaptive-control overlay.
+
+[loop]
+loop_detect_enabled = true

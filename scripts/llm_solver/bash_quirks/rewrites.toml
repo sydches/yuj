@@ -1,0 +1,102 @@
+# bash_rewrites.toml — Command rewrite rules for noisy bash patterns.
+#
+# Each [[rewrite]] entry matches a command pattern and appends a flag
+# to reduce output volume. The harness applies these BEFORE execution.
+# The model's command still runs — it just runs quieter.
+#
+# Rules:
+#   pattern:  regex matched against the full bash command (re.IGNORECASE)
+#   flag:     appended to the command if not already present
+#   skip_if:  don't append if this substring is already in the command
+#
+# These are universal — not benchmark-specific. They apply to any run.
+
+[[rewrite]]
+name = "pip_install"
+pattern = '''(?:^|[\s'"])pip[0-9]?\s+install\b'''
+flag = "-q"
+skip_if = ["-q", "--quiet"]
+
+[[rewrite]]
+name = "pip_module_install"
+pattern = '''python[0-9]?\s+-m\s+pip\s+install\b'''
+flag = "-q"
+skip_if = ["-q", "--quiet"]
+
+[[rewrite]]
+name = "npm_install"
+pattern = '''(?:^|[\s'"])npm\s+install\b'''
+flag = "--loglevel=error"
+skip_if = ["--loglevel", "--silent", "-s"]
+
+[[rewrite]]
+name = "yarn_install"
+pattern = '''(?:^|[\s'"])yarn\s+(?:install|add)\b'''
+flag = "--silent"
+skip_if = ["--silent", "-s"]
+
+[[rewrite]]
+name = "make_build"
+pattern = '''(?:^|[\s'"])make\b(?!\s+test)(?!\s+check)'''
+flag = "-s"
+skip_if = ["-s", "--silent"]
+
+[[rewrite]]
+name = "cmake_build"
+pattern = '''cmake\s+--build\b'''
+flag = "-- -j$(nproc) 2>&1 | tail -50"
+skip_if = ["tail", "head", "-j"]
+
+# ── TypeScript/Node build-check runners ────────────────────────────
+# tsc has no built-in error-count cap: one broken refactor can emit
+# thousands of "error TSxxxx" diagnostic lines (plus multi-line code
+# frames under --pretty) in a single tool result. Mirror the pytest
+# quirk's bounding philosophy (quiet flags: --tb=short -q) with the
+# cmake_build mechanism (pipe-bound output): --pretty false drops the
+# colorized code frames, head -100 keeps the FIRST diagnostics — the
+# root causes; later errors are usually cascade noise. The model can
+# re-run a narrower check for the rest. Explicit bounding from the
+# model (head/tail/--pretty) is respected via skip_if; --watch/-w
+# never-terminating runs are left alone; grep'd mentions of tsc are
+# not invocations.
+[[rewrite]]
+name = "npx_tsc_check"
+pattern = '''(?:^|[\s/'"])npx\s+(?:-\S+\s+)*tsc\b'''
+flag = "--pretty false 2>&1 | head -100"
+skip_if = ["--pretty", "head", "tail", "--watch", " -w", "grep "]
+
+[[rewrite]]
+name = "tsc_check"
+pattern = '''(?:^|[\s/'"])tsc\b'''
+flag = "--pretty false 2>&1 | head -100"
+skip_if = ["--pretty", "head", "tail", "--watch", " -w", "grep "]
+
+# ── Search-result caps ─────────────────────────────────────────────
+# Auto-inject a per-file match cap on the search verbs that do not get
+# any cap by default. Without this, `rg pattern .` against a deep
+# repo can return 5k+ matches in a single tool result, overshooting
+# max_output_chars (80k) which then triggers head/tail truncation that
+# eats 60 % of the matches as collateral. SWE-agent uses --max-count=100;
+# cline uses 300
+# matches / 0.25 MB. 100 keeps a single result under ~10–20 k chars
+# even on long lines and is plenty for grep-and-go agentic use.
+# Explicit count flags from the model are respected via skip_if.
+[[rewrite]]
+name = "rg_max_count"
+pattern = '''(?:^|[\s'"])rg\b'''
+flag = "--max-count=100"
+skip_if = ["--max-count", "-m ", "--count", "-c "]
+
+[[rewrite]]
+name = "ripgrep_max_count"
+pattern = '''(?:^|[\s'"])ripgrep\b'''
+flag = "--max-count=100"
+skip_if = ["--max-count", "-m ", "--count", "-c "]
+
+[[rewrite]]
+name = "grep_recursive_max_count"
+# Only cap recursive greps (-r / -R / --recursive) — non-recursive
+# `grep pat file` is bounded by the file size.
+pattern = '''(?:^|[\s'"])e?grep\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\b|--recursive\b)'''
+flag = "--max-count=100"
+skip_if = ["--max-count", "-m ", "--count", "-c "]

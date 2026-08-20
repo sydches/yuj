@@ -1,0 +1,4 @@
+# Request denormalization rules.
+
+[system_prompt]
+strategy = "native"

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yuj"
+version = "0.1.0"
+description = "Yuj is a coding-agent harness that watches the LLM and keeps it on course. It maintains relevant context without extra LLM calls."
+requires-python = ">=3.11"
+dependencies = [
+    "openai",
+    "orjson",
+    "requests",
+    "transformers",
+]
+
+[project.scripts]
+yuj = "scripts.llm_assist.__main__:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["scripts*"]

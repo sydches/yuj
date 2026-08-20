@@ -1,0 +1,38 @@
+# Task format descriptor: C/C++ ctest / make test
+#
+# Matches ctest invocations and `make test`/`make check` — the
+# conventional verification commands for CMake and Autotools projects.
+
+name = "ctest"
+description = "ctest / make test / make check invocations"
+
+verification_patterns = [
+    '''(?:^|[\s/'"])ctest\b''',
+    '''(?:^|[\s/'"])make\s+(?:test|check)\b''',
+]
+
+# Per-subtest output_parser is unimplemented for ctest. The schema is
+# `[output_parser.summary]` + `[output_parser.per_test]` (see
+# pytest.toml). Without it, regression detection for this runner is
+# content-blind OK/FAIL from exit codes only.
+
+# How run_tests should invoke this runner when the repo is detected as
+# CMake/C++ (CMakeLists.txt or CTestTestfile.cmake present in cwd).
+# Assumes a conventional build/ subdir; falls back gracefully when not.
+[run_tests]
+detection_priority = 4
+env_activate_prefix = ""
+base_cmd = "ctest --output-on-failure"
+detect_files = ["CTestTestfile.cmake", "CMakeLists.txt"]
+arg_path_style = "ignored"        # ctest filters by name regex, not path
+arg_k_template = "-R {expr}"
+arg_last_failed = "--rerun-failed"
+
+# ctest's exit codes are 0=all-passed, nonzero=some-failed (no
+# pytest-style collection/usage/internal-error distinctions). Map
+# nonzero to "failed" rather than letting it fall through to pytest's
+# _PYTEST_STATUS vocabulary.
+status_default = "failed"
+
+[run_tests.status_map]
+0 = "passed"

@@ -1,0 +1,56 @@
+# Task format descriptor: Go
+#
+# Matches `go test`, `go build`, `go vet` — any go subcommand that
+# produces a pass/fail verdict on task correctness.
+
+name = "go"
+description = "Go test/build/vet invocations"
+
+verification_patterns = [
+    '''(?:^|[\s/'"])go\s+(?:test|build|vet)\b''',
+]
+
+[output_control]
+failure_only_flag = "-v"
+passed_marker = "--- PASS"
+failed_marker = "--- FAIL"
+
+# Structured output parsing for go test. Go's default output has no
+# "N passed, M failed" summary line — only per-test `--- PASS: TestX`
+# or `--- FAIL: TestX` markers, plus a terminal `PASS` / `FAIL` and
+# `ok <pkg> <time>` / `FAIL <pkg> <reason>`. Summary counts are
+# derived implicitly by the parser from per_test matches when the
+# summary block is empty; consumers see the counts via
+# len(parsed["tests"]).
+
+[output_parser.per_test]
+# --- PASS: TestFoo/subtest (0.01s)
+# --- FAIL: TestBar (0.02s)
+# Verdict captured as PASS/FAIL; matches the pytest-style canonical set
+# for FAILED via the render_digest checks that accept PASS-prefix/FAIL-prefix.
+regex = '''^---\s+(?P<verdict>PASS|FAIL)(?:\s*:\s*)(?P<test_id>\S+)'''
+
+# How run_tests should invoke this runner when the repo is detected as
+# Go (go.mod present in cwd). go test ships with the toolchain; no env
+# activation needed.
+[run_tests]
+detection_priority = 2
+env_activate_prefix = ""
+base_cmd = "go test"
+detect_files = ["go.mod", "go.sum"]
+# Go takes a package path positionally (default ./...) and -run for the
+# name regex filter. If the model passes neither path nor k, we add
+# ./... so the whole module is exercised.
+arg_path_style = "positional"
+arg_k_template = "-run {expr}"
+arg_last_failed = ""              # no built-in equivalent
+
+# `go test`/`go vet`/`go build` don't have pytest's rich exit-code
+# vocabulary — it's just 0 (ok) vs nonzero (build failure, vet finding,
+# or test failure, all folded into exit 1). Keep it simple: nonzero is
+# always "failed", never pytest's "collection_error"/"usage_error"/
+# "no_tests_collected" because those labels do not apply to Go.
+status_default = "failed"
+
+[run_tests.status_map]
+0 = "passed"

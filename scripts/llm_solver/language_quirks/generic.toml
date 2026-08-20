@@ -1,0 +1,19 @@
+# Task format descriptor: generic verification-looking commands
+#
+# Matches any bash command starting with a word that conventionally
+# denotes a verification step. Broad by design — use when the benchmark
+# has no single canonical runner, or when analyzing mixed-domain runs.
+# False positives are expected.
+
+name = "generic"
+description = "Generic verify/test/check/build invocations"
+
+verification_patterns = [
+    '''(?:^|[\s/'"])(?:test|check|verify|validate|lint)\b''',
+    '''(?:^|[\s/'"])(?:make|cmake|ninja|bazel)\b''',
+]
+
+# Per-subtest output_parser is unimplemented for the generic runner.
+# The schema is `[output_parser.summary]` + `[output_parser.per_test]`
+# (see pytest.toml). Without it, regression detection here is
+# content-blind OK/FAIL from exit codes only.

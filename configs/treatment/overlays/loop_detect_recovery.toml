@@ -1,0 +1,7 @@
+# Adaptive-control overlay.
+
+[loop]
+loop_detect_enabled = true
+
+[prompts]
+loop_detect_recovery = "<system-reminder>Loop: {streak} identical calls. The repeat produces nothing new. Name one fact you still need, then issue a DIFFERENT call to get it. One more identical call ends the session.</system-reminder>"

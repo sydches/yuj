@@ -1,0 +1,7 @@
+# Adaptive-control overlay.
+
+[loop]
+require_intent = true
+
+[prompts]
+intent_gate_repeat = "[intent gate: {count} silent calls since turn {first_turn}. Say what you expect this call to show before issuing it.]"

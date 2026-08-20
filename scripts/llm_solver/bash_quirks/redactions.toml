@@ -1,0 +1,83 @@
+# bash_redactions.toml — Pattern list applied to every tool result
+# BEFORE truncation, so a secret that appears at byte 81000 of an 80k-
+# truncated tail still gets masked rather than slipping through to the
+# trace + the model's prompt.
+#
+# Each [[redaction]] entry:
+#   name:        identifier for the savings ledger / log
+#   pattern:     Python regex matched against the raw result text
+#   replace:     string substituted for each match (default '[REDACTED]')
+#   capture:     when set to a group number, replaces only that group
+#                while preserving the rest (e.g. preserves the env-var
+#                NAME but masks its value)
+#
+# Conservative bias: false positives redact more text (worse output
+# quality, no security impact); false negatives leak secrets. Patterns
+# below target tokens with high entropy / known prefixes that are
+# vanishingly unlikely to appear in legitimate Python code or test
+# output. New patterns added here apply to every bash and run_tests
+# invocation harness-wide.
+#
+# Trace masking is a security/safety win — there is no token
+# saving claimed because patterns rarely fire in normal solver runs.
+
+# AWS access key — fixed AKIA / AKIA prefix + 16 alphanumeric.
+[[redaction]]
+name = "aws_access_key_id"
+pattern = '''AKIA[0-9A-Z]{16}'''
+replace = "[REDACTED:aws_access_key]"
+
+# AWS secret access key — 40 base64-ish chars after `aws_secret_access_key=` or
+# similar marker. Targets the assignment shape, not bare 40-char strings
+# (false-positive risk too high for raw strings).
+[[redaction]]
+name = "aws_secret_access_key"
+pattern = '''(aws_secret_access_key|AWS_SECRET_ACCESS_KEY)\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})["']?'''
+replace = "\\1=[REDACTED:aws_secret]"
+
+# GitHub personal access token — ghp_ / gho_ / ghu_ / ghs_ / ghr_ + 36+ chars.
+[[redaction]]
+name = "github_token"
+pattern = '''gh[pousr]_[A-Za-z0-9]{36,}'''
+replace = "[REDACTED:github_token]"
+
+# GitHub fine-grained PAT — github_pat_<22 chars>_<59 chars>
+[[redaction]]
+name = "github_fine_grained_pat"
+pattern = '''github_pat_[A-Za-z0-9_]{22,}_[A-Za-z0-9]{50,}'''
+replace = "[REDACTED:github_pat]"
+
+# Slack tokens — xoxb / xoxp / xoxa / xoxr + 10-13 chars + - + base64.
+[[redaction]]
+name = "slack_token"
+pattern = '''xox[abprs]-[A-Za-z0-9-]{10,}'''
+replace = "[REDACTED:slack_token]"
+
+# OpenAI / Anthropic API keys — sk-... / sk-ant-... shape. Anthropic uses
+# 'sk-ant-' explicitly; OpenAI uses 'sk-' followed by 48 chars.
+[[redaction]]
+name = "openai_api_key"
+pattern = '''sk-(?!ant-)[A-Za-z0-9]{32,}'''
+replace = "[REDACTED:openai_key]"
+
+[[redaction]]
+name = "anthropic_api_key"
+pattern = '''sk-ant-[A-Za-z0-9_-]{32,}'''
+replace = "[REDACTED:anthropic_key]"
+
+# JWT — three base64url segments separated by dots. Conservative: only
+# match when the header decodes to a JWT shape (eyJ prefix is base64 of '{"').
+[[redaction]]
+name = "jwt"
+pattern = '''eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'''
+replace = "[REDACTED:jwt]"
+
+# Generic high-entropy assignments: NAME=long_token in .env-style lines.
+# Very conservative — only fires on identifiers ending with TOKEN/SECRET/
+# KEY/PASSWORD/PASSWD assigned to a 16+ char value with no spaces.
+# Preserves the variable NAME in the output (capture group 1) so the
+# model still sees that some env var was set, just not its value.
+[[redaction]]
+name = "env_token_assignment"
+pattern = '''([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|API_KEY))\s*=\s*["']?([A-Za-z0-9+/=_-]{16,})["']?'''
+replace = "\\1=[REDACTED:env_secret]"

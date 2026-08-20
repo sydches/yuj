@@ -1,0 +1,5 @@
+# Base denormalize rules — pass-through defaults.
+# Standard OpenAI chat format, no transforms needed.
+
+[system_prompt]
+strategy = "native"

@@ -1,0 +1,1 @@
+Create or overwrite a file inside the working directory. Missing parent directories are created automatically. Errors on directories — pick a different filename. Configured post-edit checks may revert the write if they fail.

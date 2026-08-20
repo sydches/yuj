@@ -1,0 +1,20 @@
+title: Yuj
+description: Yuj is a coding-agent harness that watches the LLM and keeps it on course. It maintains relevant context without extra LLM calls.
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+
+url: https://sydches.github.io
+baseurl: /yuj
+
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+back_to_top: true
+back_to_top_text: Back to top
+
+aux_links:
+  Yuj on GitHub:
+    - https://github.com/sydches/yuj
+
+nav_external_links:
+  - title: Paper and results
+    url: https://github.com/sydches/yuj/tree/main/paper

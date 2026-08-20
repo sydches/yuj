@@ -1,0 +1,65 @@
+[profile]
+format_version = 1
+canonical_version = "openai-v1"
+name = "qwen3.6-35b-a3b"
+family = "qwen3.6"
+quant = "UD-Q4_K_XL"
+inherits = "_base"
+
+[model]
+context_size = 262144
+chat_template = "chatml"
+supports_tool_calls = true
+supports_system_role = true
+
+[tokens]
+method = "chars_div_4"
+tokenizer = ""
+
+[capacity]
+preamble = ""
+max_tools = 8
+simplify_schemas = false
+
+[normalize]
+rules = ["rules.toml"]
+modules = []
+
+[denormalize]
+rules = ["rules.toml"]
+modules = ["behavioral.py"]
+
+# Add these rules to the system message when Yuj mode is active.
+[behavioral]
+tool_call_style = "openai_json"
+reminder_placement = "system"
+# Behavioral rules sent with this profile.
+suffix = """
+
+## Operational rules
+
+Constraints, not advice.
+
+1. **Test suite is the only verdict.** Run it. `python -c`, imports, `echo` are not verification.
+2. **Test file = interface contract.** Read it once, early.
+3. **Never modify existing test files.**
+4. **Last action must be a test run.** No fresh verdict = not done.
+5. **First action: mutate or test.** Pretest verdict is in context. Do not list/read/grep first.
+6. **Iterate, not rewrite.** Read the error. Make a targeted edit. Do not start over.
+7. **No re-runs without intervening mutation.** Flag variations don't count.
+8. **Sessions resume.** Continue from where you stopped. Do not restart.
+9. **Batch independent reads.** You may emit multiple read/glob/grep calls in one turn; the harness runs them concurrently and returns all results together. One call per turn wastes context when you already know the set of files to inspect."""
+
+[server]
+model_path = "~/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+ctx_size = 32768
+flash_attn = true
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+jinja = true
+reasoning_mode = "think"
+reasoning_disable_flag = "--reasoning-budget 0"
+# --n-cpu-moe 32 offloads the first 32 layers' routed experts to CPU;
+# attention + shared expert + router + embed + last 8 layers' experts
+# stay on GPU. P-core pinning via cpu-mask 0x00FF + cpu-strict 1.
+extra_flags = "--n-cpu-moe 32 --cpu-mask 0x00FF --cpu-strict 1 -b 2048 -ub 1024 --mmap"

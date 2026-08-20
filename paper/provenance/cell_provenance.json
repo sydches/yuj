@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "scope": "Path-neutral public projection of cell status, configuration identity, endpoint-code coverage, and transfer-model validation.",
+  "source_artifacts": {
+    "qwen_task_outcomes": "73d1d9fa6c9d4d892b42ed7ce0c8b8037361060de431036f6224e93adfe08c07",
+    "qwen_cell_manifest": "9559b4c2f8b064faea4d775a58800402dfc07f16ba9a09bea9ce27eb11061e33",
+    "qwen_system_provenance": "131f933e8cadaf5b1254429d99b73d8492393f7869f996bdfabb6aeec182e185",
+    "devstral_cell_result": "11735faf5644baaeb30a344ece1e3d4261215c29e160f90b99199ed9ffff5f04",
+    "nemotron_cell_result": "83385fb21ff644601564cdbbf116de07ede0684ebb07298646d046a98a3877ed",
+    "qwen38_cell_result": "0141842f13ca59a947c3207899f517f88385d5fedffdc36df86c1f4b40800c3a",
+    "reading_boundary_exclusions": "eea1a8a7a349eb4414268f4c523b4bf12aee6b44fed3c0cae939da62d28c1d51"
+  },
+  "qwen_cells": [
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 20480,
+      "context_label": "severe pressure",
+      "task_count": 169,
+      "configuration_note": "complete package",
+      "analysis_status": null,
+      "result_status": "final"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 43008,
+      "context_label": "mild pressure",
+      "task_count": 169,
+      "configuration_note": "paired complete package",
+      "analysis_status": null,
+      "result_status": "final"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 262144,
+      "context_label": "large window",
+      "task_count": 169,
+      "configuration_note": "paired complete package",
+      "analysis_status": "post_hoc_common_cohort_projection",
+      "result_status": "final"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Pro",
+      "context_tokens": 49152,
+      "context_label": "pressure",
+      "task_count": 316,
+      "configuration_note": "registered pressure pair",
+      "analysis_status": null,
+      "result_status": "final"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Pro",
+      "context_tokens": 262144,
+      "context_label": "large window",
+      "task_count": 316,
+      "configuration_note": "historical 256k arms projected onto the pressure cohort",
+      "analysis_status": null,
+      "result_status": "final"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "FeatureBench",
+      "context_tokens": 47104,
+      "context_label": "pressure",
+      "task_count": 183,
+      "configuration_note": "registered pressure pair",
+      "analysis_status": null,
+      "result_status": "final"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "FeatureBench",
+      "context_tokens": 262144,
+      "context_label": "large window",
+      "task_count": 183,
+      "configuration_note": "paired effectively context-unconstrained cell",
+      "analysis_status": null,
+      "result_status": "final"
+    }
+  ],
+  "qwen_pressure_execution_provenance": [
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 20480,
+      "task_count": 169,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "initial_wall_cap_seconds": 180,
+      "critical_code_fingerprint": "2d0968138017dc186ec15e92fc746ed315668ff0646b7f0a7c99e87aeb7b5568",
+      "control": {
+        "context_mode": "full",
+        "resolved_config_sha256": "a747e1d20ae1bac837e380b7b876ddbced06d55933eceb3a2f814ebbbf0a9c4a",
+        "finalized_opportunities": 169,
+        "code_identity_records": 169,
+        "missing_code_identity_records": 0
+      },
+      "treatment": {
+        "context_mode": "halflife",
+        "resolved_config_sha256": "10ba710f4d547bc32499ba719a577ba5bb7df6b53210a665cf20c48ca3def5b0",
+        "finalized_opportunities": 174,
+        "code_identity_records": 174,
+        "missing_code_identity_records": 0
+      }
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 43008,
+      "task_count": 169,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "initial_wall_cap_seconds": 180,
+      "critical_code_fingerprint": "c69f196a73e05458d5bb145c18e10a86a03fcd37c6f7f1eec5cf6328e647b79f",
+      "control": {
+        "context_mode": "full",
+        "resolved_config_sha256": "880683d596ef6862f2f6e6e225ea3c267257e0169e10536cda907a3bb5cae32c",
+        "finalized_opportunities": 170,
+        "code_identity_records": 170,
+        "missing_code_identity_records": 0
+      },
+      "treatment": {
+        "context_mode": "halflife",
+        "resolved_config_sha256": "f0106a7da15df55b487ba324021f4c1bd9520eaabe2b2ebf472b9c9e4efe6bf4",
+        "finalized_opportunities": 212,
+        "code_identity_records": 212,
+        "missing_code_identity_records": 0
+      }
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "SWE-bench Pro",
+      "context_tokens": 49152,
+      "task_count": 316,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "initial_wall_cap_seconds": 180,
+      "critical_code_fingerprint": "a34876bd0262d35ecf42eecfdb0af33ab1e3b5adea6afde17024d90138174e40",
+      "control": {
+        "context_mode": "full",
+        "resolved_config_sha256": "821f82b04446bab56fc3d701d6c0a40d766f1fad70b3c68613fbfa780041e096",
+        "finalized_opportunities": 338,
+        "code_identity_records": 316,
+        "missing_code_identity_records": 22
+      },
+      "treatment": {
+        "context_mode": "halflife",
+        "resolved_config_sha256": "53fc0a9082be92436bb8a970f7be20bbbdd7b40c06fa012f52965c47eca18037",
+        "finalized_opportunities": 533,
+        "code_identity_records": 316,
+        "missing_code_identity_records": 217
+      }
+    },
+    {
+      "model": "Qwen3.6-35B-A3B",
+      "benchmark": "FeatureBench",
+      "context_tokens": 47104,
+      "task_count": 183,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "initial_wall_cap_seconds": 180,
+      "critical_code_fingerprint": "a34876bd0262d35ecf42eecfdb0af33ab1e3b5adea6afde17024d90138174e40",
+      "control": {
+        "context_mode": "full",
+        "resolved_config_sha256": "182dba5abf466943d5562ef600c9b8a9d9e1a39dad84d6b061a80186e0c852e0",
+        "finalized_opportunities": 189,
+        "code_identity_records": 189,
+        "missing_code_identity_records": 0
+      },
+      "treatment": {
+        "context_mode": "halflife",
+        "resolved_config_sha256": "36a0177632681c5a3ec44ce8d89e36fecfd3e61467bcdf8a73b789f9197f7e10",
+        "finalized_opportunities": 346,
+        "code_identity_records": 346,
+        "missing_code_identity_records": 0
+      }
+    }
+  ],
+  "transfer_cells": [
+    {
+      "model": "Devstral Small 2 24B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 20480,
+      "task_count": 169,
+      "status": "final",
+      "publication_ready": true,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "provenance_passed": true,
+      "normalized_server_contract_sha256": [
+        "3d4a9198d0dcc288c9b6fdde27bdfd33213ce0f4556118ffab0c735ac513aa1c"
+      ],
+      "resolved_config_sha256": {
+        "control": [
+          "dbe0334d294bdba8523aca24a548572ff4dd589e773c66f7c96efd4d8d1bfba6"
+        ],
+        "treatment": [
+          "1a3f0f6f4bb5f23016d6be6d66afba6164509af418a8dee7ac6dc28dc1721288"
+        ]
+      },
+      "quirk_sha256": {
+        "bash_quirks/forbidden.toml": [
+          "d1137cbb0315"
+        ],
+        "bash_quirks/redactions.toml": [
+          "899def1aed3c"
+        ],
+        "language_quirks/pytest.toml": [
+          "d75bf83b3af3"
+        ],
+        "tool_quirks/glob.toml": [
+          "e838b0ecf8db"
+        ]
+      },
+      "model_facing_content_equivalent": true,
+      "label_drift_only": true
+    },
+    {
+      "model": "Nemotron-Cascade 2 30B-A3B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 20480,
+      "task_count": 169,
+      "status": "final",
+      "publication_ready": true,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "provenance_passed": true,
+      "normalized_server_contract_sha256": [
+        "53a53a6db7b85384c3a254dd4285f3c5d995ac7702ecf71e718a8ed0c0e46449"
+      ],
+      "resolved_config_sha256": {
+        "control": [
+          "6700692b66a54183c749f4c3021a9f27133ae84e9aed5f2c9ac004d315af5f7c"
+        ],
+        "treatment": [
+          "856e41c9c46c1d18085f89c563855169a1dbf4f6a3578cd18727f480bb490757"
+        ]
+      },
+      "quirk_sha256": {
+        "bash_quirks/forbidden.toml": [
+          "d1137cbb0315"
+        ],
+        "bash_quirks/redactions.toml": [
+          "899def1aed3c"
+        ],
+        "language_quirks/pytest.toml": [
+          "d75bf83b3af3"
+        ],
+        "tool_quirks/glob.toml": [
+          "e838b0ecf8db"
+        ]
+      },
+      "model_facing_content_equivalent": true,
+      "label_drift_only": true
+    },
+    {
+      "model": "Qwen3.8-27B",
+      "benchmark": "SWE-bench Verified",
+      "context_tokens": 20480,
+      "task_count": 169,
+      "status": "final",
+      "publication_ready": true,
+      "endpoint_rule": "best finalized task outcome across registered ladder",
+      "provenance_passed": true,
+      "normalized_server_contract_sha256": [
+        "a730e158c45af893e3ba1b328816401519dd8d78acf81246a2485048241b51df"
+      ],
+      "resolved_config_sha256": {
+        "control": [
+          "a77754d2ea9283a0a3ed73ed9cd18b39a31563c46e3322067ab96bfe349a7db9"
+        ],
+        "treatment": [
+          "f2678a89c856b2b31a657860e60f9d151f86435365de17fad178fd7cb718df4d"
+        ]
+      },
+      "quirk_sha256": {
+        "bash_quirks/forbidden.toml": [
+          "d1137cbb0315"
+        ],
+        "bash_quirks/redactions.toml": [
+          "899def1aed3c"
+        ],
+        "language_quirks/pytest.toml": [
+          "d75bf83b3af3"
+        ],
+        "tool_quirks/glob.toml": [
+          "e838b0ecf8db"
+        ]
+      },
+      "model_facing_content_equivalent": true,
+      "label_drift_only": true
+    }
+  ],
+  "analysis_exclusions": {
+    "scope": "reading-boundary fit only",
+    "rows": 17,
+    "sha256": "eea1a8a7a349eb4414268f4c523b4bf12aee6b44fed3c0cae939da62d28c1d51"
+  },
+  "public_boundary": "Raw runs, traces, transcripts, predictions, patches, evaluator artifacts, benchmark launchers, and host paths are not public."
+}

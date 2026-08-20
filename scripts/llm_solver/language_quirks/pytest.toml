@@ -1,0 +1,79 @@
+# Task format descriptor: pytest-family Python testing
+#
+# Matches: pytest, py.test, unittest invocations, either directly or via
+# `python[N] -m pytest/unittest`. Does NOT match bare `cat test_foo.py`
+# or file reads — only actual runner invocations.
+#
+# Analysis tools that accept --task-format load this file and use its
+# patterns as the definition of "verification command" for the run.
+
+name = "pytest"
+description = "pytest / py.test / unittest / python -m pytest invocations"
+
+# Regex patterns matched against bash args_summary with re.IGNORECASE | re.VERBOSE.
+# A match means "this bash call is a verification gate for the task."
+verification_patterns = [
+    '''(?:^|[\s/'"])(?:pytest|py\.test|unittest)\b''',
+    '''(?:^|[\s/'"])python[0-9]?\s+(?:-m\s+)?(?:pytest|unittest)\b''',
+]
+
+# Flags appended to test commands by the harness to reduce output volume.
+# Only appended if not already present in the command.
+[output_control]
+failure_only_flag = "--tb=short -q --no-header"
+passed_marker = "PASSED"       # substring in passing-test lines (stripped from output)
+failed_marker = "FAILED"       # substring in failing-test lines (never stripped)
+
+# Structured parsing of pytest output. Consumed by bash_quirks.parse_structured()
+# for per-subtest regression detection. When
+# bash_transforms_structured_output_enabled is set, the harness REPLACES the
+# raw result shown to the model with a compact digest rendered from the
+# fields below; when the sink mechanism is on (bash_transforms_sink_threshold_chars),
+# raw output is also written to .tool_output/<session>_<turn>.log so the
+# model can read the full output on demand via the read tool.
+[output_parser]
+# One regex per summary field — order-agnostic (pytest emits
+# "2 failed, 8 passed" or "8 passed, 2 failed" depending on config).
+# Each field's first capture group is the integer count.
+[output_parser.summary]
+passed = '''(\d+)\s+passed'''
+failed = '''(\d+)\s+failed'''
+errors = '''(\d+)\s+error(?:s|ed)?'''
+skipped = '''(\d+)\s+skipped'''
+
+# Per-test verdict lines in pytest -v / --tb=short / -rA outputs:
+#   "PASSED tests/test_x.py::test_y"
+#   "FAILED tests/test_x.py::test_y - AssertionError: ..."
+#   "ERROR tests/test_x.py::test_y"
+[output_parser.per_test]
+regex = '''
+    ^(?P<verdict>PASSED|FAILED|ERROR)\s+(?P<test_id>\S+)
+'''
+
+# How the model-callable run_tests tool should invoke this runner.
+# Loaded by language_quirks.load_run_tests_quirk(cwd) when the cwd has
+# any of the detect_files; consumed by harness/tools.py:run_tests.
+[run_tests]
+detection_priority = 0
+# The conda-activate prefix matches the SWE-bench grader-of-record. Some
+# images carry profile.d/conda.sh; others only carry bin/activate, which is
+# what eval.sh sources. The guards keep this a no-op outside those images.
+env_activate_prefix = "if [ -f /opt/miniconda3/etc/profile.d/conda.sh ]; then source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed 2>/dev/null; elif [ -f /opt/miniconda3/bin/activate ]; then source /opt/miniconda3/bin/activate && conda activate testbed 2>/dev/null; fi; "
+base_cmd = "python3 -m pytest --tb=short -q --no-header"
+detect_files = ["pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "conftest.py", "tox.ini"]
+arg_path_style = "positional"      # appended after flags
+arg_k_template = "-k {expr}"
+arg_last_failed = "--lf"
+
+# pytest exit-code semantics (docs.pytest.org/en/stable/reference/exit-codes.html).
+# Encoded explicitly here (rather than relying solely on run_tests.py's
+# hardcoded fallback) so the mapping lives with the runner it describes,
+# same as every other language_quirks TOML. Values are byte-identical to
+# the historical _PYTEST_STATUS map in harness/_tools/_pytest_hints.py.
+[run_tests.status_map]
+0 = "passed"
+1 = "failed"
+2 = "collection_error"
+3 = "internal_error"
+4 = "usage_error"
+5 = "no_tests_collected"

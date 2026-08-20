@@ -1,0 +1,20 @@
+# Base normalize rules — common output cleanup.
+# All profiles inherit these unless overridden.
+
+[[strip]]
+name = "thinking_block"
+pattern = '<think>.*?</think>'
+target = "content"
+replace = ""
+
+[[strip]]
+name = "trailing_whitespace"
+pattern = '\s+$'
+target = "content"
+replace = ""
+
+[[strip]]
+name = "empty_content"
+pattern = '^\s*$'
+target = "content"
+replace = ""

@@ -1,0 +1,51 @@
+[profile]
+format_version = 1
+canonical_version = "openai-v1"
+name = "_base"
+family = "_base"
+quant = ""
+inherits = ""
+
+[model]
+context_size = 40960
+chat_template = "chatml"
+supports_tool_calls = true
+supports_system_role = true
+
+[tokens]
+method = "chars_div_4"
+tokenizer = ""
+
+[capacity]
+preamble = ""
+max_tools = 8
+simplify_schemas = false
+
+[normalize]
+rules = ["rules.toml"]
+modules = []
+
+[denormalize]
+rules = ["rules.toml"]
+modules = []
+
+# Default behavioral settings. The empty module list means the base profile
+# does not apply this suffix by itself.
+[behavioral]
+tool_call_style = "openai_json"
+reminder_placement = "system"
+suffix = """
+Missing file referenced in errors? Write it — use error output, interface descriptions, and surrounding code as spec.
+After every mutation, run the initial validation command. Read output. Fix. Repeat to exit code 0. No proxy checks.
+All paths relative. No absolute paths."""
+
+[server]
+model_path = ""
+ctx_size = 8192
+flash_attn = true
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+jinja = true
+reasoning_mode = "none"           # "think" (<think> tags), "channel" (<|channel> blocks), "none"
+reasoning_disable_flag = ""       # e.g. "--reasoning-budget 0", "--reasoning off"
+extra_flags = ""

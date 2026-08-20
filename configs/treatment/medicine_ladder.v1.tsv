@@ -1,0 +1,6 @@
+rank_within_ladder	lookup_status	reactive_lookup_allowed	live_eligible	ready_for_live	executor_status	runtime_executor_id	intervention_id	candidate_config_path	timing_class	primary_knob	online_signal_id
+1	ready_live_lookup	true	true	true	implemented	toml_overlay.apply	toml_overlay.apply::loop.loop_detect_on_default	configs/treatment/overlays/loop_detect.toml	live_reactive	loop.loop_detect_enabled	treatment_v1_ladder
+2	ready_live_lookup	true	true	true	implemented	toml_overlay.apply	toml_overlay.apply::loop.duplicate_guard	configs/treatment/overlays/duplicate_guard.toml	live_reactive	loop.duplicate_guard_enabled	treatment_v1_ladder
+3	ready_live_lookup	true	true	true	implemented	toml_overlay.apply	toml_overlay.apply::loop.loop_detect_recovery	configs/treatment/overlays/loop_detect_recovery.toml	live_reactive	prompts.loop_detect_recovery	treatment_v1_ladder
+4	ready_live_lookup	true	true	true	implemented	toml_overlay.apply	toml_overlay.apply::tools.unified_envelope	configs/treatment/overlays/unified_envelope.toml	live_reactive	tools.unified_envelope.enabled	treatment_v1_ladder
+5	ready_live_lookup	true	true	true	implemented	toml_overlay.apply	toml_overlay.apply::loop.intent_gate_repeat	configs/treatment/overlays/intent_gate.toml	live_reactive	prompts.intent_gate_repeat	treatment_v1_ladder

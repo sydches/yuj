@@ -1,0 +1,6 @@
+# Exact detector overrides for the primary FeatureBench 47,104 cell.
+[loop]
+loop_detect_threshold = 0
+
+[llm_hurdle_detector.trace_nets]
+reread_min_gap = 8

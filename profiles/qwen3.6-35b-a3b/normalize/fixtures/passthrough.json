@@ -1,0 +1,17 @@
+{
+  "description": "Clean response passes through normalize unchanged",
+  "cases": [
+    {
+      "input": {
+        "content": "The installed version of pydantic is 2.5.3.",
+        "tool_calls": [],
+        "finish_reason": "stop"
+      },
+      "expected": {
+        "content": "The installed version of pydantic is 2.5.3.",
+        "tool_calls": [],
+        "finish_reason": "stop"
+      }
+    }
+  ]
+}

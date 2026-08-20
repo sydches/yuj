@@ -1,0 +1,6 @@
+# Exact detector overrides for the primary SWE-bench Verified 43,008 cell.
+[loop]
+loop_detect_threshold = 0
+
+[llm_hurdle_detector.trace_nets]
+reread_min_gap = 3

@@ -1,0 +1,57 @@
+# bash_quirks/forbidden.toml — bash command patterns the harness refuses.
+#
+# When a pattern matches, the dispatched bash command is replaced with a
+# `false` no-op carrying a `[HARNESS: <reason>]` annotation that the model
+# sees in the result. Same architectural pattern as rewrites.toml but
+# with a destructive replacement instead of a flag append.
+#
+# Rules (per [[forbidden]] entry):
+#   pattern:  regex matched against the full bash command (re.IGNORECASE)
+#   reason:   short human-readable explanation injected into the harness
+#             message (the model sees `[HARNESS: <reason>]` in the result)
+#
+# Toggle: knob `bash_quirks.forbidden_enabled` (default true). Set false
+# to disable the entire forbidden layer.
+#
+
+[[forbidden]]
+name = "cd_root"
+pattern = '''^\s*cd\s+/\s*(?:&&|;|$)'''
+reason = "cd / not permitted; sandbox cwd is the only writable target"
+
+[[forbidden]]
+name = "cd_home_other"
+pattern = '''^\s*cd\s+/(?:home|root|opt|usr|etc)/'''
+reason = "cd outside cwd not permitted; sandbox cwd is the only writable target"
+
+# ─── O8: bash file-write as covert mutation channel ─────────────────────
+# Model writes substantive code via bash heredocs / redirects instead of
+# write/edit/str_replace tools. The harness mutation counter doesn't see
+# these, so pre_mutation_gate / rumination_gate / ledger metrics misreport.
+# Reroute by refusing the bash-channel write patterns; force the typed
+# tools.
+
+[[forbidden]]
+name = "shell_cat_redirect"
+pattern = '''^\s*cat\s+>'''
+reason = "use write/str_replace tool — bash redirect bypasses mutation tracking"
+
+[[forbidden]]
+name = "shell_tee_to_file"
+pattern = '''\btee\s+\./'''
+reason = "use write/str_replace tool — tee bypasses mutation tracking"
+
+[[forbidden]]
+name = "shell_sed_inplace"
+pattern = '''\bsed\s+-i\b'''
+reason = "use edit/str_replace tool — sed -i bypasses mutation tracking"
+
+[[forbidden]]
+name = "shell_redirect_to_codefile"
+pattern = '''>>?\s*(?:\./)?[\w./-]+\.(py|toml|json|ya?ml|md|txt|cfg|ini|sh|rs|c|cpp|h|hpp|go|js|ts|tsx|jsx)\b'''
+reason = "use write/edit/str_replace tool — shell redirect bypasses mutation tracking"
+
+[[forbidden]]
+name = "python_heredoc_open_for_write"
+pattern = '''python3?\s*<<.*?\bopen\([^)]*,\s*["'][aw]'''
+reason = "use write/edit/str_replace tool — python heredoc with file-open(mode='w'/'a') bypasses mutation tracking"

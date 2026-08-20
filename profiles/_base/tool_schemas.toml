@@ -1,0 +1,61 @@
+# Tool schemas — parameter shapes are invariant across description modes.
+#
+# Mode-specific prose lives in profiles/_base/tool_descriptions/<mode>/<tool>.txt
+# and is injected at load time by scripts/llm_solver/harness/schemas.py.
+#
+# To change an existing input shape, update its [[tools]] entry and its Python
+# handler and tests. A new tool also needs registry and dispatch code. To add a
+# new description mode, create a directory under tool_descriptions/ with one
+# .txt file per tool name.
+
+[[tools]]
+name = "bash"
+required = ["cmd"]
+properties = { cmd = { type = "string" } }
+
+[[tools]]
+name = "read"
+required = ["path"]
+properties = { path = { type = "string" }, offset = { type = "integer" }, limit = { type = "integer" } }
+
+[[tools]]
+name = "write"
+required = ["path", "content"]
+properties = { path = { type = "string" }, content = { type = "string" } }
+
+[[tools]]
+name = "edit"
+required = ["path", "old_str", "new_str"]
+properties = { path = { type = "string" }, old_str = { type = "string" }, new_str = { type = "string" } }
+
+[[tools]]
+name = "glob"
+required = ["pattern"]
+properties = { pattern = { type = "string" }, path = { type = "string" }, page = { type = "integer" } }
+
+[[tools]]
+name = "grep"
+required = ["pattern"]
+properties = { pattern = { type = "string" }, path = { type = "string" }, glob = { type = "string" }, page = { type = "integer" } }
+
+[[tools]]
+name = "run_tests"
+required = []
+properties = { path = { type = "string" }, k = { type = "string" }, last_failed = { type = "boolean" } }
+
+[[tools]]
+name = "list_definitions"
+required = ["path"]
+properties = { path = { type = "string" } }
+
+[[tools]]
+name = "apply_patch"
+required = ["patch"]
+properties = { patch = { type = "string" } }
+
+[[tools]]
+name = "done"
+required = []
+[tools.properties]
+[tools.properties.message]
+type = "string"

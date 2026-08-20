@@ -1,0 +1,1 @@
+Read a file; returns contents with line numbers. Optional `offset` (0-based, skip first N lines) and `limit` (max lines returned; 0 = no limit). Errors on directories — use glob to list directory contents.

@@ -1,0 +1,2019 @@
+# Task-level outcomes
+
+This is the human-readable rendering of `task_outcomes.tsv`. Its 2,012
+data rows and all 15 values in each row are identical to the TSV.
+
+| model | benchmark | context_tokens | context_label | task_id | repository | control_resolved | treatment_resolved | control_f2p_passed | control_f2p_total | control_f2p_fraction | treatment_f2p_passed | treatment_f2p_total | treatment_f2p_fraction | f2p_difference |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 004 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 006 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 007 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 008 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 009 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 013 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 021 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 023 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 024 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 030 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 031 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 035 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 037 | django/django | 0 | 0 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 040 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 041 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 043 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 048 | django/django | 0 | 0 | 4 | 6 | 0.666666666667 | 4 | 6 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 049 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 054 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 055 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 059 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 062 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 066 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 068 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 083 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 086 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 089 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 092 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 096 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 100 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 104 | django/django | 0 | 0 | 3 | 5 | 0.6 | 3 | 5 | 0.6 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 105 | django/django | 0 | 1 | 0 | 0 | 0 | 9 | 9 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 107 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 110 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 113 | django/django | 1 | 0 | 3 | 3 | 1 | 0 | 0 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 116 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 121 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 123 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 131 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 140 | django/django | 1 | 0 | 2 | 2 | 1 | 1 | 2 | 0.5 | -0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 141 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 144 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 149 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 152 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 161 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 164 | django/django | 0 | 0 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 166 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 171 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 175 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 176 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 177 | django/django | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 181 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 182 | django/django | 0 | 1 | 0 | 0 | 0 | 3 | 3 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 183 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 184 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 194 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 196 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 197 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 199 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 202 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 203 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 205 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 212 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 213 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 215 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 223 | django/django | 0 | 0 | 6 | 9 | 0.666666666667 | 6 | 9 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 233 | django/django | 0 | 0 | 3 | 8 | 0.375 | 1 | 8 | 0.125 | -0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 235 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 237 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 239 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 242 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 243 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 244 | django/django | 0 | 1 | 2 | 4 | 0.5 | 4 | 4 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 246 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 248 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 252 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 255 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 256 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 257 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 263 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 264 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 270 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 274 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 278 | matplotlib/matplotlib | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 281 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 3 | 7 | 0.428571428571 | 0.428571428571 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 282 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 283 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 286 | matplotlib/matplotlib | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 288 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 289 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 298 | psf/requests | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 299 | pydata/xarray | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 300 | pydata/xarray | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 313 | pydata/xarray | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 315 | pydata/xarray | 0 | 1 | 0 | 0 | 0 | 3 | 3 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 316 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 318 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 321 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 323 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 324 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 325 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 328 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 330 | pylint-dev/pylint | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 333 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 336 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 339 | pytest-dev/pytest | 0 | 0 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 342 | pytest-dev/pytest | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 345 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 349 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 351 | scikit-learn/scikit-learn | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 352 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 358 | scikit-learn/scikit-learn | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 365 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 366 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 368 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 370 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 372 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 374 | scikit-learn/scikit-learn | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 375 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 378 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 380 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 381 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 383 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 384 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 386 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 391 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 394 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 395 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 397 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 398 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 399 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 400 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 402 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 404 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 406 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 407 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 409 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 410 | sphinx-doc/sphinx | 1 | 0 | 2 | 2 | 1 | 0 | 0 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 411 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 414 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 415 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 417 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 419 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 420 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 421 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 422 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 428 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 429 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 430 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 431 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 432 | sympy/sympy | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 436 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 440 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 441 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 444 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 445 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 446 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 447 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 454 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 458 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 467 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 469 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 471 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 473 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 477 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 482 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 485 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 486 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 20480 | severe pressure | 488 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 004 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 006 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 007 | astropy/astropy | 0 | 0 | 20 | 20 | 1 | 20 | 20 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 008 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 009 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 013 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 021 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 023 | django/django | 0 | 0 | 438 | 438 | 1 | 438 | 438 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 024 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 030 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 031 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 035 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 037 | django/django | 0 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 040 | django/django | 1 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 041 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 043 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 048 | django/django | 0 | 0 | 4 | 6 | 0.666666666667 | 4 | 6 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 049 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 054 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 055 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 059 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 062 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 066 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 068 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 083 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 086 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 089 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 092 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 096 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 100 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 104 | django/django | 0 | 0 | 3 | 5 | 0.6 | 3 | 5 | 0.6 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 105 | django/django | 1 | 1 | 9 | 9 | 1 | 9 | 9 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 107 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 110 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 113 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 116 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 121 | django/django | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 123 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 131 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 140 | django/django | 1 | 0 | 2 | 2 | 1 | 1 | 2 | 0.5 | -0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 141 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 144 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 149 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 152 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 161 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 164 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 166 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 171 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 175 | django/django | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 176 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 177 | django/django | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 181 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 182 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 183 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 184 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 194 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 196 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 197 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 199 | django/django | 0 | 0 | 1 | 2 | 0.5 | 0 | 0 | 0 | -0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 202 | django/django | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 203 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 205 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 212 | django/django | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 213 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 215 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 223 | django/django | 0 | 0 | 6 | 9 | 0.666666666667 | 6 | 9 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 233 | django/django | 1 | 1 | 8 | 8 | 1 | 8 | 8 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 235 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 237 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 239 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 242 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 243 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 244 | django/django | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 246 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 248 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 252 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 255 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 256 | matplotlib/matplotlib | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 257 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 263 | matplotlib/matplotlib | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 264 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 270 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 274 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 278 | matplotlib/matplotlib | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 281 | matplotlib/matplotlib | 0 | 1 | 3 | 7 | 0.428571428571 | 7 | 7 | 1 | 0.571428571429 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 282 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 283 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 286 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 288 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 289 | mwaskom/seaborn | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 298 | psf/requests | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 299 | pydata/xarray | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 300 | pydata/xarray | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 313 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 315 | pydata/xarray | 0 | 0 | 1 | 3 | 0.333333333333 | 1 | 3 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 316 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 318 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 321 | pylint-dev/pylint | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 323 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 324 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 325 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 328 | pylint-dev/pylint | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 330 | pylint-dev/pylint | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 333 | pytest-dev/pytest | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 336 | pytest-dev/pytest | 0 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 339 | pytest-dev/pytest | 0 | 0 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 342 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 345 | pytest-dev/pytest | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 349 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 351 | scikit-learn/scikit-learn | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 352 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 358 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 365 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 366 | scikit-learn/scikit-learn | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 368 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 370 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 372 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 374 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 375 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 378 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 380 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 381 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 383 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 384 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 386 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 391 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 394 | sphinx-doc/sphinx | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 395 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 397 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 398 | sphinx-doc/sphinx | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 399 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 400 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 402 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 404 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 406 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 407 | sphinx-doc/sphinx | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 409 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 410 | sphinx-doc/sphinx | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 411 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 414 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 415 | sphinx-doc/sphinx | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 417 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 419 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 420 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 421 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 422 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 428 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 429 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 430 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 431 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 432 | sympy/sympy | 0 | 1 | 1 | 2 | 0.5 | 2 | 2 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 436 | sympy/sympy | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 440 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 441 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 444 | sympy/sympy | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 445 | sympy/sympy | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 446 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 447 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 454 | sympy/sympy | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 458 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 467 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 469 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 471 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 473 | sympy/sympy | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 477 | sympy/sympy | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 482 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 485 | sympy/sympy | 0 | 0 | 5 | 6 | 0.833333333333 | 1 | 6 | 0.166666666667 | -0.666666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 486 | sympy/sympy | 0 | 0 | 1 | 3 | 0.333333333333 | 1 | 3 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 43008 | mild pressure | 488 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 004 | astropy/astropy | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 006 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 007 | astropy/astropy | 0 | 0 | 20 | 20 | 1 | 20 | 20 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 008 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 009 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 013 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 021 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 023 | django/django | 0 | 0 | 438 | 438 | 1 | 438 | 438 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 024 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 030 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 031 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 035 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 037 | django/django | 1 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 040 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 041 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 043 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 048 | django/django | 0 | 0 | 4 | 6 | 0.666666666667 | 4 | 6 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 049 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 054 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 055 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 059 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 062 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 066 | django/django | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 068 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 083 | django/django | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 086 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 089 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 092 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 096 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 100 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 104 | django/django | 0 | 0 | 3 | 5 | 0.6 | 3 | 5 | 0.6 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 105 | django/django | 1 | 1 | 9 | 9 | 1 | 9 | 9 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 107 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 110 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 113 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 116 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 121 | django/django | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 123 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 131 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 140 | django/django | 0 | 1 | 1 | 2 | 0.5 | 2 | 2 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 141 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 144 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 149 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 152 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 161 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 164 | django/django | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 166 | django/django | 1 | 0 | 3 | 3 | 1 | 0 | 0 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 171 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 175 | django/django | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 176 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 177 | django/django | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 181 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 182 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 183 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 184 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 194 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 196 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 197 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 199 | django/django | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 202 | django/django | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 203 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 205 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 212 | django/django | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 213 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 215 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 223 | django/django | 0 | 0 | 6 | 9 | 0.666666666667 | 6 | 9 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 233 | django/django | 1 | 1 | 8 | 8 | 1 | 8 | 8 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 235 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 237 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 239 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 242 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 243 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 244 | django/django | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 246 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 248 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 252 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 255 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 256 | matplotlib/matplotlib | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 257 | matplotlib/matplotlib | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 263 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 264 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 270 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 274 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 278 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 281 | matplotlib/matplotlib | 1 | 1 | 7 | 7 | 1 | 7 | 7 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 282 | matplotlib/matplotlib | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 283 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 286 | matplotlib/matplotlib | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 288 | mwaskom/seaborn | 0 | 1 | 1 | 2 | 0.5 | 2 | 2 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 289 | mwaskom/seaborn | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 298 | psf/requests | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 299 | pydata/xarray | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 300 | pydata/xarray | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 313 | pydata/xarray | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 315 | pydata/xarray | 0 | 1 | 1 | 3 | 0.333333333333 | 3 | 3 | 1 | 0.666666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 316 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 318 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 321 | pylint-dev/pylint | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 323 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 324 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 325 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 328 | pylint-dev/pylint | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 330 | pylint-dev/pylint | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 333 | pytest-dev/pytest | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 336 | pytest-dev/pytest | 1 | 0 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 339 | pytest-dev/pytest | 0 | 0 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 342 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 345 | pytest-dev/pytest | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 349 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 351 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 352 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 358 | scikit-learn/scikit-learn | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 365 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 366 | scikit-learn/scikit-learn | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 368 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 370 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 372 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 374 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 375 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 378 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 380 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 381 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 383 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 384 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 386 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 391 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 394 | sphinx-doc/sphinx | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 395 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 397 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 398 | sphinx-doc/sphinx | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 399 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 400 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 402 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 404 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 406 | sphinx-doc/sphinx | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 407 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 409 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 410 | sphinx-doc/sphinx | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 411 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 414 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 415 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 417 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 419 | sphinx-doc/sphinx | 0 | 0 | 2 | 3 | 0.666666666667 | 0 | 3 | 0 | -0.666666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 420 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 421 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 422 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 428 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 429 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 430 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 431 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 432 | sympy/sympy | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 436 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 440 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 441 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 444 | sympy/sympy | 0 | 1 | 1 | 2 | 0.5 | 2 | 2 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 445 | sympy/sympy | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 446 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 447 | sympy/sympy | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 454 | sympy/sympy | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 458 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 467 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 469 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 471 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 473 | sympy/sympy | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 477 | sympy/sympy | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 482 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 485 | sympy/sympy | 1 | 1 | 6 | 6 | 1 | 6 | 6 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 486 | sympy/sympy | 0 | 0 | 2 | 3 | 0.666666666667 | 2 | 3 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Verified | 262144 | large window | 488 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-00c70ce7b0541cfc94afe567921d7668cdc8f4ac-vnan | NodeBB/NodeBB | 0 | 0 | 501 | 681 | 0.735682819383 | 501 | 681 | 0.735682819383 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan | NodeBB/NodeBB | 0 | 0 | 2 | 3 | 0.666666666667 | 3 | 3 | 1 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-05f2236193f407cf8e2072757fbd6bb170bc13f0-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-087e6020e490b4a1759f38c1ad03869511928263-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 1 | 0 | 3 | 0 | 3 | 3 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-0c81642997ea1d827dbd02c311db9d4976112cd4-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-0e07f3c9bace416cbab078a30eae972868c0a8a3-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-18c45b44613aecd53e9f60457b9812049ab2998d-v0495b863a912fbff5749c67e860612b91825407c | NodeBB/NodeBB | 0 | 0 | 0 | 7 | 0 | 4 | 7 | 0.571428571429 | 0.571428571429 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-3c85b944e30a0ba8b3ec9e1f441c74f383625a15-v4fbcfae8b15e4ce5d132c408bca69ebb9cf146ed | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-4327a09d76f10a79109da9d91c22120428d3bdb9-vnan | NodeBB/NodeBB | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-445b70deda20201b7d9a68f7224da751b3db728c-v4fbcfae8b15e4ce5d132c408bca69ebb9cf146ed | NodeBB/NodeBB | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-6489e9fd9ed16ea743cc5627f4d86c72fbdb3a8a-v2c59007b1005cd5cd14cbb523ca5229db1fd2dd8 | NodeBB/NodeBB | 0 | 1 | 0 | 10 | 0 | 10 | 10 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-6ea3b51f128dd270281db576a1b59270d5e45db0-vnan | NodeBB/NodeBB | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-70b4a0e2aebebe8f2f559de6680093d96a697b2f-vnan | NodeBB/NodeBB | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-767973717be700f46f06f3e7f4fc550c63509046-vnan | NodeBB/NodeBB | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-8168c6c40707478f71b8af60300830fe554c778c-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 1 | 4 | 0.25 | 2 | 4 | 0.5 | 0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-82562bec444940608052f3e4149e0c61ec80bf3f-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-84dfda59e6a0e8a77240f939a7cb8757e6eaf945-v2c59007b1005cd5cd14cbb523ca5229db1fd2dd8 | NodeBB/NodeBB | 0 | 0 | 5 | 6 | 0.833333333333 | 5 | 6 | 0.833333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-84e065752f6d7fbe5c08cbf50cb173ffb866b8fa-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-8ca65b0c78c67c1653487c02d1135e1b702185e1-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-97c8569a798075c50e93e585ac741ab55cb7c28b-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-a917210c5b2c20637094545401f85783905c074c-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-b398321a5eb913666f903a794219833926881a8f-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 0 | 1 | 0 | 4 | 0 | 4 | 4 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-be43cd25974681c9743d424238b7536c357dc8d3-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 6 | 0 | 1 | 6 | 0.166666666667 | 0.166666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-cfc237c2b79d8c731bbfc6cadf977ed530bfd57a-v0495b863a912fbff5749c67e860612b91825407c | NodeBB/NodeBB | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-f083cd559d69c16481376868c8da65172729c0ca-vnan | NodeBB/NodeBB | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | NodeBB__NodeBB-f2082d7de85eb62a70819f4f3396dd85626a0c0a-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-1b70260d5aa2f6c9782fd2b848e8d16566e50d85-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-1bd7dcf339dd8b6c50bc16670be2448a206f4fdb-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 4 | 5 | 0.8 | 5 | 5 | 1 | 0.2 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-1c06c46cc14324df35ac4f39a45fb3ccd602195d-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-34db57a47f875d11c4068567b9ec7ace174ec4cf-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 2 | 3 | 0.666666666667 | 2 | 3 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-42355d181a11b51ebfc56f6f4b3d9c74e01cb13b-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-4c5ce5a1a9e79a845aff4978cfeb72a0d4ecf7d6-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 9 | 0 | 9 | 9 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-5260527c4a71bfed99d803e687dd19619423b134-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-5640093f1ca63fd6af231cc8a7fb7d40e1907b8c-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-5d253a13807e884b7ce0b6b57a963a45e2f0322c-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-5e369604e1930b1a2e071fecd7ec5276ebd12cb1-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 1 | 2 | 5 | 0.4 | 5 | 5 | 1 | 0.6 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-622a493ae03bd5e5cf517d336fc426e9d12208c7-v906c969b551b346ef54a2c0b41e04f632b7b73c2 | ansible/ansible | 0 | 0 | 4 | 9 | 0.444444444444 | 4 | 9 | 0.444444444444 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-6cc97447aac5816745278f3735af128afb255c81-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 1 | 6 | 8 | 0.75 | 8 | 8 | 1 | 0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-77658704217d5f166404fc67997203c25381cb6e-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 31 | 33 | 0.939393939394 | 32 | 33 | 0.969696969697 | 0.030303030303 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-8127abbc298cabf04aaa89a478fc5e5e3432a6fc-v30a923fb5c164d6cd18280c02422f75e611e8fb2 | ansible/ansible | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-83909bfa22573777e3db5688773bda59721962ad-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-9142be2f6cabbe6597c9254c5bb9186d17036d55-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 1 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-935528e22e5283ee3f63a8772830d3d01f55ed8c-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 8 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-949c503f2ef4b2c5d668af0492a5c0db1ab86140-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-9759e0ca494de1fd5fc2df2c5d11c57adbe6007c-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-984216f52e76b904e5b0fa0fb956ab4f1e0a7751-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-a02e22e902a69aeb465f16bf03f7f5a91b2cb828-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-a1569ea4ca6af5480cf0b7b3135f5e12add28a44-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 2 | 6 | 0.333333333333 | 2 | 6 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-a26c325bd8f6e2822d9d7e62f77a424c1db4fbf6-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-b2a289dcbb702003377221e25f62c8a3608f0e89-v173091e2e36d38c978002990795f66cfc0af30ad | ansible/ansible | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-b6290e1d156af608bd79118d209a64a051c55001-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 6 | 8 | 0.75 | 0 | 8 | 0 | -0.75 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-b748edea457a4576847a10275678127895d2f02f-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 4 | 5 | 0.8 | 4 | 5 | 0.8 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-b8025ac160146319d2b875be3366b60c852dd35d-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-be59caa59bf47ca78a4760eb7ff38568372a8260-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-bec27fb4c0a40c5f8bbcf26a475704227d65ee73-v30a923fb5c164d6cd18280c02422f75e611e8fb2 | ansible/ansible | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-c616e54a6e23fa5616a1d56d243f69576164ef9b-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-cb94c0cc550df9e98f1247bc71d8c2b861c75049-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d2f80991180337e2be23d6883064a67dcbaeb662-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d30fc6c0b359f631130b0e979d9a78a7b3747d48-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d33bedc48fdd933b5abd65a77c081876298e2f07-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 2 | 5 | 0.4 | 0.4 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d58e69c82d7edd0583dd8e78d76b075c33c3151e-v173091e2e36d38c978002990795f66cfc0af30ad | ansible/ansible | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d6d2251929c84c3aa883bad7db0f19cc9ff0339e-v30a923fb5c164d6cd18280c02422f75e611e8fb2 | ansible/ansible | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d72025be751c894673ba85caa063d835a0ad3a8c-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-d9f1866249756efc264b00ff7497e92c11a9885f-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-de5858f48dc9e1ce9117034e0d7e76806f420ca8-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-deb54e4c5b32a346f1f0b0a14f1c713d2cc2e961-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-e40889e7112ae00a21a2c74312b330e67a766cc0-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 18 | 0 | 3 | 18 | 0.166666666667 | 0.166666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-ea04e0048dbb3b63f876aad7020e1de8eee9f362-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-ecea15c508f0e081525be036cf76bbb56dbcdd9d-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 1 | 7 | 0.142857142857 | 1 | 7 | 0.142857142857 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-eea46a0d1b99a6dadedbb6a3502d599235fa7ec3-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 0 | 10 | 0 | 1 | 10 | 0.1 | 0.1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-f86c58e2d235d8b96029d102c71ee2dfafd57997-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 10 | 15 | 0.666666666667 | 10 | 15 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | ansible__ansible-f8ef34672b961a95ec7282643679492862c688ec-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-1077729a19c0ce902e713cf6fab42c91fb7907f1-vnan | element-hq/element-web | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-2760bfc8369f1bee640d6d7a7e910783143d4c5f-vnan | element-hq/element-web | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-44b98896a79ede48f5ad7ff22619a39d5f6ff03c-vnan | element-hq/element-web | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-494d9de6f0a94ffb491e74744d2735bce02dc0ab-vnan | element-hq/element-web | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-5dfde12c1c1c0b6e48f17e3405468593e39d9492-vnan | element-hq/element-web | 0 | 0 | 0 | 9 | 0 | 1 | 9 | 0.111111111111 | 0.111111111111 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-5e8488c2838ff4268f39db4a8cca7d74eecf5a7e-vnan | element-hq/element-web | 0 | 0 | 0 | 29 | 0 | 0 | 29 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-6205c70462e0ce2e1e77afb3a70b55d0fdfe1b31-vnan | element-hq/element-web | 1 | 1 | 42 | 42 | 1 | 42 | 42 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-66d0b318bc6fee0d17b54c1781d6ab5d5d323135-vnan | element-hq/element-web | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-71fe08ea0f159ccb707904d87f0a4aef205a167c-vnan | element-hq/element-web | 0 | 1 | 0 | 4 | 0 | 4 | 4 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-776ffa47641c7ec6d142ab4a47691c30ebf83c2e | element-hq/element-web | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-880428ab94c6ea98d3d18dcaeb17e8767adcb461-vnan | element-hq/element-web | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-ad26925bb6628260cfe0fcf90ec0a8cba381f4a4-vnan | element-hq/element-web | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-aeabf3b18896ac1eb7ae9757e66ce886120f8309-vnan | element-hq/element-web | 0 | 0 | 0 | 8 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-b7fea97bb68c6628a644580076f840109132f074-vnan | element-hq/element-web | 0 | 1 | 0 | 16 | 0 | 16 | 16 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-ce554276db97b9969073369fefa4950ca8e54f84-vnan | element-hq/element-web | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-dae13ac8522fc6d41e64d1ac6e3174486fdcce0c-vnan | element-hq/element-web | 1 | 1 | 19 | 19 | 1 | 19 | 19 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-e15ef9f3de36df7f318c083e485f44e1de8aad17 | element-hq/element-web | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-ecfd1736e5dd9808e87911fc264e6c816653e1a9-vnan | element-hq/element-web | 0 | 0 | 1 | 9 | 0.111111111111 | 1 | 9 | 0.111111111111 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | element-hq__element-web-f0359a5c180b8fec4329c77adcf967c8d3b7b787-vnan | element-hq/element-web | 0 | 1 | 0 | 10 | 0 | 10 | 10 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-02e21636c58e86c51119b63e0fb5ca7b813b07b1 | flipt-io/flipt | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-05d7234fa582df632f70a7cd10194d61bd7043b9 | flipt-io/flipt | 0 | 0 | 0 | 4 | 0 | 1 | 4 | 0.25 | 0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-0fd09def402258834b9d6c0eaa6d3b4ab93b4446 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-1737085488ecdcd3299c8e61af45a8976d457b7e | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-2ca5dfb3513e4e786d2b037075617cccc286d5c3 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-36e62baffae2132f78f9d34dc300a9baa2d7ae0e | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-3d5a345f94c2adc8a0eaa102c189c08ad4c0f8e8 | flipt-io/flipt | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-3ef34d1fff012140ba86ab3cafec8f9934b492be | flipt-io/flipt | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-40007b9d97e3862bcef8c20ae6c87b22ea0627f0 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-492cc0b158200089dceede3b1aba0ed28df3fb1d | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-507170da0f7f4da330f6732bffdf11c4df7fc192 | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-524f277313606f8cd29b299617d6565c01642e15 | flipt-io/flipt | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-56a620b8fc9ef7a0819b47709aa541cdfdbba00b | flipt-io/flipt | 0 | 0 | 0 | 32 | 0 | 27 | 32 | 0.84375 | 0.84375 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-690672523398c2b6f6e4562f0bf9868664ab894f | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-6fd0f9e2587f14ac1fdd1c229f0bcae0468c8daa | flipt-io/flipt | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-756f00f79ba8abf9fe53f3c6c818123b42eb7355 | flipt-io/flipt | 0 | 0 | 5 | 6 | 0.833333333333 | 5 | 6 | 0.833333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-84806a178447e766380cc66b14dee9c6eeb534f4 | flipt-io/flipt | 0 | 0 | 0 | 8 | 0 | 6 | 8 | 0.75 | 0.75 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-967855b429f749c28c112b8cb1b15bc79157f973 | flipt-io/flipt | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-9d25c18b79bc7829a6fb08ec9e8793d5d17e2868 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-9f8127f225a86245fa35dca4885c2daef824ee55 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-abaa5953795afb9c621605bb18cb32ac48b4508c | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-b2393f07d893024ab1e47ea2081e0289e1f9d56f | flipt-io/flipt | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-b2cd6a6dd73ca91b519015fd5924fde8d17f3f06 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-b433bd05ce405837804693bebd5f4b88d87133c8 | flipt-io/flipt | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-b4bb5e13006a729bc0eed8fe6ea18cff54acdacb | flipt-io/flipt | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-b68b8960b8a08540d5198d78c665a7eb0bea4008 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-c12967bc73fdf02054cf3ef8498c05e25f0a18c0 | flipt-io/flipt | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-c1728053367c753688f114ec26e703c8fdeda125 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-c188284ff0c094a4ee281afebebd849555ebee59 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-c8d71ad7ea98d97546f01cce4ccb451dbcf37d3b | flipt-io/flipt | 0 | 0 | 0 | 8 | 0 | 5 | 8 | 0.625 | 0.625 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-cd2f3b0a9d4d8b8a6d3d56afab65851ecdc408e8 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-cf06f4ebfab7fa21eed3e5838592e8e44566957f | flipt-io/flipt | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-dae029cba7cdb98dfb1a6b416c00d324241e6063 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-db1c3b100e231c62f0c90c2ab037614f20a2a63b | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-e2bd19dafa7166c96b082fb2a59eb54b4be0d778 | flipt-io/flipt | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-e42da21a07a5ae35835ec54f74004ebd58713874 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-e50808c03e4b9d25a6a78af9c61a3b1616ea356b | flipt-io/flipt | 0 | 0 | 0 | 23 | 0 | 0 | 23 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-e88e93990e3ec1e7697754b423decc510d5dd5fe | flipt-io/flipt | 0 | 0 | 0 | 8 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-e91615cf07966da41756017a7d571f9fc0fdbe80 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-f1bc91a1b999656dbdb2495ccb57bf2105b84920 | flipt-io/flipt | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | flipt-io__flipt-f808b4dd6e36b9dc8b011eb26b196f4e2cc64c41 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-030b2e03525d68d74cb749959aac2d7f3fc0effa | future-architect/vuls | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-0ec945d0510cdebf92cdd8999f94610772689f14 | future-architect/vuls | 0 | 0 | 1 | 6 | 0.166666666667 | 1 | 6 | 0.166666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-139f3a81b66c47e6d8f70ce6c4afe7a9196a6ea8 | future-architect/vuls | 0 | 0 | 0 | 79 | 0 | 0 | 79 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-1832b4ee3a20177ad313d806983127cb6e53f5cf | future-architect/vuls | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-2923cbc645fbc7a37d50398eb2ab8febda8c3264 | future-architect/vuls | 0 | 1 | 0 | 5 | 0 | 5 | 5 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-2c84be80b65d022c262956cd26fc79d8bb2f7010 | future-architect/vuls | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-3c1489e588dacea455ccf4c352a3b1006902e2d4 | future-architect/vuls | 0 | 0 | 0 | 22 | 0 | 0 | 22 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-3f8de0268376e1f0fa6d9d61abb0d9d3d580ea7d | future-architect/vuls | 0 | 0 | 3 | 25 | 0.12 | 3 | 25 | 0.12 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-407407d306e9431d6aa0ab566baa6e44e5ba2904 | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-436341a4a522dc83eb8bddd1164b764c8dd6bc45 | future-architect/vuls | 0 | 1 | 0 | 10 | 0 | 10 | 10 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-457a3a9627fb9a0800d0aecf1d4713fb634a9011 | future-architect/vuls | 0 | 1 | 0 | 6 | 0 | 6 | 6 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-4a72295de7b91faa59d90a5bee91535bbe76755d | future-architect/vuls | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-4b680b996061044e93ef5977a081661665d3360a | future-architect/vuls | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-4c04acbd9ea5b073efe999e33381fa9f399d6f27 | future-architect/vuls | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-54e73c2f5466ef5daec3fb30922b9ac654e4ed25 | future-architect/vuls | 0 | 0 | 0 | 11 | 0 | 9 | 11 | 0.818181818182 | 0.818181818182 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-5af1a227339e46c7abf3f2815e4c636a0c01098e | future-architect/vuls | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-61c39637f2f3809e1b5dad05f0c57c799dce1587 | future-architect/vuls | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-6eff6a9329a65cc412e79b8f82444dfa3d0f0b5a | future-architect/vuls | 0 | 0 | 0 | 37 | 0 | 23 | 37 | 0.621621621622 | 0.621621621622 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-73f0adad95c4d227e2ccfa876c85cc95dd065e13 | future-architect/vuls | 0 | 1 | 0 | 14 | 0 | 14 | 14 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-78b52d6a7f480bd610b692de9bf0c86f57332f23 | future-architect/vuls | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-7e91f5ef7e5712b1a3d7d5066ad6607e9debc21c | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-83bcca6e669ba2e4102f26c4a2b52f78c7861f1a | future-architect/vuls | 0 | 0 | 0 | 25 | 0 | 20 | 25 | 0.8 | 0.8 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-8659668177f1feb65963db7a967347a79c5f9c40 | future-architect/vuls | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-86b60e1478e44d28b1aff6b9ac7e95ceb05bc5fc | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-878c25bf5a9c9fd88ac32eb843f5636834d5712d | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-9aa0d87a21bede91c2b45c32187456bb69455e92 | future-architect/vuls | 0 | 1 | 0 | 6 | 0 | 6 | 6 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-abd80417728b16c6502067914d27989ee575f0ee | future-architect/vuls | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-ad2edbb8448e2c41a097f1c0b52696c0f6c5924d | future-architect/vuls | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-bff6b7552370b55ff76d474860eead4ab5de785a-v1151a6325649aaf997cd541ebe533b53fddf1b07 | future-architect/vuls | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-c11ba27509f733d7d280bdf661cbbe2e7a99df4c | future-architect/vuls | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-ca3f6b1dbf2cd24d1537bfda43e788443ce03a0c | future-architect/vuls | 0 | 0 | 0 | 16 | 0 | 2 | 16 | 0.125 | 0.125 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-d18e7a751d07260d75ce3ba0cd67c4a6aebfd967 | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-e1fab805afcfc92a2a615371d0ec1e667503c254-v264a82e2f4818e30f5a25e4da53b27ba119f62b5 | future-architect/vuls | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-e4728e388120b311c4ed469e4f942e0347a2689b-v264a82e2f4818e30f5a25e4da53b27ba119f62b5 | future-architect/vuls | 0 | 0 | 0 | 3 | 0 | 1 | 3 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-ef2be3d6ea4c0a13674aaab08b182eca4e2b9a17-v264a82e2f4818e30f5a25e4da53b27ba119f62b5 | future-architect/vuls | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-f0b3a8b1db98eb1bd32685f1c36c41a99c3452ed | future-architect/vuls | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-fd18df1dd4e4360f8932bc4b894bd8b40d654e7c | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | future-architect__vuls-fe8d252c51114e922e6836055ef86a15f79ad042 | future-architect/vuls | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-005dcb16bacc6a5d5890c4cd302ccfd4298e275d-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-007235446f85b1cbaef92664c3b3867517250f21 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-0415e422f12454db0c22316cf3eaa5088d6b6322 | gravitational/teleport | 0 | 0 | 0 | 16 | 0 | 13 | 16 | 0.8125 | 0.8125 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-1330415d33a27594c948a36d9d7701f496229e9f | gravitational/teleport | 0 | 0 | 0 | 29 | 0 | 0 | 29 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-288c5519ce0dec9622361a5e5d6cd36aa2d9e348 | gravitational/teleport | 0 | 1 | 0 | 24 | 0 | 24 | 24 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-2b15263e49da5625922581569834eec4838a9257-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 14 | 0 | 2 | 14 | 0.142857142857 | 0.142857142857 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-2bb3bbbd8aff1164a2353381cb79e1dc93b90d28-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-326fd1d7be87b03998dbc53bc706fdef90f5065c-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-3587cca7840f636489449113969a5066025dd5bf | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-3fa6904377c006497169945428e8197158667910-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 43 | 0 | 0 | 43 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-3ff75e29fb2153a2637fe7f83e49dc04b1c99c9f | gravitational/teleport | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-47530e1fd8bfb84ec096ebcbbc29990f30829655-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 3 | 0 | 1 | 3 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-4d0117b50dc8cdb91c94b537a4844776b224cd3d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-4e1c39639edf1ab494dd7562844c8b277b5cfa18-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-4f771403dc4177dc26ee0370f7332f3fe54bee0f-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-59d39dee5a8a66e5b8a18a9085a199d369b1fba8-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 1 | 7 | 0.142857142857 | 0 | 7 | 0 | -0.142857142857 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-5dca072bb4301f4579a15364fcf37cc0c39f7f6c | gravitational/teleport | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-629dc432eb191ca479588a8c49205debb83e80e2 | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-65438e6e44b6ce51458d09b7bb028a2797cfb0ea-vce94f93ad1030e3136852817f2423c1b3ac37bc4 | gravitational/teleport | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-769b4b5eec7286b7b14e179f2cc52e6b15d2d9f3-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 8 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-7744f72c6eb631791434b648ba41083b5f6d2278-vce94f93ad1030e3136852817f2423c1b3ac37bc4 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-78b0d8c72637df1129fb6ff84fc49ef4b5ab1288 | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-82185f232ae8974258397e121b3bc2ed0c3729ed-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-96019ce0be7a2c8e36363f359eb7c943b41dde70 | gravitational/teleport | 0 | 1 | 0 | 3 | 0 | 3 | 3 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-a95b3ae0667f9e4b2404bf61f51113e6d83f01cd | gravitational/teleport | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-ac2fb2f9b4fd1896b554d3011df23d3d71295779 | gravitational/teleport | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-af5e2517de7d18406b614e413aca61c319312171-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-b4e7cd3a5e246736d3fe8d6886af55030b232277 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-b5d8169fc0a5e43fee2616c905c6d32164654dc6 | gravitational/teleport | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-ba6c4a135412c4296dd5551bd94042f0dc024504-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-baeb2697c4e4870c9850ff0cd5c7a2d08e1401c9-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 33 | 0 | 0 | 33 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-bb562408da4adeae16e025be65e170959d1ec492-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-c1b1c6a1541c478d7777a48fca993cc8206c73b9 | gravitational/teleport | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-c335534e02de143508ebebc7341021d7f8656e8f | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-c782838c3a174fdff80cafd8cd3b1aa4dae8beb2 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-d6ffe82aaf2af1057b69c61bf9df777f5ab5635a-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 71 | 0 | 0 | 71 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-d873ea4fa67d3132eccba39213c1ca2f52064dcc-vce94f93ad1030e3136852817f2423c1b3ac37bc4 | gravitational/teleport | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-db89206db6c2969266e664c7c0fb51b70e958b64 | gravitational/teleport | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-e6681abe6a7113cfd2da507f05581b7bdf398540-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-eda668c30d9d3b56d9c69197b120b01013611186 | gravitational/teleport | 0 | 0 | 0 | 28 | 0 | 0 | 28 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-f432a71a13e698b6e1c4672a2e9e9c1f32d35c12 | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-fb0ab2b9b771377a689fd0d0374777c251e58bbf | gravitational/teleport | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | gravitational__teleport-fd2959260ef56463ad8afa4c973f47a50306edd4 | gravitational/teleport | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-08ac40d050a64e1d2646ece4959af0c42bf6b7b5-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-0a90f9f0256e4f933523e9842799e39f95ae29ce-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 0 | 14 | 16 | 0.875 | 15 | 16 | 0.9375 | 0.0625 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-0dc5b20fa186f9714f8a838178597e69f549d026-v2d9a6c849c60ed19fd0858ce9e40b7cc8e097e59 | internetarchive/openlibrary | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-11838fad1028672eb975c79d8984f03348500173-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 50 | 54 | 0.925925925926 | 47 | 54 | 0.87037037037 | -0.0555555555556 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-1351c59fd43689753de1fca32c78d539a116ffc1-v29f82c9cf21d57b242f8d8b0e541525d259e2d63 | internetarchive/openlibrary | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-1894cb48d6e7fb498295a5d3ed0596f6f603b784-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-25858f9f0c165df25742acf8309ce909773f0cdd-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 1 | 1 | 6 | 6 | 1 | 6 | 6 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-308a35d6999427c02b1dbf5211c033ad3b352556-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-30bc73a1395fba2300087c7f307e54bb5372b60a-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-322d7a46cdc965bfabbf9500e98fde098c9d95b2-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-3f7db6bbbcc7c418b3db72d157c6aed1d45b2ccf-v430f20c722405e462d9ef44dee7d34c41e76fe7a | internetarchive/openlibrary | 1 | 0 | 6 | 6 | 1 | 0 | 6 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-43f9e7e0d56a4f1d487533543c17040a029ac501-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-4b7ea2977be2747496ba792a678940baa985f7ea-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 0 | 23 | 0 | 22 | 23 | 0.95652173913 | 0.95652173913 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-53d376b148897466bb86d5accb51912bbbe9a8ed-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 2 | 4 | 0.5 | 3 | 4 | 0.75 | 0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-630221ab686c64e75a2ce253c893c033e4814b2e-v93c53c13d5f9b383ebb411ee7750b49dcd1a34c6 | internetarchive/openlibrary | 0 | 0 | 0 | 6 | 0 | 2 | 6 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-6a117fab6c963b74dc1ba907d838e74f76d34a4b-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-6fdbbeee4c0a7e976ff3e46fb1d36f4eb110c428-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-77c16d530b4d5c0f33d68bead2c6b329aee9b996-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-798a582540019363d14b2090755cc7b89a350788-v430f20c722405e462d9ef44dee7d34c41e76fe7a | internetarchive/openlibrary | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-7bf3238533070f2d24bafbb26eedf675d51941f6-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 0 | 43 | 0 | 0 | 43 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-910b08570210509f3bcfebf35c093a48243fe754-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 0 | 6 | 0 | 2 | 6 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-9bdfd29fac883e77dcbc4208cab28c06fd963ab2-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-a48fd6ba9482c527602bc081491d9e8ae6e8226c-vfa6ff903cb27f336e17654595dd900fa943dcd91 | internetarchive/openlibrary | 1 | 0 | 4 | 4 | 1 | 3 | 4 | 0.75 | -0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-b112069e31e0553b2d374abb5f9c5e05e8f3dbbe-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 0 | 1 | 0 | 3 | 0 | 3 | 3 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-b4f7c185ae5f1824ac7f3a18e8adf6a4b468459c-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-b67138b316b1e9c11df8a4a8391fe5cc8e75ff9f-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-ba3abfb6af6e722185d3715929ab0f3e5a134eed-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 1 | 0 | 51 | 0 | 51 | 51 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-d40ec88713dc95ea791b252f92d2f7b75e107440-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 0 | 0 | 0 | 28 | 0 | 0 | 28 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-dbbd9d539c6d4fd45d5be9662aa19b6d664b5137-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | internetarchive__openlibrary-f343c08f89c772f7ba6c0246f384b9e6c3dc0add-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-0130c6dc13438b48cf0fdfab08a89e357b5517c9 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-0488fb92cb02a82924fb1181bf1642f2e87096db | navidrome/navidrome | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-1e96b858a91c640fe64e84c5e5ad8cc0954ea38d | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-31799662706fedddf5bcc1a76b50409d1f91d327 | navidrome/navidrome | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-3853c3318f67b41a9e4cb768618315ff77846fdb | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-3972616585e82305eaf26aa25697b3f5f3082288 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-3f2d24695e9382125dfe5e6d6c8bbeb4a313a4f9 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-55730514ea59d5f1d0b8e3f8745569c29bdbf7b4 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-5e549255201e622c911621a7b770477b1f5a89be | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-6bd4c0f6bfa653e9b8b27cfdc2955762d371d6e9 | navidrome/navidrome | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-812dc2090f20ac4f8ac271b6ed95be5889d1a3ca | navidrome/navidrome | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-8383527aaba1ae8fa9765e995a71a86c129ef626 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-b65e76293a917ee2dfc5d4b373b1c62e054d0dca | navidrome/navidrome | 0 | 0 | 1 | 2 | 0.5 | 0 | 2 | 0 | -0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-d0dceae0943b8df16e579c2d9437e11760a0626a | navidrome/navidrome | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-d21932bd1b2379b0ebca2d19e5d8bae91040268a | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-d8e794317f788198227e10fb667e10496b3eb99a | navidrome/navidrome | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | navidrome__navidrome-eebfbc5381a1e506ff17b5f1371d1ad83d5fd642 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-01ea5214d11e0df8b7170d91bafd34f23cb0f2b1 | protonmail/webclients | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-281a6b3f190f323ec2c0630999354fafb84b2880 | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-2f2f6c311c6128fe86976950d3c0c2db07b03921 | protonmail/webclients | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-369fd37de29c14c690cb3b1c09a949189734026f | protonmail/webclients | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-428cd033fede5fd6ae9dbc7ab634e010b10e4209 | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-4817fe14e1356789c90165c2a53f6a043c2c5f83 | protonmail/webclients | 0 | 0 | 0 | 42 | 0 | 0 | 42 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-5f0745dd6993bb1430a951c62a49807c6635cd77 | protonmail/webclients | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-6e165e106d258a442ae849cdf08260329cb92d39 | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-6e1873b06df6529a469599aa1d69d3b18f7d9d37 | protonmail/webclients | 0 | 0 | 0 | 8 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-715dbd4e6999499cd2a576a532d8214f75189116 | protonmail/webclients | 0 | 0 | 1 | 3 | 0.333333333333 | 0 | 3 | 0 | -0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-7e54526774e577c0ebb58ced7ba8bef349a69fec | protonmail/webclients | 0 | 1 | 0 | 5 | 0 | 5 | 5 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-8142704f447df6e108d53cab25451c8a94976b92 | protonmail/webclients | 0 | 1 | 0 | 13 | 0 | 13 | 13 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-b9387af4cdf79c2cb2a221dea33d665ef789512e | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-c6f65d205c401350a226bb005f42fac1754b0b5b | protonmail/webclients | 0 | 0 | 0 | 21 | 0 | 12 | 21 | 0.571428571429 | 0.571428571429 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-c8117f446c3d1d7e117adc6e0e46b0ece9b0b90e | protonmail/webclients | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-caf10ba9ab2677761c88522d1ba8ad025779c492 | protonmail/webclients | 0 | 1 | 0 | 6 | 0 | 6 | 6 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-d494a66038112b239a381f49b3914caf8d2ef3b4 | protonmail/webclients | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-d8ff92b414775565f496b830c9eb6cc5fa9620e6 | protonmail/webclients | 0 | 0 | 0 | 14 | 0 | 0 | 14 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-df60460f163fd5c34e844ab9015e3176f1ab1ac0 | protonmail/webclients | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-dfe5604193d63bfcb91ce60d62db2f805c43bf11 | protonmail/webclients | 0 | 1 | 26 | 28 | 0.928571428571 | 28 | 28 | 1 | 0.0714285714286 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-e7f3f20c8ad86089967498632ace73c1157a9d51 | protonmail/webclients | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | protonmail__webclients-f080ffc38e2ad7bddf2e93e5193e82c20c7a11e7 | protonmail/webclients | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-01d1d1494411380d97cac14614a829d3a69cecaf-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 0 | 1 | 2 | 3 | 0.666666666667 | 3 | 3 | 1 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-0d2afd58f3d0e34af21cee7d8a3fc9d855594e9f-vnan | qutebrowser/qutebrowser | 1 | 0 | 7 | 7 | 1 | 5 | 7 | 0.714285714286 | -0.285714285714 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-16de05407111ddd82fa12e54389d532362489da9-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 2 | 364 | 0.00549450549451 | 0 | 364 | 0 | -0.00549450549451 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-1943fa072ec3df5a87e18a23b0916f134c131016-vafb3e8e01b31319c66c4e666b8a3b1d8ba55db24 | qutebrowser/qutebrowser | 0 | 1 | 0 | 4 | 0 | 4 | 4 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-233cb1cc48635130e5602549856a6fa4ab4c087f-v35616345bb8052ea303186706cec663146f0f184 | qutebrowser/qutebrowser | 0 | 1 | 1 | 8 | 0.125 | 8 | 8 | 1 | 0.875 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-394bfaed6544c952c6b3463751abab3176ad4997-vafb3e8e01b31319c66c4e666b8a3b1d8ba55db24 | qutebrowser/qutebrowser | 0 | 0 | 0 | 16 | 0 | 8 | 16 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-3e21c8214a998cb1058defd15aabb24617a76402-v5fc38aaf22415ab0b70567368332beee7955b367 | qutebrowser/qutebrowser | 0 | 0 | 0 | 1869 | 0 | 0 | 1869 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-46e6839e21d9ff72abb6c5d49d5abaa5a8da8a81-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-473a15f7908f2bb6d670b0e908ab34a28d8cf7e2-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 364 | 0 | 0 | 364 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-99029144b5109bb1b2a53964a7c129e009980cd9-va0fd88aac89cde702ec1ba84877234da33adce8a | qutebrowser/qutebrowser | 0 | 0 | 0 | 4 | 0 | 2 | 4 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-996487c43e4fcc265b541f9eca1e7930e3c5cf05-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-9b71c1ea67a9e7eb70dd83214d881c2031db6541-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 364 | 0 | 0 | 364 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-9ed748effa8f3bcd804612d9291da017b514e12f-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-bedc9f7fadf93f83d8dee95feeecb9922b6f063f-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-bf045f7ec7c27709ea3ef61cf41a24e8fdd2e7da-v059c6fdc75567943479b23ebca7c07b5e9a7f34c | qutebrowser/qutebrowser | 0 | 1 | 0 | 12 | 0 | 12 | 12 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-de4a1c1a2839b5b49c3d4ce21d39de48d24e2091-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 66 | 66 | 1 | 66 | 66 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-deeb15d6f009b3ca0c3bd503a7cef07462bd16b4-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 2 | 10 | 0.2 | 0 | 10 | 0 | -0.2 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-ec2dcfce9eee9f808efc17a1b99e227fc4421dea-v5149fcda2a9a6fe1d35dfed1bade1444a11ef271 | qutebrowser/qutebrowser | 0 | 0 | 0 | 7 | 0 | 2 | 7 | 0.285714285714 | 0.285714285714 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-f7753550f2c1dcb2348e4779fd5287166754827e-v059c6fdc75567943479b23ebca7c07b5e9a7f34c | qutebrowser/qutebrowser | 0 | 1 | 0 | 26 | 0 | 26 | 26 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-f8e7fea0becae25ae20606f1422068137189fe9e | qutebrowser/qutebrowser | 0 | 0 | 0 | 88 | 0 | 85 | 88 | 0.965909090909 | 0.965909090909 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-fd6790fe8c02b144ab2464f1fc8ab3d02ce3c476-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 0 | 1 | 0 | 6 | 0 | 6 | 6 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-fec187c2cb53d769c2682b35ca77858a811414a8-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | qutebrowser__qutebrowser-ff1c025ad3210506fc76e1f604d8c8c27637d88e-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 785 | 0 | 781 | 785 | 0.994904458599 | 0.994904458599 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-09c2776c0fce3db5c6e18da92b5a45dce9f013aa-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-1ff82aa365763cee2d609c9d19360ad87fdf2ec7-vc4e41fd0029957297843cb9dec4a25c7c756f029 | tutao/tutanota | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-40e94dee2bcec2b63f362da283123e9df1874cc1-vc4e41fd0029957297843cb9dec4a25c7c756f029 | tutao/tutanota | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-8513a9e8114a8b42e64f4348335e0f23efa054c4-vee878bb72091875e912c52fc32bc60ec3760227b | tutao/tutanota | 0 | 1 | 0 | 78 | 0 | 78 | 78 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-da4edb7375c10f47f4ed3860a591c5e6557f7b5c-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 0 | 0 | 0 | 107 | 0 | 0 | 107 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-db90ac26ab78addf72a8efaff3c7acc0fbd6d000-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 0 | 0 | 0 | 107 | 0 | 0 | 107 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-f373ac3808deefce8183dad8d16729839cc330c1-v2939aa9f4356f0dc9f523ee5ce19d09e08ab979b | tutao/tutanota | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-f3ffe17af6e8ab007e8d461355057ad237846d9d-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 0 | 1 | 0 | 107 | 0 | 107 | 107 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 49152 | pressure | tutao__tutanota-fb32e5f9d9fc152a00144d56dd0af01760a2d4dc-vc4e41fd0029957297843cb9dec4a25c7c756f029 | tutao/tutanota | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-00c70ce7b0541cfc94afe567921d7668cdc8f4ac-vnan | NodeBB/NodeBB | 0 | 0 | 0 | 681 | 0 | 0 | 681 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan | NodeBB/NodeBB | 0 | 0 | 2 | 3 | 0.666666666667 | 3 | 3 | 1 | 0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-05f2236193f407cf8e2072757fbd6bb170bc13f0-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-087e6020e490b4a1759f38c1ad03869511928263-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 2 | 3 | 0.666666666667 | 2 | 3 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-0c81642997ea1d827dbd02c311db9d4976112cd4-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-0e07f3c9bace416cbab078a30eae972868c0a8a3-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-18c45b44613aecd53e9f60457b9812049ab2998d-v0495b863a912fbff5749c67e860612b91825407c | NodeBB/NodeBB | 0 | 0 | 0 | 7 | 0 | 4 | 7 | 0.571428571429 | 0.571428571429 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-3c85b944e30a0ba8b3ec9e1f441c74f383625a15-v4fbcfae8b15e4ce5d132c408bca69ebb9cf146ed | NodeBB/NodeBB | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-4327a09d76f10a79109da9d91c22120428d3bdb9-vnan | NodeBB/NodeBB | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-445b70deda20201b7d9a68f7224da751b3db728c-v4fbcfae8b15e4ce5d132c408bca69ebb9cf146ed | NodeBB/NodeBB | 0 | 0 | 1 | 4 | 0.25 | 0 | 4 | 0 | -0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-6489e9fd9ed16ea743cc5627f4d86c72fbdb3a8a-v2c59007b1005cd5cd14cbb523ca5229db1fd2dd8 | NodeBB/NodeBB | 1 | 1 | 10 | 10 | 1 | 10 | 10 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-6ea3b51f128dd270281db576a1b59270d5e45db0-vnan | NodeBB/NodeBB | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-70b4a0e2aebebe8f2f559de6680093d96a697b2f-vnan | NodeBB/NodeBB | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-767973717be700f46f06f3e7f4fc550c63509046-vnan | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-8168c6c40707478f71b8af60300830fe554c778c-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 2 | 4 | 0.5 | 2 | 4 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-82562bec444940608052f3e4149e0c61ec80bf3f-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-84dfda59e6a0e8a77240f939a7cb8757e6eaf945-v2c59007b1005cd5cd14cbb523ca5229db1fd2dd8 | NodeBB/NodeBB | 0 | 0 | 4 | 6 | 0.666666666667 | 0 | 6 | 0 | -0.666666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-84e065752f6d7fbe5c08cbf50cb173ffb866b8fa-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-8ca65b0c78c67c1653487c02d1135e1b702185e1-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-97c8569a798075c50e93e585ac741ab55cb7c28b-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-a5afad27e52fd336163063ba40dcadc80233ae10-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-a917210c5b2c20637094545401f85783905c074c-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-b398321a5eb913666f903a794219833926881a8f-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 0 | 1 | 0 | 4 | 0 | 4 | 4 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-be43cd25974681c9743d424238b7536c357dc8d3-vf2cf3cbd463b7ad942381f1c6d077626485a1e9e | NodeBB/NodeBB | 0 | 0 | 0 | 6 | 0 | 1 | 6 | 0.166666666667 | 0.166666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-cfc237c2b79d8c731bbfc6cadf977ed530bfd57a-v0495b863a912fbff5749c67e860612b91825407c | NodeBB/NodeBB | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-f083cd559d69c16481376868c8da65172729c0ca-vnan | NodeBB/NodeBB | 1 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | NodeBB__NodeBB-f2082d7de85eb62a70819f4f3396dd85626a0c0a-vd59a5728dfc977f44533186ace531248c2917516 | NodeBB/NodeBB | 0 | 0 | 3 | 5 | 0.6 | 3 | 5 | 0.6 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-1b70260d5aa2f6c9782fd2b848e8d16566e50d85-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-1bd7dcf339dd8b6c50bc16670be2448a206f4fdb-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 5 | 5 | 1 | 5 | 5 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-1c06c46cc14324df35ac4f39a45fb3ccd602195d-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 2 | 4 | 0.5 | 2 | 4 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-34db57a47f875d11c4068567b9ec7ace174ec4cf-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 2 | 3 | 0.666666666667 | 2 | 3 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-42355d181a11b51ebfc56f6f4b3d9c74e01cb13b-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 10 | 10 | 1 | 10 | 10 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-4c5ce5a1a9e79a845aff4978cfeb72a0d4ecf7d6-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 9 | 9 | 1 | 9 | 9 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-5260527c4a71bfed99d803e687dd19619423b134-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-5640093f1ca63fd6af231cc8a7fb7d40e1907b8c-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-5d253a13807e884b7ce0b6b57a963a45e2f0322c-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-5e369604e1930b1a2e071fecd7ec5276ebd12cb1-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 2 | 5 | 0.4 | 2 | 5 | 0.4 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-622a493ae03bd5e5cf517d336fc426e9d12208c7-v906c969b551b346ef54a2c0b41e04f632b7b73c2 | ansible/ansible | 0 | 0 | 4 | 9 | 0.444444444444 | 5 | 9 | 0.555555555556 | 0.111111111111 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-6cc97447aac5816745278f3735af128afb255c81-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 7 | 8 | 0.875 | 7 | 8 | 0.875 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-77658704217d5f166404fc67997203c25381cb6e-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 31 | 33 | 0.939393939394 | 17 | 33 | 0.515151515152 | -0.424242424242 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-8127abbc298cabf04aaa89a478fc5e5e3432a6fc-v30a923fb5c164d6cd18280c02422f75e611e8fb2 | ansible/ansible | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-83909bfa22573777e3db5688773bda59721962ad-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-9142be2f6cabbe6597c9254c5bb9186d17036d55-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-935528e22e5283ee3f63a8772830d3d01f55ed8c-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 1 | 8 | 8 | 1 | 8 | 8 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-949c503f2ef4b2c5d668af0492a5c0db1ab86140-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-9759e0ca494de1fd5fc2df2c5d11c57adbe6007c-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 1 | 12 | 15 | 0.8 | 15 | 15 | 1 | 0.2 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-984216f52e76b904e5b0fa0fb956ab4f1e0a7751-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-a02e22e902a69aeb465f16bf03f7f5a91b2cb828-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 0 | 17 | 17 | 1 | 2 | 17 | 0.117647058824 | -0.882352941176 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-a1569ea4ca6af5480cf0b7b3135f5e12add28a44-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 2 | 6 | 0.333333333333 | 2 | 6 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-a26c325bd8f6e2822d9d7e62f77a424c1db4fbf6-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-b2a289dcbb702003377221e25f62c8a3608f0e89-v173091e2e36d38c978002990795f66cfc0af30ad | ansible/ansible | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-b6290e1d156af608bd79118d209a64a051c55001-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 0 | 8 | 0 | 6 | 8 | 0.75 | 0.75 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-b748edea457a4576847a10275678127895d2f02f-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 4 | 5 | 0.8 | 4 | 5 | 0.8 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-b8025ac160146319d2b875be3366b60c852dd35d-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-be59caa59bf47ca78a4760eb7ff38568372a8260-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-bec27fb4c0a40c5f8bbcf26a475704227d65ee73-v30a923fb5c164d6cd18280c02422f75e611e8fb2 | ansible/ansible | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-c616e54a6e23fa5616a1d56d243f69576164ef9b-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-cb94c0cc550df9e98f1247bc71d8c2b861c75049-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d2f80991180337e2be23d6883064a67dcbaeb662-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d30fc6c0b359f631130b0e979d9a78a7b3747d48-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d33bedc48fdd933b5abd65a77c081876298e2f07-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 4 | 5 | 0.8 | 4 | 5 | 0.8 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d58e69c82d7edd0583dd8e78d76b075c33c3151e-v173091e2e36d38c978002990795f66cfc0af30ad | ansible/ansible | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d6d2251929c84c3aa883bad7db0f19cc9ff0339e-v30a923fb5c164d6cd18280c02422f75e611e8fb2 | ansible/ansible | 1 | 0 | 4 | 4 | 1 | 0 | 4 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d72025be751c894673ba85caa063d835a0ad3a8c-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-d9f1866249756efc264b00ff7497e92c11a9885f-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-de5858f48dc9e1ce9117034e0d7e76806f420ca8-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 3 | 17 | 0.176470588235 | 3 | 17 | 0.176470588235 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-deb54e4c5b32a346f1f0b0a14f1c713d2cc2e961-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-e40889e7112ae00a21a2c74312b330e67a766cc0-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 0 | 4 | 18 | 0.222222222222 | 4 | 18 | 0.222222222222 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-ea04e0048dbb3b63f876aad7020e1de8eee9f362-v1055803c3a812189a1133297f7f5468579283f86 | ansible/ansible | 0 | 1 | 1 | 2 | 0.5 | 2 | 2 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-ecea15c508f0e081525be036cf76bbb56dbcdd9d-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 0 | 0 | 1 | 7 | 0.142857142857 | 0 | 7 | 0 | -0.142857142857 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-eea46a0d1b99a6dadedbb6a3502d599235fa7ec3-v390e508d27db7a51eece36bb6d9698b63a5b638a | ansible/ansible | 0 | 0 | 9 | 10 | 0.9 | 9 | 10 | 0.9 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-f86c58e2d235d8b96029d102c71ee2dfafd57997-v0f01c69f1e2528b935359cfe578530722bca2c59 | ansible/ansible | 0 | 0 | 11 | 15 | 0.733333333333 | 11 | 15 | 0.733333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | ansible__ansible-f8ef34672b961a95ec7282643679492862c688ec-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5 | ansible/ansible | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-1077729a19c0ce902e713cf6fab42c91fb7907f1-vnan | element-hq/element-web | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-2760bfc8369f1bee640d6d7a7e910783143d4c5f-vnan | element-hq/element-web | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-44b98896a79ede48f5ad7ff22619a39d5f6ff03c-vnan | element-hq/element-web | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-494d9de6f0a94ffb491e74744d2735bce02dc0ab-vnan | element-hq/element-web | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-5dfde12c1c1c0b6e48f17e3405468593e39d9492-vnan | element-hq/element-web | 0 | 0 | 3 | 9 | 0.333333333333 | 2 | 9 | 0.222222222222 | -0.111111111111 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-5e8488c2838ff4268f39db4a8cca7d74eecf5a7e-vnan | element-hq/element-web | 1 | 1 | 29 | 29 | 1 | 29 | 29 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-6205c70462e0ce2e1e77afb3a70b55d0fdfe1b31-vnan | element-hq/element-web | 1 | 1 | 42 | 42 | 1 | 42 | 42 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-66d0b318bc6fee0d17b54c1781d6ab5d5d323135-vnan | element-hq/element-web | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-71fe08ea0f159ccb707904d87f0a4aef205a167c-vnan | element-hq/element-web | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-776ffa47641c7ec6d142ab4a47691c30ebf83c2e | element-hq/element-web | 0 | 0 | 3 | 10 | 0.3 | 0 | 10 | 0 | -0.3 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-880428ab94c6ea98d3d18dcaeb17e8767adcb461-vnan | element-hq/element-web | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-ad26925bb6628260cfe0fcf90ec0a8cba381f4a4-vnan | element-hq/element-web | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-aeabf3b18896ac1eb7ae9757e66ce886120f8309-vnan | element-hq/element-web | 0 | 0 | 0 | 8 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-b7fea97bb68c6628a644580076f840109132f074-vnan | element-hq/element-web | 1 | 1 | 16 | 16 | 1 | 16 | 16 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-ce554276db97b9969073369fefa4950ca8e54f84-vnan | element-hq/element-web | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-dae13ac8522fc6d41e64d1ac6e3174486fdcce0c-vnan | element-hq/element-web | 1 | 1 | 19 | 19 | 1 | 19 | 19 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-e15ef9f3de36df7f318c083e485f44e1de8aad17 | element-hq/element-web | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-ecfd1736e5dd9808e87911fc264e6c816653e1a9-vnan | element-hq/element-web | 1 | 1 | 9 | 9 | 1 | 9 | 9 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | element-hq__element-web-f0359a5c180b8fec4329c77adcf967c8d3b7b787-vnan | element-hq/element-web | 1 | 1 | 10 | 10 | 1 | 10 | 10 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-02e21636c58e86c51119b63e0fb5ca7b813b07b1 | flipt-io/flipt | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-05d7234fa582df632f70a7cd10194d61bd7043b9 | flipt-io/flipt | 0 | 0 | 0 | 4 | 0 | 1 | 4 | 0.25 | 0.25 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-0fd09def402258834b9d6c0eaa6d3b4ab93b4446 | flipt-io/flipt | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-1737085488ecdcd3299c8e61af45a8976d457b7e | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-2ca5dfb3513e4e786d2b037075617cccc286d5c3 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-36e62baffae2132f78f9d34dc300a9baa2d7ae0e | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-3d5a345f94c2adc8a0eaa102c189c08ad4c0f8e8 | flipt-io/flipt | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-3ef34d1fff012140ba86ab3cafec8f9934b492be | flipt-io/flipt | 1 | 1 | 5 | 5 | 1 | 5 | 5 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-40007b9d97e3862bcef8c20ae6c87b22ea0627f0 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-492cc0b158200089dceede3b1aba0ed28df3fb1d | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-507170da0f7f4da330f6732bffdf11c4df7fc192 | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-524f277313606f8cd29b299617d6565c01642e15 | flipt-io/flipt | 0 | 0 | 1 | 3 | 0.333333333333 | 1 | 3 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-56a620b8fc9ef7a0819b47709aa541cdfdbba00b | flipt-io/flipt | 0 | 0 | 27 | 32 | 0.84375 | 27 | 32 | 0.84375 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-690672523398c2b6f6e4562f0bf9868664ab894f | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-6fd0f9e2587f14ac1fdd1c229f0bcae0468c8daa | flipt-io/flipt | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-756f00f79ba8abf9fe53f3c6c818123b42eb7355 | flipt-io/flipt | 0 | 0 | 5 | 6 | 0.833333333333 | 5 | 6 | 0.833333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-84806a178447e766380cc66b14dee9c6eeb534f4 | flipt-io/flipt | 0 | 0 | 6 | 8 | 0.75 | 6 | 8 | 0.75 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-967855b429f749c28c112b8cb1b15bc79157f973 | flipt-io/flipt | 1 | 0 | 18 | 18 | 1 | 0 | 18 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-9d25c18b79bc7829a6fb08ec9e8793d5d17e2868 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-9f8127f225a86245fa35dca4885c2daef824ee55 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-abaa5953795afb9c621605bb18cb32ac48b4508c | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-b2393f07d893024ab1e47ea2081e0289e1f9d56f | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-b2cd6a6dd73ca91b519015fd5924fde8d17f3f06 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-b433bd05ce405837804693bebd5f4b88d87133c8 | flipt-io/flipt | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-b4bb5e13006a729bc0eed8fe6ea18cff54acdacb | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-b68b8960b8a08540d5198d78c665a7eb0bea4008 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-c12967bc73fdf02054cf3ef8498c05e25f0a18c0 | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-c1728053367c753688f114ec26e703c8fdeda125 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-c188284ff0c094a4ee281afebebd849555ebee59 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-c8d71ad7ea98d97546f01cce4ccb451dbcf37d3b | flipt-io/flipt | 0 | 0 | 5 | 8 | 0.625 | 2 | 8 | 0.25 | -0.375 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-cd2f3b0a9d4d8b8a6d3d56afab65851ecdc408e8 | flipt-io/flipt | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-cf06f4ebfab7fa21eed3e5838592e8e44566957f | flipt-io/flipt | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-dae029cba7cdb98dfb1a6b416c00d324241e6063 | flipt-io/flipt | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-db1c3b100e231c62f0c90c2ab037614f20a2a63b | flipt-io/flipt | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-e2bd19dafa7166c96b082fb2a59eb54b4be0d778 | flipt-io/flipt | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-e42da21a07a5ae35835ec54f74004ebd58713874 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-e50808c03e4b9d25a6a78af9c61a3b1616ea356b | flipt-io/flipt | 0 | 0 | 0 | 23 | 0 | 0 | 23 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-e88e93990e3ec1e7697754b423decc510d5dd5fe | flipt-io/flipt | 1 | 1 | 8 | 8 | 1 | 8 | 8 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-e91615cf07966da41756017a7d571f9fc0fdbe80 | flipt-io/flipt | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-f1bc91a1b999656dbdb2495ccb57bf2105b84920 | flipt-io/flipt | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | flipt-io__flipt-f808b4dd6e36b9dc8b011eb26b196f4e2cc64c41 | flipt-io/flipt | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-030b2e03525d68d74cb749959aac2d7f3fc0effa | future-architect/vuls | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-0ec945d0510cdebf92cdd8999f94610772689f14 | future-architect/vuls | 0 | 0 | 3 | 6 | 0.5 | 3 | 6 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-139f3a81b66c47e6d8f70ce6c4afe7a9196a6ea8 | future-architect/vuls | 0 | 0 | 0 | 79 | 0 | 0 | 79 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-1832b4ee3a20177ad313d806983127cb6e53f5cf | future-architect/vuls | 0 | 0 | 6 | 18 | 0.333333333333 | 6 | 18 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-2923cbc645fbc7a37d50398eb2ab8febda8c3264 | future-architect/vuls | 1 | 1 | 5 | 5 | 1 | 5 | 5 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-2c84be80b65d022c262956cd26fc79d8bb2f7010 | future-architect/vuls | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-3c1489e588dacea455ccf4c352a3b1006902e2d4 | future-architect/vuls | 0 | 0 | 0 | 22 | 0 | 0 | 22 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-3f8de0268376e1f0fa6d9d61abb0d9d3d580ea7d | future-architect/vuls | 0 | 0 | 3 | 25 | 0.12 | 3 | 25 | 0.12 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-407407d306e9431d6aa0ab566baa6e44e5ba2904 | future-architect/vuls | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-436341a4a522dc83eb8bddd1164b764c8dd6bc45 | future-architect/vuls | 1 | 1 | 10 | 10 | 1 | 10 | 10 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-457a3a9627fb9a0800d0aecf1d4713fb634a9011 | future-architect/vuls | 1 | 1 | 6 | 6 | 1 | 6 | 6 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-4a72295de7b91faa59d90a5bee91535bbe76755d | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-4b680b996061044e93ef5977a081661665d3360a | future-architect/vuls | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-4c04acbd9ea5b073efe999e33381fa9f399d6f27 | future-architect/vuls | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-54e73c2f5466ef5daec3fb30922b9ac654e4ed25 | future-architect/vuls | 1 | 1 | 11 | 11 | 1 | 11 | 11 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-5af1a227339e46c7abf3f2815e4c636a0c01098e | future-architect/vuls | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-61c39637f2f3809e1b5dad05f0c57c799dce1587 | future-architect/vuls | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-6eff6a9329a65cc412e79b8f82444dfa3d0f0b5a | future-architect/vuls | 0 | 0 | 1 | 37 | 0.027027027027 | 1 | 37 | 0.027027027027 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-73f0adad95c4d227e2ccfa876c85cc95dd065e13 | future-architect/vuls | 1 | 1 | 14 | 14 | 1 | 14 | 14 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-78b52d6a7f480bd610b692de9bf0c86f57332f23 | future-architect/vuls | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-7e91f5ef7e5712b1a3d7d5066ad6607e9debc21c | future-architect/vuls | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-83bcca6e669ba2e4102f26c4a2b52f78c7861f1a | future-architect/vuls | 0 | 0 | 0 | 25 | 0 | 0 | 25 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-8659668177f1feb65963db7a967347a79c5f9c40 | future-architect/vuls | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-86b60e1478e44d28b1aff6b9ac7e95ceb05bc5fc | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-878c25bf5a9c9fd88ac32eb843f5636834d5712d | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-9aa0d87a21bede91c2b45c32187456bb69455e92 | future-architect/vuls | 1 | 0 | 6 | 6 | 1 | 0 | 6 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-abd80417728b16c6502067914d27989ee575f0ee | future-architect/vuls | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-ad2edbb8448e2c41a097f1c0b52696c0f6c5924d | future-architect/vuls | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-bff6b7552370b55ff76d474860eead4ab5de785a-v1151a6325649aaf997cd541ebe533b53fddf1b07 | future-architect/vuls | 0 | 0 | 3 | 7 | 0.428571428571 | 3 | 7 | 0.428571428571 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-c11ba27509f733d7d280bdf661cbbe2e7a99df4c | future-architect/vuls | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-ca3f6b1dbf2cd24d1537bfda43e788443ce03a0c | future-architect/vuls | 0 | 0 | 2 | 16 | 0.125 | 2 | 16 | 0.125 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-d18e7a751d07260d75ce3ba0cd67c4a6aebfd967 | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-e1fab805afcfc92a2a615371d0ec1e667503c254-v264a82e2f4818e30f5a25e4da53b27ba119f62b5 | future-architect/vuls | 0 | 0 | 2 | 4 | 0.5 | 2 | 4 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-e4728e388120b311c4ed469e4f942e0347a2689b-v264a82e2f4818e30f5a25e4da53b27ba119f62b5 | future-architect/vuls | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-ef2be3d6ea4c0a13674aaab08b182eca4e2b9a17-v264a82e2f4818e30f5a25e4da53b27ba119f62b5 | future-architect/vuls | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-f0b3a8b1db98eb1bd32685f1c36c41a99c3452ed | future-architect/vuls | 0 | 1 | 1 | 2 | 0.5 | 2 | 2 | 1 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-fd18df1dd4e4360f8932bc4b894bd8b40d654e7c | future-architect/vuls | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | future-architect__vuls-fe8d252c51114e922e6836055ef86a15f79ad042 | future-architect/vuls | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-005dcb16bacc6a5d5890c4cd302ccfd4298e275d-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-007235446f85b1cbaef92664c3b3867517250f21 | gravitational/teleport | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-0415e422f12454db0c22316cf3eaa5088d6b6322 | gravitational/teleport | 0 | 0 | 13 | 16 | 0.8125 | 13 | 16 | 0.8125 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-1330415d33a27594c948a36d9d7701f496229e9f | gravitational/teleport | 0 | 0 | 0 | 29 | 0 | 0 | 29 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-288c5519ce0dec9622361a5e5d6cd36aa2d9e348 | gravitational/teleport | 1 | 1 | 24 | 24 | 1 | 24 | 24 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-2b15263e49da5625922581569834eec4838a9257-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 8 | 14 | 0.571428571429 | 4 | 14 | 0.285714285714 | -0.285714285714 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-2bb3bbbd8aff1164a2353381cb79e1dc93b90d28-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-326fd1d7be87b03998dbc53bc706fdef90f5065c-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-3587cca7840f636489449113969a5066025dd5bf | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-3fa6904377c006497169945428e8197158667910-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 43 | 0 | 0 | 43 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-3ff75e29fb2153a2637fe7f83e49dc04b1c99c9f | gravitational/teleport | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-47530e1fd8bfb84ec096ebcbbc29990f30829655-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-4d0117b50dc8cdb91c94b537a4844776b224cd3d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-4e1c39639edf1ab494dd7562844c8b277b5cfa18-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-4f771403dc4177dc26ee0370f7332f3fe54bee0f-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-59d39dee5a8a66e5b8a18a9085a199d369b1fba8-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 6 | 7 | 0.857142857143 | 6 | 7 | 0.857142857143 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-5dca072bb4301f4579a15364fcf37cc0c39f7f6c | gravitational/teleport | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-629dc432eb191ca479588a8c49205debb83e80e2 | gravitational/teleport | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-65438e6e44b6ce51458d09b7bb028a2797cfb0ea-vce94f93ad1030e3136852817f2423c1b3ac37bc4 | gravitational/teleport | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-769b4b5eec7286b7b14e179f2cc52e6b15d2d9f3-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 1 | 1 | 8 | 8 | 1 | 8 | 8 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-7744f72c6eb631791434b648ba41083b5f6d2278-vce94f93ad1030e3136852817f2423c1b3ac37bc4 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-78b0d8c72637df1129fb6ff84fc49ef4b5ab1288 | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-82185f232ae8974258397e121b3bc2ed0c3729ed-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-96019ce0be7a2c8e36363f359eb7c943b41dde70 | gravitational/teleport | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-a95b3ae0667f9e4b2404bf61f51113e6d83f01cd | gravitational/teleport | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-ac2fb2f9b4fd1896b554d3011df23d3d71295779 | gravitational/teleport | 1 | 1 | 5 | 5 | 1 | 5 | 5 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-af5e2517de7d18406b614e413aca61c319312171-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-b4e7cd3a5e246736d3fe8d6886af55030b232277 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-b5d8169fc0a5e43fee2616c905c6d32164654dc6 | gravitational/teleport | 0 | 0 | 2 | 4 | 0.5 | 2 | 4 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-ba6c4a135412c4296dd5551bd94042f0dc024504-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-baeb2697c4e4870c9850ff0cd5c7a2d08e1401c9-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 33 | 0 | 0 | 33 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-bb562408da4adeae16e025be65e170959d1ec492-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-c1b1c6a1541c478d7777a48fca993cc8206c73b9 | gravitational/teleport | 1 | 1 | 11 | 11 | 1 | 11 | 11 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-c335534e02de143508ebebc7341021d7f8656e8f | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-c782838c3a174fdff80cafd8cd3b1aa4dae8beb2 | gravitational/teleport | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-d6ffe82aaf2af1057b69c61bf9df777f5ab5635a-vee9b09fb20c43af7e520f57e9239bbcf46b7113d | gravitational/teleport | 0 | 0 | 3 | 71 | 0.0422535211268 | 1 | 71 | 0.0140845070423 | -0.0281690140845 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-d873ea4fa67d3132eccba39213c1ca2f52064dcc-vce94f93ad1030e3136852817f2423c1b3ac37bc4 | gravitational/teleport | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-db89206db6c2969266e664c7c0fb51b70e958b64 | gravitational/teleport | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-e6681abe6a7113cfd2da507f05581b7bdf398540-v626ec2a48416b10a88641359a169d99e935ff037 | gravitational/teleport | 0 | 0 | 8 | 10 | 0.8 | 8 | 10 | 0.8 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-eda668c30d9d3b56d9c69197b120b01013611186 | gravitational/teleport | 0 | 0 | 0 | 28 | 0 | 0 | 28 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-f432a71a13e698b6e1c4672a2e9e9c1f32d35c12 | gravitational/teleport | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-fb0ab2b9b771377a689fd0d0374777c251e58bbf | gravitational/teleport | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | gravitational__teleport-fd2959260ef56463ad8afa4c973f47a50306edd4 | gravitational/teleport | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-08ac40d050a64e1d2646ece4959af0c42bf6b7b5-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 3 | 7 | 0.428571428571 | 3 | 7 | 0.428571428571 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-0a90f9f0256e4f933523e9842799e39f95ae29ce-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 0 | 14 | 16 | 0.875 | 14 | 16 | 0.875 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-0dc5b20fa186f9714f8a838178597e69f549d026-v2d9a6c849c60ed19fd0858ce9e40b7cc8e097e59 | internetarchive/openlibrary | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-11838fad1028672eb975c79d8984f03348500173-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 47 | 54 | 0.87037037037 | 50 | 54 | 0.925925925926 | 0.0555555555556 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-1351c59fd43689753de1fca32c78d539a116ffc1-v29f82c9cf21d57b242f8d8b0e541525d259e2d63 | internetarchive/openlibrary | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-1894cb48d6e7fb498295a5d3ed0596f6f603b784-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-25858f9f0c165df25742acf8309ce909773f0cdd-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 1 | 1 | 6 | 6 | 1 | 6 | 6 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-308a35d6999427c02b1dbf5211c033ad3b352556-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-30bc73a1395fba2300087c7f307e54bb5372b60a-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-322d7a46cdc965bfabbf9500e98fde098c9d95b2-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 0 | 0 | 8 | 11 | 0.727272727273 | 8 | 11 | 0.727272727273 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-3f7db6bbbcc7c418b3db72d157c6aed1d45b2ccf-v430f20c722405e462d9ef44dee7d34c41e76fe7a | internetarchive/openlibrary | 1 | 0 | 6 | 6 | 1 | 4 | 6 | 0.666666666667 | -0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-43f9e7e0d56a4f1d487533543c17040a029ac501-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-4b7ea2977be2747496ba792a678940baa985f7ea-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 20 | 23 | 0.869565217391 | 20 | 23 | 0.869565217391 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-53d376b148897466bb86d5accb51912bbbe9a8ed-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 0 | 4 | 0 | 3 | 4 | 0.75 | 0.75 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-630221ab686c64e75a2ce253c893c033e4814b2e-v93c53c13d5f9b383ebb411ee7750b49dcd1a34c6 | internetarchive/openlibrary | 0 | 0 | 4 | 6 | 0.666666666667 | 4 | 6 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-6a117fab6c963b74dc1ba907d838e74f76d34a4b-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-6fdbbeee4c0a7e976ff3e46fb1d36f4eb110c428-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-77c16d530b4d5c0f33d68bead2c6b329aee9b996-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 0 | 0 | 10 | 12 | 0.833333333333 | 10 | 12 | 0.833333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-798a582540019363d14b2090755cc7b89a350788-v430f20c722405e462d9ef44dee7d34c41e76fe7a | internetarchive/openlibrary | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-7bf3238533070f2d24bafbb26eedf675d51941f6-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 1 | 1 | 43 | 43 | 1 | 43 | 43 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-910b08570210509f3bcfebf35c093a48243fe754-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4 | internetarchive/openlibrary | 0 | 0 | 4 | 6 | 0.666666666667 | 2 | 6 | 0.333333333333 | -0.333333333333 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-9bdfd29fac883e77dcbc4208cab28c06fd963ab2-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-a48fd6ba9482c527602bc081491d9e8ae6e8226c-vfa6ff903cb27f336e17654595dd900fa943dcd91 | internetarchive/openlibrary | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-b112069e31e0553b2d374abb5f9c5e05e8f3dbbe-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-b4f7c185ae5f1824ac7f3a18e8adf6a4b468459c-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-b67138b316b1e9c11df8a4a8391fe5cc8e75ff9f-ve8c8d62a2b60610a3c4631f5f23ed866bada9818 | internetarchive/openlibrary | 0 | 0 | 1 | 11 | 0.0909090909091 | 1 | 11 | 0.0909090909091 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-ba3abfb6af6e722185d3715929ab0f3e5a134eed-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c | internetarchive/openlibrary | 1 | 1 | 51 | 51 | 1 | 51 | 51 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-d40ec88713dc95ea791b252f92d2f7b75e107440-v13642507b4fc1f8d234172bf8129942da2c2ca26 | internetarchive/openlibrary | 0 | 0 | 23 | 28 | 0.821428571429 | 23 | 28 | 0.821428571429 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-dbbd9d539c6d4fd45d5be9662aa19b6d664b5137-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | internetarchive__openlibrary-f343c08f89c772f7ba6c0246f384b9e6c3dc0add-v08d8e8889ec945ab821fb156c04c7d2e2810debb | internetarchive/openlibrary | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-0130c6dc13438b48cf0fdfab08a89e357b5517c9 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-0488fb92cb02a82924fb1181bf1642f2e87096db | navidrome/navidrome | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-1e96b858a91c640fe64e84c5e5ad8cc0954ea38d | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-31799662706fedddf5bcc1a76b50409d1f91d327 | navidrome/navidrome | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-3853c3318f67b41a9e4cb768618315ff77846fdb | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-3972616585e82305eaf26aa25697b3f5f3082288 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-3f2d24695e9382125dfe5e6d6c8bbeb4a313a4f9 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-55730514ea59d5f1d0b8e3f8745569c29bdbf7b4 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-5e549255201e622c911621a7b770477b1f5a89be | navidrome/navidrome | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-6bd4c0f6bfa653e9b8b27cfdc2955762d371d6e9 | navidrome/navidrome | 0 | 0 | 0 | 3 | 0 | 2 | 3 | 0.666666666667 | 0.666666666667 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-812dc2090f20ac4f8ac271b6ed95be5889d1a3ca | navidrome/navidrome | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-8383527aaba1ae8fa9765e995a71a86c129ef626 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-b65e76293a917ee2dfc5d4b373b1c62e054d0dca | navidrome/navidrome | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-d0dceae0943b8df16e579c2d9437e11760a0626a | navidrome/navidrome | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-d21932bd1b2379b0ebca2d19e5d8bae91040268a | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-d8e794317f788198227e10fb667e10496b3eb99a | navidrome/navidrome | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | navidrome__navidrome-eebfbc5381a1e506ff17b5f1371d1ad83d5fd642 | navidrome/navidrome | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-01ea5214d11e0df8b7170d91bafd34f23cb0f2b1 | protonmail/webclients | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-281a6b3f190f323ec2c0630999354fafb84b2880 | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-2f2f6c311c6128fe86976950d3c0c2db07b03921 | protonmail/webclients | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-369fd37de29c14c690cb3b1c09a949189734026f | protonmail/webclients | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-428cd033fede5fd6ae9dbc7ab634e010b10e4209 | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-4817fe14e1356789c90165c2a53f6a043c2c5f83 | protonmail/webclients | 0 | 0 | 0 | 42 | 0 | 0 | 42 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-5f0745dd6993bb1430a951c62a49807c6635cd77 | protonmail/webclients | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-6e165e106d258a442ae849cdf08260329cb92d39 | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-6e1873b06df6529a469599aa1d69d3b18f7d9d37 | protonmail/webclients | 0 | 0 | 0 | 8 | 0 | 4 | 8 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-715dbd4e6999499cd2a576a532d8214f75189116 | protonmail/webclients | 0 | 0 | 1 | 3 | 0.333333333333 | 1 | 3 | 0.333333333333 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-7e54526774e577c0ebb58ced7ba8bef349a69fec | protonmail/webclients | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-8142704f447df6e108d53cab25451c8a94976b92 | protonmail/webclients | 1 | 1 | 13 | 13 | 1 | 13 | 13 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-b9387af4cdf79c2cb2a221dea33d665ef789512e | protonmail/webclients | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-c6f65d205c401350a226bb005f42fac1754b0b5b | protonmail/webclients | 0 | 0 | 17 | 21 | 0.809523809524 | 17 | 21 | 0.809523809524 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-c8117f446c3d1d7e117adc6e0e46b0ece9b0b90e | protonmail/webclients | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-caf10ba9ab2677761c88522d1ba8ad025779c492 | protonmail/webclients | 0 | 1 | 0 | 6 | 0 | 6 | 6 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-d494a66038112b239a381f49b3914caf8d2ef3b4 | protonmail/webclients | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-d8ff92b414775565f496b830c9eb6cc5fa9620e6 | protonmail/webclients | 0 | 0 | 0 | 14 | 0 | 0 | 14 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-df60460f163fd5c34e844ab9015e3176f1ab1ac0 | protonmail/webclients | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-dfe5604193d63bfcb91ce60d62db2f805c43bf11 | protonmail/webclients | 0 | 0 | 25 | 28 | 0.892857142857 | 27 | 28 | 0.964285714286 | 0.0714285714286 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-e7f3f20c8ad86089967498632ace73c1157a9d51 | protonmail/webclients | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | protonmail__webclients-f080ffc38e2ad7bddf2e93e5193e82c20c7a11e7 | protonmail/webclients | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-01d1d1494411380d97cac14614a829d3a69cecaf-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 0 | 0 | 2 | 3 | 0.666666666667 | 2 | 3 | 0.666666666667 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-0d2afd58f3d0e34af21cee7d8a3fc9d855594e9f-vnan | qutebrowser/qutebrowser | 1 | 0 | 7 | 7 | 1 | 5 | 7 | 0.714285714286 | -0.285714285714 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-16de05407111ddd82fa12e54389d532362489da9-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 6 | 364 | 0.0164835164835 | 6 | 364 | 0.0164835164835 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-1943fa072ec3df5a87e18a23b0916f134c131016-vafb3e8e01b31319c66c4e666b8a3b1d8ba55db24 | qutebrowser/qutebrowser | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-233cb1cc48635130e5602549856a6fa4ab4c087f-v35616345bb8052ea303186706cec663146f0f184 | qutebrowser/qutebrowser | 1 | 1 | 8 | 8 | 1 | 8 | 8 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-394bfaed6544c952c6b3463751abab3176ad4997-vafb3e8e01b31319c66c4e666b8a3b1d8ba55db24 | qutebrowser/qutebrowser | 0 | 0 | 8 | 16 | 0.5 | 8 | 16 | 0.5 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-3e21c8214a998cb1058defd15aabb24617a76402-v5fc38aaf22415ab0b70567368332beee7955b367 | qutebrowser/qutebrowser | 0 | 0 | 0 | 1869 | 0 | 0 | 1869 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-46e6839e21d9ff72abb6c5d49d5abaa5a8da8a81-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-473a15f7908f2bb6d670b0e908ab34a28d8cf7e2-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 364 | 0 | 0 | 364 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-99029144b5109bb1b2a53964a7c129e009980cd9-va0fd88aac89cde702ec1ba84877234da33adce8a | qutebrowser/qutebrowser | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-996487c43e4fcc265b541f9eca1e7930e3c5cf05-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-9b71c1ea67a9e7eb70dd83214d881c2031db6541-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 364 | 0 | 0 | 364 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-9ed748effa8f3bcd804612d9291da017b514e12f-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 1 | 1 | 6 | 6 | 1 | 6 | 6 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-bedc9f7fadf93f83d8dee95feeecb9922b6f063f-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 17 | 17 | 1 | 17 | 17 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-bf045f7ec7c27709ea3ef61cf41a24e8fdd2e7da-v059c6fdc75567943479b23ebca7c07b5e9a7f34c | qutebrowser/qutebrowser | 1 | 1 | 12 | 12 | 1 | 12 | 12 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-de4a1c1a2839b5b49c3d4ce21d39de48d24e2091-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 66 | 66 | 1 | 66 | 66 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-deeb15d6f009b3ca0c3bd503a7cef07462bd16b4-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 2 | 10 | 0.2 | 2 | 10 | 0.2 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-ec2dcfce9eee9f808efc17a1b99e227fc4421dea-v5149fcda2a9a6fe1d35dfed1bade1444a11ef271 | qutebrowser/qutebrowser | 0 | 0 | 2 | 7 | 0.285714285714 | 2 | 7 | 0.285714285714 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-f7753550f2c1dcb2348e4779fd5287166754827e-v059c6fdc75567943479b23ebca7c07b5e9a7f34c | qutebrowser/qutebrowser | 1 | 1 | 26 | 26 | 1 | 26 | 26 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-f8e7fea0becae25ae20606f1422068137189fe9e | qutebrowser/qutebrowser | 0 | 0 | 84 | 88 | 0.954545454545 | 84 | 88 | 0.954545454545 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-fd6790fe8c02b144ab2464f1fc8ab3d02ce3c476-v2ef375ac784985212b1805e1d0431dc8f1b3c171 | qutebrowser/qutebrowser | 1 | 1 | 6 | 6 | 1 | 6 | 6 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-fec187c2cb53d769c2682b35ca77858a811414a8-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | qutebrowser__qutebrowser-ff1c025ad3210506fc76e1f604d8c8c27637d88e-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d | qutebrowser/qutebrowser | 0 | 0 | 778 | 785 | 0.991082802548 | 777 | 785 | 0.989808917197 | -0.00127388535032 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-09c2776c0fce3db5c6e18da92b5a45dce9f013aa-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-1ff82aa365763cee2d609c9d19360ad87fdf2ec7-vc4e41fd0029957297843cb9dec4a25c7c756f029 | tutao/tutanota | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-40e94dee2bcec2b63f362da283123e9df1874cc1-vc4e41fd0029957297843cb9dec4a25c7c756f029 | tutao/tutanota | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-8513a9e8114a8b42e64f4348335e0f23efa054c4-vee878bb72091875e912c52fc32bc60ec3760227b | tutao/tutanota | 0 | 1 | 0 | 78 | 0 | 78 | 78 | 1 | 1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-da4edb7375c10f47f4ed3860a591c5e6557f7b5c-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 0 | 0 | 0 | 107 | 0 | 0 | 107 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-db90ac26ab78addf72a8efaff3c7acc0fbd6d000-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 0 | 0 | 0 | 107 | 0 | 0 | 107 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-f373ac3808deefce8183dad8d16729839cc330c1-v2939aa9f4356f0dc9f523ee5ce19d09e08ab979b | tutao/tutanota | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-f3ffe17af6e8ab007e8d461355057ad237846d9d-vbc0d9ba8f0071fbe982809910959a6ff8884dbbf | tutao/tutanota | 1 | 0 | 107 | 107 | 1 | 0 | 107 | 0 | -1 |
+| Qwen3.6-35B-A3B | SWE-bench Pro | 262144 | large window | tutao__tutanota-fb32e5f9d9fc152a00144d56dd0af01760a2d4dc-vc4e41fd0029957297843cb9dec4a25c7c756f029 | tutao/tutanota | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 001 | pypa/packaging | 0 | 0 | 0 | 72 | 0 | 10 | 294 | 0.0340136054422 | 0.0340136054422 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 002 | fastapi/fastapi | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 003 | fastapi/fastapi | 0 | 0 | 8 | 10 | 0.8 | 0 | 10 | 0 | -0.8 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 004 | huggingface/trl | 0 | 0 | 0 | 51 | 0 | 0 | 51 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 005 | huggingface/trl | 0 | 0 | 0 | 23 | 0 | 319 | 352 | 0.90625 | 0.90625 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 006 | mlflow/mlflow | 0 | 0 | 33 | 55 | 0.6 | 34 | 55 | 0.618181818182 | 0.0181818181818 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 007 | mlflow/mlflow | 0 | 0 | 26 | 33 | 0.787878787879 | 25 | 33 | 0.757575757576 | -0.030303030303 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 008 | mlflow/mlflow | 0 | 0 | 0 | 20 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 009 | mlflow/mlflow | 0 | 0 | 0 | 22 | 0 | 0 | 22 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 010 | mlflow/mlflow | 0 | 0 | 0 | 10 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 011 | mlflow/mlflow | 0 | 0 | 5 | 18 | 0.277777777778 | 3 | 18 | 0.166666666667 | -0.111111111111 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 012 | mlflow/mlflow | 0 | 0 | 22 | 25 | 0.88 | 22 | 25 | 0.88 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 013 | mlflow/mlflow | 0 | 0 | 0 | 20 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 014 | mlflow/mlflow | 0 | 0 | 0 | 27 | 0 | 0 | 27 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 015 | mlflow/mlflow | 0 | 0 | 22 | 30 | 0.733333333333 | 20 | 30 | 0.666666666667 | -0.0666666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 016 | mlflow/mlflow | 0 | 0 | 0 | 11 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 017 | mlflow/mlflow | 0 | 0 | 0 | 11 | 0 | 4 | 11 | 0.363636363636 | 0.363636363636 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 018 | mlflow/mlflow | 0 | 0 | 9 | 10 | 0.9 | 9 | 10 | 0.9 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 019 | mlflow/mlflow | 0 | 0 | 0 | 21 | 0 | 7 | 20 | 0.35 | 0.35 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 020 | mlflow/mlflow | 0 | 0 | 0 | 20 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 021 | mlflow/mlflow | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 022 | mlflow/mlflow | 0 | 0 | 0 | 10 | 0 | 3 | 10 | 0.3 | 0.3 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 023 | mlflow/mlflow | 1 | 1 | 21 | 21 | 1 | 21 | 21 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 024 | mlflow/mlflow | 0 | 0 | 0 | 10 | 0 | 2 | 10 | 0.2 | 0.2 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 025 | mlflow/mlflow | 0 | 0 | 0 | 40 | 0 | 0 | 40 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 026 | mlflow/mlflow | 0 | 0 | 0 | 22 | 0 | 3 | 32 | 0.09375 | 0.09375 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 027 | mlflow/mlflow | 0 | 0 | 10 | 19 | 0.526315789474 | 10 | 19 | 0.526315789474 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 028 | mlflow/mlflow | 0 | 0 | 0 | 19 | 0 | 15 | 19 | 0.789473684211 | 0.789473684211 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 029 | mlflow/mlflow | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 030 | mlflow/mlflow | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 031 | mlflow/mlflow | 0 | 0 | 0 | 14 | 0 | 0 | 14 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 032 | mlflow/mlflow | 0 | 0 | 0 | 12 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 033 | mlflow/mlflow | 0 | 0 | 0 | 88 | 0 | 0 | 88 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 034 | mlflow/mlflow | 0 | 0 | 0 | 18 | 0 | 14 | 18 | 0.777777777778 | 0.777777777778 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 035 | mlflow/mlflow | 0 | 0 | 0 | 15 | 0 | 1 | 15 | 0.0666666666667 | 0.0666666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 036 | mlflow/mlflow | 0 | 0 | 9 | 14 | 0.642857142857 | 0 | 3 | 0 | -0.642857142857 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 037 | mlflow/mlflow | 0 | 0 | 13 | 13 | 1 | 13 | 13 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 038 | mlflow/mlflow | 1 | 1 | 25 | 25 | 1 | 25 | 25 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 039 | mlflow/mlflow | 0 | 0 | 8 | 13 | 0.615384615385 | 8 | 13 | 0.615384615385 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 040 | mlflow/mlflow | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 041 | mlflow/mlflow | 0 | 0 | 11 | 13 | 0.846153846154 | 11 | 13 | 0.846153846154 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 042 | mlflow/mlflow | 0 | 0 | 0 | 11 | 0 | 8 | 18 | 0.444444444444 | 0.444444444444 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 043 | mlflow/mlflow | 0 | 0 | 0 | 1 | 0 | 4 | 15 | 0.266666666667 | 0.266666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 044 | mlflow/mlflow | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 045 | mlflow/mlflow | 0 | 0 | 21 | 21 | 1 | 21 | 21 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 046 | mlflow/mlflow | 0 | 0 | 11 | 14 | 0.785714285714 | 7 | 14 | 0.5 | -0.285714285714 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 047 | mlflow/mlflow | 0 | 0 | 0 | 23 | 0 | 0 | 23 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 048 | mlflow/mlflow | 0 | 0 | 0 | 21 | 0 | 0 | 21 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 049 | mlflow/mlflow | 0 | 0 | 0 | 17 | 0 | 0 | 47 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 050 | mlflow/mlflow | 0 | 0 | 0 | 23 | 0 | 0 | 23 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 051 | mlflow/mlflow | 0 | 0 | 0 | 13 | 0 | 9 | 13 | 0.692307692308 | 0.692307692308 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 052 | mlflow/mlflow | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 053 | mlflow/mlflow | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 054 | mesonbuild/meson | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 055 | mesonbuild/meson | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 056 | Netflix/metaflow | 0 | 0 | 0 | 32 | 0 | 28 | 31 | 0.903225806452 | 0.903225806452 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 069 | pandas-dev/pandas | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 070 | pandas-dev/pandas | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 071 | pandas-dev/pandas | 0 | 0 | 0 | 4 | 0 | 1 | 27 | 0.037037037037 | 0.037037037037 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 072 | pandas-dev/pandas | 0 | 0 | 0 | 25 | 0 | 0 | 25 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 073 | pandas-dev/pandas | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 074 | pandas-dev/pandas | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 075 | pandas-dev/pandas | 0 | 0 | 0 | 9 | 0 | 12 | 13 | 0.923076923077 | 0.923076923077 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 076 | pandas-dev/pandas | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 077 | pandas-dev/pandas | 0 | 0 | 0 | 11 | 0 | 12 | 14 | 0.857142857143 | 0.857142857143 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 078 | pandas-dev/pandas | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 079 | pandas-dev/pandas | 0 | 0 | 0 | 10 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 080 | pandas-dev/pandas | 0 | 0 | 0 | 6 | 0 | 10 | 12 | 0.833333333333 | 0.833333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 081 | pandas-dev/pandas | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 082 | pandas-dev/pandas | 0 | 0 | 0 | 23 | 0 | 0 | 23 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 083 | pandas-dev/pandas | 0 | 0 | 224 | 347 | 0.64553314121 | 224 | 347 | 0.64553314121 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 084 | pandas-dev/pandas | 0 | 0 | 0 | 4 | 0 | 42 | 43 | 0.976744186047 | 0.976744186047 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 085 | pandas-dev/pandas | 0 | 0 | 1 | 54 | 0.0185185185185 | 1 | 54 | 0.0185185185185 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 086 | pandas-dev/pandas | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 087 | pandas-dev/pandas | 0 | 0 | 0 | 21 | 0 | 0 | 21 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 088 | sympy/sympy | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 089 | sympy/sympy | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 090 | sympy/sympy | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 091 | sympy/sympy | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 092 | sympy/sympy | 0 | 0 | 0 | 11 | 0 | 11 | 22 | 0.5 | 0.5 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 093 | sympy/sympy | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 094 | pydata/xarray | 0 | 0 | 0 | 19 | 0 | 0 | 19 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 095 | pydata/xarray | 0 | 0 | 0 | 34 | 0 | 13 | 34 | 0.382352941176 | 0.382352941176 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 096 | pydata/xarray | 0 | 0 | 0 | 3 | 0 | 6 | 18 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 097 | pydata/xarray | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 098 | pydata/xarray | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 099 | pydata/xarray | 0 | 0 | 0 | 14 | 0 | 0 | 14 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 100 | pypa/hatch | 0 | 0 | 0 | 13 | 0 | 5 | 13 | 0.384615384615 | 0.384615384615 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 101 | pypa/hatch | 0 | 0 | 0 | 19 | 0 | 0 | 19 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 102 | pypa/setuptools | 0 | 0 | 0 | 26 | 0 | 1 | 30 | 0.0333333333333 | 0.0333333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 103 | pytest-dev/pytest | 0 | 0 | 0 | 180 | 0 | 121 | 169 | 0.715976331361 | 0.715976331361 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 104 | pytest-dev/pytest | 0 | 0 | 7 | 29 | 0.241379310345 | 7 | 29 | 0.241379310345 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 105 | astropy/astropy | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 106 | astropy/astropy | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 107 | astropy/astropy | 0 | 0 | 0 | 20 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 108 | astropy/astropy | 0 | 0 | 0 | 60 | 0 | 0 | 60 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 109 | astropy/astropy | 0 | 0 | 0 | 80 | 0 | 0 | 184 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 110 | astropy/astropy | 0 | 0 | 0 | 40 | 0 | 16 | 44 | 0.363636363636 | 0.363636363636 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 111 | astropy/astropy | 0 | 0 | 0 | 16 | 0 | 0 | 48 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 112 | astropy/astropy | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 113 | astropy/astropy | 0 | 0 | 0 | 18 | 0 | 1 | 29 | 0.0344827586207 | 0.0344827586207 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 114 | astropy/astropy | 0 | 0 | 0 | 9 | 0 | 3 | 54 | 0.0555555555556 | 0.0555555555556 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 115 | astropy/astropy | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 116 | astropy/astropy | 0 | 0 | 0 | 44 | 0 | 13 | 43 | 0.302325581395 | 0.302325581395 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 117 | astropy/astropy | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 118 | astropy/astropy | 0 | 0 | 0 | 15 | 0 | 28 | 960 | 0.0291666666667 | 0.0291666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 119 | astropy/astropy | 0 | 0 | 0 | 5 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 120 | astropy/astropy | 0 | 0 | 0 | 11 | 0 | 0 | 33 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 121 | astropy/astropy | 0 | 0 | 0 | 27 | 0 | 0 | 27 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 122 | optuna/optuna | 0 | 0 | 0 | 11 | 0 | 4 | 28 | 0.142857142857 | 0.142857142857 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 123 | pydantic/pydantic | 0 | 0 | 0 | 10 | 0 | 2 | 10 | 0.2 | 0.2 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 124 | pydantic/pydantic | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 125 | pydantic/pydantic | 0 | 0 | 0 | 21 | 0 | 0 | 64 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 126 | pydantic/pydantic | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 127 | pydantic/pydantic | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 129 | matplotlib/matplotlib | 0 | 0 | 13 | 27 | 0.481481481481 | 13 | 27 | 0.481481481481 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 130 | matplotlib/matplotlib | 0 | 0 | 26 | 29 | 0.896551724138 | 26 | 29 | 0.896551724138 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 131 | linkedin/Liger-Kernel | 0 | 0 | 0 | 17 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 132 | linkedin/Liger-Kernel | 0 | 0 | 0 | 40 | 0 | 0 | 40 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 133 | linkedin/Liger-Kernel | 0 | 0 | 0 | 5 | 0 | 0 | 50 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 134 | linkedin/Liger-Kernel | 0 | 0 | 0 | 14 | 0 | 0 | 14 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 135 | linkedin/Liger-Kernel | 0 | 0 | 0 | 4 | 0 | 0 | 36 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 136 | linkedin/Liger-Kernel | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 137 | linkedin/Liger-Kernel | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 138 | python/mypy | 0 | 0 | 3 | 10 | 0.3 | 3 | 10 | 0.3 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 139 | python/mypy | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 140 | mwaskom/seaborn | 0 | 0 | 0 | 88 | 0 | 0 | 88 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 141 | mwaskom/seaborn | 0 | 0 | 0 | 179 | 0 | 60 | 202 | 0.29702970297 | 0.29702970297 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 142 | mwaskom/seaborn | 0 | 0 | 2 | 52 | 0.0384615384615 | 0 | 55 | 0 | -0.0384615384615 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 143 | mwaskom/seaborn | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 144 | mwaskom/seaborn | 0 | 0 | 0 | 90 | 0 | 0 | 90 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 145 | mwaskom/seaborn | 0 | 0 | 0 | 101 | 0 | 3 | 103 | 0.0291262135922 | 0.0291262135922 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 146 | mwaskom/seaborn | 0 | 0 | 0 | 29 | 0 | 6 | 29 | 0.206896551724 | 0.206896551724 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 147 | mwaskom/seaborn | 0 | 0 | 0 | 72 | 0 | 49 | 69 | 0.710144927536 | 0.710144927536 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 148 | mwaskom/seaborn | 0 | 0 | 26 | 52 | 0.5 | 9 | 52 | 0.173076923077 | -0.326923076923 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 149 | mwaskom/seaborn | 0 | 0 | 0 | 172 | 0 | 0 | 172 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 150 | mwaskom/seaborn | 0 | 0 | 0 | 13 | 0 | 10 | 13 | 0.769230769231 | 0.769230769231 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 151 | scikit-learn/scikit-learn | 0 | 0 | 39 | 39 | 1 | 35 | 39 | 0.897435897436 | -0.102564102564 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 152 | scikit-learn/scikit-learn | 0 | 0 | 7 | 10 | 0.7 | 7 | 10 | 0.7 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 153 | scikit-learn/scikit-learn | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 154 | huggingface/transformers | 0 | 0 | 0 | 16 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 155 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 156 | huggingface/transformers | 0 | 0 | 33 | 98 | 0.336734693878 | 33 | 98 | 0.336734693878 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 157 | huggingface/transformers | 0 | 0 | 0 | 19 | 0 | 0 | 19 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 158 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 159 | huggingface/transformers | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 160 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 161 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 162 | huggingface/transformers | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 163 | huggingface/transformers | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 164 | huggingface/transformers | 0 | 0 | 0 | 13 | 0 | 5 | 13 | 0.384615384615 | 0.384615384615 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 165 | huggingface/transformers | 0 | 0 | 0 | 10 | 0 | 0 | 55 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 166 | huggingface/transformers | 0 | 0 | 4 | 9 | 0.444444444444 | 4 | 9 | 0.444444444444 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 167 | huggingface/transformers | 0 | 0 | 0 | 21 | 0 | 0 | 21 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 168 | huggingface/transformers | 0 | 1 | 0 | 14 | 0 | 9 | 9 | 1 | 1 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 169 | huggingface/transformers | 0 | 0 | 0 | 11 | 0 | 2 | 11 | 0.181818181818 | 0.181818181818 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 170 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 171 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 172 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 173 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 174 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 175 | huggingface/transformers | 0 | 0 | 27 | 41 | 0.658536585366 | 27 | 41 | 0.658536585366 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 176 | huggingface/transformers | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 177 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 178 | huggingface/transformers | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 179 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 180 | huggingface/transformers | 0 | 0 | 0 | 15 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 181 | huggingface/transformers | 0 | 0 | 0 | 7 | 0 | 0 | 105 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 182 | huggingface/transformers | 0 | 0 | 0 | 13 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 183 | huggingface/transformers | 0 | 0 | 0 | 6 | 0 | 2 | 30 | 0.0666666666667 | 0.0666666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 184 | huggingface/transformers | 0 | 0 | 0 | 5 | 0 | 0 | 35 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 185 | huggingface/transformers | 0 | 0 | 33 | 65 | 0.507692307692 | 33 | 65 | 0.507692307692 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 186 | huggingface/transformers | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 187 | sphinx-doc/sphinx | 0 | 0 | 0 | 29 | 0 | 0 | 29 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 188 | sphinx-doc/sphinx | 0 | 0 | 0 | 35 | 0 | 0 | 35 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 189 | sphinx-doc/sphinx | 0 | 0 | 0 | 24 | 0 | 0 | 24 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 190 | sphinx-doc/sphinx | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 191 | sphinx-doc/sphinx | 0 | 0 | 1 | 45 | 0.0222222222222 | 5 | 45 | 0.111111111111 | 0.0888888888889 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 192 | sphinx-doc/sphinx | 0 | 0 | 0 | 9 | 0 | 24 | 27 | 0.888888888889 | 0.888888888889 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 193 | sphinx-doc/sphinx | 0 | 0 | 1 | 11 | 0.0909090909091 | 1 | 11 | 0.0909090909091 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 194 | sphinx-doc/sphinx | 0 | 0 | 0 | 50 | 0 | 44 | 51 | 0.862745098039 | 0.862745098039 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 195 | sphinx-doc/sphinx | 0 | 0 | 0 | 27 | 0 | 2 | 27 | 0.0740740740741 | 0.0740740740741 |
+| Qwen3.6-35B-A3B | FeatureBench | 47104 | pressure | 196 | sphinx-doc/sphinx | 0 | 0 | 0 | 10 | 0 | 2 | 10 | 0.2 | 0.2 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 001 | pypa/packaging | 0 | 0 | 10 | 294 | 0.0340136054422 | 10 | 294 | 0.0340136054422 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 002 | fastapi/fastapi | 0 | 0 | 7 | 10 | 0.7 | 0 | 1 | 0 | -0.7 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 003 | fastapi/fastapi | 0 | 0 | 9 | 10 | 0.9 | 9 | 10 | 0.9 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 004 | huggingface/trl | 0 | 0 | 300 | 352 | 0.852272727273 | 208 | 352 | 0.590909090909 | -0.261363636364 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 005 | huggingface/trl | 1 | 1 | 352 | 352 | 1 | 352 | 352 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 006 | mlflow/mlflow | 0 | 0 | 33 | 55 | 0.6 | 34 | 55 | 0.618181818182 | 0.0181818181818 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 007 | mlflow/mlflow | 0 | 0 | 26 | 33 | 0.787878787879 | 25 | 33 | 0.757575757576 | -0.030303030303 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 008 | mlflow/mlflow | 0 | 0 | 0 | 26 | 0 | 0 | 26 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 009 | mlflow/mlflow | 0 | 0 | 0 | 22 | 0 | 0 | 22 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 010 | mlflow/mlflow | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 011 | mlflow/mlflow | 0 | 0 | 12 | 18 | 0.666666666667 | 9 | 18 | 0.5 | -0.166666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 012 | mlflow/mlflow | 0 | 0 | 22 | 25 | 0.88 | 25 | 25 | 1 | 0.12 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 013 | mlflow/mlflow | 0 | 0 | 0 | 12 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 014 | mlflow/mlflow | 0 | 0 | 1 | 43 | 0.0232558139535 | 1 | 43 | 0.0232558139535 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 015 | mlflow/mlflow | 0 | 0 | 21 | 30 | 0.7 | 22 | 30 | 0.733333333333 | 0.0333333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 016 | mlflow/mlflow | 0 | 0 | 0 | 11 | 0 | 4 | 15 | 0.266666666667 | 0.266666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 017 | mlflow/mlflow | 0 | 0 | 4 | 11 | 0.363636363636 | 4 | 11 | 0.363636363636 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 018 | mlflow/mlflow | 0 | 0 | 9 | 10 | 0.9 | 9 | 10 | 0.9 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 019 | mlflow/mlflow | 0 | 0 | 18 | 20 | 0.9 | 8 | 20 | 0.4 | -0.5 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 020 | mlflow/mlflow | 0 | 0 | 0 | 20 | 0 | 17 | 20 | 0.85 | 0.85 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 021 | mlflow/mlflow | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 022 | mlflow/mlflow | 1 | 1 | 10 | 10 | 1 | 10 | 10 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 023 | mlflow/mlflow | 1 | 1 | 21 | 21 | 1 | 21 | 21 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 024 | mlflow/mlflow | 0 | 0 | 3 | 10 | 0.3 | 7 | 10 | 0.7 | 0.4 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 025 | mlflow/mlflow | 0 | 0 | 9 | 44 | 0.204545454545 | 9 | 44 | 0.204545454545 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 026 | mlflow/mlflow | 0 | 0 | 0 | 0 | 0 | 10 | 32 | 0.3125 | 0.3125 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 027 | mlflow/mlflow | 0 | 0 | 0 | 19 | 0 | 10 | 19 | 0.526315789474 | 0.526315789474 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 028 | mlflow/mlflow | 0 | 0 | 0 | 19 | 0 | 17 | 19 | 0.894736842105 | 0.894736842105 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 029 | mlflow/mlflow | 0 | 0 | 25 | 26 | 0.961538461538 | 26 | 26 | 1 | 0.0384615384615 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 030 | mlflow/mlflow | 0 | 0 | 0 | 13 | 0 | 0 | 13 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 031 | mlflow/mlflow | 0 | 0 | 4 | 22 | 0.181818181818 | 2 | 22 | 0.0909090909091 | -0.0909090909091 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 032 | mlflow/mlflow | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 033 | mlflow/mlflow | 0 | 0 | 0 | 88 | 0 | 0 | 88 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 034 | mlflow/mlflow | 0 | 0 | 13 | 18 | 0.722222222222 | 9 | 18 | 0.5 | -0.222222222222 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 035 | mlflow/mlflow | 0 | 0 | 2 | 15 | 0.133333333333 | 1 | 15 | 0.0666666666667 | -0.0666666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 036 | mlflow/mlflow | 0 | 0 | 9 | 14 | 0.642857142857 | 9 | 14 | 0.642857142857 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 037 | mlflow/mlflow | 0 | 0 | 13 | 13 | 1 | 13 | 13 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 038 | mlflow/mlflow | 1 | 1 | 25 | 25 | 1 | 25 | 25 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 039 | mlflow/mlflow | 0 | 0 | 8 | 13 | 0.615384615385 | 9 | 13 | 0.692307692308 | 0.0769230769231 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 040 | mlflow/mlflow | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 041 | mlflow/mlflow | 0 | 0 | 11 | 13 | 0.846153846154 | 11 | 13 | 0.846153846154 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 042 | mlflow/mlflow | 0 | 0 | 8 | 18 | 0.444444444444 | 8 | 18 | 0.444444444444 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 043 | mlflow/mlflow | 0 | 0 | 0 | 1 | 0 | 4 | 15 | 0.266666666667 | 0.266666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 044 | mlflow/mlflow | 0 | 0 | 0 | 50 | 0 | 0 | 50 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 045 | mlflow/mlflow | 0 | 0 | 21 | 21 | 1 | 21 | 21 | 1 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 046 | mlflow/mlflow | 0 | 0 | 0 | 14 | 0 | 13 | 14 | 0.928571428571 | 0.928571428571 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 047 | mlflow/mlflow | 0 | 0 | 1 | 29 | 0.0344827586207 | 0 | 29 | 0 | -0.0344827586207 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 048 | mlflow/mlflow | 0 | 0 | 0 | 56 | 0 | 0 | 56 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 049 | mlflow/mlflow | 0 | 0 | 16 | 47 | 0.340425531915 | 7 | 47 | 0.148936170213 | -0.191489361702 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 050 | mlflow/mlflow | 0 | 0 | 0 | 23 | 0 | 8 | 23 | 0.347826086957 | 0.347826086957 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 051 | mlflow/mlflow | 0 | 0 | 10 | 13 | 0.769230769231 | 10 | 13 | 0.769230769231 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 052 | mlflow/mlflow | 0 | 0 | 11 | 14 | 0.785714285714 | 11 | 14 | 0.785714285714 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 053 | mlflow/mlflow | 0 | 0 | 0 | 11 | 0 | 24 | 76 | 0.315789473684 | 0.315789473684 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 054 | mesonbuild/meson | 0 | 0 | 13 | 38 | 0.342105263158 | 13 | 36 | 0.361111111111 | 0.0190058479532 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 055 | mesonbuild/meson | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 056 | Netflix/metaflow | 0 | 0 | 30 | 31 | 0.967741935484 | 0 | 32 | 0 | -0.967741935484 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 069 | pandas-dev/pandas | 0 | 0 | 0 | 15 | 0 | 0 | 15 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 070 | pandas-dev/pandas | 0 | 0 | 0 | 11 | 0 | 0 | 11 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 071 | pandas-dev/pandas | 0 | 0 | 1 | 27 | 0.037037037037 | 1 | 27 | 0.037037037037 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 072 | pandas-dev/pandas | 0 | 0 | 0 | 25 | 0 | 0 | 25 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 073 | pandas-dev/pandas | 0 | 1 | 4 | 14 | 0.285714285714 | 14 | 14 | 1 | 0.714285714286 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 074 | pandas-dev/pandas | 0 | 0 | 0 | 2 | 0 | 3 | 29 | 0.103448275862 | 0.103448275862 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 075 | pandas-dev/pandas | 0 | 0 | 3 | 13 | 0.230769230769 | 4 | 13 | 0.307692307692 | 0.0769230769231 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 076 | pandas-dev/pandas | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 077 | pandas-dev/pandas | 0 | 0 | 5 | 14 | 0.357142857143 | 9 | 14 | 0.642857142857 | 0.285714285714 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 078 | pandas-dev/pandas | 0 | 0 | 0 | 3 | 0 | 75 | 164 | 0.457317073171 | 0.457317073171 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 079 | pandas-dev/pandas | 0 | 0 | 11 | 16 | 0.6875 | 11 | 16 | 0.6875 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 080 | pandas-dev/pandas | 0 | 0 | 5 | 12 | 0.416666666667 | 8 | 12 | 0.666666666667 | 0.25 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 081 | pandas-dev/pandas | 0 | 0 | 0 | 0 | 0 | 0 | 47 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 082 | pandas-dev/pandas | 0 | 0 | 1 | 40 | 0.025 | 1 | 40 | 0.025 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 083 | pandas-dev/pandas | 0 | 0 | 224 | 347 | 0.64553314121 | 224 | 347 | 0.64553314121 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 084 | pandas-dev/pandas | 0 | 0 | 0 | 43 | 0 | 42 | 43 | 0.976744186047 | 0.976744186047 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 085 | pandas-dev/pandas | 0 | 0 | 1 | 54 | 0.0185185185185 | 1 | 54 | 0.0185185185185 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 086 | pandas-dev/pandas | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 087 | pandas-dev/pandas | 0 | 0 | 0 | 321 | 0 | 241 | 321 | 0.750778816199 | 0.750778816199 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 088 | sympy/sympy | 0 | 0 | 0 | 7 | 0 | 23 | 70 | 0.328571428571 | 0.328571428571 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 089 | sympy/sympy | 0 | 0 | 0 | 12 | 0 | 0 | 12 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 090 | sympy/sympy | 0 | 0 | 10 | 49 | 0.204081632653 | 37 | 49 | 0.755102040816 | 0.551020408163 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 091 | sympy/sympy | 0 | 0 | 0 | 12 | 0 | 1 | 12 | 0.0833333333333 | 0.0833333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 092 | sympy/sympy | 0 | 0 | 12 | 22 | 0.545454545455 | 21 | 22 | 0.954545454545 | 0.409090909091 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 093 | sympy/sympy | 0 | 0 | 0 | 16 | 0 | 0 | 16 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 094 | pydata/xarray | 0 | 0 | 0 | 19 | 0 | 0 | 19 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 095 | pydata/xarray | 0 | 0 | 11 | 34 | 0.323529411765 | 13 | 34 | 0.382352941176 | 0.0588235294118 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 096 | pydata/xarray | 0 | 0 | 6 | 18 | 0.333333333333 | 9 | 18 | 0.5 | 0.166666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 097 | pydata/xarray | 0 | 0 | 4 | 14 | 0.285714285714 | 7 | 14 | 0.5 | 0.214285714286 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 098 | pydata/xarray | 0 | 0 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 099 | pydata/xarray | 0 | 0 | 4 | 20 | 0.2 | 18 | 20 | 0.9 | 0.7 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 100 | pypa/hatch | 0 | 0 | 1 | 13 | 0.0769230769231 | 5 | 13 | 0.384615384615 | 0.307692307692 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 101 | pypa/hatch | 0 | 0 | 0 | 19 | 0 | 0 | 19 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 102 | pypa/setuptools | 0 | 0 | 0 | 26 | 0 | 7 | 30 | 0.233333333333 | 0.233333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 103 | pytest-dev/pytest | 0 | 0 | 133 | 169 | 0.786982248521 | 132 | 169 | 0.781065088757 | -0.00591715976331 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 104 | pytest-dev/pytest | 0 | 0 | 7 | 29 | 0.241379310345 | 14 | 29 | 0.48275862069 | 0.241379310345 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 105 | astropy/astropy | 0 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 106 | astropy/astropy | 0 | 0 | 1 | 36 | 0.0277777777778 | 1 | 36 | 0.0277777777778 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 107 | astropy/astropy | 0 | 0 | 0 | 20 | 0 | 0 | 20 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 108 | astropy/astropy | 0 | 0 | 0 | 90 | 0 | 0 | 90 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 109 | astropy/astropy | 0 | 0 | 0 | 184 | 0 | 3 | 184 | 0.0163043478261 | 0.0163043478261 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 110 | astropy/astropy | 0 | 0 | 13 | 44 | 0.295454545455 | 22 | 44 | 0.5 | 0.204545454545 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 111 | astropy/astropy | 0 | 0 | 0 | 48 | 0 | 3 | 48 | 0.0625 | 0.0625 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 112 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 113 | astropy/astropy | 0 | 0 | 1 | 29 | 0.0344827586207 | 2 | 29 | 0.0689655172414 | 0.0344827586207 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 114 | astropy/astropy | 0 | 0 | 3 | 54 | 0.0555555555556 | 3 | 54 | 0.0555555555556 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 115 | astropy/astropy | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 116 | astropy/astropy | 0 | 0 | 8 | 43 | 0.186046511628 | 11 | 43 | 0.255813953488 | 0.0697674418605 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 117 | astropy/astropy | 0 | 0 | 0 | 17 | 0 | 10 | 17 | 0.588235294118 | 0.588235294118 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 118 | astropy/astropy | 0 | 0 | 0 | 15 | 0 | 28 | 960 | 0.0291666666667 | 0.0291666666667 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 119 | astropy/astropy | 0 | 0 | 0 | 5 | 0 | 0 | 10 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 120 | astropy/astropy | 0 | 0 | 0 | 11 | 0 | 0 | 33 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 121 | astropy/astropy | 0 | 0 | 0 | 27 | 0 | 17 | 27 | 0.62962962963 | 0.62962962963 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 122 | optuna/optuna | 0 | 0 | 4 | 28 | 0.142857142857 | 4 | 28 | 0.142857142857 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 123 | pydantic/pydantic | 0 | 0 | 5 | 10 | 0.5 | 4 | 10 | 0.4 | -0.1 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 124 | pydantic/pydantic | 0 | 0 | 0 | 12 | 0 | 4 | 12 | 0.333333333333 | 0.333333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 125 | pydantic/pydantic | 0 | 0 | 0 | 0 | 0 | 49 | 64 | 0.765625 | 0.765625 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 126 | pydantic/pydantic | 0 | 0 | 0 | 116 | 0 | 0 | 116 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 127 | pydantic/pydantic | 0 | 0 | 0 | 26 | 0 | 0 | 26 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 129 | matplotlib/matplotlib | 0 | 0 | 13 | 27 | 0.481481481481 | 13 | 27 | 0.481481481481 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 130 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 26 | 29 | 0.896551724138 | 0.896551724138 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 131 | linkedin/Liger-Kernel | 0 | 0 | 0 | 17 | 0 | 0 | 17 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 132 | linkedin/Liger-Kernel | 0 | 0 | 0 | 40 | 0 | 0 | 40 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 133 | linkedin/Liger-Kernel | 0 | 0 | 0 | 5 | 0 | 0 | 50 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 134 | linkedin/Liger-Kernel | 0 | 0 | 0 | 14 | 0 | 0 | 14 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 135 | linkedin/Liger-Kernel | 0 | 0 | 0 | 36 | 0 | 0 | 36 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 136 | linkedin/Liger-Kernel | 0 | 0 | 0 | 1 | 0 | 0 | 22 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 137 | linkedin/Liger-Kernel | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 138 | python/mypy | 0 | 0 | 3 | 10 | 0.3 | 3 | 10 | 0.3 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 139 | python/mypy | 0 | 0 | 0 | 7 | 0 | 0 | 7 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 140 | mwaskom/seaborn | 0 | 0 | 14 | 119 | 0.117647058824 | 14 | 119 | 0.117647058824 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 141 | mwaskom/seaborn | 0 | 0 | 195 | 202 | 0.965346534653 | 177 | 202 | 0.876237623762 | -0.0891089108911 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 142 | mwaskom/seaborn | 0 | 0 | 20 | 52 | 0.384615384615 | 2 | 52 | 0.0384615384615 | -0.346153846154 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 143 | mwaskom/seaborn | 0 | 0 | 3 | 16 | 0.1875 | 0 | 16 | 0 | -0.1875 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 144 | mwaskom/seaborn | 0 | 0 | 0 | 90 | 0 | 45 | 202 | 0.222772277228 | 0.222772277228 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 145 | mwaskom/seaborn | 0 | 0 | 4 | 103 | 0.0388349514563 | 0 | 101 | 0 | -0.0388349514563 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 146 | mwaskom/seaborn | 0 | 0 | 0 | 29 | 0 | 10 | 29 | 0.344827586207 | 0.344827586207 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 147 | mwaskom/seaborn | 0 | 0 | 25 | 69 | 0.36231884058 | 48 | 69 | 0.695652173913 | 0.333333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 148 | mwaskom/seaborn | 0 | 0 | 17 | 52 | 0.326923076923 | 26 | 52 | 0.5 | 0.173076923077 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 149 | mwaskom/seaborn | 0 | 0 | 1 | 258 | 0.00387596899225 | 1 | 258 | 0.00387596899225 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 150 | mwaskom/seaborn | 0 | 0 | 6 | 13 | 0.461538461538 | 10 | 13 | 0.769230769231 | 0.307692307692 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 151 | scikit-learn/scikit-learn | 0 | 0 | 39 | 39 | 1 | 35 | 39 | 0.897435897436 | -0.102564102564 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 152 | scikit-learn/scikit-learn | 0 | 0 | 7 | 10 | 0.7 | 0 | 5 | 0 | -0.7 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 153 | scikit-learn/scikit-learn | 0 | 0 | 0 | 2 | 0 | 61 | 218 | 0.279816513761 | 0.279816513761 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 154 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 155 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 156 | huggingface/transformers | 0 | 0 | 42 | 98 | 0.428571428571 | 33 | 98 | 0.336734693878 | -0.0918367346939 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 157 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 158 | huggingface/transformers | 0 | 0 | 68 | 69 | 0.985507246377 | 0 | 1 | 0 | -0.985507246377 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 159 | huggingface/transformers | 0 | 0 | 0 | 18 | 0 | 3 | 14 | 0.214285714286 | 0.214285714286 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 160 | huggingface/transformers | 0 | 0 | 7 | 67 | 0.10447761194 | 7 | 67 | 0.10447761194 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 161 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 162 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 163 | huggingface/transformers | 0 | 0 | 37 | 39 | 0.948717948718 | 0 | 13 | 0 | -0.948717948718 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 164 | huggingface/transformers | 0 | 0 | 8 | 13 | 0.615384615385 | 8 | 13 | 0.615384615385 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 165 | huggingface/transformers | 0 | 0 | 0 | 55 | 0 | 0 | 55 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 166 | huggingface/transformers | 0 | 0 | 0 | 18 | 0 | 4 | 9 | 0.444444444444 | 0.444444444444 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 167 | huggingface/transformers | 0 | 0 | 0 | 21 | 0 | 0 | 21 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 168 | huggingface/transformers | 0 | 0 | 0 | 14 | 0 | 8 | 9 | 0.888888888889 | 0.888888888889 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 169 | huggingface/transformers | 0 | 0 | 2 | 11 | 0.181818181818 | 2 | 11 | 0.181818181818 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 170 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 171 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 172 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 173 | huggingface/transformers | 1 | 0 | 41 | 41 | 1 | 0 | 1 | 0 | -1 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 174 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 175 | huggingface/transformers | 0 | 0 | 27 | 41 | 0.658536585366 | 27 | 41 | 0.658536585366 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 176 | huggingface/transformers | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 177 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 178 | huggingface/transformers | 0 | 0 | 2 | 15 | 0.133333333333 | 0 | 18 | 0 | -0.133333333333 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 179 | huggingface/transformers | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 180 | huggingface/transformers | 0 | 0 | 0 | 18 | 0 | 0 | 18 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 181 | huggingface/transformers | 0 | 0 | 90 | 91 | 0.989010989011 | 90 | 91 | 0.989010989011 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 182 | huggingface/transformers | 0 | 0 | 39 | 40 | 0.975 | 0 | 1 | 0 | -0.975 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 183 | huggingface/transformers | 0 | 0 | 2 | 30 | 0.0666666666667 | 4 | 29 | 0.137931034483 | 0.0712643678161 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 184 | huggingface/transformers | 0 | 0 | 0 | 35 | 0 | 0 | 35 | 0 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 185 | huggingface/transformers | 0 | 0 | 0 | 20 | 0 | 33 | 65 | 0.507692307692 | 0.507692307692 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 186 | huggingface/transformers | 0 | 0 | 3 | 10 | 0.3 | 3 | 10 | 0.3 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 187 | sphinx-doc/sphinx | 0 | 0 | 17 | 64 | 0.265625 | 17 | 64 | 0.265625 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 188 | sphinx-doc/sphinx | 0 | 0 | 0 | 35 | 0 | 23 | 35 | 0.657142857143 | 0.657142857143 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 189 | sphinx-doc/sphinx | 0 | 0 | 0 | 24 | 0 | 10 | 28 | 0.357142857143 | 0.357142857143 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 190 | sphinx-doc/sphinx | 0 | 0 | 0 | 13 | 0 | 1 | 13 | 0.0769230769231 | 0.0769230769231 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 191 | sphinx-doc/sphinx | 0 | 0 | 1 | 45 | 0.0222222222222 | 1 | 45 | 0.0222222222222 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 192 | sphinx-doc/sphinx | 0 | 0 | 0 | 9 | 0 | 14 | 27 | 0.518518518519 | 0.518518518519 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 193 | sphinx-doc/sphinx | 0 | 0 | 1 | 11 | 0.0909090909091 | 1 | 11 | 0.0909090909091 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 194 | sphinx-doc/sphinx | 0 | 0 | 44 | 51 | 0.862745098039 | 41 | 51 | 0.803921568627 | -0.0588235294118 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 195 | sphinx-doc/sphinx | 0 | 0 | 2 | 27 | 0.0740740740741 | 2 | 27 | 0.0740740740741 | 0 |
+| Qwen3.6-35B-A3B | FeatureBench | 262144 | large window | 196 | sphinx-doc/sphinx | 0 | 0 | 2 | 10 | 0.2 | 2 | 10 | 0.2 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 004 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 006 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 007 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 12 | 20 | 0.6 | 0.6 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 008 | astropy/astropy | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 009 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 013 | astropy/astropy | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 021 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 023 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 024 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 030 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 031 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 035 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 037 | django/django | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 040 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 041 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 043 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 048 | django/django | 0 | 0 | 0 | 0 | 0 | 4 | 6 | 0.666666666667 | 0.666666666667 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 049 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 054 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 055 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 059 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 062 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 066 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 068 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 083 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0.333333333333 | 0.333333333333 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 086 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 089 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 092 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 096 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 100 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 104 | django/django | 0 | 0 | 2 | 5 | 0.4 | 0 | 0 | 0 | -0.4 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 105 | django/django | 1 | 0 | 9 | 9 | 1 | 0 | 9 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 107 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 110 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 113 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 116 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 121 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 123 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 131 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 140 | django/django | 1 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 141 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 144 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 149 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 152 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 161 | django/django | 0 | 1 | 2 | 3 | 0.666666666667 | 3 | 3 | 1 | 0.333333333333 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 164 | django/django | 0 | 0 | 2 | 2 | 1 | 0 | 0 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 166 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 171 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 175 | django/django | 1 | 0 | 3 | 3 | 1 | 1 | 3 | 0.333333333333 | -0.666666666667 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 176 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 177 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 181 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 182 | django/django | 0 | 1 | 0 | 0 | 0 | 3 | 3 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 183 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 184 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 194 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 196 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 197 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 199 | django/django | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 202 | django/django | 0 | 0 | 1 | 2 | 0.5 | 1 | 2 | 0.5 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 203 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 205 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 212 | django/django | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 213 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 215 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 223 | django/django | 0 | 0 | 6 | 9 | 0.666666666667 | 0 | 9 | 0 | -0.666666666667 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 233 | django/django | 0 | 0 | 7 | 8 | 0.875 | 5 | 8 | 0.625 | -0.25 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 235 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 237 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 239 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 242 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 243 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 244 | django/django | 0 | 0 | 2 | 4 | 0.5 | 2 | 4 | 0.5 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 246 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 248 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 252 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 255 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 256 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 257 | matplotlib/matplotlib | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 263 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 264 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 270 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 274 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 278 | matplotlib/matplotlib | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 281 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 4 | 7 | 0.571428571429 | 0.571428571429 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 282 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 283 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 286 | matplotlib/matplotlib | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 288 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 289 | mwaskom/seaborn | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 298 | psf/requests | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 299 | pydata/xarray | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 300 | pydata/xarray | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 313 | pydata/xarray | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 315 | pydata/xarray | 0 | 0 | 0 | 3 | 0 | 3 | 3 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 316 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 318 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 321 | pylint-dev/pylint | 0 | 0 | 0 | 10 | 0 | 0 | 10 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 323 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 324 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 325 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 328 | pylint-dev/pylint | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 330 | pylint-dev/pylint | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 333 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 336 | pytest-dev/pytest | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 339 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 342 | pytest-dev/pytest | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 345 | pytest-dev/pytest | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 349 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 351 | scikit-learn/scikit-learn | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 352 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 358 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 365 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 366 | scikit-learn/scikit-learn | 0 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 368 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 370 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 372 | scikit-learn/scikit-learn | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 374 | scikit-learn/scikit-learn | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 375 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 378 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 380 | scikit-learn/scikit-learn | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 381 | scikit-learn/scikit-learn | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 383 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 384 | sphinx-doc/sphinx | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 386 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 391 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 394 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 395 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 397 | sphinx-doc/sphinx | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | -1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 398 | sphinx-doc/sphinx | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 399 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 400 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 402 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 404 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 406 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 407 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 409 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 410 | sphinx-doc/sphinx | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 411 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 414 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 415 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 417 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 419 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 420 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 421 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 422 | sphinx-doc/sphinx | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 428 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 429 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 430 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 431 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 432 | sympy/sympy | 0 | 0 | 1 | 2 | 0.5 | 0 | 2 | 0 | -0.5 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 436 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 440 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 441 | sympy/sympy | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 444 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 445 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 446 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 447 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 454 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 458 | sympy/sympy | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 467 | sympy/sympy | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 469 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 471 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 473 | sympy/sympy | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 477 | sympy/sympy | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 482 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 485 | sympy/sympy | 0 | 0 | 0 | 6 | 0 | 3 | 6 | 0.5 | 0.5 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 486 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Devstral Small 2 24B | SWE-bench Verified | 20480 | severe pressure | 488 | sympy/sympy | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 004 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 006 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 007 | astropy/astropy | 0 | 0 | 0 | 20 | 0 | 0 | 20 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 008 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 009 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 013 | astropy/astropy | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 021 | astropy/astropy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 023 | django/django | 0 | 0 | 0 | 0 | 0 | 438 | 438 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 024 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 030 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 031 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 035 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 037 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 040 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 041 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 043 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 048 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 049 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 054 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 055 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 059 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 062 | django/django | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 066 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 068 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 083 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 086 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 089 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 092 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 096 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 100 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 104 | django/django | 0 | 0 | 3 | 5 | 0.6 | 0 | 5 | 0 | -0.6 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 105 | django/django | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 107 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 110 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 113 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 116 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 121 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 123 | django/django | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 131 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 140 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 141 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 144 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 149 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 152 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 161 | django/django | 0 | 1 | 0 | 3 | 0 | 3 | 3 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 164 | django/django | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 166 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 171 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 175 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 176 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 177 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 181 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 182 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 183 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 184 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 194 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 196 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 197 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 199 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 202 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 203 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 205 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 212 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 213 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 215 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 223 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 233 | django/django | 0 | 0 | 1 | 8 | 0.125 | 4 | 8 | 0.5 | 0.375 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 235 | django/django | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | -1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 237 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 239 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 242 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 243 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 244 | django/django | 0 | 1 | 2 | 4 | 0.5 | 4 | 4 | 1 | 0.5 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 246 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 248 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 252 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 255 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 256 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 257 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 263 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 264 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 270 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 274 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 278 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 281 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 282 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 283 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 286 | matplotlib/matplotlib | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 288 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 289 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 298 | psf/requests | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 299 | pydata/xarray | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 300 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 313 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 315 | pydata/xarray | 0 | 0 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 316 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 318 | pydata/xarray | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 321 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 323 | pylint-dev/pylint | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 324 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 325 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 328 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 330 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 333 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 336 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 339 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 342 | pytest-dev/pytest | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 345 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 349 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 351 | scikit-learn/scikit-learn | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 352 | scikit-learn/scikit-learn | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 358 | scikit-learn/scikit-learn | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 365 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 366 | scikit-learn/scikit-learn | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 368 | scikit-learn/scikit-learn | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 370 | scikit-learn/scikit-learn | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 372 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 374 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 375 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 378 | scikit-learn/scikit-learn | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 380 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 381 | scikit-learn/scikit-learn | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 383 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 384 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 386 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 391 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 394 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 395 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 397 | sphinx-doc/sphinx | 1 | 0 | 1 | 1 | 1 | 0 | 1 | 0 | -1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 398 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 399 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 400 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 402 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 404 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 406 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 407 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 409 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 410 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 411 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 414 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 415 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 417 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 419 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 420 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 421 | sphinx-doc/sphinx | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 422 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 428 | sympy/sympy | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 429 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 430 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 431 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 432 | sympy/sympy | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 436 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 440 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 441 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 444 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 445 | sympy/sympy | 0 | 1 | 0 | 2 | 0 | 2 | 2 | 1 | 1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 446 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 447 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 454 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 458 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 467 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 469 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 471 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 473 | sympy/sympy | 1 | 0 | 2 | 2 | 1 | 0 | 2 | 0 | -1 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 477 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 482 | sympy/sympy | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 485 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 486 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Nemotron-Cascade 2 30B-A3B | SWE-bench Verified | 20480 | severe pressure | 488 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 004 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 006 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 007 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 008 | astropy/astropy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 009 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 013 | astropy/astropy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 021 | astropy/astropy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 023 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 024 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 030 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 031 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 035 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 037 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 040 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 041 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 043 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 048 | django/django | 0 | 0 | 4 | 6 | 0.666666666667 | 4 | 6 | 0.666666666667 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 049 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 054 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 055 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 059 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 062 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 066 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 068 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 083 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0.333333333333 | 0.333333333333 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 086 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 089 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 092 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 096 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 100 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 104 | django/django | 0 | 0 | 1 | 5 | 0.2 | 2 | 5 | 0.4 | 0.2 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 105 | django/django | 0 | 1 | 0 | 0 | 0 | 9 | 9 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 107 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 110 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 113 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 116 | django/django | 0 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 121 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 123 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 131 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 140 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 141 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 144 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 149 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 152 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 161 | django/django | 1 | 1 | 3 | 3 | 1 | 3 | 3 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 164 | django/django | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 166 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 171 | django/django | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 175 | django/django | 0 | 1 | 0 | 0 | 0 | 3 | 3 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 176 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 177 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 181 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 182 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 183 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 184 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 194 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 196 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 197 | django/django | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 199 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 202 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 203 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 205 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 212 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 213 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 215 | django/django | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 223 | django/django | 0 | 0 | 6 | 9 | 0.666666666667 | 6 | 9 | 0.666666666667 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 233 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 235 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 237 | django/django | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 239 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 242 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 243 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 244 | django/django | 1 | 1 | 4 | 4 | 1 | 4 | 4 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 246 | django/django | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 248 | django/django | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 252 | django/django | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 255 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 256 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 257 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 263 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 264 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 270 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 274 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 278 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 281 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 282 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 283 | matplotlib/matplotlib | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 286 | matplotlib/matplotlib | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 288 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 289 | mwaskom/seaborn | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 298 | psf/requests | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 299 | pydata/xarray | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 300 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 313 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 315 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0.333333333333 | 0.333333333333 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 316 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 318 | pydata/xarray | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 321 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 323 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 324 | pylint-dev/pylint | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 325 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 328 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 330 | pylint-dev/pylint | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 333 | pytest-dev/pytest | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 336 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 339 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 342 | pytest-dev/pytest | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 345 | pytest-dev/pytest | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 349 | pytest-dev/pytest | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 351 | scikit-learn/scikit-learn | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 352 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 358 | scikit-learn/scikit-learn | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 365 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 366 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 368 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 370 | scikit-learn/scikit-learn | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 372 | scikit-learn/scikit-learn | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 374 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 375 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 378 | scikit-learn/scikit-learn | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 380 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 381 | scikit-learn/scikit-learn | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 383 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 384 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 386 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 391 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 394 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 395 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 397 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 398 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 399 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 400 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 402 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 404 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 406 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 407 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 409 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 410 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0.5 | 0.5 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 411 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 414 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 415 | sphinx-doc/sphinx | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 417 | sphinx-doc/sphinx | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 419 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 420 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 421 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 422 | sphinx-doc/sphinx | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 428 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 429 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 430 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 431 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 432 | sympy/sympy | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 436 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 440 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 441 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 444 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 445 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 2 | 2 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 446 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 447 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 454 | sympy/sympy | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 458 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 467 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 469 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 471 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 473 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 477 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 482 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 485 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 5 | 6 | 0.833333333333 | 0.833333333333 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 486 | sympy/sympy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Qwen3.8-27B | SWE-bench Verified | 20480 | severe pressure | 488 | sympy/sympy | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
