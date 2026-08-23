@@ -32,6 +32,10 @@ VALID_ARGUMENTS = {
     },
     "glob": {"pattern": "**/*.py", "path": "src", "page": 1},
     "grep": {"pattern": "value", "path": "src", "glob": "*.py", "page": 2},
+    "lsp": {
+        "kind": "definition", "path": "src/app.py",
+        "line": 4, "character": 2,
+    },
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
