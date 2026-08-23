@@ -77,6 +77,14 @@ _DISPATCH = {
         bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
         unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+        container_runtime=getattr(
+            cfg, "sandbox_container_runtime", "docker"
+        ),
+        container_image=getattr(cfg, "sandbox_container_image", ""),
+        container_flags=tuple(
+            getattr(cfg, "sandbox_container_flags", ()) or ()
+        ),
     ),
     "read": lambda args, cwd, cfg: read(
         args["path"], cwd=cwd, offset=args.get("offset", 0),

@@ -527,6 +527,10 @@ resume_last_n_actions = 3
 # contain `**`. Prefix a pattern with `optional:` when absence is acceptable.
 # Add project-specific masks in config.local.toml.
 [sandbox]
+backend = "bwrap"                 # bwrap | container
+container_runtime = "docker"      # docker | podman
+container_image = ""              # required when backend = "container"
+container_flags = []              # fail-closed resource/metadata allowlist
 unreadable_paths = []
 
 # ---------------------------------------------------------------------------

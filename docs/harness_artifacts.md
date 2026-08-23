@@ -147,7 +147,12 @@ matching `metrics.json` provenance records `thinking_level_requested`,
 `thinking_level_effective`, and `thinking_level_clamped`. These are run
 conditions, not model-side state or evidence of task success.
 
-The same `session_start` row records `model_target`, `model`, `profile_name`,
+The same `session_start` row records `sandbox_backend`, `container_runtime`,
+and `container_image_digest`. Runtime and digest are null for the bwrap
+backend. These fields are run-start provenance and are not projected into
+`.solver/state.json`.
+
+The row also records `model_target`, `model`, `profile_name`,
 `base_url`, and `context_size` for the effective main target. API keys are
 excluded. `model_fallback` events and the post-run fallback metrics are raw
 telemetry/provenance only; `.solver/state.json` does not project them.

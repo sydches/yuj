@@ -44,6 +44,8 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
         return None
     if not session.cfg.sandbox_bash:
         return None
+    if getattr(session.cfg, "sandbox_backend", "bwrap") != "bwrap":
+        return None
     if container_mode() is not None:
         return None
     if not Path(session.cfg.bwrap_bin).is_file():

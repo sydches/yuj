@@ -345,6 +345,17 @@ def _extract_config_fields(d: dict) -> dict:
         "unreadable_paths": tuple(
             d.get("sandbox", {}).get("unreadable_paths", []) or []
         ),
+        "sandbox_backend": d.get("sandbox", {}).get("backend", "bwrap"),
+        "sandbox_container_runtime": d.get("sandbox", {}).get(
+            "container_runtime", "docker"
+        ),
+        "sandbox_container_image": d.get("sandbox", {}).get(
+            "container_image", ""
+        ),
+        "sandbox_container_flags": _string_tuple(
+            d.get("sandbox", {}).get("container_flags", []),
+            path="sandbox.container_flags",
+        ),
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
         "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
         "system_header": _require(d, "prompts", "system_header"),
@@ -489,6 +500,28 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     if not isinstance(cfg.tools_bash_redirect_read_side, bool):
         raise ValueError(
             "config error: tools.bash_redirect_read_side must be a boolean."
+        )
+    if cfg.sandbox_backend not in {"bwrap", "container"}:
+        raise ValueError(
+            "config error: sandbox.backend must be 'bwrap' or 'container', "
+            f"got {cfg.sandbox_backend!r}."
+        )
+    from .harness.sandbox.container_backend import (
+        CONTAINER_RUNTIMES,
+        ContainerBackend,
+        normalize_container_flags,
+    )
+    if cfg.sandbox_container_runtime not in CONTAINER_RUNTIMES:
+        raise ValueError(
+            "config error: sandbox.container_runtime must be 'docker' or "
+            f"'podman', got {cfg.sandbox_container_runtime!r}."
+        )
+    normalize_container_flags(cfg.sandbox_container_flags)
+    if cfg.sandbox_backend == "container":
+        ContainerBackend(
+            runtime=cfg.sandbox_container_runtime,
+            image=cfg.sandbox_container_image,
+            flags=cfg.sandbox_container_flags,
         )
     if (
         isinstance(cfg.tools_ast_search_max_rows, bool)

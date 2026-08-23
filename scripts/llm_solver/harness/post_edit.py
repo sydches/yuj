@@ -220,6 +220,14 @@ def run_post_edit_checks(
             sandbox=cfg.sandbox_bash, bwrap_bin=cfg.bwrap_bin,
             sandbox_required=getattr(cfg, "sandbox_required", False),
             unreadable_paths=tuple(getattr(cfg, "unreadable_paths", ()) or ()),
+            sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+            container_runtime=getattr(
+                cfg, "sandbox_container_runtime", "docker"
+            ),
+            container_image=getattr(cfg, "sandbox_container_image", ""),
+            container_flags=tuple(
+                getattr(cfg, "sandbox_container_flags", ()) or ()
+            ),
         )
         failed = ("[exit code:" in out) or out.startswith("ERROR")
         if not failed:

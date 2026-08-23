@@ -108,7 +108,11 @@ order in the
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
-| `[tools].sandbox_required` | Stop if Yuj cannot start the requested `bwrap` sandbox. |
+| `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
+| `[sandbox].backend` | Select the first-class `bwrap` or `container` command backend. |
+| `[sandbox].container_runtime` | Select `docker` or `podman` for the container backend. |
+| `[sandbox].container_image` | Name an already-local trusted image. Required for the container backend. |
+| `[sandbox].container_flags` | Add allowlisted resource or metadata flags without weakening isolation. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 | `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
@@ -129,6 +133,30 @@ Read [Model tools](model-tools.html) for optional tool settings. Read
 [Run a local model](serving_overlay.html) for runtime files and profiles.
 Read [Extend Yuj with TOML files](extending-yuj.html) before you add or change
 a model, language, or tool descriptor.
+
+### Select a shell sandbox backend
+
+The shipped `[sandbox].backend = "bwrap"` keeps the existing Linux behavior.
+Set it to `"container"`, choose `docker` or `podman`, and name a trusted local
+image to start one short-lived container for each shell-like command. Yuj
+mounts the task directory read-write at the identical absolute path, disables
+networking, keeps the image root read-only, drops capabilities, and never
+pulls a missing image. `bash`, `run_tests`, post-edit checks, and configured
+language servers use the same selected backend. Persistent shell reuse and
+host-side trivial-read shortcuts are disabled for container calls.
+
+At task startup Yuj resolves the runtime and inspects the local image ID. With
+`[tools].sandbox_required = true`, a missing runtime or image stops before a
+model command. With it false, a failed container preflight produces a warning
+and the run explicitly degrades to unsandboxed command execution. Successful
+runs pin calls to the inspected image ID. A first-class container selection
+cannot be combined with the legacy `YUJ_CONTAINER` modes.
+
+`[sandbox].container_flags` accepts only reviewed resource and metadata
+options such as memory, CPU, PID-count, labels, and `--init`. Mount, network,
+environment, entrypoint, device, privilege, and security-boundary flags are
+rejected. See [Sandbox](sandbox.html) for the exact boundary and local-image
+preflight.
 
 ### Save restorable file checkpoints
 

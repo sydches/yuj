@@ -40,7 +40,10 @@ class TraceEventSpec:
 
 TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
-        "session_start", frozenset({"session_number", "thinking_level"})
+        "session_start", frozenset({
+            "session_number", "thinking_level", "sandbox_backend",
+            "container_runtime", "container_image_digest",
+        })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
     TraceEventSpec(
@@ -139,7 +142,10 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     ),
     TraceEventSpec(
         "runtime_envelope",
-        frozenset({"session", "sandbox_mode", "sandbox_engaged"}),
+        frozenset({
+            "session", "sandbox_mode", "sandbox_engaged", "sandbox_backend",
+            "container_runtime", "container_image_digest",
+        }),
     ),
     TraceEventSpec("guardrail_init", frozenset({"session_number"})),
     TraceEventSpec("trace_corrupt", frozenset({"session_number", "kind"})),

@@ -58,7 +58,7 @@ def test_container_argv_has_fail_closed_isolation_defaults(tmp_path: Path) -> No
     assert "--read-only" in argv
     assert _value_after(argv, "--cap-drop") == "ALL"
     assert _value_after(argv, "--security-opt") == "no-new-privileges"
-    assert _value_after(argv, "--pid") == "private"
+    assert "--pid" not in argv  # the runtime default is a private namespace
     assert _value_after(argv, "--ipc") == "private"
     assert _value_after(argv, "--user") == "12:34"
     assert _value_after(argv, "--entrypoint") == "/usr/bin/env"

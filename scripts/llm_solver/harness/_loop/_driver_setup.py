@@ -265,7 +265,11 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
     a sandboxed run from a silently degraded unsandboxed run.
     """
     _container_id = os.environ.get("YUJ_CONTAINER", "")
+    _configured_backend = getattr(cfg, "sandbox_backend", "bwrap")
     _bwrap_present = Path(cfg.bwrap_bin).is_file()
+    _container_runtime: str | None = None
+    _container_image_digest: str | None = None
+    _container_preflight_err: str | None = None
     # Bwrap PREFLIGHT (Codex S3): actually exec a tiny command in
     # a fresh user+net namespace and check exit. Catches the
     # silent class of failures where bwrap is INSTALLED but the
@@ -275,7 +279,57 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
     # produce a per-call warning + silent unsandboxed fallback.
     # Cached at module level: pays once per process. Skipped
     # entirely in container mode (docker exec doesn't use bwrap).
-    if _container_id:
+    if _configured_backend == "container":
+        if _container_id:
+            raise RuntimeError(
+                "sandbox.backend='container' cannot be combined with legacy "
+                "YUJ_CONTAINER; unset YUJ_CONTAINER or select "
+                "sandbox.backend='bwrap'"
+            )
+        _ambient_unshare_net = None
+        _bwrap_preflight_passed = None
+        _bwrap_preflight_err = None
+        _container_runtime = getattr(
+            cfg, "sandbox_container_runtime", "docker"
+        )
+        if not cfg.sandbox_bash:
+            _sandbox_mode = "none"
+            _sandbox_engaged = False
+        else:
+            from ..sandbox.container_backend import (
+                ContainerBackend,
+                ContainerBackendError,
+            )
+
+            backend = ContainerBackend(
+                runtime=_container_runtime,
+                image=getattr(cfg, "sandbox_container_image", ""),
+                flags=tuple(
+                    getattr(cfg, "sandbox_container_flags", ()) or ()
+                ),
+            )
+            try:
+                runtime_bin = backend.resolve_runtime(
+                    sandbox_required=bool(
+                        getattr(cfg, "sandbox_required", False)
+                    )
+                )
+                if runtime_bin is None:
+                    _container_preflight_err = (
+                        f"container runtime {_container_runtime!r} is missing"
+                    )
+                else:
+                    _container_image_digest = backend.image_digest(runtime_bin)
+            except ContainerBackendError as exc:
+                _container_preflight_err = str(exc)
+            _sandbox_engaged = bool(_container_image_digest)
+            _sandbox_mode = "container" if _sandbox_engaged else "none"
+    elif _configured_backend != "bwrap":
+        raise ValueError(
+            "sandbox.backend must be 'bwrap' or 'container'; "
+            f"got {_configured_backend!r}"
+        )
+    elif _container_id:
         _sandbox_mode = "container"
         _sandbox_engaged = True
         _bwrap_preflight_passed: bool | None = None
@@ -366,6 +420,10 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
         session=1,
         sandbox_mode=_sandbox_mode,
         sandbox_engaged=_sandbox_engaged,
+        sandbox_backend=_configured_backend,
+        container_runtime=_container_runtime,
+        container_image_digest=_container_image_digest,
+        container_preflight_error=_container_preflight_err,
         sandbox_bash_cfg=bool(cfg.sandbox_bash),
         sandbox_required_cfg=bool(getattr(cfg, "sandbox_required", False)),
         bwrap_bin=cfg.bwrap_bin,
@@ -387,6 +445,8 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
         # Bump this on any argv-shape change. Today's set includes
         # --unshare-{net,pid,ipc,uts,cgroup,user},
         # --tmpfs $cwd/.git/hooks, --setenv (5 entries),
-        # unreadable_paths masks. Bump to 3 if any of those change.
-        sandbox_policy_version=2,
+        # unreadable_paths masks. Version 3 adds the first-class per-call
+        # Docker/Podman backend with no-pull, no-network, read-only-root,
+        # capability-drop, identical-cwd mount, and explicit environment.
+        sandbox_policy_version=3,
     )

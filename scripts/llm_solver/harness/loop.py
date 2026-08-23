@@ -284,6 +284,15 @@ class Session:
                 bwrap_bin=cfg.bwrap_bin,
                 unreadable_paths=_bash_unreadable_paths(cwd, cfg),
                 sandbox_required=getattr(cfg, "sandbox_required", False),
+                sandbox=bool(getattr(cfg, "sandbox_bash", True)),
+                sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+                container_runtime=getattr(
+                    cfg, "sandbox_container_runtime", "docker"
+                ),
+                container_image=getattr(cfg, "sandbox_container_image", ""),
+                container_flags=tuple(
+                    getattr(cfg, "sandbox_container_flags", ()) or ()
+                ),
                 diagnostics_timeout_s=float(
                     getattr(cfg, "lsp_diagnostics_timeout_s", 2.0)
                 ),

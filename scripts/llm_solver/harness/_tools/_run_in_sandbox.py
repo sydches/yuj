@@ -2,6 +2,7 @@
 import logging
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 from .._tool_filters import (
@@ -88,6 +89,12 @@ def _run_in_sandbox(
     cmd: str, *, cwd: str, timeout: int, sandbox: bool,
     bwrap_bin: str, sandbox_required: bool = False,
     unreadable_paths: tuple[str, ...] = (),
+    sandbox_backend: str = "bwrap",
+    container_runtime: str = "docker",
+    container_image: str = "",
+    container_flags: tuple[str, ...] = (),
+    effective_env: Mapping[str, str] | None = None,
+    allow_login_shell: bool = False,
 ) -> tuple[str, int | None, bool]:
     """Execute a shell command and return (filtered_text, exit_code, timed_out).
 
@@ -113,7 +120,53 @@ def _run_in_sandbox(
     # raise, even though the outer container is providing isolation.
     mode = container_mode() if sandbox else None
     try:
-        if mode == AMBIENT_CONTAINER:
+        if sandbox and sandbox_backend == "container":
+            if mode is not None:
+                raise RuntimeError(
+                    "sandbox.backend='container' cannot be combined with "
+                    "legacy YUJ_CONTAINER; unset YUJ_CONTAINER or select "
+                    "sandbox.backend='bwrap'"
+                )
+            from ..sandbox.container_backend import ContainerBackend
+
+            backend = ContainerBackend(
+                runtime=container_runtime,
+                image=container_image,
+                flags=container_flags,
+            )
+            runtime_bin = backend.resolve_runtime(
+                sandbox_required=sandbox_required,
+            )
+            if runtime_bin is None:
+                log.warning(
+                    "sandbox.backend=container but runtime %s is missing — "
+                    "running without sandbox because sandbox_required=false",
+                    container_runtime,
+                )
+                result = subprocess.run(
+                    cmd, shell=True, cwd=cwd,
+                    capture_output=True, text=True, timeout=timeout,
+                )
+            else:
+                argv = backend.build_argv(
+                    cmd,
+                    cwd,
+                    runtime_bin=runtime_bin,
+                    effective_env=effective_env,
+                    unreadable_paths=unreadable_paths,
+                    sandbox_required=sandbox_required,
+                    allow_login_shell=allow_login_shell,
+                )
+                result = subprocess.run(
+                    argv, cwd=None,
+                    capture_output=True, text=True, timeout=timeout,
+                )
+        elif sandbox and sandbox_backend != "bwrap":
+            raise RuntimeError(
+                "sandbox.backend must be 'bwrap' or 'container'; "
+                f"got {sandbox_backend!r}"
+            )
+        elif mode == AMBIENT_CONTAINER:
             # Ambient container mode: the harness is already running
             # inside a container that provides the sandbox boundary.
             # Run bash directly. No bwrap, no docker-exec round-trip.

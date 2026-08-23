@@ -364,6 +364,12 @@ class Config:
     # Compound-aware shell redirects. Read-side interception is an opt-in;
     # write-side rules remain gated by the availability of their target tool.
     tools_bash_redirect_read_side: bool = False
+    # First-class shell sandbox backend. Container mode creates one ephemeral
+    # Docker/Podman container per command and preserves the absolute cwd.
+    sandbox_backend: str = "bwrap"
+    sandbox_container_runtime: str = "docker"
+    sandbox_container_image: str = ""
+    sandbox_container_flags: tuple[str, ...] = ()
     # Lazy language-server diagnostics and optional navigation tool.
     lsp_enabled: bool = False
     lsp_servers: dict[str, object] = field(default_factory=dict)

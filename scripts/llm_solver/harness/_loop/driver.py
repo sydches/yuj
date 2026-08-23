@@ -189,6 +189,30 @@ def solve_task(
     end_session_num = start_session_num + cfg.max_sessions - 1
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the selected backend before pretests or model tool calls. A
+    # successful container preflight pins execution to the inspected image ID;
+    # a non-strict failure degrades once, loudly, rather than retrying an
+    # unavailable runtime on every command.
+    env_fields = compute_runtime_envelope_fields(cfg, work_dir)
+    if (
+        getattr(cfg, "sandbox_backend", "bwrap") == "container"
+        and cfg.sandbox_bash
+    ):
+        if env_fields["sandbox_engaged"]:
+            cfg = replace(
+                cfg,
+                sandbox_container_image=env_fields["container_image_digest"],
+            )
+        elif not getattr(cfg, "sandbox_required", False):
+            log.warning(
+                "container_preflight: %s — running without sandbox because "
+                "sandbox_required=false",
+                env_fields.get("container_preflight_error") or "unavailable",
+            )
+            cfg = replace(cfg, sandbox_bash=False)
+        if "cfg" in getattr(client, "__dict__", {}):
+            client.cfg = cfg
+
     with open(trace_path, "a") as trace_file:
         # First-event-of-task envelope: records the runtime conditions that
         # the rest of the trace is conditioned on. Without this, post-hoc
@@ -197,32 +221,39 @@ def solve_task(
         # when the trace was empty at task start (i.e. session 1 of a fresh
         # task, not a resumed task whose prior sessions already wrote).
         if trace_path.stat().st_size == 0:
-            env_fields = compute_runtime_envelope_fields(cfg, work_dir)
             _emit_trace_event(trace_file, "runtime_envelope", **env_fields)
             log.info(
-                "runtime_envelope: sandbox_mode=%s engaged=%s bwrap=%s preflight=%s container=%r",
-                env_fields["sandbox_mode"], env_fields["sandbox_engaged"],
+                "runtime_envelope: sandbox_mode=%s backend=%s engaged=%s "
+                "bwrap=%s preflight=%s container=%r runtime=%r digest=%r",
+                env_fields["sandbox_mode"], env_fields["sandbox_backend"],
+                env_fields["sandbox_engaged"],
                 env_fields["bwrap_present"], env_fields["bwrap_preflight_passed"],
                 env_fields["yuj_container"],
+                env_fields["container_runtime"],
+                env_fields["container_image_digest"],
             )
             if env_fields["bwrap_preflight_error"] and not env_fields["yuj_container"]:
                 log.warning("bwrap_preflight: %s", env_fields["bwrap_preflight_error"])
             # Strict mode: refuse to start the session loop unsandboxed.
             # _run_in_sandbox would also catch this on the first bash call,
             # but failing here is louder and avoids any pretest noise.
-            if (getattr(cfg, "sandbox_required", False)
-                    and cfg.sandbox_bash
-                    and not env_fields["sandbox_engaged"]):
-                raise RuntimeError(
-                    f"sandbox_required=true but sandbox_engaged=false "
-                    f"(sandbox_mode={env_fields['sandbox_mode']}, "
-                    f"bwrap_bin={cfg.bwrap_bin!r}, "
-                    f"bwrap_present={env_fields['bwrap_present']}, "
-                    f"bwrap_preflight_passed={env_fields['bwrap_preflight_passed']}, "
-                    f"bwrap_preflight_error={env_fields['bwrap_preflight_error']!r}, "
-                    f"yuj_container={env_fields['yuj_container']!r}). Refusing to start a "
-                    "session that would run the model's bash unsandboxed."
-                )
+        if (getattr(cfg, "sandbox_required", False)
+                and cfg.sandbox_bash
+                and not env_fields["sandbox_engaged"]):
+            raise RuntimeError(
+                f"sandbox_required=true but sandbox_engaged=false "
+                f"(sandbox_mode={env_fields['sandbox_mode']}, "
+                f"sandbox_backend={env_fields['sandbox_backend']!r}, "
+                f"bwrap_bin={cfg.bwrap_bin!r}, "
+                f"bwrap_present={env_fields['bwrap_present']}, "
+                f"bwrap_preflight_passed={env_fields['bwrap_preflight_passed']}, "
+                f"bwrap_preflight_error={env_fields['bwrap_preflight_error']!r}, "
+                f"container_runtime={env_fields['container_runtime']!r}, "
+                f"container_preflight_error="
+                f"{env_fields['container_preflight_error']!r}, "
+                f"yuj_container={env_fields['yuj_container']!r}). Refusing "
+                "to start a session that would run model commands unsandboxed."
+            )
         for session_num in range(start_session_num, end_session_num + 1):
             # Pretest: run failing tests BEFORE every session. Verdict becomes
             # the first block of the session's first user message. On sessions
@@ -329,6 +360,9 @@ def solve_task(
                 trace_file, "session_start",
                 session_number=session_num,
                 context_contract=context_contract,
+                sandbox_backend=env_fields["sandbox_backend"],
+                container_runtime=env_fields["container_runtime"],
+                container_image_digest=env_fields["container_image_digest"],
                 **thinking_fields,
                 **model_binding.trace_fields(),
             )

@@ -176,12 +176,19 @@ def _semantic_exit_annotation(cmd: str, exit_code: int) -> str | None:
 def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
          bwrap_bin: str = _DEFAULT_BWRAP_BIN,
          sandbox_required: bool = False,
-         unreadable_paths: tuple[str, ...] = ()) -> str:
+         unreadable_paths: tuple[str, ...] = (),
+         sandbox_backend: str = "bwrap",
+         container_runtime: str = "docker",
+         container_image: str = "",
+         container_flags: tuple[str, ...] = (),
+         effective_env=None,
+         allow_login_shell: bool = False) -> str:
     """Run a shell command, return stdout+stderr.
 
-    When `sandbox=True` and /usr/bin/bwrap exists, the command runs inside
-    a bwrap sandbox that treats the entire host as read-only and only
-    `cwd` as writable. See `_build_bwrap_argv` for the shape.
+    With the bwrap backend, the command runs in a mount namespace that treats
+    the host as read-only and only ``cwd`` as writable. With the container
+    backend, it runs in one no-network Docker/Podman container with ``cwd``
+    mounted at the identical absolute path.
 
     If bwrap is unavailable, falls back to plain `subprocess.run(shell=True,
     cwd=cwd)`. The fallback is logged once per process so the degradation
@@ -195,7 +202,11 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     # for the unsandboxed path (rare; typically tests) and going
     # through Python file I/O still respects cwd containment so it's
     # safe — but staying on the configured path is less surprising.
-    if sandbox and container_mode() is None:
+    if (
+        sandbox
+        and sandbox_backend == "bwrap"
+        and container_mode() is None
+    ):
         inproc = _try_inproc_trivial_read(cmd, cwd)
     else:
         inproc = None
@@ -210,6 +221,12 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             cmd, cwd=cwd, timeout=timeout, sandbox=sandbox, bwrap_bin=bwrap_bin,
             sandbox_required=sandbox_required,
             unreadable_paths=unreadable_paths,
+            sandbox_backend=sandbox_backend,
+            container_runtime=container_runtime,
+            container_image=container_image,
+            container_flags=container_flags,
+            effective_env=effective_env,
+            allow_login_shell=allow_login_shell,
         )
     if timed_out:
         return ToolExecutionText(
