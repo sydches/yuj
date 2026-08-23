@@ -14,6 +14,7 @@ from scripts.llm_solver.harness._tools.bash import bash
 from scripts.llm_solver.harness._loop._driver_setup import (
     compute_runtime_envelope_fields,
 )
+from scripts.llm_solver.harness.sandbox.env_policy import EnvironmentPolicy
 
 from _config_helpers import make_config
 
@@ -26,7 +27,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(cwd: Path, command: str, *, unreadable_paths=()) -> str:
+def _run(
+    cwd: Path,
+    command: str,
+    *,
+    unreadable_paths=(),
+    effective_env=None,
+) -> str:
     return bash(
         command,
         cwd=str(cwd),
@@ -37,6 +44,7 @@ def _run(cwd: Path, command: str, *, unreadable_paths=()) -> str:
         container_runtime="docker",
         container_image=IMAGE,
         unreadable_paths=tuple(unreadable_paths),
+        effective_env=effective_env,
     )
 
 
@@ -53,6 +61,33 @@ def test_live_container_preserves_cwd_path_and_allows_task_write(
     assert result.splitlines()[0] == "."
     assert "container-write" in result
     assert (tmp_path / "created.txt").read_text() == "container-write"
+
+
+def test_live_container_receives_the_resolved_environment_only(
+    tmp_path: Path,
+) -> None:
+    effective = EnvironmentPolicy(
+        inherit="core",
+        set={"TERM": "dumb", "VISIBLE_SET": "fixed-value"},
+    ).resolve({
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/sandbox-home",
+        "LANG": "C.UTF-8",
+        "TERM": "host-term",
+        "SAFE_HOST": "must-not-inherit",
+        "SERVICE_TOKEN": "must-not-inherit",
+    })
+
+    result = _run(tmp_path, "env", effective_env=effective)
+
+    assert "PATH=/usr/bin:/bin" in result
+    assert "HOME=/sandbox-home" in result
+    assert "LANG=C.UTF-8" in result
+    assert "TERM=dumb" in result
+    assert "VISIBLE_SET=fixed-value" in result
+    assert "SAFE_HOST" not in result
+    assert "SERVICE_TOKEN" not in result
+    assert "host-term" not in result
 
 
 def test_live_container_and_bwrap_return_the_same_task_path(tmp_path: Path) -> None:
