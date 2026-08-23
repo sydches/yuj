@@ -104,6 +104,7 @@ order in the
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
 | `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
+| `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
@@ -503,6 +504,25 @@ section, omitted path, oversized response, request failure, or model failure
 leaves that mechanical prompt byte-for-byte unchanged. The trace records only
 the attempt's token count, validity, fallback, and model role; model-written
 handoff text is not copied into `.solver/state.json`.
+
+### Recover an interrupted tool turn
+
+`[loop].interrupted_turn_mode = "mechanical"` is the default. Before a
+trace-backed resume reads prior events, Yuj removes only a malformed trailing
+JSON fragment, fsyncs the repaired prefix, and appends one `turn_aborted`
+event. The next user message names any call that had started without a durable
+result and says its outcome is unknown. Transcript resume closes the dangling
+assistant/tool protocol edge with a synthetic tool result; it never reruns the
+call or claims that its filesystem effects succeeded or failed.
+
+Before every real dispatch Yuj fsyncs a bounded `tool_start` event. SIGTERM,
+SIGINT, fatal exceptions, normal scope completion, and process exit record a
+`session_exit` event with the pending-call set. A hard kill cannot run an exit
+handler, so the already-durable start row remains the recovery evidence.
+
+Set the mode to `"off"` to disable mechanical repair. In that mode resume does
+not truncate a malformed suffix and does not append `turn_aborted`; ordinary
+trace loading may therefore reject or stop at the damaged tail.
 
 ## Apply a small TOML file
 

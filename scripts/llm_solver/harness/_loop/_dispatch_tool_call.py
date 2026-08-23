@@ -30,7 +30,7 @@ from .trace_output import build_tool_call_trace_fields
 
 __all__ = [
     "TCOutcome", "TurnState",
-    "dispatch_one_tool_call",
+    "dispatch_one_tool_call", "record_tool_start",
 ]
 
 
@@ -166,6 +166,42 @@ def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
     )
 
 
+def record_tool_start(tc, state: "TurnState") -> None:
+    """Make one bounded ``tool_start`` row durable before dispatch."""
+    diagnostics = getattr(state.session, "_exit_diagnostics", None)
+    if diagnostics is None:
+        return
+    diagnostics.record_tool_start(
+        tool_call_id=tc.id,
+        tool_name=tc.name,
+        turn_number=state.turn,
+        args_summary=_truncate_for_trace(
+            _summarize_args(
+                tc.arguments, state.cfg.trace_args_summary_chars
+            ),
+            state.cfg.trace_args_summary_chars,
+        ),
+        intent=_truncate_for_trace(
+            state.content or "", state.cfg.trace_reasoning_store_chars
+        ),
+    )
+
+
+def _record_tool_finished(tc, state: "TurnState") -> None:
+    """Clear pending state only after ordinary result evidence is durable."""
+    diagnostics = getattr(state.session, "_exit_diagnostics", None)
+    if diagnostics is None:
+        return
+    writer = getattr(state.session, "_async_trace_writer", None)
+    if writer is None:
+        raise RuntimeError("tool exit diagnostics require an active trace writer")
+    writer.barrier()
+    if not diagnostics.record_tool_finished(tc.id):
+        raise RuntimeError(
+            f"tool call {tc.id!r} finished without a pending tool_start"
+        )
+
+
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
@@ -211,6 +247,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # that re-enter the emit path (gate_intercepted, normal,
     # error_ladder END). Empty list = no rewrite happened.
     rewrite_log: list = []
+    dispatch_started = tc.id in state.preexecuted
 
     # 6a. done_guard — accept path ends session; otherwise BLOCK
     # (or END once cfg.done_loop_abort_after rejected calls accumulate).
@@ -315,6 +352,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             )
             result = state.preexecuted.get(tc.id)
             if result is None:
+                record_tool_start(tc, state)
+                dispatch_started = True
                 _disp_t0 = time.perf_counter()
                 result = dispatch(tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
                                   output_control=effective_output_control,
@@ -342,6 +381,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             )
             result = state.preexecuted.get(tc.id)
             if result is None:
+                record_tool_start(tc, state)
+                dispatch_started = True
                 _disp_t0 = time.perf_counter()
                 result = dispatch(tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
                                   output_control=effective_output_control,
@@ -382,6 +423,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 # passed through verbatim.
                 session._emit(
                     "tool_call",
+                    tool_call_id=tc.id,
                     session_number=session._session_number,
                     turn_number=turn,
                     tool_name=tc.name,
@@ -407,6 +449,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                     tc, state,
                     executed=bool(execution_metadata.get("executed", True)),
                 )
+                if dispatch_started:
+                    _record_tool_finished(tc, state)
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
@@ -519,6 +563,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         _snapshot_sha = _turn_snapshot(session.cwd, turn, session=session)
     session._emit(
         "tool_call",
+        tool_call_id=tc.id,
         session_number=session._session_number,
         turn_number=turn,
         tool_name=tc.name,
@@ -550,6 +595,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     _capture_workspace_checkpoint(
         tc, state, executed=call_executed,
     )
+    if dispatch_started:
+        _record_tool_finished(tc, state)
 
     # Gate-blocked calls were never executed — don't store a
     # cmd_signature (prevents later calls of the same command

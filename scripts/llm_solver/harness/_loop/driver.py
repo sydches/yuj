@@ -35,6 +35,7 @@ from ._driver_setup import (
 )
 from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
+from .interrupted_turn import RecoveryPlan, recover_interrupted_trace
 from . import model_role_runtime
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
@@ -185,9 +186,15 @@ def solve_task(
     pretest_parsed_verdict: dict | None = None
     from ..savings import close_ledger
     from ..system_log import close_system_log
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    recovery_plan = RecoveryPlan(recovered=False)
+    if resume_from_artifacts or resume_path is not None:
+        recovery_plan = recover_interrupted_trace(
+            trace_path,
+            mode=getattr(cfg, "interrupted_turn_mode", "mechanical"),
+        )
     start_session_num = _next_session_number(trace_path) if resume_from_artifacts else 1
     end_session_num = start_session_num + cfg.max_sessions - 1
-    artifact_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve the selected backend before pretests or model tool calls. A
     # successful container preflight pins execution to the inspected image ID;
@@ -333,6 +340,12 @@ def solve_task(
                     initial = build_resume_prompt_from_trace(
                         trace_path, cfg, task_description
                     ) or task_prompt
+                    if recovery_plan.recovered:
+                        initial = (
+                            recovery_plan.resume_prompt_line
+                            + "\n\n"
+                            + initial
+                        )
                 else:
                     initial = task_prompt
                 if cfg.prompt_addendum and not resume_from_artifacts:
@@ -399,7 +412,12 @@ def solve_task(
                 session, session_client, role_usage,
             )
             if session_num == start_session_num and resume_path is not None:
-                inject_resume_messages(session, resume_path, initial)
+                inject_resume_messages(
+                    session,
+                    resume_path,
+                    initial,
+                    recovery=recovery_plan,
+                )
             # Emit resolved thresholds so trace replay across config changes
             # is reproducible. At
             # session 2+ also include the prior session's terminal

@@ -101,6 +101,28 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "tool_start",
+        frozenset({
+            "tool_call_id", "tool_name", "session_number", "turn_number",
+            "started_at", "args_summary", "intent",
+        }),
+    ),
+    TraceEventSpec(
+        "session_exit",
+        frozenset({
+            "session_number", "reason", "kind", "recorded_at",
+            "pending_tool_calls",
+        }),
+    ),
+    TraceEventSpec(
+        "turn_aborted",
+        frozenset({
+            "session_number", "turn_number", "reason", "recovery_mode",
+            "recorded_at", "interrupted_tool_call_ids",
+            "interrupted_tool_calls",
+        }),
+    ),
+    TraceEventSpec(
         "lsp_diagnostics",
         frozenset({
             "session_number", "file", "errors", "warnings", "ms",

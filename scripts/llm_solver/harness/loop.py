@@ -471,6 +471,10 @@ class Session:
         # trace_file is set, so tests that poke at internal state
         # without running the loop don't spawn writer threads.
         self._async_trace_writer = None
+        # Installed only while ``run`` owns the active trace writer. Tool
+        # dispatch uses this recorder to make starts durable before execution
+        # and to retain unresolved calls for signal/fatal recovery.
+        self._exit_diagnostics = None
         # Adaptive phase state (config-driven runtime switch).
         self._adaptive_phase = "base"
         self._adaptive_switched = False
@@ -580,20 +584,45 @@ class Session:
         return sink_to_disk(self, raw, turn)
 
     def run(self) -> SessionResult:
+        from ._loop.interrupted_turn import ExitDiagnostics
         from ._loop.run_step import run_session_loop
         from ._loop.persistent_bash import (
             maybe_install_persistent_bash, teardown_persistent_bash,
         )
         from ._loop.trace_async_writer import AsyncTraceWriter
-        runner = maybe_install_persistent_bash(self)
+        runner = None
         # Lazy-start the async trace writer only when actually running
         # the loop; tests that construct Session without calling run()
         # never spawn a writer thread.
         if self._trace_file is not None and self._async_trace_writer is None:
             self._async_trace_writer = AsyncTraceWriter(self._trace_file)
+        diagnostics = None
+        if self._trace_path is not None and self._async_trace_writer is not None:
+            diagnostics = ExitDiagnostics(
+                self._trace_path,
+                session_number=self._session_number,
+                sync_before=self._async_trace_writer.barrier,
+            )
         try:
-            return run_session_loop(self)
+            if diagnostics is not None:
+                diagnostics.install()
+                self._exit_diagnostics = diagnostics
+            try:
+                runner = maybe_install_persistent_bash(self)
+                result = run_session_loop(self)
+            except BaseException as exc:
+                if diagnostics is not None:
+                    diagnostics.record_fatal_exception(exc)
+                raise
+            if diagnostics is not None:
+                diagnostics.record_exit(
+                    reason="session scope completed", kind="normal"
+                )
+            return result
         finally:
+            if diagnostics is not None:
+                diagnostics.uninstall()
+            self._exit_diagnostics = None
             teardown_persistent_bash(runner)
             if self._lsp_manager is not None:
                 self._lsp_manager.close()

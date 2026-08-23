@@ -358,6 +358,9 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
         "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
+        "interrupted_turn_mode": d.get("loop", {}).get(
+            "interrupted_turn_mode", "mechanical"
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -505,6 +508,11 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: sandbox.backend must be 'bwrap' or 'container', "
             f"got {cfg.sandbox_backend!r}."
+        )
+    if cfg.interrupted_turn_mode not in {"off", "mechanical"}:
+        raise ValueError(
+            "config error: loop.interrupted_turn_mode must be 'off' or "
+            f"'mechanical', got {cfg.interrupted_turn_mode!r}."
         )
     from .harness.sandbox.container_backend import (
         CONTAINER_RUNTIMES,

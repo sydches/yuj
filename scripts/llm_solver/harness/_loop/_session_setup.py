@@ -20,7 +20,7 @@ from ..context_strategies import resolve_context_mode_for_class
 from ..context_strategies._metadata import LEGACY_CONTEXT_CONSTRUCTOR_CONFIG_ATTRS
 
 if TYPE_CHECKING:
-    pass
+    from .interrupted_turn import RecoveryPlan
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +92,13 @@ def build_context_manager(
     return ctx
 
 
-def inject_resume_messages(session, resume_path: Path, initial: str) -> None:
+def inject_resume_messages(
+    session,
+    resume_path: Path,
+    initial: str,
+    *,
+    recovery: "RecoveryPlan | None" = None,
+) -> None:
     """Replace session.context's initial messages with a parsed prior transcript.
 
     Caller invokes only on session 1 when ``resume_path`` is set. The
@@ -107,7 +113,21 @@ def inject_resume_messages(session, resume_path: Path, initial: str) -> None:
     """
     from .resume import parse_resume_transcript, build_resumed_messages
     prior_msgs, last_assistant = parse_resume_transcript(resume_path)
-    resumed_msgs = build_resumed_messages(prior_msgs, last_assistant, initial)
+    if recovery is not None and recovery.recovered:
+        from .interrupted_turn import build_interrupted_resume_messages
+
+        transcript_messages = list(prior_msgs)
+        if last_assistant is not None:
+            transcript_messages.append(last_assistant)
+        resumed_msgs = build_interrupted_resume_messages(
+            transcript_messages,
+            recovery,
+            next_user_message=initial,
+        )
+    else:
+        resumed_msgs = build_resumed_messages(
+            prior_msgs, last_assistant, initial
+        )
     if not session.context.replace_all_messages(resumed_msgs):
         raise RuntimeError(
             f"Resume injection failed: context manager "

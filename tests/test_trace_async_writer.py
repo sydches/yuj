@@ -8,6 +8,7 @@ harness hot path. Critical contracts:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,7 @@ def test_stop_idempotent(tmp_path: Path):
 
 
 def test_per_item_flush_visibility(tmp_path: Path):
-    """Each enqueued item is fsynced individually; after stop() drain
-    the file is byte-complete on disk (no pending OS buffers)."""
+    """Each item is flushed; clean stop adds the durability fsync."""
     p = tmp_path / "trace.jsonl"
     with open(p, "a") as f:
         w = AsyncTraceWriter(f)
@@ -66,3 +66,38 @@ def test_two_writers_two_files(tmp_path: Path):
     assert p2.read_text().count('"src":2') == 50
     assert '"src":1' not in p2.read_text()
     assert '"src":2' not in p1.read_text()
+
+
+def test_barrier_fsyncs_prior_rows_before_ack(tmp_path: Path, monkeypatch):
+    p = tmp_path / "barrier.jsonl"
+    calls = []
+    real_fsync = os.fsync
+
+    def checked_fsync(fd):
+        calls.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", checked_fsync)
+    with open(p, "a") as trace_file:
+        writer = AsyncTraceWriter(trace_file)
+        writer.submit('{"before":"barrier"}\n')
+        writer.barrier()
+        assert p.read_text() == '{"before":"barrier"}\n'
+        writer.stop()
+    assert calls
+
+
+def test_barrier_propagates_an_earlier_writer_failure():
+    class BrokenTrace:
+        def write(self, _value):
+            raise OSError("disk unavailable")
+
+        def flush(self):
+            pass
+
+    writer = AsyncTraceWriter(BrokenTrace())
+    writer.submit('{"lost":true}\n')
+    with pytest.raises(RuntimeError, match="barrier failed"):
+        writer.barrier()
+    with pytest.raises(RuntimeError, match="barrier failed"):
+        writer.stop()

@@ -27,7 +27,11 @@ from ..approvals import approval_decision
 from ..system_log import get_system_log, provenance_for
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
-from ._dispatch_tool_call import TurnState, dispatch_one_tool_call
+from ._dispatch_tool_call import (
+    TurnState,
+    dispatch_one_tool_call,
+    record_tool_start,
+)
 from .compaction import preflight_reclip_oversized
 from .trace_output import build_tool_call_trace_fields
 
@@ -524,42 +528,6 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # read/glob/grep calls. Mutating tools (write/edit/bash)
         # always run sequentially — they never enter this path.
         preexecuted: dict[str, str] = {}
-        if (
-            cfg.parallel_readonly_enabled
-            and len(tool_calls) > 1
-            and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
-        ):
-            effective_output_control = (
-                session.output_control if cfg.bash_transforms_task_format_enabled else None
-            )
-            effective_universal_rewrites = (
-                session.universal_rewrites if cfg.bash_transforms_universal_enabled else None
-            )
-            with ThreadPoolExecutor(
-                max_workers=max(1, cfg.parallel_max_workers)
-            ) as _ex:
-                futures = {
-                    tc.id: _ex.submit(
-                        dispatch, tc.name, tc.arguments,
-                        cwd=session.cwd, cfg=cfg,
-                        output_control=effective_output_control,
-                        universal_rewrites=effective_universal_rewrites,
-                        forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
-                        redirect_rules=getattr(session, "redirect_rules", None),
-                        redactions=session.redactions,
-                        tool_registry=session._tool_registry,
-                        stale_guard=session._stale_guard,
-                        active_tools=getattr(session, "active_tool_names", ()),
-                        redirect_event_sink=getattr(session, "_redirect_event_sink", None),
-                    )
-                    for tc in tool_calls
-                }
-                for tc_id, fut in futures.items():
-                    try:
-                        preexecuted[tc_id] = fut.result()
-                    except Exception as e:
-                        preexecuted[tc_id] = f"ERROR: {e}"
-
         state = TurnState(
             session=session,
             turn=turn,
@@ -579,6 +547,44 @@ def run_session_loop(session: "Session") -> "SessionResult":
             observers=observers,
             turn_had_pressure=turn_had_pressure,
         )
+        if (
+            cfg.parallel_readonly_enabled
+            and len(tool_calls) > 1
+            and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
+        ):
+            effective_output_control = (
+                session.output_control if cfg.bash_transforms_task_format_enabled else None
+            )
+            effective_universal_rewrites = (
+                session.universal_rewrites if cfg.bash_transforms_universal_enabled else None
+            )
+            with ThreadPoolExecutor(
+                max_workers=max(1, cfg.parallel_max_workers)
+            ) as _ex:
+                futures = {}
+                for tc in tool_calls:
+                    # The durability point must precede submission: the
+                    # worker may start executing as soon as ``submit``
+                    # returns, and multiple read calls can overlap.
+                    record_tool_start(tc, state)
+                    futures[tc.id] = _ex.submit(
+                        dispatch, tc.name, tc.arguments,
+                        cwd=session.cwd, cfg=cfg,
+                        output_control=effective_output_control,
+                        universal_rewrites=effective_universal_rewrites,
+                        forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                        redirect_rules=getattr(session, "redirect_rules", None),
+                        redactions=session.redactions,
+                        tool_registry=session._tool_registry,
+                        stale_guard=session._stale_guard,
+                        active_tools=getattr(session, "active_tool_names", ()),
+                        redirect_event_sink=getattr(session, "_redirect_event_sink", None),
+                    )
+                for tc_id, fut in futures.items():
+                    try:
+                        preexecuted[tc_id] = fut.result()
+                    except Exception as e:
+                        preexecuted[tc_id] = f"ERROR: {e}"
         for tc in tool_calls:
             args_summary = _summarize_args(tc.arguments, cfg.args_summary_chars)
             approval_allowed, approval_reason = approval_decision(
