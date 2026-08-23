@@ -63,6 +63,10 @@ def _extract_config_fields(d: dict) -> dict:
         "tokenizer_id": d.get("model", {}).get("tokenizer_id", ""),
         "thinking_level": d.get("model", {}).get("thinking_level", "off"),
         "model_roles": dict(d.get("models", {}).get("roles", {})),
+        "model_fallback_chain": d.get("models", {}).get("fallback_chain", {}),
+        "model_fallback_revert": d.get("models", {}).get(
+            "fallback_revert", "never"
+        ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
         "duplicate_abort": _require(d, "loop", "duplicate_abort"),
@@ -433,8 +437,14 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
-    from .harness._loop.model_roles import validate_role_specs
+    from .harness._loop.model_roles import (
+        normalize_fallback_revert,
+        validate_fallback_chains,
+        validate_role_specs,
+    )
     validate_role_specs(cfg.model_roles)
+    validate_fallback_chains(cfg.model_fallback_chain)
+    normalize_fallback_revert(cfg.model_fallback_revert)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

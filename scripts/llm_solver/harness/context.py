@@ -93,6 +93,27 @@ class ContextManager(ABC):
         """
         return False
 
+    def set_token_estimator(
+        self,
+        token_estimator: Callable[[list[dict]], int],
+    ) -> None:
+        """Replace model-specific token counting and invalidate projections.
+
+        Model fallback can change both tokenization and the point at which a
+        strategy prunes messages.  The loop calls this public owner method
+        instead of reaching into each strategy's private cache fields.
+        """
+        if not callable(token_estimator):
+            raise TypeError("token_estimator must be callable")
+        self._token_estimator = token_estimator
+        # Every current strategy uses these names for projections affected by
+        # token pressure.  Keeping invalidation in the ABC makes that cache
+        # contract explicit for future strategies too.
+        if hasattr(self, "_msg_cache"):
+            self._msg_cache = None
+        if hasattr(self, "_tok_cache"):
+            self._tok_cache = None
+
 
 class FullTranscript(ContextManager):
     """Append-only context — ships every message, no pruning.

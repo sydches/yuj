@@ -101,6 +101,8 @@ order in the
 | `[model].thinking_level` | Select the requested per-run reasoning effort. |
 | `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
 | `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
+| `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
+| `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
@@ -163,6 +165,55 @@ normally means you must run a second llama-server process yourself.
 Every model response is charged once to its effective role. Post-run
 `metrics.json` reports request, prompt, completion, cached, and total token
 counts under `metrics.tokens_by_role`.
+
+## Configure model fallback
+
+Fallback is off by default. Each role's chain is an empty list until you opt
+in. A string entry uses exact `<profile>@<endpoint>` syntax:
+
+```toml
+[models]
+fallback_revert = "never"
+
+[models.fallback_chain]
+main = ["qwen3-small@http://127.0.0.1:8181/v1"]
+weak = []
+editor = []
+```
+
+An inline target may also set `model`, `context_size`, or an endpoint-specific
+`api_key`. Credentials are used for requests but excluded from trace and
+provenance artifacts:
+
+```toml
+[[models.fallback_chain.main]]
+profile = "qwen3-small"
+endpoint = "http://127.0.0.1:8181/v1"
+model = "served-small"
+context_size = 32768
+```
+
+Yuj validates every fallback profile at startup. During a solver turn, it
+uses the configured transient retry budget on the active target first. It may
+then advance the `main` chain for an exhausted connection/timeout/server
+failure, a server out-of-memory failure, or a recognized context-overflow
+response. Authentication failures, arbitrary bad requests, malformed
+profiles, and tool/protocol errors stay fatal.
+
+Before sending any task message to a replacement, Yuj queries that target's
+live context window, applies its profile to the canonical messages and tool
+schemas, and checks the resulting prompt against `context_fill_ratio`. A
+candidate that cannot fit is traced and skipped. A candidate that fits gets a
+fresh retry budget. Client, profile, context-derived limits, tool schemas, and
+the context token estimator switch together; old-profile wire messages are
+never reused.
+
+`fallback_revert = "never"` keeps the selected target for later sessions.
+`"next_session"` returns to the primary target when the next session begins.
+Every transition changes the treatment and is recorded as `model_fallback`.
+Post-run metrics include `model_fallback_used`, `model_fallback_count`,
+`model_fallback_roles`, and `model_fallback_active_targets`, so studies can
+exclude runs that changed models.
 
 ## Configure llama-server prompt caching
 

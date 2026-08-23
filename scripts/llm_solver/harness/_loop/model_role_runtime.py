@@ -14,6 +14,7 @@ from ...config import Config
 from ...server.profile_loader import load_profile
 from .model_roles import (
     MAIN_MODEL_ROLE,
+    ModelFallbackController,
     ModelRoleResolver,
     ModelRoleRouter,
     ModelTarget,
@@ -30,6 +31,31 @@ class ModelRoleRuntime:
     resolver: ModelRoleResolver
     router: ModelRoleRouter
     token_ledger: RoleTokenLedger
+    fallback_controller: ModelFallbackController
+
+
+@dataclass(frozen=True)
+class SessionModelBinding:
+    """The effective main client and profile assumptions for one session."""
+
+    client: Any
+    config: Any
+    resolution: ResolvedModelRole | None
+    token_estimator: Callable[[list[dict]], int] | None
+
+    def trace_fields(self) -> dict[str, object]:
+        if self.resolution is None:
+            cfg = self.config
+            return {
+                "model_target": str(getattr(cfg, "model", "") or ""),
+                "model": str(getattr(cfg, "model", "") or ""),
+                "profile_name": str(getattr(cfg, "profile_name", "") or ""),
+                "base_url": str(getattr(cfg, "base_url", "") or ""),
+                "context_size": int(getattr(cfg, "context_size", 0) or 0),
+            }
+        fields = self.resolution.provenance_fields()
+        fields["model_target"] = self.resolution.target.label()
+        return fields
 
 
 @dataclass(frozen=True)
@@ -110,22 +136,30 @@ def build_model_role_runtime(
         profile_loader=profile_loader,
     )
     token_ledger = RoleTokenLedger()
+    fallback_controller = ModelFallbackController(
+        resolver,
+        fallback_chain=cfg.model_fallback_chain,
+        fallback_revert=cfg.model_fallback_revert,
+    )
 
     router: ModelRoleRouter
 
     def make_client(resolution: ResolvedModelRole) -> Any:
         if resolution.target == resolver.main.target:
             return main_client
-        role_client = client_factory(_target_config(cfg, resolution), resolution.profile)
+        active_cfg = getattr(main_client, "cfg", cfg)
+        role_client = client_factory(
+            _target_config(active_cfg, resolution), resolution.profile
+        )
         session_id = str(getattr(main_client, "_session_id", "") or "")
         if session_id and hasattr(role_client, "set_session_id"):
             role_client.set_session_id(session_id)
         _attach_runtime(role_client, router, token_ledger, resolution)
         return role_client
 
-    router = ModelRoleRouter(resolver, make_client)
+    router = ModelRoleRouter(resolver, make_client, fallback_controller)
     _attach_runtime(main_client, router, token_ledger, resolver.main)
-    return ModelRoleRuntime(resolver, router, token_ledger)
+    return ModelRoleRuntime(resolver, router, token_ledger, fallback_controller)
 
 
 def validate_model_role_profiles(
@@ -144,7 +178,7 @@ def validate_model_role_profiles(
             return None
         return load_profile(name, profiles_dir)
 
-    ModelRoleResolver(
+    resolver = ModelRoleResolver(
         main_target=ModelTarget(
             profile_name=main_profile_name,
             model=cfg.model,
@@ -154,6 +188,11 @@ def validate_model_role_profiles(
         ),
         role_specs=cfg.model_roles,
         profile_loader=profile_loader,
+    )
+    ModelFallbackController(
+        resolver,
+        fallback_chain=cfg.model_fallback_chain,
+        fallback_revert=cfg.model_fallback_revert,
     )
 
 
@@ -205,6 +244,72 @@ def role_token_ledger(client: Any) -> RoleTokenLedger:
     return _stored_attr(client, "_role_token_ledger") or RoleTokenLedger()
 
 
+def begin_model_session(client: Any, default_cfg: Any = None) -> SessionModelBinding:
+    """Apply session reversion policy and return the effective main target."""
+    from .profile_resolution import _resolve_token_estimator
+
+    router = _stored_attr(client, "_model_role_router")
+    if router is None:
+        return SessionModelBinding(
+            client=client,
+            config=_stored_attr(client, "cfg", default_cfg),
+            resolution=_stored_attr(client, "_model_role_resolution"),
+            token_estimator=_resolve_token_estimator(client),
+        )
+    router.begin_session()
+    routed = router.client_for(MAIN_MODEL_ROLE)
+    resolution = resolution_with_client_context(routed)
+    _attach_runtime(
+        routed.client,
+        router,
+        _stored_attr(client, "_role_token_ledger") or RoleTokenLedger(),
+        resolution,
+    )
+    return SessionModelBinding(
+        client=routed.client,
+        config=_stored_attr(routed.client, "cfg", default_cfg),
+        resolution=resolution,
+        token_estimator=_resolve_token_estimator(routed.client),
+    )
+
+
+def resolution_with_client_context(
+    routed: ResolvedRoleClient,
+) -> ResolvedModelRole:
+    """Reflect a live client context window in its immutable resolution."""
+    context_size = int(
+        getattr(getattr(routed.client, "cfg", None), "context_size", 0) or 0
+    )
+    resolution = routed.resolution
+    if context_size <= 0 or context_size == resolution.target.context_size:
+        return resolution
+    return replace(
+        resolution,
+        target=replace(resolution.target, context_size=context_size),
+    )
+
+
+def model_fallback_metrics(client: Any) -> dict[str, object]:
+    """Return study-filter fields from the run's fallback controller."""
+    router = _stored_attr(client, "_model_role_router")
+    controller = getattr(router, "fallback_controller", None)
+    if controller is None:
+        return {
+            "model_fallback_used": False,
+            "model_fallback_count": 0,
+            "model_fallback_roles": [],
+            "model_fallback_active_targets": {},
+        }
+    return controller.metrics_fields()
+
+
+def model_fallback_provenance(client: Any) -> dict[str, object]:
+    """Return configured fallback policy without endpoint credentials."""
+    router = _stored_attr(client, "_model_role_router")
+    controller = getattr(router, "fallback_controller", None)
+    return controller.provenance_fields() if controller is not None else {}
+
+
 def bind_session_model_roles(
     session: Any,
     client: Any,
@@ -224,10 +329,15 @@ def bind_session_model_roles(
 __all__ = [
     "ConsumerRoleClient",
     "ModelRoleRuntime",
+    "SessionModelBinding",
+    "begin_model_session",
     "build_model_role_runtime",
     "bind_session_model_roles",
     "consumer_role_client",
+    "model_fallback_metrics",
+    "model_fallback_provenance",
     "record_role_usage",
+    "resolution_with_client_context",
     "role_token_ledger",
     "validate_model_role_profiles",
 ]

@@ -34,15 +34,13 @@ from ._driver_setup import (
 )
 from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
-from .model_role_runtime import bind_session_model_roles, role_token_ledger
+from . import model_role_runtime
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
 
 if TYPE_CHECKING:
     from ..loop import SessionResult, TaskSpec
-
 log = logging.getLogger(__name__)
-
 
 def solve_task(
     repo_dir: Path, cfg: Config, client,
@@ -93,7 +91,6 @@ def solve_task(
     prev_session: "Session | None" = None
     prev_result: "SessionResult | None" = None
     pending_handoff = None
-
     agg_prompt = 0
     agg_completion = 0
     agg_turns = 0
@@ -110,23 +107,21 @@ def solve_task(
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
     cache_usage = CacheUsageAccumulator()
-    role_usage = role_token_ledger(client)
+    role_usage = model_role_runtime.role_token_ledger(client)
     done_loop_aborted = False
     sessions_used = 0
     success = False
-
     task_description = task_prompt
-    thinking_fields = thinking_trace_fields(cfg, client)
     # Mechanical state.json is rebuilt from the trace at session boundaries.
     state_json_path = artifact_dir / ".solver" / "state.json"
     state_path: Path | None = state_json_path if cfg.state_writer_enabled else None
-
     # Multilingual: resolve analysis_task_format="auto" to the repo's
     # actual runner before any consumer (verification detection, output
     # parsing, detector fields) reads it. No-op when a concrete format
     # is pinned. Must precede load_transforms_and_estimator.
     cfg = resolve_task_format(cfg, work_dir)
-
+    if "cfg" in getattr(client, "__dict__", {}):
+        client.cfg = cfg
     setup_run_outputs(
         cfg, client, work_dir, artifact_dir,
         assistant_artifacts=artifacts_dir is not None,
@@ -299,28 +294,31 @@ def solve_task(
 
             if pretest_block:
                 initial = pretest_block + "\n" + initial
-
             log.info("[session %d/%d] %s", session_num, end_session_num, work_dir.name)
-
+            model_binding = model_role_runtime.begin_model_session(client, cfg)
+            session_client, session_cfg = model_binding.client, model_binding.config
+            thinking_fields = thinking_trace_fields(session_cfg, session_client)
             # Trace: session start
             _emit_trace_event(
                 trace_file, "session_start",
                 session_number=session_num,
                 context_contract=context_contract,
                 **thinking_fields,
+                **model_binding.trace_fields(),
             )
             if state_path is not None:
                 write_state_from_trace(trace_path, state_path,
-                                       max_result_chars=cfg.max_output_chars)
+                                       max_result_chars=session_cfg.max_output_chars)
 
             ctx = build_context_manager(
-                context_class, cfg, work_dir, initial, session_num, token_estimator,
+                context_class, session_cfg, work_dir, initial, session_num,
+                model_binding.token_estimator or token_estimator,
             )
             if getattr(cfg, "turn_snapshots_enabled", False):
                 from ..turn_snapshots import ensure_snapshot_setup
                 ensure_snapshot_setup(work_dir)
             session = Session(
-                cfg, client, system_prompt, initial, str(work_dir),
+                session_cfg, session_client, system_prompt, initial, str(work_dir),
                 context_manager=ctx, trace_file=trace_file, session_number=session_num,
                 trace_path=trace_path, state_path=state_path,
                 output_control=output_control,
@@ -335,7 +333,9 @@ def solve_task(
                 ),
             )
             session._cache_usage_accumulator = cache_usage
-            bind_session_model_roles(session, client, role_usage)
+            model_role_runtime.bind_session_model_roles(
+                session, session_client, role_usage,
+            )
             if session_num == start_session_num and resume_path is not None:
                 inject_resume_messages(session, resume_path, initial)
             # Emit resolved thresholds so trace replay across config changes
@@ -493,6 +493,7 @@ def solve_task(
         metrics["tokens_per_turn"] = round(total_tokens / agg_turns, 2)
     metrics.update(cache_usage.metrics_fields())
     metrics.update(role_usage.metrics_fields())
+    metrics.update(model_role_runtime.model_fallback_metrics(client))
     write_run_metrics(artifact_dir, metrics, provenance)
     close_ledger()
     close_system_log()

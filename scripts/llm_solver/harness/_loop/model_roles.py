@@ -7,8 +7,8 @@ reusable by compaction, handoff, advisor, and classifier consumers.
 """
 from __future__ import annotations
 
-import re
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -557,6 +557,15 @@ class ModelFallbackController:
             to_index=to_index,
         )
 
+    def has_next(self, role: str = MAIN_MODEL_ROLE) -> bool:
+        """Return whether advancing this role would select another target."""
+        requested = normalize_model_role(role)
+        chain = self._chains.get(requested)
+        return bool(
+            chain is not None
+            and self._indices[requested] + 1 < len(chain)
+        )
+
     def begin_session(self) -> bool:
         """Apply ``next_session`` reversion; return whether any role reverted."""
         if self.fallback_revert != "next_session":
@@ -578,6 +587,17 @@ class ModelFallbackController:
             "model_fallback_count": self._fallback_count,
             "model_fallback_roles": sorted(self._fallback_roles),
             "model_fallback_active_targets": active,
+        }
+
+    def provenance_fields(self) -> dict[str, object]:
+        """Return the configured secret-free chain and initial target."""
+        return {
+            "model_fallback_revert": self.fallback_revert,
+            "model_fallback_chains": {
+                role: [resolution.target.label() for resolution in chain[1:]]
+                for role, chain in sorted(self._chains.items())
+            },
+            "initial_model_target": self.resolver.main.target.label(),
         }
 
 

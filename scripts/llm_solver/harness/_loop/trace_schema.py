@@ -70,6 +70,23 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "model_fallback",
+        frozenset({
+            "session_number",
+            "turn_number",
+            "role",
+            "from",
+            "to",
+            "reason",
+            "from_profile",
+            "to_profile",
+            "from_model",
+            "to_model",
+            "from_context_size",
+            "to_context_size",
+        }),
+    ),
+    TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
     ),

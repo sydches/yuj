@@ -100,9 +100,11 @@ def load_system_prompt_and_provenance(
     thinking_resolution = getattr(client, "__dict__", {}).get(
         "_thinking_resolution"
     )
+    from .model_role_runtime import model_fallback_provenance
     provenance = collect_provenance(
         cfg, profile_path, resolved_system_prompt=system_prompt,
         run_metadata=run_metadata, thinking_resolution=thinking_resolution,
+        fallback_provenance=model_fallback_provenance(client),
     )
     context_contract = build_context_contract(context_class, cfg)
     provenance["context_contract"] = context_contract
