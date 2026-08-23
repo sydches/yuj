@@ -112,6 +112,28 @@ def test_unreadable_file_and_directory_are_never_loaded(tmp_path):
     assert extractor.extracted == ["visible.fixture"]
 
 
+def test_read_diagnostic_does_not_retain_absolute_host_path(tmp_path, monkeypatch):
+    source = tmp_path / "broken.fixture"
+    source.write_text("DEF hidden\n")
+    original_read_bytes = Path.read_bytes
+
+    def failed_read(path: Path) -> bytes:
+        if path.resolve() == source.resolve():
+            raise PermissionError(13, "permission denied", str(path))
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", failed_read)
+    snapshot = StructuralIndex(tmp_path, extractor=_RecordingExtractor()).scan()
+
+    assert snapshot.rows == ()
+    assert len(snapshot.diagnostics) == 1
+    assert snapshot.diagnostics[0].path == "broken.fixture"
+    assert snapshot.diagnostics[0].message == (
+        "could not read source file (PermissionError errno=13)"
+    )
+    assert str(tmp_path) not in str(snapshot.diagnostics)
+
+
 def test_max_rows_and_character_cap_are_explicit(tmp_path):
     for number in range(5):
         (tmp_path / f"{number}.fixture").write_text(f"DEF item{number}\n")

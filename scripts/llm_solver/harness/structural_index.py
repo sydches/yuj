@@ -510,7 +510,11 @@ class StructuralIndex:
                 source = path.read_bytes()
             except OSError as exc:
                 diagnostics.append(
-                    IndexDiagnostic(display_path, "read_error", str(exc))
+                    IndexDiagnostic(
+                        display_path,
+                        "read_error",
+                        _safe_os_error("could not read source file", exc),
+                    )
                 )
                 continue
             digest = hashlib.sha256(source).hexdigest()
@@ -654,6 +658,14 @@ def _row_sort_key(row: StructuralRow) -> tuple[object, ...]:
         row.signature,
         row.language,
     )
+
+
+def _safe_os_error(action: str, error: OSError) -> str:
+    """Describe an OS failure without retaining its absolute filename."""
+    details = type(error).__name__
+    if error.errno is not None:
+        details += f" errno={error.errno}"
+    return f"{action} ({details})"
 
 
 __all__ = [
