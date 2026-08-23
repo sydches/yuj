@@ -22,4 +22,5 @@ adaptive_debug.jsonl
 system_log.jsonl
 .llm_assist/
 .reference/
+/.internal/
 .junk/
