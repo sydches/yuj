@@ -246,6 +246,8 @@ class Config:
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
+    permissions_rules: dict[str, object] = field(default_factory=dict)
+    permissions_ask_fallback: str = "deny"
     analysis_task_format: str = "auto"  # resolved per-repo via detect_runner; multilingual default
     provider: str = "openai-compatible"
     rumination_gate_max_blocks: int = 0

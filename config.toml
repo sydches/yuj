@@ -427,6 +427,21 @@ enabled = false
 dir = ".harness/injections"
 
 # ---------------------------------------------------------------------------
+# Declarative per-tool permission policy. Empty rules preserve allow-by-default
+# behavior. Later matching entries win; assistant-only "ask" pauses for an
+# operator, while measurement runs resolve "ask" to deny.
+# ---------------------------------------------------------------------------
+[permissions]
+ask_fallback = "deny"  # deny | allow; assistant only when approval transport is absent
+
+[permissions.rules]
+# Example overlay:
+# [permissions.rules.bash]
+# "*" = "ask"
+# "git *" = "allow"
+# "rm *" = "deny"
+
+# ---------------------------------------------------------------------------
 # Prompt addendum settings
 # ---------------------------------------------------------------------------
 

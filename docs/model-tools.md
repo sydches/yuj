@@ -87,6 +87,14 @@ The `bash` tool follows the active sandbox and approval settings. Read
 [Sandbox](sandbox.html) before you let the model work on private files or use a
 Docker socket.
 
+`[permissions].rules` can allow, ask for approval, or deny a tool by its
+canonical command/path argument. The last matching `*`/`?` rule wins. Empty
+rules allow current behavior, and an allow still passes through bash-specific
+forbidden rules. Assistant `ask` decisions use `yuj approve|reject`; measurement
+runs deny them. See
+[Configuration](configuration.html#apply-per-tool-permission-rules) for the
+table and exact match fields.
+
 With `[tools].background_enabled = true`, pass `background = true` to `bash`
 to receive a `proc_id` without waiting for the command. `bash_poll` returns
 only output added since the preceding poll and waits no longer than

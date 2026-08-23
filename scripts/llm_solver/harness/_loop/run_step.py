@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING
 
 from ..guardrails import Action, Decision, PASS
 from ..action_metadata import action_metadata
-from ..approvals import approval_decision
+from ..approvals import approval_decision, approval_transport_available
+from .._tool_filters import resolve_tool_permission
 from ..system_log import get_system_log, provenance_for
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
@@ -536,6 +537,26 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 )
                 for tc in tool_calls
             }
+        permission_resolutions = {}
+        approval_available = approval_transport_available(session._trace_path)
+        for tc in tool_calls:
+            validation = schema_validations.get(tc.id)
+            if validation is not None and not validation.valid:
+                continue
+            resolution = resolve_tool_permission(
+                policy=session._permission_policy,
+                tool_name=tc.name,
+                arguments=tc.arguments,
+                cfg=cfg,
+                approval_available=approval_available,
+            )
+            permission_resolutions[tc.id] = resolution
+            session._emit(
+                "permission",
+                session_number=session._session_number,
+                turn_number=turn,
+                **resolution.trace_fields(),
+            )
         state = TurnState(
             session=session,
             turn=turn,
@@ -549,6 +570,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             turn_t0=_turn_t0,
             preexecuted=preexecuted,
             schema_validations=schema_validations,
+            permission_resolutions=permission_resolutions,
             dispatch=dispatch,
             log=log,
             tool_pre=tool_pre,
@@ -563,6 +585,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
             and all(
                 validation.valid
                 for validation in schema_validations.values()
+            )
+            and all(
+                resolution.allowed
+                for resolution in permission_resolutions.values()
             )
         ):
             effective_output_control = (
@@ -600,45 +626,63 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         preexecuted[tc_id] = f"ERROR: {e}"
         for tc in tool_calls:
             args_summary = _summarize_args(tc.arguments, cfg.args_summary_chars)
-            approval_allowed, approval_reason = approval_decision(
-                runtime_mode=getattr(cfg, "runtime_mode", "measurement"),
-                cwd=session.cwd,
-                trace_path=session._trace_path,
-                tool_name=tc.name,
-                tool_args=tc.arguments,
-                args_summary=args_summary,
-            )
-            if not approval_allowed:
-                session.context.add_tool_result(
-                    tc.id,
-                    "APPROVAL REQUIRED: This tool call was not executed. "
-                    f"Reason: {approval_reason}. Review it with `yuj show`, "
-                    "approve it with `yuj approve <session_id>`, then resume.",
-                    tool_name=tc.name,
-                    gate_blocked=True,
-                )
-                session._emit(
-                    "approval_request",
-                    session_number=session._session_number,
-                    turn_number=turn,
-                    tool_name=tc.name,
-                    args_summary=_truncate_for_trace(
-                        args_summary, cfg.trace_args_summary_chars
-                    ),
-                    reason=approval_reason,
-                    reasoning=_truncate_for_trace(
-                        content or "", cfg.trace_reasoning_store_chars
-                    ),
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                )
-                return SessionResult(
-                    turn,
-                    "approval_required",
-                    done=False,
-                    total_prompt_tokens=total_prompt,
-                    total_completion_tokens=total_completion,
-                )
+            validation = schema_validations.get(tc.id)
+            resolution = permission_resolutions.get(tc.id)
+            if validation is None or validation.valid:
+                if resolution is not None and not resolution.denied:
+                    approval_allowed, approval_reason = approval_decision(
+                        runtime_mode=getattr(
+                            cfg, "runtime_mode", "measurement"
+                        ),
+                        cwd=session.cwd,
+                        trace_path=session._trace_path,
+                        tool_name=tc.name,
+                        tool_args=tc.arguments,
+                        args_summary=args_summary,
+                        required_reason=(
+                            resolution.approval_reason()
+                            if resolution.approval_required
+                            else None
+                        ),
+                        permission_rule=(
+                            resolution.rule
+                            if resolution.approval_required
+                            else None
+                        ),
+                    )
+                    if not approval_allowed:
+                        session.context.add_tool_result(
+                            tc.id,
+                            "APPROVAL REQUIRED: This tool call was not "
+                            "executed. "
+                            f"Reason: {approval_reason}. Review it with "
+                            "`yuj show`, approve it with "
+                            "`yuj approve <session_id>`, then resume.",
+                            tool_name=tc.name,
+                            gate_blocked=True,
+                        )
+                        session._emit(
+                            "approval_request",
+                            session_number=session._session_number,
+                            turn_number=turn,
+                            tool_name=tc.name,
+                            args_summary=_truncate_for_trace(
+                                args_summary, cfg.trace_args_summary_chars
+                            ),
+                            reason=approval_reason,
+                            reasoning=_truncate_for_trace(
+                                content or "", cfg.trace_reasoning_store_chars
+                            ),
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                        )
+                        return SessionResult(
+                            turn,
+                            "approval_required",
+                            done=False,
+                            total_prompt_tokens=total_prompt,
+                            total_completion_tokens=total_completion,
+                        )
             outcome = dispatch_one_tool_call(tc, state)
             if outcome.end:
                 return SessionResult(

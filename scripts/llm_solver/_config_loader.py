@@ -2,6 +2,7 @@
 
 Internal to scripts.llm_solver; load_config() in config.py is the public entry.
 """
+import copy
 import logging
 import math
 import os
@@ -504,6 +505,12 @@ def _extract_config_fields(d: dict) -> dict:
         "prompt_addendum": experiment.get("prompt_addendum", ""),
         "variant_name": experiment.get("variant_name", ""),
         "runtime_mode": d.get("runtime", {}).get("mode", "measurement"),
+        "permissions_rules": copy.deepcopy(
+            d.get("permissions", {}).get("rules", {})
+        ),
+        "permissions_ask_fallback": d.get("permissions", {}).get(
+            "ask_fallback", "deny"
+        ),
         "analysis_task_format": analysis.get("task_format", "auto"),
     }
 
@@ -557,6 +564,12 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    from .harness.tool_policy import (
+        PermissionPolicy,
+        normalize_ask_fallback,
+    )
+    PermissionPolicy.from_rule_tables(cfg.permissions_rules)
+    normalize_ask_fallback(cfg.permissions_ask_fallback)
     if not isinstance(cfg.tools_background_enabled, bool):
         raise ValueError(
             "config error: tools.background_enabled must be a boolean."

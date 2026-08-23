@@ -43,6 +43,7 @@ from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
 from .schemas import get_tool_schemas
 from .tool_validation import ToolSchemaSet
+from .tool_policy import PermissionPolicy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
@@ -211,6 +212,9 @@ class Session:
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
     ):
         self.cfg = cfg
+        self._permission_policy = PermissionPolicy.from_rule_tables(
+            getattr(cfg, "permissions_rules", {})
+        )
         self.client = client
         self.cwd = cwd
         self._session_number = session_number

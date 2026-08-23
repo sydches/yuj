@@ -215,6 +215,12 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "approval_request",
         frozenset({"session_number", "turn_number", "tool_name", "reason"}),
     ),
+    TraceEventSpec(
+        "permission",
+        frozenset({
+            "session_number", "turn_number", "tool", "rule", "decision",
+        }),
+    ),
     # API errors include the HTTP detail in the trace.
     TraceEventSpec(
         "api_error",

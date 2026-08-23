@@ -241,6 +241,71 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     return TCOutcome(end=False)
 
 
+def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
+    """Record one policy-denied call without entering any handler or quirk."""
+    session = state.session
+    cfg = state.cfg
+    result = resolution.denial_envelope()
+    error_decision = state.tool_post["error_ladder"](
+        session._guards,
+        cfg,
+        tc_name=tc.name,
+        result=result,
+    )
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = action_metadata(tc.name, tc.arguments)
+    session.context.add_tool_result(
+        tc.id,
+        result,
+        tool_name=tc.name,
+        gate_blocked=True,
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="permission_denied",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    return TCOutcome(end=False)
+
+
 def record_tool_start(tc, state: "TurnState") -> None:
     """Make one bounded ``tool_start`` row durable before dispatch."""
     diagnostics = getattr(state.session, "_exit_diagnostics", None)
@@ -282,8 +347,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
 
     Sub-phases (in fixed order):
       6a. schema validation    — reject before every handler and guard
-      6b. done_guard           — accept→END(done), BLOCK→next tc, END→END
-      6c. mutation_repeat      — END / BLOCK / WARN
+      6b. permission policy    — deny before every handler and quirk
+      6c. done_guard           — accept→END(done), BLOCK→next tc, END→END
+      6d. mutation_repeat      — END / BLOCK / WARN
       6d. contract_gate        — END / BLOCK / WARN
       6d.5 pre_mutation_gate   — BLOCK only (continue to next tc)
       6e. rumination_gate      — END / BLOCK / WARN-grace dispatch
@@ -334,7 +400,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         if not validation.valid:
             return _handle_schema_reject(tc, state, validation)
 
-    # 6a. done_guard — accept path ends session; otherwise BLOCK
+    permission = state.permission_resolutions.get(tc.id)
+    if permission is not None and permission.denied:
+        return _handle_permission_denial(tc, state, permission)
+
+    # done_guard — accept path ends session; otherwise BLOCK
     # (or END once cfg.done_loop_abort_after rejected calls accumulate).
     if tc.name == "done":
         return _handle_done_tool(tc, state)

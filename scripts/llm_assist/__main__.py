@@ -804,11 +804,15 @@ def cmd_worktree_rm(args) -> int:
 
 def _save_approval_decision(artifact_dir: Path, approval: dict, decision: str) -> None:
     tool_name = str(approval.get("tool_name") or "")
+    action_key = str(approval.get("action_key") or "")
     cmd = str(approval.get("cmd") or "")
-    if not tool_name or not cmd:
+    if not tool_name or not (action_key or cmd):
         return
     decisions = load_approval_decisions(artifact_dir)
-    decisions[f"{tool_name}:{cmd}"] = decision
+    if action_key:
+        decisions[action_key] = decision
+    if cmd:
+        decisions[f"{tool_name}:{cmd}"] = decision
     save_approval_decisions(artifact_dir, decisions)
 
 

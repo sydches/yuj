@@ -125,6 +125,8 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
+| `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
 | `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
 | `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
@@ -325,6 +327,54 @@ been verified; an unsupported profile sends no constraint and runtime reject
 validation remains available. Constraints apply only to normal requests that
 carry tools, never harness-owned side requests. Cache request policy is still
 applied last.
+
+### Apply per-tool permission rules
+
+The default permission table is empty and therefore allows every call to
+continue through Yuj's existing approval, guardrail, and bash-quirk layers:
+
+```toml
+[permissions]
+ask_fallback = "deny"
+
+[permissions.rules]
+
+# Example overlay:
+[permissions.rules.bash]
+"*" = "ask"
+"git *" = "allow"
+"rm *" = "deny"
+
+[permissions.rules.read]
+"*" = "deny"
+"docs/*" = "allow"
+```
+
+Rules retain TOML declaration order and the last matching rule wins. Matching
+is case-sensitive. Only `*` and `?` are wildcards; they include `/` and
+newlines, while brackets are literal characters. A string such as
+`read = "deny"` is shorthand for a `"*"` argument rule. A global `"*"` tool
+entry can set a baseline which a later exact-tool entry overrides.
+
+Each tool has one canonical match value. `bash` uses `cmd`; `read`, `write`,
+`edit`, `glob`, `grep`, `run_tests`, `list_definitions`, and `lsp` use `path`
+(`glob` and `grep` default it to `.`); `apply_patch` uses `patch`; `done` uses
+`message`; and `bash_poll`/`bash_kill` use `proc_id`. Calls without a dedicated
+field use a canonical sorted JSON argument object.
+
+In assistant mode, `ask` writes `approval_request.json`, pauses, and can be
+continued with `yuj approve` or refused with `yuj reject`. `--always` stores a
+stable action identity for any tool, not only shell commands. If an assistant
+session has no usable approval-artifact path, `ask_fallback` explicitly chooses
+allow or deny. Measurement mode never creates an approval request and always
+turns `ask` into `deny`, regardless of that fallback.
+
+The fixed order is schema validation, the general permission table, operator
+approval, bash-specific redirects/forbidden rules, then the handler. An
+`allow` decision therefore does not bypass `bash_quirks/forbidden.toml`.
+Permission denials use the normal error ladder. Raw `permission` trace rows
+record only tool, matched rule, and effective decision; they do not record the
+matched command/path and are not projected into `.solver/state.json`.
 
 ### Run background commands
 

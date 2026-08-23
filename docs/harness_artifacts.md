@@ -57,8 +57,8 @@ The normal `assist_home` is `<yuj-installation>/.llm_assist`. Set
 | `<session_id>/checkpoint.json` | End status for the newest run segment. Resume replaces this file. |
 | `<session_id>/metrics.json` | Measures for the newest run segment. Resume replaces this file. |
 | `<session_id>/.shadow_git/` or the task telemetry sibling's `.shadow_git/` | Independent Git object store for enabled file checkpoints. It is outside the model's task view. |
-| `<session_id>/approval_request.json` | Current shell approval request and its status. |
-| `<session_id>/approval_decisions.json` | Exact shell commands accepted or refused with `--always`. |
+| `<session_id>/approval_request.json` | Current tool approval request, stable action identity, matched permission rule when applicable, and status. Bash requests retain `cmd` for compatibility. |
+| `<session_id>/approval_decisions.json` | Exact tool actions accepted or refused with `--always`; legacy bash command keys remain readable. |
 | `<session_id>/shell_interrupt.json` | Time and reason for the latest user interrupt. Resume clears it when the new run segment starts. |
 | `<session_id>/llm_hurdle_detector.jsonl` | Detector results when the selected treatment enables that file. |
 | `<session_id>/adaptive_control_ledger.jsonl` | Controller actions when the selected treatment enables that file. |
@@ -183,6 +183,13 @@ A `schema_reject` row is raw validation metadata: it records the tool and
 value-free field errors before any handler runs. It is not projected into
 `.solver/state.json`; the associated gate-blocked `tool_call` row remains the
 mechanical attempted-action record and is counted by the normal error ladder.
+
+A `permission` row is raw control metadata emitted after schema validation and
+before approval, bash quirks, or a handler. It records only the tool, matched
+rule, and effective `allow`, `ask`, or `deny` decision—never the matched
+argument. It is not projected into `.solver/state.json`. A denied call retains
+a gate-blocked `tool_call` row and its model-visible error, so the ordinary
+error ladder and replay history still see the attempted action.
 
 The row also records `model_target`, `model`, `profile_name`,
 `base_url`, and `context_size` for the effective main target. API keys are
