@@ -52,6 +52,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instruction_resolved_bytes",
             "project_instructions_truncated", "prompt_import_tree",
             "ignore_file_names",
+            "tool_lazy_loading_enabled", "tool_active_limit", "registered_tools",
+            "active_tools",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
@@ -101,6 +103,14 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
+    ),
+    TraceEventSpec(
+        "tools_activated",
+        frozenset({
+            "session_number", "turn_number", "requested", "activated",
+            "active_tools",
+        }),
+        frozenset({"already_active"}),
     ),
     TraceEventSpec(
         "checkpoint",

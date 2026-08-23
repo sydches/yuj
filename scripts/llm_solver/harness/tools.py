@@ -166,6 +166,9 @@ _DISPATCH = {
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
     ),
+    "load_tools": lambda args, cwd, cfg: (
+        "ERROR: load_tools requires a live session tool surface"
+    ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),

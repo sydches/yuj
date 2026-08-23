@@ -23,6 +23,13 @@ from .context import ContextManager
 from .context_contract import build_context_contract
 from .context_strategies import SolverStateContext
 from .tool_specs import PARALLEL_READ_SAFE_TOOL_NAMES
+from .tool_loading import (
+    ToolLoadingError,
+    loader_error,
+    loader_success,
+    replace_tool_surface,
+)
+from .schemas import get_tool_schemas
 
 # Tools safe to dispatch concurrently when the flag is set.
 _READONLY_TOOLS = PARALLEL_READ_SAFE_TOOL_NAMES
@@ -42,7 +49,6 @@ from .guardrails import (
 )
 from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
-from .schemas import get_tool_schemas
 from .tool_validation import ToolSchemaSet
 from .tool_policy import PermissionPolicy
 from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
@@ -110,7 +116,7 @@ _TRANSIENT_ERRORS = (openai.APIConnectionError, openai.APITimeoutError)
 
 from ._loop import (  # noqa: F401
     _apply_profile_preamble, _apply_profile_schema_simplify,
-    _apply_profile_tool_cap, apply_profile_to_schemas,
+    _apply_profile_tool_cap, apply_profile_to_schemas, build_tool_surface,
     _auto_commit, _canon_focus_path,
     _dedup_signature, _encode_focus_path, _encode_focus_target,
     _extract_bash_focus_target, _extract_test_target_from_command,
@@ -282,9 +288,10 @@ class Session:
         self.adaptive_control_resolved_baseline_cfg = cfg
         # Monotonic bash counter for sink filenames (.tool_output/<sess>_<N>.log)
         self._sink_counter: int = 0
-        self._tool_schemas = apply_profile_to_schemas(
-            get_tool_schemas(cfg.tool_desc), cfg, client,
+        self._tool_surface = build_tool_surface(
+            cfg, client, get_tool_schemas(cfg.tool_desc)
         )
+        self._tool_schemas = self._tool_surface.active_schemas
 
         def _redirect_event_sink(payload: dict[str, object]) -> None:
             fields = dict(payload)
@@ -392,13 +399,33 @@ class Session:
                 f"LSP {query.kind} {query.file} status={query.status}\n{body}"
             )
 
+        def _load_tools_handler(args, _cwd, _cfg):
+            try:
+                activation = self._tool_surface.activate(args.get("names"))
+            except ToolLoadingError as exc:
+                return loader_error(exc, self._tool_surface)
+            self._sync_tool_surface()
+            self._tool_activation_events += 1
+            self._activated_tool_names.update(activation.activated)
+            self._emit(
+                "tools_activated",
+                session_number=self._session_number,
+                turn_number=self._current_turn,
+                requested=list(activation.requested),
+                activated=list(activation.activated),
+                already_active=list(activation.already_active),
+                active_tools=list(activation.active_tools),
+            )
+            return loader_success(activation)
+
         handlers["lsp"] = _lsp_handler
+        handlers["load_tools"] = _load_tools_handler
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
         self._tool_registry = ToolRegistry(handlers=handlers)
         self._checkpoint_store = checkpoint_store
-        schema_names = [s["function"]["name"] for s in self._tool_schemas]
+        schema_names = list(self._tool_surface.registered_names)
         validate_tool_handlers(schema_names, registry=self._tool_registry)
         self._tool_schema_set = ToolSchemaSet.from_openai_tools(
             self._tool_schemas
@@ -616,6 +643,8 @@ class Session:
         # Number of same-turn follow-up requests, aggregated by the driver
         # into post-run metrics. The initial response is not a continuation.
         self._length_continuation_count = 0
+        self._tool_activation_events = 0
+        self._activated_tool_names: set[str] = set()
         # Adaptive phase state (config-driven runtime switch).
         self._adaptive_phase = "base"
         self._adaptive_switched = False
@@ -656,9 +685,43 @@ class Session:
     @property
     def active_tool_names(self) -> frozenset[str]:
         """Names in the current profile-filtered model-facing tool surface."""
-        return frozenset(
-            schema["function"]["name"] for schema in self._tool_schemas
+        return frozenset(self._tool_surface.active_names)
+
+    def is_hidden_tool(
+        self, name: str, *, active_names: frozenset[str] | None = None
+    ) -> bool:
+        """Return whether ``name`` was registered but hidden on a request."""
+        return self._tool_surface.is_hidden(name, active_names=active_names)
+
+    def _sync_tool_surface(self) -> None:
+        """Atomically rebuild request schemas and their validation view."""
+        self._tool_schemas = self._tool_surface.active_schemas
+        self._tool_schema_set = ToolSchemaSet.from_openai_tools(
+            self._tool_schemas
         )
+
+    def _replace_registered_tool_schemas(
+        self, registered_schemas: list[dict], cfg=None
+    ) -> None:
+        """Refresh config/profile gates without losing prior activations."""
+        effective_cfg = cfg or self.cfg
+        from ._loop.profile_resolution import _profile_tool_limit
+
+        lazy = bool(getattr(
+            effective_cfg, "tools_lazy_loading_enabled", False
+        ))
+        self._tool_surface = replace_tool_surface(
+            self._tool_surface,
+            registered_schemas,
+            lazy_loading_enabled=lazy,
+            active_default=getattr(
+                effective_cfg, "tools_active_default", ()
+            ),
+            max_active_tools=(
+                _profile_tool_limit(self.client) if lazy else None
+            ),
+        )
+        self._sync_tool_surface()
 
     @property
     def last_tool_calls(self) -> list[tuple[str, str]]:

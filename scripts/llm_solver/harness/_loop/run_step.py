@@ -529,6 +529,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # read/glob/grep calls. Mutating tools (write/edit/bash)
         # always run sequentially — they never enter this path.
         preexecuted: dict[str, str] = {}
+        turn_active_tool_names = frozenset(session.active_tool_names)
+        inactive_tool_call_ids = frozenset(
+            tc.id
+            for tc in tool_calls
+            if session.is_hidden_tool(
+                tc.name, active_names=turn_active_tool_names
+            )
+        )
         schema_validations = {}
         if getattr(cfg, "tools_schema_validation", "off") == "reject":
             schema_validations = {
@@ -536,10 +544,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     tc.name, tc.arguments
                 )
                 for tc in tool_calls
+                if tc.id not in inactive_tool_call_ids
             }
         permission_resolutions = {}
         approval_available = approval_transport_available(session._trace_path)
         for tc in tool_calls:
+            if tc.id in inactive_tool_call_ids:
+                continue
             validation = schema_validations.get(tc.id)
             if validation is not None and not validation.valid:
                 continue
@@ -569,6 +580,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             phase_token_ms=_phase_token_ms,
             turn_t0=_turn_t0,
             preexecuted=preexecuted,
+            inactive_tool_call_ids=inactive_tool_call_ids,
             schema_validations=schema_validations,
             permission_resolutions=permission_resolutions,
             dispatch=dispatch,
@@ -581,6 +593,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         if (
             cfg.parallel_readonly_enabled
             and len(tool_calls) > 1
+            and not inactive_tool_call_ids
             and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
             and all(
                 validation.valid

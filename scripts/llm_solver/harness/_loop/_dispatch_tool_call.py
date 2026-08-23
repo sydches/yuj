@@ -22,6 +22,7 @@ import time
 
 from ..action_metadata import action_metadata
 from ..guardrails import Action
+from ..tool_loading import inactive_tool_error
 from ..._shared.classification import is_error_result
 from .._guardrails.extractors import MUTATION_TOOLS
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
@@ -255,6 +256,63 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     return TCOutcome(end=False)
 
 
+def _handle_inactive_tool(tc, state: "TurnState") -> TCOutcome:
+    """Reject a hidden registered tool before policy or execution."""
+    session = state.session
+    cfg = state.cfg
+    result = inactive_tool_error(tc.name)
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = action_metadata(tc.name, tc.arguments)
+    session.context.add_tool_result(
+        tc.id, result, tool_name=tc.name, gate_blocked=True
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="tool_not_active",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    return TCOutcome(end=False)
+
+
 def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     """Record one policy-denied call without entering any handler or quirk."""
     session = state.session
@@ -399,6 +457,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # error_ladder END). Empty list = no rewrite happened.
     rewrite_log: list = []
     dispatch_started = tc.id in state.preexecuted
+
+    if tc.id in state.inactive_tool_call_ids:
+        return _handle_inactive_tool(tc, state)
 
     if getattr(cfg, "tools_schema_validation", "off") == "reject":
         validation = state.schema_validations.get(tc.id)

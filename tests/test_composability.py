@@ -176,6 +176,7 @@ def test_tool_specs_drive_surface_metadata():
         "lsp": "lsp_tool_enabled",
         "bash_poll": "tools_background_enabled",
         "bash_kill": "tools_background_enabled",
+        "load_tools": "tools_lazy_loading_enabled",
     }
     assert NATIVE_ENVELOPE_PREFIXES == (
         "<test_results",

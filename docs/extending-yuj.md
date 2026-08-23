@@ -294,7 +294,7 @@ Use these profile fields for these active jobs:
 | `[model].supports_system_role` | Keep or fold the system message. |
 | `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
 | `[capacity].preamble` | Add text before the system prompt. |
-| `[capacity].max_tools` | Limit the number of enabled tools sent to the model. |
+| `[capacity].max_tools` | Limit the fixed tool surface, or the active count when deferred loading is enabled. |
 | `[capacity].simplify_schemas` | Remove descriptions from tool schemas. |
 | `[normalize].rules` | Apply supported rules to a model reply. |
 | `[denormalize].rules` | Choose how Yuj sends the system message. |
@@ -418,6 +418,8 @@ Use a settings overlay for an existing switch or limit:
 
 ```toml
 [tools]
+lazy_loading_enabled = false
+active_default = ["bash", "read", "edit", "glob", "grep", "done"]
 glob_max_matches_per_page = 40
 glob_max_listed_paths = 100
 glob_refuse_unscoped_recursive = true
@@ -486,7 +488,8 @@ Run the schema tests after either change:
 .venv/bin/python -m pytest -q \
   tests/test_composability.py \
   tests/test_harness_pipeline_session.py \
-  tests/test_run_tests_tool.py
+  tests/test_run_tests_tool.py \
+  tests/test_tool_specs_lazy_loading.py
 ```
 
 ## Know when TOML is not enough

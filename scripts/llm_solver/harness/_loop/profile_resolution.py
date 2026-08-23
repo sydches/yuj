@@ -28,19 +28,25 @@ def _resolve_profile(client):
 _CAP_IMMUNE_TOOLS: frozenset[str] = CAP_IMMUNE_TOOL_NAMES
 
 
+def _profile_tool_limit(client) -> int | None:
+    """Return the profile's positive request-tool limit, if declared."""
+    profile = _resolve_profile(client)
+    if profile is None:
+        return None
+    max_tools = int(getattr(profile, "max_tools", 0) or 0)
+    return max_tools if max_tools > 0 else None
+
+
 def _apply_profile_tool_cap(tool_schemas: list[dict], client) -> list[dict]:
     """Apply profile max_tools cap to the declared tool surface.
 
-    Cap-immune tools (currently just `done`) are partitioned to the
+    Cap-immune tools (`load_tools` when enabled, plus `done`) are partitioned to the
     head of the result so they always survive the truncation. Without
     this guard, a tight max_tools cap that happened to land before
     `done` would silently strip the session terminator.
     """
-    profile = _resolve_profile(client)
-    if profile is None:
-        return tool_schemas
-    max_tools = int(getattr(profile, "max_tools", 0) or 0)
-    if max_tools <= 0 or len(tool_schemas) <= max_tools:
+    max_tools = _profile_tool_limit(client)
+    if max_tools is None or len(tool_schemas) <= max_tools:
         return tool_schemas
 
     immune: list[dict] = []
@@ -130,6 +136,39 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
             client,
         ),
         client,
+    )
+
+
+def _build_registered_tool_schemas(
+    cfg, client, tool_schemas: list[dict] | None = None
+) -> list[dict]:
+    """Apply gates and schema shape without erasing the lazy registry."""
+    if tool_schemas is None:
+        from ..schemas import get_tool_schemas
+
+        tool_schemas = get_tool_schemas(cfg.tool_desc)
+
+    return _apply_profile_schema_simplify(
+        _filter_disabled_tools(tool_schemas, cfg),
+        client,
+    )
+
+
+def build_tool_surface(
+    cfg, client, tool_schemas: list[dict] | None = None
+):
+    """Build the registered and initial request-visible tool surface."""
+    from ..tool_loading import ToolSurface
+
+    lazy = bool(getattr(cfg, "tools_lazy_loading_enabled", False))
+    registered = _build_registered_tool_schemas(cfg, client, tool_schemas)
+    if not lazy:
+        registered = _apply_profile_tool_cap(registered, client)
+    return ToolSurface(
+        registered,
+        lazy_loading_enabled=lazy,
+        active_default=getattr(cfg, "tools_active_default", ()),
+        max_active_tools=_profile_tool_limit(client) if lazy else None,
     )
 
 

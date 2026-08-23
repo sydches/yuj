@@ -7,7 +7,6 @@ from dataclasses import replace
 from typing import Any
 
 from ..context import chars_div_4
-from ..schemas import get_tool_schemas
 from ..tool_validation import ToolSchemaSet
 from .model_role_runtime import resolution_with_client_context
 from .model_roles import (
@@ -15,7 +14,7 @@ from .model_roles import (
     ResolvedRoleClient,
     check_context_window,
 )
-from .profile_resolution import _resolve_token_estimator, apply_profile_to_schemas
+from .profile_resolution import _resolve_token_estimator, build_tool_surface
 
 log = logging.getLogger(__name__)
 
@@ -128,11 +127,22 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             switched.transition,
             to_resolution=effective_resolution,
         )
-        candidate_schemas = apply_profile_to_schemas(
-            get_tool_schemas(routed.client.cfg.tool_desc),
-            routed.client.cfg,
-            routed.client,
+        initial_surface = build_tool_surface(
+            routed.client.cfg, routed.client
         )
+        from ..tool_loading import replace_tool_surface
+        candidate_surface = replace_tool_surface(
+            session._tool_surface,
+            initial_surface.registered_schemas,
+            lazy_loading_enabled=getattr(
+                routed.client.cfg, "tools_lazy_loading_enabled", False
+            ),
+            active_default=getattr(
+                routed.client.cfg, "tools_active_default", ()
+            ),
+            max_active_tools=initial_surface.max_active_tools,
+        )
+        candidate_schemas = candidate_surface.active_schemas
         candidate_schema_set = ToolSchemaSet.from_openai_tools(
             candidate_schemas
         )
@@ -161,6 +171,7 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
         session.cfg = routed.client.cfg
         session._active_model_resolution = effective_resolution
         session._active_model_role = effective_resolution.effective_role
+        session._tool_surface = candidate_surface
         session._tool_schemas = candidate_schemas
         session._tool_schema_set = candidate_schema_set
         session.context.set_token_estimator(estimator)

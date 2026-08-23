@@ -125,6 +125,16 @@ def _extract_config_fields(d: dict) -> dict:
         "post_edit_check_enabled": d.get("post_edit_check", {}).get("enabled", False),
         "post_edit_check_timeout": d.get("post_edit_check", {}).get("timeout", 10),
         "post_edit_checks": list(d.get("post_edit_check", {}).get("checks", [])),
+        "tools_lazy_loading_enabled": d.get("tools", {}).get(
+            "lazy_loading_enabled", False
+        ),
+        "tools_active_default": _string_tuple(
+            d.get("tools", {}).get(
+                "active_default",
+                ["bash", "read", "edit", "glob", "grep", "done"],
+            ),
+            path="tools.active_default",
+        ),
         "tools_run_tests_enabled": d.get("tools", {}).get("run_tests", {}).get("enabled", False),
         "tools_run_tests_timeout": int(d.get("tools", {}).get("run_tests", {}).get("timeout", 240)),
         "tools_run_tests_structured_output": bool(d.get("tools", {}).get("run_tests", {}).get("structured_output", True)),
@@ -589,6 +599,27 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    if not isinstance(cfg.tools_lazy_loading_enabled, bool):
+        raise ValueError(
+            "config error: tools.lazy_loading_enabled must be a boolean."
+        )
+    if any(not name.strip() for name in cfg.tools_active_default):
+        raise ValueError(
+            "config error: tools.active_default entries must be non-empty strings."
+        )
+    if len(cfg.tools_active_default) != len(set(cfg.tools_active_default)):
+        raise ValueError(
+            "config error: tools.active_default must not contain duplicates."
+        )
+    from .harness.tool_specs import ACTIVE_TOOL_NAMES
+    unknown_active_tools = sorted(
+        set(cfg.tools_active_default) - set(ACTIVE_TOOL_NAMES)
+    )
+    if unknown_active_tools:
+        raise ValueError(
+            "config error: tools.active_default contains unknown tool names: "
+            + ", ".join(unknown_active_tools)
+        )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,
