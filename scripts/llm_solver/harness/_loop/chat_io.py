@@ -59,10 +59,11 @@ def _can_continue_raw(client) -> bool:
     )
 
 
-def _chat_with_length_continuation(session, outgoing, turn: int):
+def _chat_with_length_continuation(
+    session, outgoing, turn: int, *, max_attempts: int,
+):
     """Execute one logical response through raw profile phases."""
     client = session.client
-    cfg = session.cfg
     base_request = client._prepare_profile_chat_request(
         outgoing, session._tool_schemas
     )
@@ -77,7 +78,7 @@ def _chat_with_length_continuation(session, outgoing, turn: int):
     result = continue_length_response(
         base_request=base_request,
         initial_response=initial_raw,
-        max_attempts=cfg.length_continue_max,
+        max_attempts=max_attempts,
         supports_prefill=client.profile.supports_prefill,
         call_model=call_model,
         normalize=client.profile.normalize,
@@ -125,6 +126,19 @@ def _fallback_reason(exc: Exception, default: str | None) -> str | None:
     return default
 
 
+def _length_continue_max(cfg) -> int:
+    """Return an enabled bound only for the validated primitive shape.
+
+    Lightweight integrations historically supply partial ``MagicMock`` or
+    namespace configs. A synthetic attribute must not opt into a model call;
+    production config validation still rejects invalid explicit values.
+    """
+    value = getattr(cfg, "length_continue_max", 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
+
+
 def _has_fallback(session: "Session") -> bool:
     namespace = getattr(session, "__dict__", {})
     router = namespace.get("_model_role_router") if isinstance(namespace, dict) else None
@@ -161,12 +175,11 @@ def chat_with_retry(session: "Session", turn: int):
                 outgoing = maybe_compact_messages(
                     session, session.context.get_messages()
                 )
-                if (
-                    int(getattr(cfg, "length_continue_max", 0) or 0) > 0
-                    and _can_continue_raw(session.client)
-                ):
+                length_continue_max = _length_continue_max(cfg)
+                if length_continue_max > 0 and _can_continue_raw(session.client):
                     result = _chat_with_length_continuation(
-                        session, outgoing, turn
+                        session, outgoing, turn,
+                        max_attempts=length_continue_max,
                     )
                 else:
                     result = session.client.chat(
