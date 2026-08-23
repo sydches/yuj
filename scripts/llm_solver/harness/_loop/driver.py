@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...config import Config
+from ...server.request_controls import CacheUsageAccumulator
 from ..context import ContextManager
 from ..solver import write_checkpoint, write_run_metrics
 from ..state_writer import write_state_from_trace
@@ -110,6 +111,7 @@ def solve_task(
     agg_verify_repeat = 0
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
+    cache_usage = CacheUsageAccumulator()
     done_loop_aborted = False
     sessions_used = 0
     success = False
@@ -334,6 +336,7 @@ def solve_task(
                     or getattr(cfg, "adaptive_control_baseline_config_paths", ())
                 ),
             )
+            session._cache_usage_accumulator = cache_usage
             if session_num == start_session_num and resume_path is not None:
                 inject_resume_messages(session, resume_path, initial)
             # Emit resolved thresholds so trace replay across config changes
@@ -489,9 +492,8 @@ def solve_task(
         metrics["time_per_session_seconds"] = round(wall_clock / sessions_used, 2)
     if agg_turns > 0:
         metrics["tokens_per_turn"] = round(total_tokens / agg_turns, 2)
-
+    metrics.update(cache_usage.metrics_fields())
     write_run_metrics(artifact_dir, metrics, provenance)
-
     close_ledger()
     close_system_log()
     return success

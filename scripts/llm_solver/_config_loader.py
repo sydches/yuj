@@ -43,6 +43,10 @@ def _extract_config_fields(d: dict) -> dict:
         "health_timeout": _require(d, "server", "health_timeout"),
         "launch_timeout": _require(d, "server", "launch_timeout"),
         "stop_settle": _require(d, "server", "stop_settle"),
+        "server_request_extra": dict(d.get("server", {}).get("request_extra", {})),
+        "cache_affinity": d.get("server", {}).get("cache_affinity", False),
+        "cache_retention": d.get("server", {}).get("cache_retention", "off"),
+        "cache_miss_warn_ratio": d.get("server", {}).get("cache_miss_warn_ratio", 0.0),
         "model": _require(d, "model", "name"),
         "profile_name": d.get("model", {}).get("profile_name", ""),
         "context_size": _require(d, "model", "context_size"),
@@ -412,6 +416,19 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         falls back to the heuristic otherwise; a warning makes the
         silent downgrade visible.
     """
+    from .server.request_controls import (
+        normalize_cache_affinity,
+        normalize_cache_retention,
+        validate_cache_miss_warn_ratio,
+        validate_request_extra,
+    )
+
+    validate_request_extra(
+        cfg.server_request_extra, path="server.request_extra"
+    )
+    normalize_cache_affinity(cfg.cache_affinity)
+    normalize_cache_retention(cfg.cache_retention)
+    validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

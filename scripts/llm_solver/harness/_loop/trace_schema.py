@@ -61,6 +61,13 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "turn",
+        frozenset({
+            "session_number", "turn_number", "role", "prompt_tokens",
+            "cached_tokens", "cache_hit_ratio",
+        }),
+    ),
+    TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
     ),

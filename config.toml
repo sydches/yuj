@@ -57,6 +57,10 @@ health_poll_interval = 2               # seconds between /health polls during la
 health_timeout = 2                     # per-attempt socket timeout for /health probe
 launch_timeout = 120                   # seconds to wait for server to become healthy on launch
 stop_settle = 2                        # seconds to wait after killing server processes
+request_extra = {}                     # llama-server JSON body fields passed through OpenAI SDK extra_body
+cache_affinity = false                 # false/0 disables; true pins to slot 0; positive integer hashes sessions across that many slots
+cache_retention = "off"                # "off" | "session"; session enables cache_prompt on normal turns
+cache_miss_warn_ratio = 0.0            # warn after the first turn below this hit ratio; 0 disables warnings
 
 [model]
 name = "qwen3-vl-8b"       # model identifier sent to the server; must match --model or alias

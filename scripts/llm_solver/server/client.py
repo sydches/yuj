@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from .profile_loader import Profile
 
 from ._streaming import assemble_stream
-from .types import SideRequestResult, ToolCall, Usage
+from .request_controls import apply_request_controls, usage_from_response
+from .types import SideRequestResult, ToolCall
 
 
 def _streaming_enabled() -> bool:
@@ -77,6 +78,33 @@ class LlamaClient:
         self._transcript_path: Path | None = None
         self._transcript_file = None
         self._transcript_call_n: int = 0
+        self._session_id: str = ""
+
+    def set_session_id(self, session_id: str) -> None:
+        """Bind subsequent requests to one stable product session identity."""
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("session_id must be a non-empty string")
+        self._session_id = session_id
+
+    def _attach_request_controls(
+        self,
+        payload: dict,
+        *,
+        side_request: bool,
+        policy_extra: dict | None = None,
+    ) -> dict:
+        """Apply configured extras and final llama cache policy."""
+        return apply_request_controls(
+            payload,
+            session_id=getattr(self, "_session_id", ""),
+            server_request_extra=getattr(
+                self.cfg, "server_request_extra", {}
+            ) or {},
+            cache_affinity=getattr(self.cfg, "cache_affinity", False),
+            cache_retention=getattr(self.cfg, "cache_retention", "off"),
+            side_request=side_request,
+            policy_extra=policy_extra,
+        )
 
     def set_transcript(self, path: Path | None, append: bool = False) -> None:
         """Enable verbatim transcript at `path`. Truncates and resets counter.
@@ -190,6 +218,7 @@ class LlamaClient:
         if self.profile is not None:
             request["messages"] = self.profile.denormalize_messages(messages)
         request["model"] = self.cfg.model
+        request = self._attach_request_controls(request, side_request=True)
         response = self._call_api(request, record_transcript=False)
         message = response.choices[0].message
         if getattr(message, "tool_calls", None):
@@ -197,13 +226,9 @@ class LlamaClient:
         content = getattr(message, "content", None)
         if not isinstance(content, str):
             raise ValueError("side request returned no text content")
-        usage = getattr(response, "usage", None)
         return SideRequestResult(
             content=content,
-            usage=Usage(
-                prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-                completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
-            ),
+            usage=usage_from_response(response),
         )
 
     def health_check(self) -> list[str]:
@@ -332,12 +357,12 @@ class LlamaClient:
         elif tools:
             log.info("Profile %s reports supports_tool_calls=false; omitting tool schema payload", profile.name)
 
+        payload = self._attach_request_controls(payload, side_request=False)
         resp = self._call_api(payload)
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"
-        prompt_tokens = resp.usage.prompt_tokens if resp.usage else 0
-        completion_tokens = resp.usage.completion_tokens if resp.usage else 0
+        usage = usage_from_response(resp)
 
         # Build raw response dict for normalize pipeline
         raw_tool_calls = []
@@ -392,7 +417,7 @@ class LlamaClient:
             content=content,
             tool_calls=tool_calls,
             finish_reason=norm_reason,
-            usage=Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+            usage=usage,
         )
 
     def _chat_legacy(
@@ -401,18 +426,18 @@ class LlamaClient:
         """Legacy chat without profile — ad-hoc quirk handling."""
         from .types import TurnResult
 
-        resp = self._call_api({
+        payload = self._attach_request_controls({
             "model": self.cfg.model,
             "messages": messages,
             "tools": tools,
             "tool_choice": "auto",
             "max_tokens": self.cfg.max_tokens,
-        })
+        }, side_request=False)
+        resp = self._call_api(payload)
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"
-        prompt_tokens = resp.usage.prompt_tokens if resp.usage else 0
-        completion_tokens = resp.usage.completion_tokens if resp.usage else 0
+        usage = usage_from_response(resp)
 
         # Strip thinking blocks from content
         raw_content = getattr(msg, "content", None)
@@ -433,7 +458,7 @@ class LlamaClient:
             content=content,
             tool_calls=tool_calls,
             finish_reason=reason,
-            usage=Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+            usage=usage,
         )
 
     def build_assistant_message(

@@ -289,6 +289,10 @@ def main(argv: list[str] | None = None) -> int:
                  not args.replay_allow_divergence, args.replay_continue_live)
     else:
         client = _build_client(cfg, profile)
+    if hasattr(client, "set_session_id"):
+        client.set_session_id(
+            str(run_metadata.get("session_id") or f"{run_dir.resolve()}:{started_at}")
+        )
     server_metadata_path: Path | None = None
     server_metadata_sha256: str | None = None
     try:

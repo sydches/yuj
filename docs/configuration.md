@@ -90,6 +90,10 @@ order in the
 | `[server].provider` | Select the OpenAI-compatible or Anthropic API format. |
 | `[server].base_url` | Use another online model service or local model server. |
 | `[server].api_key` | Use a key value or an `$ENV:VARIABLE_NAME` reference. |
+| `[server].request_extra` | Add llama-server JSON request fields through the OpenAI SDK `extra_body`. |
+| `[server].cache_affinity` | Pin one product session to a deterministic llama-server slot. |
+| `[server].cache_retention` | Turn explicit per-request prompt-cache writes off or on for the session. |
+| `[server].cache_miss_warn_ratio` | Warn after the first turn when observed prefix reuse falls below this ratio. |
 | `[model].name` | Set the exact model ID that the service accepts. |
 | `[model].profile_name` | Use settings for a model's message and tool-call format. |
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
@@ -117,6 +121,34 @@ normal use.
 The paper runtime files set the tokenizer for each reported model. Apply the
 files in the [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
 when you reproduce an experiment.
+
+## Configure llama-server prompt caching
+
+The `[server]` cache settings apply to the OpenAI-compatible llama-server
+client. They do not describe provider TTLs.
+
+`request_extra` is a TOML table of additional JSON body fields. Yuj passes
+these through the OpenAI SDK's `extra_body`. `cache_affinity = false` disables
+slot selection; `true` selects slot 0; a positive integer hashes the stable
+product session ID across that many slot numbers. Configure no more slots than
+the active llama-server actually exposes.
+
+`cache_retention = "off"` sends `cache_prompt=false`. Set it to `"session"`
+to send `cache_prompt=true` on normal solver turns. When affinity is enabled,
+the same requests also carry the derived `id_slot`. Cache policy owns both
+fields and overrides copies placed in `request_extra`.
+
+`cache_miss_warn_ratio` accepts a value from 0 through 1. Zero disables the
+warning. A positive value logs a warning when an observed cache hit ratio is
+below the threshold after the session's first request. Missing server cache
+telemetry stays unknown and does not produce a false miss warning.
+
+Compaction, handoff, and other harness side requests always send
+`cache_prompt=false` and omit `id_slot`, so they cannot replace the solver
+conversation's retained prefix. Each solver response records prompt tokens,
+cached tokens, and its hit ratio in a `turn` trace row. `metrics.json` contains
+the token-weighted run ratio under `metrics.prompt_cache`, and the installed
+session summary reports that latest ratio.
 
 ## Choose a context mode
 

@@ -946,8 +946,10 @@ def _print_run_compact_summary(record) -> None:
     changed_files = list(summary.get("changed_files", []))
     last_test_cmd = str(summary.get("last_test_cmd") or "")
     last_test_result = str(summary.get("last_test_result") or "unknown")
+    cache_metrics_present = bool(summary.get("cache_metrics_present"))
+    cache_hit_ratio = summary.get("cache_hit_ratio")
 
-    if not changed_files and not last_test_cmd:
+    if not changed_files and not last_test_cmd and not cache_metrics_present:
         return
 
     print("summary:")
@@ -963,6 +965,11 @@ def _print_run_compact_summary(record) -> None:
         print(f"  last_test_result: {last_test_result}")
     else:
         print("  last_test: none observed")
+    if cache_metrics_present:
+        if isinstance(cache_hit_ratio, (int, float)):
+            print(f"  cache_hit_ratio: {float(cache_hit_ratio):.1%}")
+        else:
+            print("  cache_hit_ratio: unknown")
 
 
 def _handle_keyboard_interrupt(store: SessionStore, record) -> int:

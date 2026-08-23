@@ -25,6 +25,7 @@ from ..guardrails import Action, Decision, PASS
 from ..action_metadata import action_metadata
 from ..approvals import approval_decision
 from ..system_log import get_system_log, provenance_for
+from ...server.request_controls import CacheObservation, warn_on_cache_miss
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
 from ._dispatch_tool_call import TurnState, dispatch_one_tool_call
 from .compaction import preflight_reclip_oversized
@@ -327,6 +328,28 @@ def run_session_loop(session: "Session") -> "SessionResult":
         reason = chat_result.finish_reason
         prompt_tokens = chat_result.usage.prompt_tokens
         completion_tokens = chat_result.usage.completion_tokens
+        cache_observation = CacheObservation(
+            prompt_tokens=int(prompt_tokens or 0),
+            cached_tokens=chat_result.usage.cached_tokens,
+            hit_ratio=chat_result.usage.cache_hit_ratio,
+            source="turn_result",
+        )
+        accumulator = getattr(session, "_cache_usage_accumulator", None)
+        if accumulator is not None:
+            accumulator.record(cache_observation)
+        warn_on_cache_miss(
+            cache_observation,
+            warn_ratio=getattr(cfg, "cache_miss_warn_ratio", 0.0),
+            prior_turns=local_turn,
+            logger=log,
+        )
+        session._emit(
+            "turn",
+            session_number=session._session_number,
+            turn_number=turn,
+            role=getattr(session, "_active_model_role", "main"),
+            **cache_observation.trace_fields(),
+        )
         total_prompt += prompt_tokens
         total_completion += completion_tokens
         # Canonical pt signal — drives the post-flight gate AND the
