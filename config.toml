@@ -10,8 +10,14 @@
 # schemas) belong here.
 
 # ---------------------------------------------------------------------------
-# Model aliases — short names → full model identifiers
+# Model roles and aliases
 # ---------------------------------------------------------------------------
+
+[models]
+
+[models.roles]
+weak = ""    # optional profile name or inline target for summaries/classifiers; empty uses the main model
+editor = ""  # optional profile name or inline target for edit-focused side work; empty uses the main model
 
 [models.aliases]
 # Local models (llm_solver via llama-server)

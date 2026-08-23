@@ -13,6 +13,10 @@ from .harness.context_strategies import (
     list_context_modes,
     resolve_context_class,
 )
+from .harness._loop.model_role_runtime import (
+    build_model_role_runtime,
+    validate_model_role_profiles,
+)
 from .models import resolve_model
 from .server import LlamaClient, load_profile
 from .server.request_controls import THINKING_LEVELS
@@ -240,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Loaded profile: %s (inherits=%s)", profile.name, profile.inherits)
         except FileNotFoundError:
             log.info("No profile found for '%s', using legacy mode", profile_key)
+    validate_model_role_profiles(
+        cfg=cfg, main_profile=profile, profiles_dir=profiles_dir,
+    )
 
     try:
         run_metadata = _build_run_metadata(
@@ -371,6 +378,15 @@ def main(argv: list[str] | None = None) -> int:
     # max_tokens=0 from _extract_config_fields. Without this re-bind, a
     # request can still use the placeholder after Yuj derives the real value.
     client.cfg = cfg
+    if args.replay_from is None:
+        build_model_role_runtime(
+            cfg=cfg,
+            main_client=client,
+            profiles_dir=profiles_dir,
+            client_factory=lambda role_cfg, role_profile: LlamaClient(
+                role_cfg, profile=role_profile
+            ),
+        )
 
     try:
         run_metadata = _build_run_metadata(

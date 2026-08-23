@@ -363,6 +363,7 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         return messages
 
     compaction_fallback = ""
+    compaction_role_fields: dict[str, object] = {"role": "main"}
     first_kept_turn = _latest_assistant_turn(
         messages, getattr(session, "_compaction_turn", 0)
     )
@@ -371,13 +372,17 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
 
     if requested_method == "checkpoint":
         from .checkpoint_summary import generate_checkpoint
+        from .model_role_runtime import consumer_role_client, record_role_usage
 
         keep_recent_tokens = int(
             getattr(cfg, "checkpoint_keep_recent_tokens", 0) or 0
         ) or max(4096, int(0.20 * ctx_size))
+        routed = consumer_role_client(session, "weak")
+        compaction_role_fields = routed.trace_fields()
 
         def _call_checkpoint(payload: dict) -> str:
-            side_result = session.client.complete_side_request(payload)
+            side_result = routed.client.complete_side_request(payload)
+            record_role_usage(session, routed, side_result.usage)
             return side_result.content
 
         checkpoint = generate_checkpoint(
@@ -550,7 +555,7 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         first_kept_turn=first_kept_turn,
         method=requested_method,
         fallback=compaction_fallback,
-        role="main",
+        **compaction_role_fields,
     )
     if configured_method == "checkpoint":
         from .checkpoint_summary import loop_guard_forces_digest

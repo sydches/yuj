@@ -9,7 +9,6 @@ visible at one read-site. Names patched by tests are late-bound through the
 public ``loop`` module rather than imported directly.
 """
 from __future__ import annotations
-
 import logging
 import os
 import time
@@ -35,6 +34,7 @@ from ._driver_setup import (
 )
 from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
+from .model_role_runtime import bind_session_model_roles, role_token_ledger
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
 
@@ -110,16 +110,14 @@ def solve_task(
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
     cache_usage = CacheUsageAccumulator()
+    role_usage = role_token_ledger(client)
     done_loop_aborted = False
     sessions_used = 0
     success = False
 
     task_description = task_prompt
     thinking_fields = thinking_trace_fields(cfg, client)
-    # Mechanical state.json writer: active iff cfg.state_writer_enabled is
-    # true. The writer creates .solver/state.json from .trace.jsonl at session
-    # boundaries and after tool events; callers do not need to pre-seed the
-    # file for state-backed context modes.
+    # Mechanical state.json is rebuilt from the trace at session boundaries.
     state_json_path = artifact_dir / ".solver" / "state.json"
     state_path: Path | None = state_json_path if cfg.state_writer_enabled else None
 
@@ -337,6 +335,7 @@ def solve_task(
                 ),
             )
             session._cache_usage_accumulator = cache_usage
+            bind_session_model_roles(session, client, role_usage)
             if session_num == start_session_num and resume_path is not None:
                 inject_resume_messages(session, resume_path, initial)
             # Emit resolved thresholds so trace replay across config changes
@@ -493,6 +492,7 @@ def solve_task(
     if agg_turns > 0:
         metrics["tokens_per_turn"] = round(total_tokens / agg_turns, 2)
     metrics.update(cache_usage.metrics_fields())
+    metrics.update(role_usage.metrics_fields())
     write_run_metrics(artifact_dir, metrics, provenance)
     close_ledger()
     close_system_log()

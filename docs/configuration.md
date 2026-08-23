@@ -99,6 +99,8 @@ order in the
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
 | `[model].thinking_level` | Select the requested per-run reasoning effort. |
+| `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
+| `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
@@ -122,6 +124,45 @@ normal use.
 The paper runtime files set the tokenizer for each reported model. Apply the
 files in the [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
 when you reproduce an experiment.
+
+## Configure auxiliary model roles
+
+Named roles let harness-owned side requests use a smaller model without
+changing the model that works on the task. The public roles are `weak` and
+`editor`. A blank role uses the main model and endpoint. Set a profile name for
+a role that shares the main endpoint:
+
+```toml
+[models.roles]
+weak = "qwen3-small"
+```
+
+Use an inline target when a role has its own served model or endpoint:
+
+```toml
+[models.roles.weak]
+profile = "qwen3-small"
+endpoint = "http://127.0.0.1:8181/v1"
+model = "served-small"
+context_size = 32768
+```
+
+`endpoint` must be an absolute HTTP or HTTPS URL without embedded
+credentials. An inline target may also set `api_key`, but keep literal secrets
+in ignored local configuration and prefer environment-backed credentials.
+Yuj loads and validates the main profile and every configured role profile at
+startup. An invalid role stops the run before model work begins.
+
+Checkpoint summaries, fresh-session handoffs, and the model-backed hurdle
+classifier request the `weak` role. If it is unset, the resolver returns the
+actual main client and records that fallback in side-request telemetry. Role
+clients are created only when first used and are reused for the same resolved
+target. Yuj does not launch or supervise another server: a distinct endpoint
+normally means you must run a second llama-server process yourself.
+
+Every model response is charged once to its effective role. Post-run
+`metrics.json` reports request, prompt, completion, cached, and total token
+counts under `metrics.tokens_by_role`.
 
 ## Configure llama-server prompt caching
 
@@ -233,8 +274,8 @@ allow it. These settings live under `[context]`:
 | `digest_keep_recent_turns` | `8` | Digest tail size and the close-compaction guard window. |
 | `digest_compaction_gate_min_mutations` | `0` | Minimum successful mutations before compaction may run. |
 
-Checkpoint mode makes one no-tool call to the active model. Thinking is off
-for that call. Yuj keeps the system prompt and task message unchanged, places
+Checkpoint mode makes one no-tool call through the `weak` model role. Thinking
+is off for that call. Yuj keeps the system prompt and task message unchanged, places
 the validated checkpoint after the task, and keeps a verbatim recent tail
 beginning at an assistant-turn boundary. The checkpoint must contain every
 required section and every mechanically observed modified path, fit the
@@ -248,7 +289,7 @@ run segment use digest to avoid a compaction loop.
 
 ### Summarize work for a fresh session
 
-Set `[loop].handoff_summary_enabled = true` to make one no-tool side request
+Set `[loop].handoff_summary_enabled = true` to make one no-tool `weak`-role side request
 when a session ends because of `context_full`, `length`, or `max_turns` and
 another session is available. `[prompts].handoff_max_tokens` defaults to
 `2000` and limits the returned summary. Thinking is off for this request.

@@ -1,7 +1,7 @@
 """Session-boundary integration for validated model-written handoffs."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +13,7 @@ from .handoff_summary import (
     generate_handoff,
     insert_handoff_into_resume_prompt,
 )
+from .model_role_runtime import consumer_role_client, record_role_usage
 from .resume import _load_trace_events
 from .trace_schema import emit_trace_event
 
@@ -26,7 +27,13 @@ class BoundaryHandoff:
 
     result: HandoffResult
     usage: Usage | None
-    role: str = "main"
+    role_fields: dict[str, object] = field(
+        default_factory=lambda: {"role": "main"}
+    )
+
+    @property
+    def role(self) -> str:
+        return str(self.role_fields["role"])
 
 
 def generate_boundary_handoff(
@@ -45,6 +52,7 @@ def generate_boundary_handoff(
     declared response inside the configured context window.
     """
     usage: Usage | None = None
+    routed = consumer_role_client(client, "weak")
 
     def _call_model(payload: dict[str, Any]) -> str:
         nonlocal usage
@@ -54,8 +62,9 @@ def generate_boundary_handoff(
                 "handoff request does not fit configured context: "
                 f"{request_tokens} + {cfg.handoff_max_tokens} >= {cfg.context_size}"
             )
-        response = client.complete_side_request(payload)
+        response = routed.client.complete_side_request(payload)
         usage = response.usage
+        record_role_usage(client, routed, response.usage)
         return response.content
 
     # The exact tokenizer enforces the request budget above. Bound raw trace
@@ -75,7 +84,11 @@ def generate_boundary_handoff(
         session_number=session_number,
         max_history_chars=history_chars,
     )
-    return BoundaryHandoff(result=result, usage=usage)
+    return BoundaryHandoff(
+        result=result,
+        usage=usage,
+        role_fields=routed.trace_fields(),
+    )
 
 
 def maybe_prepare_boundary_handoff(
@@ -113,7 +126,7 @@ def maybe_prepare_boundary_handoff(
         tokens=attempt.result.tokens,
         valid=attempt.result.valid,
         fallback=attempt.result.fallback,
-        role=attempt.role,
+        **attempt.role_fields,
     )
     if state_path is not None:
         write_state_from_trace(

@@ -17,6 +17,7 @@ from ..llm_solver.config import (
 )
 from ..llm_solver.harness import TaskSpec, solve_task
 from ..llm_solver.harness.context_strategies import resolve_context_class
+from ..llm_solver.harness._loop.model_role_runtime import build_model_role_runtime
 from ..llm_solver.harness.loop import _load_trace_events
 from ..llm_solver.models import resolve_model
 from ..llm_solver.server import LlamaClient, load_profile
@@ -107,6 +108,12 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
         client.set_session_id(record.session_id)
     cfg = _apply_effective_context(cfg, client)
     client.cfg = cfg
+    build_model_role_runtime(
+        cfg=cfg,
+        main_client=client,
+        profiles_dir=PROJECT_ROOT / "profiles",
+        client_factory=_make_client,
+    )
 
     prompt_text = record.prompt_text
     if resume:

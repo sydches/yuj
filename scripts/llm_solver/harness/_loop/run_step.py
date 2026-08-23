@@ -337,6 +337,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
         accumulator = getattr(session, "_cache_usage_accumulator", None)
         if accumulator is not None:
             accumulator.record(cache_observation)
+        role_ledger = getattr(session, "_role_token_ledger", None)
+        if role_ledger is not None:
+            role_ledger.record_usage(
+                getattr(session, "_active_model_resolution", None) or "main",
+                chat_result.usage,
+                cached_tokens=int(chat_result.usage.cached_tokens or 0),
+            )
         warn_on_cache_miss(
             cache_observation,
             warn_ratio=getattr(cfg, "cache_miss_warn_ratio", 0.0),

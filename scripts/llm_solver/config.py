@@ -429,6 +429,7 @@ class Config:
     cache_retention: str = "off"
     cache_miss_warn_ratio: float = 0.0
     thinking_level: str = "off"
+    model_roles: dict[str, object] = field(default_factory=dict)
     # edit() match policy. Strict is the default (database-of-
     # primitives principle: no silent relaxation). Cascade restores
     # the optional auto-apply behavior.
