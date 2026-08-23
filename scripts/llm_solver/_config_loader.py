@@ -360,6 +360,8 @@ def _extract_config_fields(d: dict) -> dict:
         "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
+        "repo_map_tokens": d.get("context", {}).get("repo_map_tokens", 0),
+        "repo_map_refresh": d.get("context", {}).get("repo_map_refresh", "auto"),
         "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
         "compaction_hook": d.get("context", {}).get("compaction_hook", ""),
         "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
@@ -745,6 +747,17 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     validate_role_specs(cfg.model_roles)
     validate_fallback_chains(cfg.model_fallback_chain)
     normalize_fallback_revert(cfg.model_fallback_revert)
+    if (
+        isinstance(cfg.repo_map_tokens, bool)
+        or not isinstance(cfg.repo_map_tokens, int)
+        or cfg.repo_map_tokens < 0
+    ):
+        raise ValueError(
+            "config error: context.repo_map_tokens must be a non-negative "
+            "integer."
+        )
+    from .harness.repo_map import normalize_repo_map_refresh
+    normalize_repo_map_refresh(cfg.repo_map_refresh)
     from .harness.compaction_hooks import resolve_compaction_hook
     resolve_compaction_hook(cfg.compaction_hook)
     if cfg.compaction_method not in {"digest", "checkpoint"}:

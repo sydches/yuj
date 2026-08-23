@@ -216,6 +216,7 @@ class Session:
         ignore_policy: IgnorePolicy | None = None,
         effective_env: Mapping[str, str] | None = None,
         allow_login_shell: bool | None = None,
+        local_tokenizer=None,
     ):
         self.cfg = cfg
         from .compaction_hooks import resolve_compaction_hook
@@ -601,8 +602,13 @@ class Session:
         # _maybe_compact_messages. None when cfg.tokenizer_id is unset
         # — caller falls back to chars_div_4 estimate.
         from .local_tokenizer import load as _load_tokenizer
-        self._tokenizer = _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
-        if self._tokenizer is not None:
+        tokenizer_was_preloaded = local_tokenizer is not None
+        self._tokenizer = (
+            local_tokenizer
+            if tokenizer_was_preloaded
+            else _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
+        )
+        if self._tokenizer is not None and not tokenizer_was_preloaded:
             synced = self._tokenizer.sync_chat_template(
                 getattr(cfg, "base_url", "") or "")
             log.info("local tokenizer loaded: %s (server template %s)",

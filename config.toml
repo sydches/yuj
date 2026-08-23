@@ -235,6 +235,14 @@ checkpoint_max_summary_tokens = 4000    # hard-capped at 4000 by the runtime
 digest_compaction_safety_margin = 0.05
 digest_keep_recent_turns = 8
 digest_compaction_gate_min_mutations = 0
+# Append a deterministic ranked file/symbol map to the first task message.
+# Zero keeps the existing prompt byte-for-byte unchanged.  Enabled maps use
+# the configured local tokenizer, active profile estimator, or documented
+# chars/4 fallback as a hard incremental token budget.
+repo_map_tokens = 0
+# auto: reuse a cache while source paths/sizes/mtimes match; always: rebuild;
+# files: content-hash source files before reuse; manual: reuse any valid cache.
+repo_map_refresh = "auto"  # auto | always | files | manual
 
 [harness_observation]
 # Live prefix-only mechanical concern packets. First implementation is
