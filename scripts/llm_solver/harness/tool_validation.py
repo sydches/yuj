@@ -243,7 +243,11 @@ class ToolSchemaSet:
             # references before either runtime validation or grammar building.
             _dereference_schema(schema, schema)
             names.append(name)
-            parameters[name] = copy.deepcopy(schema)
+            # Tool handlers have a closed declared argument surface.  Make
+            # that strictness explicit when source schemas omit JSON Schema's
+            # permissive additionalProperties default, so runtime rejection
+            # and constrained decoding accept the same calls.
+            parameters[name] = _strict_object_schemas(copy.deepcopy(schema))
 
         if not names:
             raise ToolSchemaDefinitionError("at least one tool schema is required")

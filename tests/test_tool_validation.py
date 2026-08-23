@@ -300,9 +300,10 @@ def test_constrained_json_schema_has_one_strict_branch_per_active_tool(schemas):
         assert validate_json_instance(call, wrapper) == ()
 
 
-def test_constrained_schema_is_strict_without_mutating_runtime_schema(schemas):
-    # JSON Schema permits additional fields unless additionalProperties=false.
-    assert schemas.validate("read", {"path": "x.py", "future": 1}).valid
+def test_runtime_and_constrained_schemas_share_a_closed_argument_surface(schemas):
+    runtime = schemas.validate("read", {"path": "x.py", "future": 1})
+    assert runtime.valid is False
+    assert runtime.errors[0].keyword == "additionalProperties"
 
     wrapper = schemas.constrained_json_schema()
     errors = validate_json_instance(
