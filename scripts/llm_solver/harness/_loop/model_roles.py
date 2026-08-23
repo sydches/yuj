@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -525,9 +525,18 @@ class ModelFallbackController:
     def current(self, role: str = MAIN_MODEL_ROLE) -> ResolvedModelRole:
         requested = normalize_model_role(role)
         chain = self._chains.get(requested)
-        if chain is None:
-            return self.resolver.resolve(requested)
-        return chain[self._indices[requested]]
+        resolution = (
+            self.resolver.resolve(requested)
+            if chain is None
+            else chain[self._indices[requested]]
+        )
+        if requested != MAIN_MODEL_ROLE and resolution.uses_main_fallback:
+            return replace(
+                self.current(MAIN_MODEL_ROLE),
+                requested_role=requested,
+                uses_main_fallback=True,
+            )
+        return resolution
 
     def advance(
         self,
@@ -545,12 +554,13 @@ class ModelFallbackController:
         to_index = from_index + 1
         if to_index >= len(chain):
             return None
+        from_resolution = self.current(requested)
         self._indices[requested] = to_index
         self._fallback_count += 1
         self._fallback_roles.add(requested)
         return ModelFallbackTransition(
             role=requested,
-            from_resolution=chain[from_index],
+            from_resolution=from_resolution,
             to_resolution=chain[to_index],
             reason=reason_code,
             from_index=from_index,

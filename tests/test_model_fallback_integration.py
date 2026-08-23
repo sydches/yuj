@@ -311,6 +311,24 @@ def test_next_session_policy_reverts_to_primary_client():
     assert binding.resolution.profile.name == "_base"
 
 
+def test_unset_side_role_follows_the_active_main_fallback():
+    cfg = _cfg()
+    main = _FakeClient(cfg, load_profile("_base", FIXTURE_PROFILES))
+    runtime, clients = _runtime(cfg, main, {"weak": []})
+    switched = runtime.router.switch_after_retry_exhaustion(
+        "main", reason="transient_exhausted"
+    )
+    assert switched is not None
+
+    side = runtime.router.client_for("weak")
+
+    assert side.client is clients[0]
+    assert side.resolution.requested_role == "weak"
+    assert side.resolution.effective_role == "main"
+    assert side.resolution.uses_main_fallback is True
+    assert side.resolution.target == switched.routed_client.resolution.target
+
+
 def test_trace_provenance_and_metrics_expose_effective_model_per_session(
     tmp_path: Path,
 ):
