@@ -40,6 +40,7 @@ Do not pass a descriptor file with `--config`.
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
+| Threshold-triggered context compaction | A settings overlay with `[context].compaction_hook` plus a trusted Python module | The config loader resolves `module:function` at startup. | Yes. The function uses the bounded compaction-hook contract. |
 | A new tool or server type | Python and its data files | The dispatcher or server launcher must know the new type. | Yes. |
 
 ## Share an extension
@@ -490,6 +491,12 @@ Run the schema tests after either change:
 ```
 
 ## Know when TOML is not enough
+
+The custom compaction hook is the narrow public Python extension point for
+context compaction. Configure it with `context.compaction_hook`; do not fork
+`harness/_loop/compaction.py`. Read [Compaction hooks](compaction.html) before
+enabling one. Hook modules are trusted in-process code, and an invalid import
+stops startup.
 
 | Change | Why Python is needed |
 | --- | --- |

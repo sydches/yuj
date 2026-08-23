@@ -485,6 +485,7 @@ class Config:
     repo_map_tokens: int = 0
     repo_map_refresh: str = "auto"
     compaction_method: str = "digest"
+    compaction_hook: str = ""
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
     # Optional model-written fresh-session handoff. The existing mechanical

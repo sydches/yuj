@@ -69,6 +69,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "method",
             "fallback",
             "role",
+            "hook",
+            "hook_outcome",
         }),
     ),
     TraceEventSpec(

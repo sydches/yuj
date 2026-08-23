@@ -110,6 +110,7 @@ order in the
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
+| `[context].compaction_hook` | Import one trusted synchronous `module:function` that can delegate, cancel, or replace a threshold-triggered compaction. Empty uses only the built-in path. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
@@ -733,6 +734,7 @@ allow it. These settings live under `[context]`:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `compaction_method` | `"digest"` | Use the deterministic trace digest, or opt into a model-written `"checkpoint"`. |
+| `compaction_hook` | `""` | Trusted synchronous `module:function` called after the normal threshold and mutation gate. Empty disables the hook. |
 | `checkpoint_keep_recent_tokens` | `0` | Verbatim recent-tail target. Zero means 20% of the live context window, with a 4,096-token minimum. |
 | `checkpoint_max_summary_tokens` | `4000` | Maximum checkpoint response; the runtime also applies a 4,000-token hard cap and the available-reserve limit. |
 | `digest_compaction_safety_margin` | `0.05` | Margin used by the derived compaction threshold. |
@@ -746,6 +748,14 @@ beginning at an assistant-turn boundary. The checkpoint must contain every
 required section and every mechanically observed modified path, fit the
 budget, and reduce the prompt token count. Any request, response, validation,
 or size failure uses the deterministic digest instead.
+
+When `compaction_hook` is non-empty, Yuj resolves it while configuration is
+loaded, before model work starts. The hook may return `None` for the built-in
+method, `Cancel()` to keep the current conversation, or a validated
+`Compaction(summary, first_kept_turn)`. Hook failures and invalid replacements
+use the digest. Read [Compaction hooks](compaction.html) for the exact Python
+types, preparation fields, validation rules, and trace outcomes. The hook runs
+inside the harness process, not inside the model-command sandbox.
 
 Yuj records only compaction metadata in the trace and state projection; it
 does not copy model-written checkpoint text into `.solver/state.json`. If two

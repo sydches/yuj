@@ -180,6 +180,12 @@ Yuj itself writes the trace, checkpoints, metrics, and session data. These
 writes do not pass through the model shell. In normal CLI use, Yuj saves them
 under `.llm_assist/` in the Yuj installation.
 
+A configured `context.compaction_hook` is also harness-side Python. Yuj
+imports and calls it in the main process; `bwrap`, the container backend, and
+the shell environment policy do not isolate it. Enable only a reviewed module
+that you trust. Read [Compaction hooks](compaction.html) for its bounded input
+and return contract.
+
 When `[tools].file_checkpoints_enabled` is on, Yuj also writes an independent
 shadow-Git repository outside the task directory after each potentially
 mutating tool call. Its absolute path is added to the sandbox masks. The model

@@ -363,6 +363,7 @@ def _extract_config_fields(d: dict) -> dict:
         "repo_map_tokens": d.get("context", {}).get("repo_map_tokens", 0),
         "repo_map_refresh": d.get("context", {}).get("repo_map_refresh", "auto"),
         "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
+        "compaction_hook": d.get("context", {}).get("compaction_hook", ""),
         "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
         "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
         "handoff_summary_enabled": d.get("loop", {}).get("handoff_summary_enabled", False),
@@ -757,6 +758,8 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         )
     from .harness.repo_map import normalize_repo_map_refresh
     normalize_repo_map_refresh(cfg.repo_map_refresh)
+    from .harness.compaction_hooks import resolve_compaction_hook
+    resolve_compaction_hook(cfg.compaction_hook)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

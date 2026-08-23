@@ -221,6 +221,7 @@ pretest_tail_chars = 1500
 # performs no model side request. Checkpoint asks the active model for a
 # structured summary and mechanically falls back to digest on any failure.
 compaction_method = "digest"            # "digest" | "checkpoint"
+compaction_hook = ""                    # trusted synchronous module:function; empty keeps built-in behavior
 checkpoint_keep_recent_tokens = 0       # 0 = max(4096, floor(20% of live context))
 checkpoint_max_summary_tokens = 4000    # hard-capped at 4000 by the runtime
 # The compaction threshold is derived, not configured directly:
