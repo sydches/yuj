@@ -11,6 +11,11 @@ from pathlib import Path
 
 from ..llm_solver.config import PROJECT_ROOT, get_server_base_url, load_config
 from ..llm_solver.server.request_controls import THINKING_LEVELS
+from ..llm_solver.harness.worktree_runtime import (
+    WorktreeRuntimeError,
+    inspect_session_worktree,
+    remove_session_worktree,
+)
 from .progress import TraceFollower
 from .runner import (
     _make_client,
@@ -270,6 +275,26 @@ def main(argv: list[str] | None = None) -> int:
                              help="number of recent trace events to show")
     show_parser.set_defaults(func=cmd_show)
 
+    worktree_parser = sub.add_parser(
+        "worktree", help="inspect or remove retained session worktrees"
+    )
+    worktree_sub = worktree_parser.add_subparsers(
+        dest="worktree_command", required=True
+    )
+    worktree_rm = worktree_sub.add_parser(
+        "rm", help="remove one Yuj-owned worktree and its branch"
+    )
+    worktree_rm.add_argument(
+        "session_id",
+        help="coding-session ID or unique session reference",
+    )
+    worktree_rm.add_argument(
+        "--force",
+        action="store_true",
+        help="discard uncommitted files and unmerged commits",
+    )
+    worktree_rm.set_defaults(func=cmd_worktree_rm)
+
     if not argv:
         if _needs_first_run_setup() and _is_interactive():
             return cmd_setup(argparse.Namespace(
@@ -394,6 +419,8 @@ def cmd_smoke(args) -> int:
 def _smoke_acceptance_check(smoke_root: Path, record) -> tuple[bool, list[str]]:
     """Return (ok, reasons). Checks: fix present, tests pass, no pending approval."""
     reasons: list[str] = []
+    if record.worktree_path:
+        smoke_root = Path(record.worktree_path)
 
     calc_path = Path(smoke_root) / "calc.py"
     if not calc_path.is_file():
@@ -729,6 +756,49 @@ def cmd_show(args) -> int:
     print("trace_tail:")
     for line in trace_lines:
         print(f"  {line}")
+    return 0
+
+
+def cmd_worktree_rm(args) -> int:
+    """Remove only the owned worktree recorded for an assistant session."""
+    store = SessionStore()
+    record = _resolve_session_record(store, args.session_id, selector="latest")
+    if store.get_session_lock(record.session_id) is not None:
+        raise SystemExit("refusing to remove the worktree of a locked session")
+    if not all(
+        (
+            record.worktree_path,
+            record.worktree_branch,
+            record.worktree_base_commit,
+        )
+    ):
+        raise SystemExit(f"session has no retained worktree: {record.session_id}")
+    try:
+        inspected = inspect_session_worktree(Path(record.cwd), record.session_id)
+        expected = (
+            Path(str(record.worktree_path)).resolve(),
+            str(record.worktree_branch),
+            str(record.worktree_base_commit),
+        )
+        actual = (
+            inspected.worktree_path.resolve(),
+            inspected.branch,
+            inspected.base_commit,
+        )
+        if actual != expected:
+            raise WorktreeRuntimeError(
+                "saved worktree identity does not match the owned Git worktree"
+            )
+        removed = remove_session_worktree(
+            Path(record.cwd), record.session_id, force=bool(args.force)
+        )
+    except WorktreeRuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+    store.clear_active_session(record.cwd, session_id=record.session_id)
+    print(f"removed_worktree: {removed.worktree_path}")
+    print(f"removed_branch: {removed.branch}")
+    if removed.forced:
+        print("force: uncommitted files and unmerged commits were discarded")
     return 0
 
 

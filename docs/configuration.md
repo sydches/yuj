@@ -115,6 +115,7 @@ order in the
 | `[sandbox].container_runtime` | Select `docker` or `podman` for the container backend. |
 | `[sandbox].container_image` | Name an already-local trusted image. Required for the container backend. |
 | `[sandbox].container_flags` | Add allowlisted resource or metadata flags without weakening isolation. |
+| `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 | `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
@@ -162,6 +163,28 @@ options such as memory, CPU, PID-count, labels, and `--init`. Mount, network,
 environment, entrypoint, device, privilege, and security-boundary flags are
 rejected. See [Sandbox](sandbox.html) for the exact boundary and local-image
 preflight.
+
+### Isolate a session in a Git worktree
+
+The default `[runtime].worktree = "off"` keeps the current checkout as the
+task directory. Set it to `"auto"` to create
+`<repository>/.yuj_worktrees/<run-id>` on branch `worktree-<run-id>`, or set a
+Git branch name explicitly. Yuj creates the worktree before it fixes the
+sandbox cwd, so file tools and shell commands operate in the isolated copy and
+trace paths remain the same inside and outside the sandbox.
+
+Creation refuses an uncommitted source checkout, an existing branch, or an
+unowned/colliding path. The worktree and branch are preserved after normal,
+fatal, and interrupted exits. Assistant resume reuses the exact stored path,
+branch, and base commit and stops if any part is missing or mismatched. Every
+`session_start` trace row records those three fields while isolation is on.
+
+Remove a retained assistant worktree manually with
+`yuj worktree rm SESSION`. Cleanup refuses uncommitted files and commits not
+merged into the source branch. `--force` explicitly discards both. Direct
+measurement runs use the same runtime setting but leave cleanup to ordinary
+`git worktree remove` and branch management. Bench launchers that already
+isolate task copies should leave this setting off.
 
 ### Save restorable file checkpoints
 

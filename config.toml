@@ -552,6 +552,11 @@ container_image = ""              # required when backend = "container"
 container_flags = []              # fail-closed resource/metadata allowlist
 unreadable_paths = []
 
+[runtime]
+# Give one direct/assistant session its own retained Git worktree and branch.
+# "auto" derives the branch name; another string is used as the branch name.
+worktree = "off"  # off | auto | <branch-name>
+
 # ---------------------------------------------------------------------------
 # File path conventions (not overridable — documented here for reference).
 # These are implicit contracts consumed by analysis tools downstream.

@@ -372,6 +372,7 @@ def _extract_config_fields(d: dict) -> dict:
             d.get("sandbox", {}).get("container_flags", []),
             path="sandbox.container_flags",
         ),
+        "runtime_worktree": d.get("runtime", {}).get("worktree", "off"),
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
         "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
         "interrupted_turn_mode": d.get("loop", {}).get(
@@ -576,6 +577,11 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: sandbox.backend must be 'bwrap' or 'container', "
             f"got {cfg.sandbox_backend!r}."
+        )
+    if not isinstance(cfg.runtime_worktree, str) or not cfg.runtime_worktree.strip():
+        raise ValueError(
+            "config error: runtime.worktree must be 'off', 'auto', or a "
+            "non-empty Git branch name."
         )
     if cfg.interrupted_turn_mode not in {"off", "mechanical"}:
         raise ValueError(

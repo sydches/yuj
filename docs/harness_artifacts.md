@@ -47,7 +47,7 @@ The normal `assist_home` is `<yuj-installation>/.llm_assist`. Set
 | --- | --- |
 | `sessions.sqlite3` | Index of coding sessions, active-session pointers, and process locks. |
 | `<session_id>/prompt.txt` | Original task text. |
-| `<session_id>/session.json` | Model, target repository, context mode, and starting config paths. A later `provider.toml` for that coding session is not added to this file in the current code. |
+| `<session_id>/session.json` | Model, original target repository, context mode, starting config paths, and retained worktree path/branch/base commit when enabled. A later `provider.toml` for that coding session is not added to this file in the current code. |
 | `<session_id>/provider.toml` | Model-service settings given on the `code`, `run`, or `smoke` command. Present only when that command changes the service. |
 | `<session_id>/.trace.jsonl` | Append-only event record across run segments. |
 | `<session_id>/.solver/state.json` | Current state view when the state writer is on. |
@@ -152,6 +152,13 @@ The same `session_start` row records `sandbox_backend`, `container_runtime`,
 and `container_image_digest`. Runtime and digest are null for the bwrap
 backend. These fields are run-start provenance and are not projected into
 `.solver/state.json`.
+
+When runtime worktree isolation is enabled, each `session_start` also records
+`worktree_path`, `worktree_branch`, and `worktree_base_commit`. The assistant
+session store and `session.json` retain the same identity for strict resume
+and operator cleanup. The working tree lives at
+`<repository>/.yuj_worktrees/<run-id>` and is intentionally preserved on
+exit; it is task state, not a harness artifact or model-side projection.
 
 When project instruction discovery is enabled, every `session_start` row also
 records `project_instruction_files` (ordered safe labels plus source bytes,

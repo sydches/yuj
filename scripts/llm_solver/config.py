@@ -382,6 +382,7 @@ class Config:
     sandbox_container_runtime: str = "docker"
     sandbox_container_image: str = ""
     sandbox_container_flags: tuple[str, ...] = ()
+    runtime_worktree: str = "off"
     # Lazy language-server diagnostics and optional navigation tool.
     lsp_enabled: bool = False
     lsp_servers: dict[str, object] = field(default_factory=dict)

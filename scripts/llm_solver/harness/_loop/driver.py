@@ -57,6 +57,7 @@ def solve_task(
     run_metadata: dict | None = None,
     artifacts_dir: Path | None = None,
     resume_from_artifacts: bool = False,
+    worktree_info=None,
 ) -> bool:
     """Outer loop: run sessions until done or max_sessions exhausted.
 
@@ -383,6 +384,10 @@ def solve_task(
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
+                **(
+                    worktree_info.session_start_fields()
+                    if worktree_info is not None else {}
+                ),
             )
             if state_path is not None:
                 write_state_from_trace(trace_path, state_path,

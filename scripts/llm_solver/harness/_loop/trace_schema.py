@@ -36,6 +36,7 @@ class TraceEventSpec:
 
     event_type: str
     required_fields: frozenset[str]
+    optional_fields: frozenset[str] = frozenset()
 
 
 TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
@@ -43,6 +44,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "session_start", frozenset({
             "session_number", "thinking_level", "sandbox_backend",
             "container_runtime", "container_image_digest",
+        }), frozenset({
+            "worktree_path", "worktree_branch", "worktree_base_commit",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
@@ -221,6 +224,10 @@ KNOWN_TRACE_EVENT_TYPES = frozenset(
 )
 TRACE_EVENT_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     spec.event_type: spec.required_fields for spec in TRACE_EVENT_SPECS
+}
+TRACE_EVENT_OPTIONAL_FIELDS: dict[str, frozenset[str]] = {
+    spec.event_type: spec.optional_fields for spec in TRACE_EVENT_SPECS
+    if spec.optional_fields
 }
 
 

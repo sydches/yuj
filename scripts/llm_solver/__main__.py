@@ -1,5 +1,6 @@
 """CLI entry point — python -m scripts.llm_solver <run_dir> [options]."""
 import argparse
+import hashlib
 import logging
 import os
 import sys
@@ -16,6 +17,10 @@ from .harness.context_strategies import (
 from .harness._loop.model_role_runtime import (
     build_model_role_runtime,
     validate_model_role_profiles,
+)
+from .harness.worktree_runtime import (
+    create_session_worktree,
+    inspect_session_worktree,
 )
 from .models import resolve_model
 from .server import LlamaClient, load_profile
@@ -43,6 +48,35 @@ def _build_client(cfg, profile):
 
         return CodexHeadlessYujClient.from_env(cfg, profile=profile)
     return LlamaClient(cfg, profile=profile)
+
+
+def _prepare_task_worktree(
+    cfg,
+    *,
+    run_dir: Path,
+    source_cwd: Path,
+    resume: bool,
+    multi_task: bool,
+):
+    """Create/reuse a stable direct-run worktree before fixing sandbox cwd."""
+    mode = str(getattr(cfg, "runtime_worktree", "off") or "off").strip()
+    if mode == "off":
+        return None
+    source = Path(source_cwd).resolve()
+    identity = f"{Path(run_dir).resolve()}\0{source}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    run_id = f"direct-{digest}"
+    effective_mode = mode
+    if multi_task and mode != "auto":
+        effective_mode = f"{mode}-{digest[:8]}"
+    if resume:
+        inspect_session_worktree(source, run_id)
+    return create_session_worktree(
+        source,
+        mode=effective_mode,
+        run_id=run_id,
+        reuse=resume,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -420,8 +454,19 @@ def main(argv: list[str] | None = None) -> int:
         # session's context before run() is called.
         if args.resume is not None:
             initial_prompt = args.resume_message_file.read_text()
+        worktree_info = _prepare_task_worktree(
+            cfg,
+            run_dir=run_dir,
+            source_cwd=args.task,
+            resume=args.resume is not None,
+            multi_task=False,
+        )
+        task_cwd = (
+            worktree_info.session_cwd
+            if worktree_info is not None else args.task
+        )
         ok = solve_task(
-            args.task, cfg, client,
+            task_cwd, cfg, client,
             system_prompt_file=args.system_prompt,
             context_class=context_class,
             profile_path=(profile.profile_dir / "profile.toml")
@@ -431,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
             savings_dir=args.savings_dir,
             resume_path=args.resume,
             run_metadata=run_metadata,
+            worktree_info=worktree_info,
         )
         return 0 if ok else 1
 
@@ -443,13 +489,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Solving {len(pending)} tasks (model={cfg.model})")
     results = {}
     for repo_dir in pending:
+        worktree_info = _prepare_task_worktree(
+            cfg,
+            run_dir=run_dir,
+            source_cwd=repo_dir,
+            resume=False,
+            multi_task=True,
+        )
+        task_cwd = (
+            worktree_info.session_cwd
+            if worktree_info is not None else repo_dir
+        )
         ok = solve_task(
-            repo_dir, cfg, client,
+            task_cwd, cfg, client,
             system_prompt_file=args.system_prompt,
             context_class=context_class,
             profile_path=(profile.profile_dir / "profile.toml")
                          if profile and profile.profile_dir else None,
             run_metadata=run_metadata,
+            worktree_info=worktree_info,
         )
         results[repo_dir.name] = ok
         status = "PASS" if ok else "FAIL"

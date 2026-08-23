@@ -27,7 +27,10 @@ create table if not exists sessions (
     prompt_source text not null,
     context_mode text not null,
     system_prompt_path text,
-    config_paths_json text not null
+    config_paths_json text not null,
+    worktree_path text,
+    worktree_branch text,
+    worktree_base_commit text
 );
 
 create table if not exists active_sessions (
@@ -60,6 +63,9 @@ class SessionRecord:
     context_mode: str
     system_prompt_path: str | None
     config_paths_json: str
+    worktree_path: str | None = None
+    worktree_branch: str | None = None
+    worktree_base_commit: str | None = None
 
     @property
     def artifact_path(self) -> Path:
@@ -113,6 +119,15 @@ class SessionStore:
         self.db_path = self.root / "sessions.sqlite3"
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            columns = {
+                str(row["name"])
+                for row in conn.execute("pragma table_info(sessions)").fetchall()
+            }
+            for name in (
+                "worktree_path", "worktree_branch", "worktree_base_commit"
+            ):
+                if name not in columns:
+                    conn.execute(f"alter table sessions add column {name} text")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -378,6 +393,33 @@ class SessionStore:
                 (now, config_paths_json, session_id),
             )
 
+    def update_session_worktree(
+        self,
+        session_id: str,
+        *,
+        path: Path,
+        branch: str,
+        base_commit: str,
+    ) -> None:
+        """Persist the stable owned-worktree identity used by resume/cleanup."""
+        now = _utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                update sessions
+                set updated_at = ?, worktree_path = ?, worktree_branch = ?,
+                    worktree_base_commit = ?
+                where session_id = ?
+                """,
+                (
+                    now,
+                    str(Path(path).resolve()),
+                    branch,
+                    base_commit,
+                    session_id,
+                ),
+            )
+
 
 def _row_to_record(row: sqlite3.Row) -> SessionRecord:
     return SessionRecord(
@@ -394,6 +436,9 @@ def _row_to_record(row: sqlite3.Row) -> SessionRecord:
         context_mode=row["context_mode"],
         system_prompt_path=row["system_prompt_path"],
         config_paths_json=row["config_paths_json"],
+        worktree_path=row["worktree_path"],
+        worktree_branch=row["worktree_branch"],
+        worktree_base_commit=row["worktree_base_commit"],
     )
 
 

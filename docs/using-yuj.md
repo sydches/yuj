@@ -39,6 +39,7 @@ Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj sessions` | List saved sessions. |
 | `yuj resume` | Continue a paused session. |
+| `yuj worktree rm` | Remove a retained session worktree and branch. |
 | `yuj approve` | Allow a shell action that needs approval. |
 | `yuj reject` | Refuse a shell action that needs approval. |
 
@@ -434,6 +435,27 @@ without starting another run segment.
 Press Ctrl-C during `code`, `run`, `smoke`, or `resume` to pause the
 session. Yuj saves an interrupt mark, prints the resume command, and returns
 status 130.
+
+## Remove an isolated session worktree
+
+When `[runtime].worktree` is enabled, Yuj keeps the session's worktree and
+branch after every exit so `resume` sees exactly the same files. Remove it by
+session ID or unique reference only when you no longer need that workspace:
+
+```bash
+yuj worktree rm SESSION
+```
+
+The normal command refuses uncommitted files and commits that are not merged
+into the source checkout. To explicitly discard both, use:
+
+```bash
+yuj worktree rm SESSION --force
+```
+
+Yuj resolves the session through its store and verifies the recorded path,
+branch, base commit, Git registration, and ownership metadata before removal.
+It never removes a worktree automatically.
 
 ## Approve or reject a shell action
 
