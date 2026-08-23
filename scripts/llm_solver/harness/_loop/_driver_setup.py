@@ -201,14 +201,17 @@ def resolve_task_format(cfg: Config, repo_dir: Path) -> Config:
 
 def load_transforms_and_estimator(cfg: Config, client, repo_dir: Path):
     """Return (output_control, universal_rewrites, forbidden_rules,
-    redactions, output_parser, token_estimator).
+    redirect_rules, redactions, output_parser, token_estimator).
 
     Also emits two task-format or pagination warnings as side effects:
       - task_format_mismatch when the detected runner does not match
         cfg.analysis_task_format;
       - tool_quirks/glob caps disabled when search_pagination is off.
     """
-    output_control, universal_rewrites, forbidden_rules, redactions, output_parser = _load_bash_transforms(
+    (
+        output_control, universal_rewrites, forbidden_rules, redirect_rules,
+        redactions, output_parser,
+    ) = _load_bash_transforms(
         cfg,
         force_load_all=bool(getattr(cfg, "adaptive_policy_enabled", False)),
     )
@@ -242,7 +245,7 @@ def load_transforms_and_estimator(cfg: Config, client, repo_dir: Path):
 
     token_estimator = _resolve_token_estimator(client)
     return (
-        output_control, universal_rewrites, forbidden_rules,
+        output_control, universal_rewrites, forbidden_rules, redirect_rules,
         redactions, output_parser, token_estimator,
     )
 

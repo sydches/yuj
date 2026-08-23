@@ -320,9 +320,12 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   output_control=effective_output_control,
                                   universal_rewrites=effective_universal_rewrites,
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                                  redirect_rules=getattr(session, "redirect_rules", None),
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
                                   stale_guard=session._stale_guard,
+                                  active_tools=getattr(session, "active_tool_names", ()),
+                                  redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
@@ -344,21 +347,24 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   output_control=effective_output_control,
                                   universal_rewrites=effective_universal_rewrites,
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                                  redirect_rules=getattr(session, "redirect_rules", None),
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
                                   stale_guard=session._stale_guard,
+                                  active_tools=getattr(session, "active_tool_names", ()),
+                                  redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
             result = _append_lsp_diagnostics(tc, state, result)
-            if tc.name == "bash":
+            if tc.name == "bash" and not is_error_result(result):
                 session._observe_test_signal(tc.arguments.get("cmd", ""), result)
             # 6e. error_ladder (WARN / END tiers). Log every error
             # for trace visibility; the ladder decides escalation.
             err_decision = tool_post["error_ladder"](
                 session._guards, cfg, tc_name=tc.name, result=result
             )
-            if result.startswith("ERROR:"):
+            if is_error_result(result):
                 state.turn_had_pressure = True
                 log.info("Tool error: %s consecutive=%d",
                          tc.name, session._guards.consecutive_errors.get(tc.name, 0))
@@ -397,7 +403,10 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                     completion_tokens=completion_tokens,
                     **({"cmd_pre_rewrite": _truncate_for_trace(rewrite_log[0]["original"], cfg.trace_args_summary_chars)} if rewrite_log else {}),
                 )
-                _capture_workspace_checkpoint(tc, state, executed=True)
+                _capture_workspace_checkpoint(
+                    tc, state,
+                    executed=bool(execution_metadata.get("executed", True)),
+                )
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
@@ -409,7 +418,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             # model can read the file when it wants the full
             # content. Structured projection replaces raw with a
             # compact digest for test commands.
-            if tc.name == "bash" and not result.startswith("ERROR:"):
+            if tc.name == "bash" and not is_error_result(result):
                 cmd = tc.arguments.get("cmd", "")
                 result = session._project_and_sink(tc.name, cmd, result, turn)
 
@@ -455,7 +464,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # the context's own signal (separate concern — stateful
     # compaction, not thrash control).
     if (tc.name in ("write", "edit")
-            and not result.startswith("ERROR:")
+            and not is_error_result(result)
             and hasattr(session.context, "reset_dedup_counts")):
         session.context.reset_dedup_counts()
 
@@ -500,8 +509,12 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # records a rewind/branch point for this turn. Gate-blocked calls
     # never executed, so nothing changed on disk — no snapshot.
     _snapshot_sha = None
+    call_executed = (
+        not gate_blocked_flag
+        and bool(execution_metadata.get("executed", True))
+    )
     if (getattr(cfg, "turn_snapshots_enabled", False)
-            and metadata.get("source_write_like") and not gate_blocked_flag):
+            and metadata.get("source_write_like") and call_executed):
         from ..turn_snapshots import snapshot as _turn_snapshot
         _snapshot_sha = _turn_snapshot(session.cwd, turn, session=session)
     session._emit(
@@ -535,14 +548,14 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
     )
     _capture_workspace_checkpoint(
-        tc, state, executed=not gate_blocked_flag,
+        tc, state, executed=call_executed,
     )
 
     # Gate-blocked calls were never executed — don't store a
     # cmd_signature (prevents later calls of the same command
     # from matching against a non-execution).
     cmd_sig = ""
-    if not gate_blocked_flag:
+    if call_executed:
         cmd_sig = _dedup_signature(tc)[1] if tc.name == "bash" else ""
 
     # Collapse byte-identical repeats per (tool_name, focus_key) into a

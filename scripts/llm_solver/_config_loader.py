@@ -143,6 +143,9 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_stale_guard_mode": d.get("tools", {}).get(
             "stale_guard_mode", "warn"
         ),
+        "tools_bash_redirect_read_side": d.get("tools", {}).get(
+            "bash_redirect_read_side", False
+        ),
         "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
         "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
         "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
@@ -482,6 +485,10 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.stale_guard_mode must be 'off', 'warn', "
             f"or 'block', got {cfg.tools_stale_guard_mode!r}."
+        )
+    if not isinstance(cfg.tools_bash_redirect_read_side, bool):
+        raise ValueError(
+            "config error: tools.bash_redirect_read_side must be a boolean."
         )
     if (
         isinstance(cfg.tools_ast_search_max_rows, bool)

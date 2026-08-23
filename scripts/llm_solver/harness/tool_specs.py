@@ -138,7 +138,9 @@ NATIVE_ENVELOPE_PREFIXES = tuple(
 
 def is_native_envelope(result: str) -> bool:
     """Return True when a tool result already owns a typed envelope."""
-    return result.startswith(NATIVE_ENVELOPE_PREFIXES)
+    return result.startswith("<tool_result") or result.startswith(
+        NATIVE_ENVELOPE_PREFIXES
+    )
 
 
 __all__ = [

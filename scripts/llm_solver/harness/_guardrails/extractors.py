@@ -416,6 +416,8 @@ def _error_signature(result: str) -> str:
         or re.search(r'\berror_kind="stale_file"', result)
     ):
         return "stale_file"
+    if re.search(r'\berror_kind="redirect_rule"', result):
+        return "redirect_rule"
     m = _ERROR_SIG_RE.search(result)
     if m:
         return f"exit:{m.group(1)}"

@@ -115,6 +115,13 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "expected", "current",
         }),
     ),
+    TraceEventSpec(
+        "redirect_rule",
+        frozenset({
+            "session_number", "turn_number", "rule", "tool",
+            "fragment_index",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",

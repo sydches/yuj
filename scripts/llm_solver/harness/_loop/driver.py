@@ -155,8 +155,10 @@ def solve_task(
         system_prompt_file=system_prompt_file,
     )
 
-    (output_control, universal_rewrites, forbidden_rules, redactions,
-     output_parser, token_estimator) = load_transforms_and_estimator(cfg, client, work_dir)
+    (output_control, universal_rewrites, forbidden_rules, redirect_rules,
+     redactions, output_parser, token_estimator) = load_transforms_and_estimator(
+         cfg, client, work_dir
+     )
 
     # YUJ_HOLD_UNTIL — explicit pre-launch gate (same env-var contract style
     # as YUJ_CONTAINER). An orchestrator that pipelines tasks can start this
@@ -348,6 +350,7 @@ def solve_task(
                 output_control=output_control,
                 universal_rewrites=universal_rewrites,
                 forbidden_rules=forbidden_rules,
+                redirect_rules=redirect_rules,
                 redactions=redactions,
                 output_parser=output_parser,
                 pretest_parsed=pretest_parsed_verdict,

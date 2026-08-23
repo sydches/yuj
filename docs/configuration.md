@@ -112,6 +112,7 @@ order in the
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 | `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
+| `[tools].bash_redirect_read_side` | Redirect eligible `cat`/search/path-discovery shell reads to bounded dedicated tools. Off by default. |
 | `[tools].ast_search_enabled` | Add repository-wide definition/reference lookup to `list_definitions`. Off by default. |
 | `[tools].ast_search_max_rows` | Cap the rows available to one repository structural query before pagination. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
@@ -196,6 +197,24 @@ not earn credit.
 The ledger is harness state, not model-side state. Raw
 `stale_guard_observe` trace rows are its only resume source;
 `.solver/state.json` does not copy the ledger.
+
+### Redirect shell commands to dedicated tools
+
+The `[[redirect]]` rules in `scripts/llm_solver/bash_quirks/forbidden.toml`
+intercept shell fragments that have a safer bounded tool equivalent. A match
+does not execute or rewrite the command. It returns
+`Blocked: MESSAGE` in a `<tool_result status="error"
+error_kind="redirect_rule">` envelope, emits a raw `redirect_rule` trace row,
+and participates in the ordinary error ladder.
+
+Write-side rules route in-place editors and shell redirections to `edit` or
+`write`. Set `[tools].bash_redirect_read_side = true` to additionally route
+file display commands to `read`, text searches to `grep`, and path discovery
+to `glob`. Each rule is inert when its target tool is absent from the current
+profile-filtered tool set. Matching is compound-aware: quoted operators and
+leading `NAME=value` assignments are preserved, while a pipe stage consuming
+stdin is not redirected. Aggregate uses such as `grep -c`, `rg --count`, and
+`cat FILE | wc -l` remain shell commands.
 
 ### Search definitions and references across a repository
 

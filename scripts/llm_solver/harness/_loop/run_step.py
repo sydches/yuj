@@ -545,9 +545,12 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         output_control=effective_output_control,
                         universal_rewrites=effective_universal_rewrites,
                         forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                        redirect_rules=getattr(session, "redirect_rules", None),
                         redactions=session.redactions,
                         tool_registry=session._tool_registry,
                         stale_guard=session._stale_guard,
+                        active_tools=getattr(session, "active_tool_names", ()),
+                        redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                     )
                     for tc in tool_calls
                 }

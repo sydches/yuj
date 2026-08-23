@@ -196,6 +196,7 @@ class Session:
         output_control=None,
         universal_rewrites=None,
         forbidden_rules=None,
+        redirect_rules=None,
         redactions=None,
         output_parser=None,
         pretest_parsed: dict | None = None,
@@ -214,6 +215,7 @@ class Session:
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
+        self.redirect_rules = redirect_rules
         self.redactions = redactions
         self.output_parser = output_parser
         self.pretest_parsed = pretest_parsed
@@ -245,6 +247,19 @@ class Session:
         self._tool_schemas = apply_profile_to_schemas(
             get_tool_schemas(cfg.tool_desc), cfg, client,
         )
+
+        def _redirect_event_sink(payload: dict[str, object]) -> None:
+            fields = dict(payload)
+            event_type = str(fields.pop("event", "redirect_rule"))
+            with self._service_event_lock:
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    turn_number=self._current_turn,
+                    **fields,
+                )
+
+        self._redirect_event_sink = _redirect_event_sink
         self._lsp_manager = lsp_manager
         if self._lsp_manager is None and (
             getattr(cfg, "lsp_enabled", False)
@@ -412,6 +427,7 @@ class Session:
             events=self._trace_events,
             event_sink=_stale_guard_event_sink,
         )
+
         # Seed pretest parity from session 1's parsed pretest verdict (passed
         # as a dict with 'failing' and 'passing' sets). Later sessions inherit
         # the baseline from session 1 via the same mechanism (caller passes
@@ -471,6 +487,13 @@ class Session:
         if cfg.injections_enabled:
             inj_dir = Path(self.cwd) / cfg.injections_dir
             self._injections = load_injections(inj_dir)
+
+    @property
+    def active_tool_names(self) -> frozenset[str]:
+        """Names in the current profile-filtered model-facing tool surface."""
+        return frozenset(
+            schema["function"]["name"] for schema in self._tool_schemas
+        )
 
     @property
     def last_tool_calls(self) -> list[tuple[str, str]]:

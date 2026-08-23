@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import re
+from io import StringIO
+import json
+from unittest.mock import MagicMock
 
 import pytest
 
 from scripts.llm_solver._shared.classification import is_error_result
+from scripts.llm_solver.config import load_config
 from scripts.llm_solver.harness.command_redirect import (
     RedirectRule,
     find_redirect,
@@ -15,6 +19,9 @@ from scripts.llm_solver.harness.command_redirect import (
     split_shell_fragments,
     strip_leading_assignments,
 )
+from scripts.llm_solver.harness.tools import ToolRegistry, dispatch
+
+from _config_helpers import make_config
 
 
 def rule(name, pattern, tool, message="use the dedicated tool", **kwargs):
@@ -272,3 +279,224 @@ def test_malformed_rule_is_skipped(caplog):
 
     assert len(rules) == 1
     assert "redirect rule 1 skipped" in caplog.text
+
+
+def test_canonical_redirect_rules_cover_public_default_families():
+    rules = load_redirect_rules()
+
+    assert [(item.name, item.tool) for item in rules] == [
+        ("shell_write", "write"),
+        ("in_place_edit", "edit"),
+        ("read_file", "read"),
+        ("search_text", "grep"),
+        ("find_paths", "glob"),
+    ]
+    active = {"read", "write", "edit", "grep", "glob"}
+    cases = {
+        "echo value > out.txt": "write",
+        "cat <<EOF > out.txt\nvalue\nEOF": "write",
+        "sed -i 's/a/b/' src.py": "edit",
+        "cat src.py": "read",
+        "rg needle src": "grep",
+        "find src -name '*.py'": "glob",
+    }
+    for command, target in cases.items():
+        decision = find_redirect(
+            command, rules, active_tools=active, read_side_enabled=True
+        )
+        assert decision is not None
+        assert decision.tool == target
+
+
+def test_session_transform_loader_includes_canonical_redirect_rules():
+    from scripts.llm_solver.harness._loop.session_io import _load_bash_transforms
+
+    loaded = _load_bash_transforms(make_config())
+
+    assert len(loaded) == 6
+    assert [item.name for item in loaded[3]] == [
+        "shell_write", "in_place_edit", "read_file", "search_text",
+        "find_paths",
+    ]
+
+
+def test_dispatch_redirect_prevents_handler_and_emits_event(tmp_path):
+    calls = []
+    events = []
+    metadata = {}
+
+    def handler(arguments, cwd, cfg):
+        calls.append((arguments, cwd, cfg))
+        return "handler ran"
+
+    result = dispatch(
+        "bash",
+        {"cmd": "echo value > out.txt"},
+        cwd=str(tmp_path),
+        cfg=make_config(),
+        redirect_rules=load_redirect_rules(),
+        active_tools={"bash", "write"},
+        redirect_event_sink=events.append,
+        execution_metadata=metadata,
+        tool_registry=ToolRegistry(handlers={"bash": handler}),
+    )
+
+    assert calls == []
+    assert metadata["executed"] is False
+    assert result.count("<tool_result") == 1
+    assert 'status="error" error_kind="redirect_rule"' in result
+    assert "Blocked: use the write tool" in result
+    assert events == [{
+        "event": "redirect_rule",
+        "rule": "shell_write",
+        "tool": "write",
+        "fragment_index": None,
+    }]
+
+
+def test_dispatch_read_gate_and_active_tool_gate_are_runtime_effective(tmp_path):
+    calls = []
+
+    def handler(arguments, cwd, cfg):
+        calls.append(arguments["cmd"])
+        return "shell output"
+
+    registry = ToolRegistry(handlers={"bash": handler})
+    rules = load_redirect_rules()
+    disabled_by_knob = dispatch(
+        "bash", {"cmd": "cat src.py"}, cwd=str(tmp_path),
+        cfg=make_config(
+            tools_bash_redirect_read_side=False,
+            tools_unified_envelope_enabled=False,
+        ),
+        redirect_rules=rules, active_tools={"read"}, tool_registry=registry,
+    )
+    disabled_by_surface = dispatch(
+        "bash", {"cmd": "cat src.py"}, cwd=str(tmp_path),
+        cfg=make_config(
+            tools_bash_redirect_read_side=True,
+            tools_unified_envelope_enabled=False,
+        ),
+        redirect_rules=rules, active_tools={"bash"}, tool_registry=registry,
+    )
+    blocked = dispatch(
+        "bash", {"cmd": "cat src.py"}, cwd=str(tmp_path),
+        cfg=make_config(tools_bash_redirect_read_side=True),
+        redirect_rules=rules, active_tools={"read"}, tool_registry=registry,
+    )
+
+    assert disabled_by_knob == "shell output"
+    assert disabled_by_surface == "shell output"
+    assert calls == ["cat src.py", "cat src.py"]
+    assert 'error_kind="redirect_rule"' in blocked
+
+
+def test_redirect_result_honors_output_cap(tmp_path):
+    long_rule = rule("long", r"^cat\b", "read", "x" * 2000)
+    result = dispatch(
+        "bash", {"cmd": "cat src.py"}, cwd=str(tmp_path),
+        cfg=make_config(
+            tools_bash_redirect_read_side=True,
+            max_output_chars=240,
+        ),
+        redirect_rules=[long_rule], active_tools={"read"},
+        tool_registry=ToolRegistry(
+            handlers={"bash": lambda _args, _cwd, _cfg: "unexpected"}
+        ),
+    )
+
+    assert len(result) <= 240
+    assert "redirect message truncated" in result
+    assert result.endswith("</tool_result>")
+
+
+def test_redirect_config_default_overlay_and_validation(tmp_path):
+    assert load_config().tools_bash_redirect_read_side is False
+
+    overlay = tmp_path / "redirect.toml"
+    overlay.write_text("[tools]\nbash_redirect_read_side = true\n")
+    assert load_config(user_config=overlay).tools_bash_redirect_read_side is True
+
+    overlay.write_text('[tools]\nbash_redirect_read_side = "yes"\n')
+    with pytest.raises(ValueError, match="tools.bash_redirect_read_side"):
+        load_config(user_config=overlay)
+
+
+def test_redirect_envelope_counts_as_one_stable_guardrail_error_class():
+    from scripts.llm_solver.harness._guardrails.checks_post import error_ladder
+    from scripts.llm_solver.harness._guardrails.extractors import _error_signature
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+
+    result = render_redirect_error(
+        find_redirect(
+            "cat src.py", READ_RULES, active_tools={"read"},
+            read_side_enabled=True,
+        )
+    )
+    state = GuardrailState()
+    cfg = make_config(error_nudge_threshold=99)
+
+    error_ladder(state, cfg, tc_name="bash", result=result)
+
+    assert state.consecutive_errors == {"bash": 1}
+    assert state.same_class_error_signature == "redirect_rule"
+    assert _error_signature(result) == "redirect_rule"
+
+
+def test_session_uses_profile_filtered_tools_and_traces_redirect(tmp_path):
+    from scripts.llm_solver.harness.loop import Session
+    from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
+
+    trace = StringIO()
+    client = MagicMock()
+    client.chat.side_effect = [
+        TurnResult(
+            content=None,
+            tool_calls=[ToolCall(
+                id="call-1", name="bash", arguments={"cmd": "cat src.py"}
+            )],
+            finish_reason="tool_calls",
+            usage=Usage(prompt_tokens=10, completion_tokens=5),
+        ),
+        TurnResult(
+            content="done", tool_calls=[], finish_reason="stop",
+            usage=Usage(prompt_tokens=12, completion_tokens=2),
+        ),
+    ]
+    client.build_assistant_message.side_effect = [
+        {"role": "assistant", "content": None, "tool_calls": []},
+        {"role": "assistant", "content": "done"},
+    ]
+    session = Session(
+        make_config(
+            max_turns=3,
+            tools_bash_redirect_read_side=True,
+            rumination_nudge_threshold=999,
+        ),
+        client,
+        "system",
+        "task",
+        str(tmp_path),
+        trace_file=trace,
+        session_number=7,
+        redirect_rules=load_redirect_rules(),
+    )
+
+    session.run()
+    events = [json.loads(line) for line in trace.getvalue().splitlines()]
+    redirect = next(event for event in events if event["event"] == "redirect_rule")
+    call = next(event for event in events if event["event"] == "tool_call")
+
+    assert redirect["session_number"] == 7
+    assert redirect["turn_number"] == 0
+    assert redirect["rule"] == "read_file"
+    assert redirect["tool"] == "read"
+    assert call["outcome"] == "error"
+    assert call["error_class"] == "redirect_rule"
+
+    from scripts.llm_solver.harness._loop.trace_schema import (
+        TRACE_EVENT_REQUIRED_FIELDS,
+    )
+    assert TRACE_EVENT_REQUIRED_FIELDS["redirect_rule"] == frozenset({
+        "session_number", "turn_number", "rule", "tool", "fragment_index",
+    })

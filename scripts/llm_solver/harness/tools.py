@@ -162,9 +162,10 @@ def validate_tool_handlers(schema_names: list[str], *,
 
 def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              output_control=None, universal_rewrites=None,
-             forbidden_rules=None, redactions=None,
+             forbidden_rules=None, redirect_rules=None, redactions=None,
              tool_registry: ToolRegistry | None = None,
              stale_guard=None,
+             active_tools=(), redirect_event_sink=None,
              rewrite_log: list | None = None,
              execution_metadata: dict | None = None) -> str:
     """Route a tool call to its implementation, truncate output.
@@ -181,11 +182,44 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     loaded from bash_quirks/forbidden.toml. When a pattern matches, the
     bash command is replaced with `false  # [HARNESS: <reason>]` before
     execution. None disables the layer.
+    redirect_rules: optional compound-aware rules checked against the original
+    bash command before rewrites. A rule applies only when its target appears
+    in ``active_tools``.
     """
     reg = tool_registry or build_tool_registry()
     handler = reg.handlers.get(name)
     if handler is None:
         return f"ERROR: unknown tool '{name}'"
+
+    # Dedicated-tool redirects inspect the exact model command before any
+    # rewrite. A match is a typed tool error: no shell handler runs, no stale
+    # read credit is earned, and the ordinary result admission path still
+    # applies its configured byte cap.
+    redirected = False
+    if name == "bash" and redirect_rules:
+        from .command_redirect import find_redirect, render_redirect_error
+
+        decision = find_redirect(
+            str(arguments.get("cmd", "")),
+            redirect_rules,
+            active_tools=active_tools,
+            read_side_enabled=bool(
+                getattr(cfg, "tools_bash_redirect_read_side", False)
+            ),
+        )
+        if decision is not None:
+            redirected = True
+            result = render_redirect_error(
+                decision, max_chars=int(cfg.max_output_chars)
+            )
+            if redirect_event_sink is not None:
+                try:
+                    redirect_event_sink({
+                        "event": "redirect_rule",
+                        **decision.trace_fields(),
+                    })
+                except Exception as exc:
+                    log.warning("redirect event emit failed: %s", exc)
 
     # Pre-execution: rewrite bash commands (quiet flags, test flags, or
     # refuse forbidden patterns). When rewrite_log is provided and a
@@ -195,7 +229,11 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     # and the rule kind so later code can classify the rewrite.
     original_bash_cmd = str(arguments.get("cmd", "")) if name == "bash" else ""
     bash_was_rewritten = False
-    if name == "bash" and (output_control is not None or universal_rewrites or forbidden_rules):
+    if (
+        name == "bash"
+        and not redirected
+        and (output_control is not None or universal_rewrites or forbidden_rules)
+    ):
         from ..bash_quirks import rewrite_command
         original_cmd = arguments.get("cmd", "")
         _rules_fired: list = []
@@ -216,7 +254,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
 
     stale_decision = None
     stale_precheck_error = ""
-    if name == "edit" and stale_guard is not None:
+    if name == "edit" and stale_guard is not None and not redirected:
         try:
             stale_decision = stale_guard.check_edit(str(arguments.get("path", "")))
         except Exception as exc:
@@ -225,12 +263,16 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 f"ERROR: stale_file: read {arguments.get('path', '')} first"
             )
 
-    if stale_precheck_error:
+    executed = False
+    if redirected:
+        pass
+    elif stale_precheck_error:
         result = stale_precheck_error
     elif stale_decision is not None and stale_decision.blocked:
         result = stale_decision.message
     else:
         try:
+            executed = True
             result = handler(arguments, cwd, cfg)
         except (KeyError, TypeError) as e:
             return f"ERROR: bad arguments for {name}: {e}"
@@ -242,7 +284,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     # Update the mechanical read ledger only after an operation actually
     # succeeded. Observation failures never turn a completed tool call into a
     # harness exception; they simply leave the next edit conservatively stale.
-    if stale_guard is not None:
+    if stale_guard is not None and not redirected:
         from .._shared.classification import is_error_result
         raw_result = str(result)
         succeeded = not is_error_result(raw_result)
@@ -278,13 +320,14 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         result = str(result) + "\n\n" + stale_decision.message
 
     if execution_metadata is not None:
+        execution_metadata["executed"] = executed
         if hasattr(result, "exit_status"):
             execution_metadata["exit_status_known"] = True
             execution_metadata["exit_status"] = getattr(result, "exit_status")
             execution_metadata["timed_out"] = bool(getattr(result, "timed_out", False))
         result = str(result)
 
-    if name == "bash":
+    if name == "bash" and not redirected:
         cmd = arguments.get("cmd", "")
         result = _filter_bash_output(result, cmd, cfg)
         # Post-execution: condense passing-test lines.

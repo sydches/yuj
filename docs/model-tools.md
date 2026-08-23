@@ -84,6 +84,16 @@ The `bash` tool follows the active sandbox and approval settings. Read
 [Sandbox](sandbox.html) before you let the model work on private files or use a
 Docker socket.
 
+Yuj can reject a shell fragment when an active dedicated tool owns the same
+operation. The result says `Blocked:` and names the tool to use. Write-side
+redirects cover in-place editors and file redirections. Set
+`[tools].bash_redirect_read_side = true` to also redirect `cat`/`head`/`tail`
+to `read`, `grep`/`rg` to `grep`, and `find`/`fd` to `glob`. The matcher checks
+compound commands and leading environment assignments, but leaves
+stdin-consuming pipe stages and aggregate commands such as `grep -c`,
+`rg --count`, `wc -l`, and `cat FILE | wc -l` alone. A rule does nothing when
+its target tool is not in the model's active tool set.
+
 The `glob` and `grep` tools return one page at a time. Read `next_page` in the
 result when another page exists. Yuj can refuse a search that starts too broad.
 Narrow its pattern or path when that happens.

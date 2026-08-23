@@ -347,16 +347,42 @@ def find_redirect(
     return None
 
 
-def render_redirect_error(decision: RedirectDecision) -> str:
-    """Render an error-class unified envelope counted by the error ladder."""
+def render_redirect_error(
+    decision: RedirectDecision,
+    *,
+    max_chars: int | None = None,
+) -> str:
+    """Render a capped, valid error envelope counted by the error ladder."""
     tool = html.escape(decision.tool, quote=True)
-    body = html.escape(f"Blocked: {decision.message}", quote=False)
-    return (
+    opening = (
         f'<tool_result tool_name="bash" status="error" '
         f'error_kind="redirect_rule" redirect_tool="{tool}" v="1">\n'
-        f"{body}\n"
-        "</tool_result>"
     )
+    closing = "\n</tool_result>"
+    body_text = f"Blocked: {decision.message}"
+    body = html.escape(body_text, quote=False)
+    result = opening + body + closing
+    if max_chars is None or len(result) <= max_chars:
+        return result
+
+    marker = "... [redirect message truncated]"
+    budget = max_chars - len(opening) - len(closing)
+    if budget <= 0:
+        return result[:max(0, max_chars)]
+    if budget <= len(marker):
+        body = marker[:budget]
+    else:
+        prefix_budget = budget - len(marker)
+        low, high = 0, len(body_text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            escaped = html.escape(body_text[:middle], quote=False)
+            if len(escaped) <= prefix_budget:
+                low = middle
+            else:
+                high = middle - 1
+        body = html.escape(body_text[:low], quote=False) + marker
+    return opening + body + closing
 
 
 __all__ = [

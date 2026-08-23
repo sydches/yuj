@@ -258,15 +258,16 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
 def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
     """Load the bash transform layers respected by Session.
 
-    Each layer has its own enabled flag. Returns a 5-tuple in this order:
+    Each layer has its own enabled flag. Returns a 6-tuple in this order:
       1. output_control       — task-format output control
                                 (pytest --tb=short, condense PASSED)
       2. universal_rewrites   — universal rewrites
                                 (pip -q, npm --loglevel=error, make -s)
       3. forbidden_rules      — bash_quirks forbidden-rule list
-      4. redactions           — secret-redaction patterns applied to
+      4. redirect_rules       — compound-aware dedicated-tool redirects
+      5. redactions           — secret-redaction patterns applied to
                                 tool output
-      5. output_parser        — structured test-run digest parser
+      6. output_parser        — structured test-run digest parser
 
     Any element can be None if the corresponding layer is disabled or
     misconfigured. A total load failure is logged at warning level and
@@ -276,6 +277,7 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
     output_control = None
     universal_rewrites = None
     forbidden_rules = None
+    redirect_rules = None
     redactions = None
     output_parser = None
     try:
@@ -286,6 +288,7 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
             load_universal_rewrites,
         )
         from ...bash_quirks.transforms import load_forbidden_rules
+        from ..command_redirect import load_redirect_rules
         if cfg.bash_transforms_universal_enabled or force_load_all:
             universal_rewrites = load_universal_rewrites()
             if universal_rewrites:
@@ -299,6 +302,9 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
         else:
             # This flag controls forbidden command rules.
             log.info("Bash forbidden rules disabled via config")
+        redirect_rules = load_redirect_rules()
+        if redirect_rules:
+            log.info("Loaded %d bash redirect rules", len(redirect_rules))
         # Secret redaction always loads; redactions.toml presence is
         # sufficient to enable. No config gate — redacting tokens is
         # always-on safety.
@@ -337,4 +343,7 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
         # would silently fall back to raw-bash semantics with no signal
         # in standard log streams.
         log.warning("bash_transforms_load_failed: %s", e)
-    return output_control, universal_rewrites, forbidden_rules, redactions, output_parser
+    return (
+        output_control, universal_rewrites, forbidden_rules, redirect_rules,
+        redactions, output_parser,
+    )

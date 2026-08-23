@@ -36,7 +36,7 @@ Do not pass a descriptor file with `--config`.
 | A model and local server | `configs/runtime/*.toml` | The config loader reads `[model]`. `scripts/serve.sh` reads `[launch]`. | No, for a supported server and field. |
 | A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
-| A shell rewrite, refusal, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
+| A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
@@ -55,7 +55,7 @@ files. It stores language, shell, and tool quirks in the matching directories.
 | Model server setup | One `configs/runtime/*.toml` file | Copy it to a private path. Replace local model and template paths. Pass it to `scripts/serve.sh` and `--config`. |
 | Model message and tool-call format | One `profiles/NAME/` directory | Copy the directory under `profiles/`. Review every Python module before use. |
 | Test runner or language | One `language_quirks/NAME.toml` file | Copy it under `scripts/llm_solver/language_quirks/`. Give it a unique `detection_priority`. |
-| Shell rewrite, refusal, or redaction | One or more TOML rule entries | Review and merge the entries into the matching fixed file under `bash_quirks/`. The current loader ignores other TOML files in that directory. |
+| Shell rewrite, refusal, redirect, or redaction | One or more TOML rule entries | Review and merge the entries into the matching fixed file under `bash_quirks/`. The current loader ignores other TOML files in that directory. |
 | `glob` refusal text | The changed entries from `tool_quirks/glob.toml` | Review and merge them into that fixed file. The current loader does not scan extra tool-quirk files. |
 | Tool description mode | One complete `tool_descriptions/MODE/` directory | Copy the directory under `profiles/_base/tool_descriptions/`. Include one `.txt` file for every tool. |
 
@@ -435,13 +435,18 @@ Use the rule file that matches the action:
 | --- | --- | --- |
 | `bash_quirks/rewrites.toml` | `[[rewrite]]` | Match a command and add one flag unless `skip_if` matches. Yuj applies at most one rewrite rule to a command. |
 | `bash_quirks/forbidden.toml` | `[[forbidden]]` | Match a command and replace it with a failed refusal command. Yuj uses the first match. |
+| `bash_quirks/forbidden.toml` | `[[redirect]]` | Match the full command and compound fragments before rewrites, then return a typed error naming a dedicated tool. The rule applies only while that tool is active. |
 | `bash_quirks/redactions.toml` | `[[redaction]]` | Replace matching result text before Yuj shortens or saves it. Yuj applies all rules in order. |
 
 The shell paths start at `scripts/llm_solver/`.
 
 Set `[loop].bash_transforms_universal_enabled = false` to turn off the
 universal rewrite list. Set `[loop].bash_quirks_forbidden_enabled = false` to
-turn off the forbidden list. Secret redaction has no off switch.
+turn off the forbidden list. Set `[tools].bash_redirect_read_side = true` to
+activate redirect rules targeting `read`, `grep`, or `glob`; redirect rules
+targeting `write` or `edit` remain active. Every redirect is gated on its
+target appearing in the effective model-facing tool set. Secret redaction has
+no off switch.
 
 Test a new rule against both a matching command and a command that must stay
 unchanged:

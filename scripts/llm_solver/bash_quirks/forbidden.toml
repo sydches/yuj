@@ -13,6 +13,44 @@
 # Toggle: knob `bash_quirks.forbidden_enabled` (default true). Set false
 # to disable the entire forbidden layer.
 #
+# Redirect rules are checked before rewrites and forbidden rules. A redirect
+# applies only when its target tool is in the effective model-facing tool set.
+# Read-side rules additionally require `[tools].bash_redirect_read_side = true`.
+
+[[redirect]]
+name = "shell_write"
+pattern = '''^(?:(?:echo|printf)\b[^\n]*(?:>>?|&>>?)|cat\s+<<[^\n]*(?:>>?|&>>?))'''
+tool = "write"
+message = "use the write tool so file creation and replacement stay tracked"
+fragment_aware = true
+
+[[redirect]]
+name = "in_place_edit"
+pattern = '''^(?:(?:sed|perl)\s+-i(?:\S*)?(?:\s|$)|awk\s+-i\s+inplace(?:\s|$))'''
+tool = "edit"
+message = "use the edit tool so the mutation is checked and tracked"
+fragment_aware = true
+
+[[redirect]]
+name = "read_file"
+pattern = '''^(?:cat|head|tail|less|more)(?:\s|$)'''
+tool = "read"
+message = "use the read tool for bounded, line-numbered file output"
+fragment_aware = true
+
+[[redirect]]
+name = "search_text"
+pattern = '''^(?:grep|egrep|fgrep|rg|ag|ack)(?:\s|$)'''
+tool = "grep"
+message = "use the grep tool for bounded, paginated search output"
+fragment_aware = true
+
+[[redirect]]
+name = "find_paths"
+pattern = '''^(?:find|fd|locate)(?:\s|$)'''
+tool = "glob"
+message = "use the glob tool for bounded, paginated path output"
+fragment_aware = true
 
 [[forbidden]]
 name = "cd_root"
