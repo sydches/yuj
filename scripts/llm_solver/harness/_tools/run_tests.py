@@ -97,12 +97,30 @@ def run_tests(
     # Function-local import: tests patch `harness.tools._run_in_sandbox`
     # via mock.patch.object — looking the symbol up via the public
     # `tools` module here makes that patch intercept this call.
-    from ..tools import _run_in_sandbox
+    from ..sandbox.env_policy import active_environment
+    from ..tools import (
+        _bash_unreadable_paths,
+        _effective_command_environment,
+        _run_in_sandbox,
+    )
+    effective_env, allow_login_shell = active_environment()
+    if effective_env is None:
+        effective_env, allow_login_shell = _effective_command_environment(cfg)
     out, exit_code, timed_out = _run_in_sandbox(
         cmd, cwd=cwd, timeout=timeout,
         sandbox=cfg.sandbox_bash, bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
-        unreadable_paths=tuple(getattr(cfg, "unreadable_paths", ()) or ()),
+        unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+        container_runtime=getattr(
+            cfg, "sandbox_container_runtime", "docker"
+        ),
+        container_image=getattr(cfg, "sandbox_container_image", ""),
+        container_flags=tuple(
+            getattr(cfg, "sandbox_container_flags", ()) or ()
+        ),
+        effective_env=effective_env,
+        allow_login_shell=allow_login_shell,
     )
 
     if not getattr(cfg, "tools_run_tests_structured_output", True):

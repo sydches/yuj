@@ -1,5 +1,6 @@
 """glob tool: find files matching a glob pattern, optionally paginated."""
 from ...config import Config
+from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _paginated_envelope, _resolve
 
 
@@ -21,8 +22,21 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         )
     try:
         base = _resolve(cwd, path)
+        policy = active_ignore_policy(cwd)
+        if policy is not None and policy.is_model_hidden(
+            base, is_dir=base.is_dir()
+        ):
+            return "No files found."
         matches = sorted(base.glob(pattern))
-        rel = [str(m.relative_to(cwd)) for m in matches if m.is_file()]
+        rel = [
+            str(m.relative_to(cwd))
+            for m in matches
+            if m.is_file()
+            and (
+                policy is None
+                or not policy.is_ignored(m, is_dir=False)
+            )
+        ]
         if cfg is None or not cfg.search_pagination_enabled:
             if not rel:
                 return "No files found."

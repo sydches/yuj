@@ -274,4 +274,7 @@ def test_background_sandbox_argv_uses_normal_bwrap_boundary(tmp_path, monkeypatc
     assert argv[0] == "/usr/bin/bwrap"
     assert "--unshare-net" in argv
     assert "--die-with-parent" in argv
-    assert argv[-5:] == ["bash", "-o", "pipefail", "-c", "server"]
+    assert "--clearenv" in argv
+    assert argv[-7:] == [
+        "bash", "--noprofile", "--norc", "-o", "pipefail", "-c", "server",
+    ]

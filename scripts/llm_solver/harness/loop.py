@@ -1,6 +1,6 @@
 """Agentic loop — Session (inner) + solve_task (outer)."""
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
@@ -8,9 +8,11 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import IO
 
 import openai
@@ -41,9 +43,16 @@ from .guardrails import (
 from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
 from .schemas import get_tool_schemas
+from .tool_validation import ToolSchemaSet
+from .tool_policy import PermissionPolicy
+from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
-from .tools import ToolRegistry, build_tool_registry, dispatch, validate_tool_handlers
+from .tools import (
+    ToolRegistry, _bash_unreadable_paths, admit_tool_output,
+    _effective_command_environment, build_tool_registry, dispatch,
+    validate_tool_handlers,
+)
 
 log = logging.getLogger(__name__)
 
@@ -192,19 +201,59 @@ class Session:
         output_control=None,
         universal_rewrites=None,
         forbidden_rules=None,
+        redirect_rules=None,
         redactions=None,
         output_parser=None,
         pretest_parsed: dict | None = None,
         guardrail_registry: GuardrailRegistry | None = None,
         tool_registry: ToolRegistry | None = None,
+        checkpoint_store=None,
+        lsp_manager=None,
+        process_manager=None,
+        injections=None,
+        artifact_dir: Path | None = None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
+        ignore_policy: IgnorePolicy | None = None,
+        effective_env: Mapping[str, str] | None = None,
+        allow_login_shell: bool | None = None,
     ):
         self.cfg = cfg
+        self._permission_policy = PermissionPolicy.from_rule_tables(
+            getattr(cfg, "permissions_rules", {})
+        )
         self.client = client
         self.cwd = cwd
+        if effective_env is None:
+            resolved_env, resolved_login_shell = (
+                _effective_command_environment(cfg)
+            )
+        else:
+            from .sandbox.env_policy import build_subprocess_env
+            resolved_env = build_subprocess_env(effective_env)
+            resolved_login_shell = bool(
+                getattr(cfg, "sandbox_env_allow_login_shell", False)
+                if allow_login_shell is None
+                else allow_login_shell
+            )
+        self._effective_env = MappingProxyType(resolved_env)
+        self._allow_login_shell = resolved_login_shell
+        self._ignore_policy = ignore_policy or load_ignore_policy(
+            cwd,
+            enabled=getattr(cfg, "state_ignore_file_enabled", True),
+            file_names=getattr(
+                cfg, "state_ignore_file_names", (".yujignore",)
+            ),
+        )
+        self._session_number = session_number
+        self._current_turn = 0
+        self._service_event_lock = threading.RLock()
+        self._trace_file = trace_file
+        self._trace_path = trace_path
+        self._state_path = state_path
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
+        self.redirect_rules = redirect_rules
         self.redactions = redactions
         self.output_parser = output_parser
         self.pretest_parsed = pretest_parsed
@@ -236,9 +285,124 @@ class Session:
         self._tool_schemas = apply_profile_to_schemas(
             get_tool_schemas(cfg.tool_desc), cfg, client,
         )
-        self._tool_registry = tool_registry or build_tool_registry()
+
+        def _redirect_event_sink(payload: dict[str, object]) -> None:
+            fields = dict(payload)
+            event_type = str(fields.pop("event", "redirect_rule"))
+            with self._service_event_lock:
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    turn_number=self._current_turn,
+                    **fields,
+                )
+
+        self._redirect_event_sink = _redirect_event_sink
+        self._lsp_manager = lsp_manager
+        if self._lsp_manager is None and (
+            getattr(cfg, "lsp_enabled", False)
+            or getattr(cfg, "lsp_tool_enabled", False)
+        ):
+            from .lsp_support import LspManager, parse_server_specs
+
+            def _lsp_event_sink(payload: dict[str, object]) -> None:
+                fields = dict(payload)
+                event_type = str(fields.pop("event", "lsp_diagnostics"))
+                with self._service_event_lock:
+                    self._emit(
+                        event_type,
+                        session_number=self._session_number,
+                        turn_number=self._current_turn,
+                        **fields,
+                    )
+
+            self._lsp_manager = LspManager.sandboxed(
+                cwd=cwd,
+                servers=parse_server_specs(getattr(cfg, "lsp_servers", {})),
+                bwrap_bin=cfg.bwrap_bin,
+                unreadable_paths=_bash_unreadable_paths(
+                    cwd, cfg, self._ignore_policy,
+                ),
+                sandbox_required=getattr(cfg, "sandbox_required", False),
+                sandbox=bool(getattr(cfg, "sandbox_bash", True)),
+                sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+                container_runtime=getattr(
+                    cfg, "sandbox_container_runtime", "docker"
+                ),
+                container_image=getattr(cfg, "sandbox_container_image", ""),
+                container_flags=tuple(
+                    getattr(cfg, "sandbox_container_flags", ()) or ()
+                ),
+                effective_env=self._effective_env,
+                allow_login_shell=self._allow_login_shell,
+                diagnostics_timeout_s=float(
+                    getattr(cfg, "lsp_diagnostics_timeout_s", 2.0)
+                ),
+                min_severity=getattr(cfg, "lsp_min_severity", "error"),
+                enabled=bool(getattr(cfg, "lsp_enabled", False)),
+                tool_enabled=bool(getattr(cfg, "lsp_tool_enabled", False)),
+                event_sink=_lsp_event_sink,
+            )
+
+        base_registry = tool_registry or build_tool_registry()
+        handlers = dict(base_registry.handlers)
+        self._process_manager = process_manager
+
+        base_bash_handler = handlers["bash"]
+
+        def _bash_handler(args, dispatch_cwd, dispatch_cfg):
+            if not bool(args.get("background", False)):
+                return base_bash_handler(args, dispatch_cwd, dispatch_cfg)
+            if self._process_manager is None:
+                return "ERROR: background processes are not enabled"
+            return self._process_manager.start(str(args["cmd"])).result
+
+        def _bash_poll_handler(args, _cwd, _cfg):
+            if self._process_manager is None:
+                return "ERROR: background processes are not enabled"
+            timeout = args.get("timeout_s")
+            return self._process_manager.poll(
+                str(args["proc_id"]),
+                timeout_s=None if timeout is None else float(timeout),
+            ).result
+
+        def _bash_kill_handler(args, _cwd, _cfg):
+            if self._process_manager is None:
+                return "ERROR: background processes are not enabled"
+            return self._process_manager.kill(str(args["proc_id"])).result
+
+        def _lsp_handler(args, _cwd, _cfg):
+            if self._lsp_manager is None:
+                return "ERROR: lsp manager is not configured"
+            try:
+                target = Path(self.cwd) / str(args["path"])
+                self._ignore_policy.require_visible(
+                    target, is_dir=target.is_dir()
+                )
+                query = self._lsp_manager.query(
+                    str(args["kind"]),
+                    path=str(args["path"]),
+                    line=int(args.get("line", 0)),
+                    character=int(args.get("character", 0)),
+                )
+            except Exception as exc:
+                return f"ERROR: lsp query failed: {exc}"
+            body = query.result or "[]"
+            return (
+                f"LSP {query.kind} {query.file} status={query.status}\n{body}"
+            )
+
+        handlers["lsp"] = _lsp_handler
+        handlers["bash"] = _bash_handler
+        handlers["bash_poll"] = _bash_poll_handler
+        handlers["bash_kill"] = _bash_kill_handler
+        self._tool_registry = ToolRegistry(handlers=handlers)
+        self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
         validate_tool_handlers(schema_names, registry=self._tool_registry)
+        self._tool_schema_set = ToolSchemaSet.from_openai_tools(
+            self._tool_schemas
+        )
         if context_manager is not None:
             self.context: ContextManager = context_manager
         else:
@@ -329,6 +493,89 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        if self._process_manager is None and getattr(
+            cfg, "tools_background_enabled", False
+        ):
+            from .process_manager import ProcessManager, ReplayProcessManager
+
+            replay_events = getattr(client, "process_events", None)
+            if bool(getattr(client, "is_replay", False)):
+                self._process_manager = ReplayProcessManager(
+                    event for event in (replay_events or ())
+                    if int(event.get("session_number", -1)) == session_number
+                )
+            else:
+                def _process_event_sink(payload: dict[str, object]) -> None:
+                    fields = dict(payload)
+                    event_type = str(fields.pop("event"))
+                    with self._service_event_lock:
+                        self._emit(
+                            event_type,
+                            session_number=self._session_number,
+                            turn_number=self._current_turn,
+                            **fields,
+                        )
+
+                def _admit_poll_output(value: str) -> str:
+                    return admit_tool_output(
+                        "bash_poll",
+                        value,
+                        arguments={},
+                        cfg=self.cfg,
+                        output_control=self.output_control,
+                        redactions=self.redactions,
+                    )
+
+                manager_run_dir = Path(
+                    artifact_dir
+                    or (trace_path.parent if trace_path is not None else cwd)
+                )
+                self._process_manager = ProcessManager.sandboxed(
+                    run_dir=manager_run_dir,
+                    cwd=cwd,
+                    bwrap_bin=cfg.bwrap_bin,
+                    unreadable_paths=_bash_unreadable_paths(
+                        cwd, cfg, self._ignore_policy,
+                    ),
+                    sandbox_required=getattr(cfg, "sandbox_required", False),
+                    sandbox=bool(getattr(cfg, "sandbox_bash", True)),
+                    sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+                    container_runtime=getattr(
+                        cfg, "sandbox_container_runtime", "docker"
+                    ),
+                    container_image=getattr(
+                        cfg, "sandbox_container_image", ""
+                    ),
+                    container_flags=tuple(
+                        getattr(cfg, "sandbox_container_flags", ()) or ()
+                    ),
+                    effective_env=self._effective_env,
+                    allow_login_shell=self._allow_login_shell,
+                    max_procs=int(cfg.tools_background_max_procs),
+                    poll_timeout_s=float(cfg.tools_background_poll_timeout),
+                    admit_output=_admit_poll_output,
+                    event_sink=_process_event_sink,
+                )
+        from .stale_guard import StaleFileGuard
+
+        def _stale_guard_event_sink(payload: dict[str, object]) -> None:
+            fields = dict(payload)
+            event_type = str(fields.pop("event"))
+            with self._service_event_lock:
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    turn_number=self._current_turn,
+                    **fields,
+                )
+
+        self._stale_guard = StaleFileGuard.from_trace(
+            cwd=self.cwd,
+            mode=getattr(cfg, "tools_stale_guard_mode", "warn"),
+            events=self._trace_events,
+            event_sink=_stale_guard_event_sink,
+        )
+
         # Seed pretest parity from session 1's parsed pretest verdict (passed
         # as a dict with 'failing' and 'passing' sets). Later sessions inherit
         # the baseline from session 1 via the same mechanism (caller passes
@@ -358,12 +605,17 @@ class Session:
         # uses the live server window instead of a stale config knob.
         self._server_ctx_synced = False
         self._tool_log: list[tuple[str, str]] = []  # (name, args_summary)
-        self._trace_file = trace_file
         # Async trace writer — lazy-instantiated by Session.run() when
         # trace_file is set, so tests that poke at internal state
         # without running the loop don't spawn writer threads.
         self._async_trace_writer = None
-        self._session_number = session_number
+        # Installed only while ``run`` owns the active trace writer. Tool
+        # dispatch uses this recorder to make starts durable before execution
+        # and to retain unresolved calls for signal/fatal recovery.
+        self._exit_diagnostics = None
+        # Number of same-turn follow-up requests, aggregated by the driver
+        # into post-run metrics. The initial response is not a continuation.
+        self._length_continuation_count = 0
         # Adaptive phase state (config-driven runtime switch).
         self._adaptive_phase = "base"
         self._adaptive_switched = False
@@ -378,17 +630,35 @@ class Session:
         # Mechanical state.json writer — harness side, not model side.
         # Gated on state_path being non-None (arm=with_yuj only; wo_yuj runs
         # never seed .solver/state.json and therefore get no state writes).
-        self._trace_path = trace_path
-        self._state_path = state_path
         # Injection subsystem (harness/injections.py). Off-by-default;
         # when enabled, loads markdown fragments from
         # <cwd>/<cfg.injections_dir> at session start. Fire state is
         # per-session so fire_once fragments inject at most once.
-        self._injections = []
+        self._injections = list(injections) if injections is not None else []
         self._injection_state = InjectionState()
-        if cfg.injections_enabled:
+        if cfg.injections_enabled and injections is None:
+            from .project_instructions import find_project_root
+
             inj_dir = Path(self.cwd) / cfg.injections_dir
-            self._injections = load_injections(inj_dir)
+            project_root = find_project_root(
+                Path(self.cwd), getattr(cfg, "project_root_markers", ())
+            )
+            self._injections = load_injections(
+                inj_dir,
+                imports_enabled=getattr(cfg, "imports_enabled", True),
+                imports_max_depth=getattr(cfg, "imports_max_depth", 5),
+                allowed_dirs=(project_root,),
+                unreadable_paths=_bash_unreadable_paths(
+                    cwd, cfg, self._ignore_policy,
+                ),
+            )
+
+    @property
+    def active_tool_names(self) -> frozenset[str]:
+        """Names in the current profile-filtered model-facing tool surface."""
+        return frozenset(
+            schema["function"]["name"] for schema in self._tool_schemas
+        )
 
     @property
     def last_tool_calls(self) -> list[tuple[str, str]]:
@@ -466,21 +736,50 @@ class Session:
         return sink_to_disk(self, raw, turn)
 
     def run(self) -> SessionResult:
+        from ._loop.interrupted_turn import ExitDiagnostics
         from ._loop.run_step import run_session_loop
         from ._loop.persistent_bash import (
             maybe_install_persistent_bash, teardown_persistent_bash,
         )
         from ._loop.trace_async_writer import AsyncTraceWriter
-        runner = maybe_install_persistent_bash(self)
+        runner = None
         # Lazy-start the async trace writer only when actually running
         # the loop; tests that construct Session without calling run()
         # never spawn a writer thread.
         if self._trace_file is not None and self._async_trace_writer is None:
             self._async_trace_writer = AsyncTraceWriter(self._trace_file)
+        diagnostics = None
+        if self._trace_path is not None and self._async_trace_writer is not None:
+            diagnostics = ExitDiagnostics(
+                self._trace_path,
+                session_number=self._session_number,
+                sync_before=self._async_trace_writer.barrier,
+            )
         try:
-            return run_session_loop(self)
+            if diagnostics is not None:
+                diagnostics.install()
+                self._exit_diagnostics = diagnostics
+            try:
+                runner = maybe_install_persistent_bash(self)
+                result = run_session_loop(self)
+            except BaseException as exc:
+                if diagnostics is not None:
+                    diagnostics.record_fatal_exception(exc)
+                raise
+            if diagnostics is not None:
+                diagnostics.record_exit(
+                    reason="session scope completed", kind="normal"
+                )
+            return result
         finally:
+            if diagnostics is not None:
+                diagnostics.uninstall()
+            self._exit_diagnostics = None
             teardown_persistent_bash(runner)
+            if self._lsp_manager is not None:
+                self._lsp_manager.close()
+            if self._process_manager is not None:
+                self._process_manager.close()
             if self._async_trace_writer is not None:
                 self._async_trace_writer.stop(timeout=5.0)
                 self._async_trace_writer = None

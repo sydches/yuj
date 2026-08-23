@@ -338,7 +338,8 @@ def _build_container_argv(
         "--read-only",
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
-        "--pid", "private",
+        # Docker and Podman create a private PID namespace by default.
+        # Docker rejects the tempting explicit spelling `--pid private`.
         "--ipc", "private",
         "--hostname", "yuj-sandbox",
         "--user", f"{user_id}:{group_id}",

@@ -36,11 +36,23 @@ class TraceEventSpec:
 
     event_type: str
     required_fields: frozenset[str]
+    optional_fields: frozenset[str] = frozenset()
 
 
 TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
-        "session_start", frozenset({"session_number", "thinking_level"})
+        "session_start", frozenset({
+            "session_number", "thinking_level", "sandbox_backend",
+            "container_runtime", "container_image_digest",
+            "ignore_file_hash", "sandbox_env_names",
+        }), frozenset({
+            "worktree_path", "worktree_branch", "worktree_base_commit",
+            "project_instruction_files", "project_instruction_bytes",
+            "project_instruction_imported_bytes",
+            "project_instruction_resolved_bytes",
+            "project_instructions_truncated", "prompt_import_tree",
+            "ignore_file_names",
+        })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
     TraceEventSpec(
@@ -90,6 +102,92 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
     ),
+    TraceEventSpec(
+        "checkpoint",
+        frozenset({
+            "session_number", "turn", "commit", "duration_ms",
+            "file_count", "byte_count",
+        }),
+    ),
+    TraceEventSpec(
+        "tool_start",
+        frozenset({
+            "tool_call_id", "tool_name", "session_number", "turn_number",
+            "started_at", "args_summary", "intent",
+        }),
+    ),
+    TraceEventSpec(
+        "session_exit",
+        frozenset({
+            "session_number", "reason", "kind", "recorded_at",
+            "pending_tool_calls",
+        }),
+    ),
+    TraceEventSpec(
+        "turn_aborted",
+        frozenset({
+            "session_number", "turn_number", "reason", "recovery_mode",
+            "recorded_at", "interrupted_tool_call_ids",
+            "interrupted_tool_calls",
+        }),
+    ),
+    TraceEventSpec(
+        "length_continue",
+        frozenset({
+            "session_number", "turn_number", "attempt", "tokens",
+        }),
+    ),
+    TraceEventSpec(
+        "lsp_diagnostics",
+        frozenset({
+            "session_number", "file", "errors", "warnings", "ms",
+            "server", "status",
+        }),
+    ),
+    TraceEventSpec(
+        "stale_guard_observe",
+        frozenset({"session_number", "path", "source", "fingerprint"}),
+    ),
+    TraceEventSpec(
+        "stale_guard",
+        frozenset({
+            "session_number", "path", "reason", "mode", "blocked",
+            "expected", "current",
+        }),
+    ),
+    TraceEventSpec(
+        "redirect_rule",
+        frozenset({
+            "session_number", "turn_number", "rule", "tool",
+            "fragment_index",
+        }),
+    ),
+    TraceEventSpec(
+        "schema_reject",
+        frozenset({"session_number", "turn_number", "tool", "errors"}),
+    ),
+    TraceEventSpec(
+        "proc_start",
+        frozenset({
+            "session_number", "proc_id", "command_sha256", "log_path",
+            "result",
+        }),
+    ),
+    TraceEventSpec(
+        "proc_poll",
+        frozenset({
+            "session_number", "proc_id", "result", "output_sha256",
+            "running", "exit_code", "timed_out", "cursor_start",
+            "cursor_end",
+        }),
+    ),
+    TraceEventSpec(
+        "proc_kill",
+        frozenset({
+            "session_number", "proc_id", "result", "was_running",
+            "exit_code", "reason",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",
@@ -107,7 +205,10 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     ),
     TraceEventSpec(
         "runtime_envelope",
-        frozenset({"session", "sandbox_mode", "sandbox_engaged"}),
+        frozenset({
+            "session", "sandbox_mode", "sandbox_engaged", "sandbox_backend",
+            "container_runtime", "container_image_digest",
+        }),
     ),
     TraceEventSpec("guardrail_init", frozenset({"session_number"})),
     TraceEventSpec("trace_corrupt", frozenset({"session_number", "kind"})),
@@ -115,6 +216,12 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
         "approval_request",
         frozenset({"session_number", "turn_number", "tool_name", "reason"}),
+    ),
+    TraceEventSpec(
+        "permission",
+        frozenset({
+            "session_number", "turn_number", "tool", "rule", "decision",
+        }),
     ),
     # API errors include the HTTP detail in the trace.
     TraceEventSpec(
@@ -129,6 +236,10 @@ KNOWN_TRACE_EVENT_TYPES = frozenset(
 )
 TRACE_EVENT_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     spec.event_type: spec.required_fields for spec in TRACE_EVENT_SPECS
+}
+TRACE_EVENT_OPTIONAL_FIELDS: dict[str, frozenset[str]] = {
+    spec.event_type: spec.optional_fields for spec in TRACE_EVENT_SPECS
+    if spec.optional_fields
 }
 
 

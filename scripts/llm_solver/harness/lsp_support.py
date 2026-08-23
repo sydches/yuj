@@ -151,21 +151,67 @@ class LspQueryResult:
 def build_lsp_sandbox_argv(
     command: Sequence[str], *, cwd: str, bwrap_bin: str,
     unreadable_paths: tuple[str, ...] = (), sandbox_required: bool = True,
+    sandbox: bool = True, sandbox_backend: str = "bwrap",
+    container_runtime: str = "docker", container_image: str = "",
+    container_flags: tuple[str, ...] = (),
+    effective_env: Mapping[str, str] | None = None,
+    allow_login_shell: bool = False,
 ) -> list[str]:
     """Run a stdio server under the same no-network policy as model bash."""
     from .sandbox import AMBIENT_CONTAINER, _build_bwrap_argv, container_mode
 
     command = tuple(command)
     command_text = shlex.join(command)
+    from .sandbox.env_policy import build_clean_exec_argv
+
+    def explicit(argv: list[str]) -> list[str]:
+        return (
+            argv if effective_env is None
+            else build_clean_exec_argv(argv, effective_env)
+        )
+
+    if not sandbox:
+        return explicit(list(command))
+    if sandbox_backend == "container":
+        if container_mode() is not None:
+            raise LspSupportError(
+                "sandbox.backend='container' cannot be combined with "
+                "legacy YUJ_CONTAINER"
+            )
+        from .sandbox.container_backend import ContainerBackend
+
+        backend = ContainerBackend(
+            runtime=container_runtime,
+            image=container_image,
+            flags=container_flags,
+        )
+        runtime_bin = backend.resolve_runtime(
+            sandbox_required=sandbox_required,
+        )
+        if runtime_bin is None:
+            return explicit(list(command))
+        return backend.build_argv(
+            command_text,
+            cwd,
+            runtime_bin=runtime_bin,
+            unreadable_paths=unreadable_paths,
+            sandbox_required=sandbox_required,
+            effective_env=effective_env,
+            allow_login_shell=allow_login_shell,
+        )
+    if sandbox_backend != "bwrap":
+        raise LspSupportError(f"unknown sandbox backend {sandbox_backend!r}")
     if container_mode() == AMBIENT_CONTAINER:
         from ._tools._run_in_sandbox import _probe_ambient_unshare_net
 
         prefix = ["unshare", "-n"] if _probe_ambient_unshare_net() else []
-        return [*prefix, *command]
+        return [*prefix, *explicit(list(command))]
     return _build_bwrap_argv(
         command_text, cwd, bwrap_bin,
         unreadable_paths=unreadable_paths,
         sandbox_required=sandbox_required,
+        effective_env=effective_env,
+        allow_login_shell=allow_login_shell,
         tail=list(command),
     )
 
@@ -376,7 +422,12 @@ class LspManager:
     def sandboxed(
         cls, *, cwd: str | Path, servers: Iterable[LspServerSpec],
         bwrap_bin: str, unreadable_paths: tuple[str, ...] = (),
-        sandbox_required: bool = True, **kwargs,
+        sandbox_required: bool = True, sandbox: bool = True,
+        sandbox_backend: str = "bwrap", container_runtime: str = "docker",
+        container_image: str = "", container_flags: tuple[str, ...] = (),
+        effective_env: Mapping[str, str] | None = None,
+        allow_login_shell: bool = False,
+        **kwargs,
     ) -> "LspManager":
         cwd_text = str(Path(cwd).resolve())
 
@@ -385,6 +436,13 @@ class LspManager:
                 spec.command, cwd=cwd_text, bwrap_bin=bwrap_bin,
                 unreadable_paths=unreadable_paths,
                 sandbox_required=sandbox_required,
+                sandbox=sandbox,
+                sandbox_backend=sandbox_backend,
+                container_runtime=container_runtime,
+                container_image=container_image,
+                container_flags=container_flags,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
 
         return cls(cwd=cwd_text, servers=servers, argv_builder=argv_builder, **kwargs)

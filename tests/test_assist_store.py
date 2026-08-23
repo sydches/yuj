@@ -274,6 +274,40 @@ def test_approve_always_records_session_decision(tmp_path, capsys):
     assert "always approve" in captured.out
 
 
+def test_approve_always_records_non_bash_action_key(tmp_path, capsys):
+    store = SessionStore(tmp_path)
+    record = store.create_session(
+        cwd=tmp_path / "work",
+        model="qwen3-8b",
+        prompt_text="Inspect the project",
+        prompt_source="inline",
+        context_mode="full",
+        system_prompt_path=None,
+        config_paths=[],
+    )
+    action_key = "read:sha256:" + "a" * 64
+    save_approval_request(
+        Path(record.artifact_dir),
+        {
+            "status": "pending",
+            "action_key": action_key,
+            "tool_name": "read",
+            "args_summary": "path='README.md'",
+            "reason": "permission rule requires approval",
+            "permission_rule": "README.md",
+        },
+    )
+
+    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store):
+        rc = main(["approve", record.session_id, "--always"])
+
+    captured = capsys.readouterr()
+    decisions = load_approval_decisions(Path(record.artifact_dir))
+    assert rc == 0
+    assert decisions[action_key] == "approved"
+    assert "always approve" in captured.out
+
+
 def test_reject_command_marks_pending_request_rejected(tmp_path, capsys):
     store = SessionStore(tmp_path)
     record = store.create_session(

@@ -85,6 +85,8 @@ thinking_level = "off"        # off | minimal | low | medium | high | xhigh | ma
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
+interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
+length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
 duplicate_abort = 3         # abort session after N identical consecutive tool calls
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
@@ -258,6 +260,35 @@ prompt_version = "llm_hurdle_detector_prompt_v2"
 [tools]
 bash_timeout = 120          # seconds before a bash tool call is killed
 grep_timeout = 30           # seconds before a grep tool call is killed
+# Independent shadow-Git workspace checkpoints. The repository lives outside
+# the task cwd, is masked from model commands, and is never exposed as a tool.
+file_checkpoints_enabled = false
+file_checkpoints_exclude = [
+  ".solver/**",
+  ".tool_output/**",
+  "prompt.txt",
+  "checkpoint.json",
+  "metrics.json",
+]
+# Refuse or warn on edit calls whose target was not observed at its current
+# content hash in this session. The trace reconstructs the ledger on resume.
+stale_guard_mode = "warn"  # off | warn | block
+# Redirect shell reads such as cat/grep/find to the corresponding bounded
+# model tool. Write-side redirect rules remain active independently.
+bash_redirect_read_side = false
+# Repository-wide tree-sitter symbol lookup through list_definitions.
+ast_search_enabled = false
+ast_search_max_rows = 1000
+# Validate native tool arguments against the effective profile-filtered schema
+# before any handler runs. Constrained modes additionally require a verified
+# profile capability and otherwise fall back to runtime validation.
+schema_validation = "off"       # off | reject
+constrained_decoding = "off"    # off | json_schema | grammar
+# Session-scoped asynchronous shell commands. Polls are the only model-facing
+# output channel; every live child is terminated when the session ends.
+background_enabled = false
+background_max_procs = 4
+background_poll_timeout = 300  # seconds; caps each bash_poll wait
 # Paginated search envelopes. When enabled, grep and glob wrap their
 # output in <search_result .../> with total/shown/page/next_page
 # attributes so the agent can check discovery scope and request
@@ -368,6 +399,22 @@ timeout = 10                 # seconds; runs per edit/write
 checks = []                  # no shipped defaults — user declares policy
 
 # ---------------------------------------------------------------------------
+# Language Server Protocol diagnostics and navigation
+# ---------------------------------------------------------------------------
+[lsp]
+enabled = false
+diagnostics_timeout_s = 2.0
+min_severity = "error"       # error | warning | information | hint
+tool_enabled = false
+
+[lsp.servers]
+# Example:
+# [lsp.servers.python]
+# command = ["pyright-langserver", "--stdio"]
+# extensions = [".py"]
+# root_markers = ["pyproject.toml", ".git"]
+
+# ---------------------------------------------------------------------------
 # Injection subsystem (harness/injections.py)
 # ---------------------------------------------------------------------------
 # When enabled, the harness loads every *.md in `dir` at session
@@ -378,6 +425,21 @@ checks = []                  # no shipped defaults — user declares policy
 [injections]
 enabled = false
 dir = ".harness/injections"
+
+# ---------------------------------------------------------------------------
+# Declarative per-tool permission policy. Empty rules preserve allow-by-default
+# behavior. Later matching entries win; assistant-only "ask" pauses for an
+# operator, while measurement runs resolve "ask" to deny.
+# ---------------------------------------------------------------------------
+[permissions]
+ask_fallback = "deny"  # deny | allow; assistant only when approval transport is absent
+
+[permissions.rules]
+# Example overlay:
+# [permissions.rules.bash]
+# "*" = "ask"
+# "git *" = "allow"
+# "rm *" = "deny"
 
 # ---------------------------------------------------------------------------
 # Prompt addendum settings
@@ -404,10 +466,21 @@ task_format = "pytest"     # default task format
 
 [prompts]
 handoff_max_tokens = 2000  # maximum validated model-written handoff size
-# Harness system header. Injected as the system prompt when no
-# --system-prompt file is supplied; otherwise appended to the file's
-# contents. Task-agnostic — names no benchmark, test framework, or
-# tool invocation convention.
+# Repository instruction discovery is an opt-in treatment. When enabled, Yuj
+# reads one non-empty override/default file from the global directory and each
+# directory from the project root to the task cwd, bounded by UTF-8 bytes.
+project_docs_enabled = false
+project_doc_names = ["AGENTS.md", "CLAUDE.md"]
+project_doc_max_bytes = 32768
+project_root_markers = [".git", ".hg", ".sl"]
+project_doc_global_dir = "~/.config/yuj"
+# Arm-file imports existed before this switch, so true preserves that public
+# behavior. Set false to treat every standalone @path line literally.
+imports_enabled = true
+imports_max_depth = 5
+# Harness system header. It follows an optional --system-prompt arm file and
+# optional project-instruction blocks. Task-agnostic — names no benchmark,
+# test framework, or tool invocation convention.
 system_header = """\
 You are a software engineering solver. Work in the current directory. Use tools to read, write, edit, search, and run commands."""
 
@@ -488,11 +561,43 @@ resume_gate_escalation = "{n} calls blocked by gate. Code preserved. Make target
 # Number of recent actions shown in the max_turns resume message.
 resume_last_n_actions = 3
 
+# ---------------------------------------------------------------------------
+# Repository model-view ignore files
+# ---------------------------------------------------------------------------
+[state]
+# Gitignore-style files are loaded once from the task root. Their rules hide
+# matching paths from model-facing read/search tools and shell sandboxes while
+# leaving harness/scorer access unchanged. Earlier file names take precedence.
+ignore_file_enabled = true
+ignore_file_names = [".yujignore"]
+
 # Optional host paths to hide inside bwrap. Patterns may be absolute and may
 # contain `**`. Prefix a pattern with `optional:` when absence is acceptable.
 # Add project-specific masks in config.local.toml.
 [sandbox]
+backend = "bwrap"                 # bwrap | container
+container_runtime = "docker"      # docker | podman
+container_image = ""              # required when backend = "container"
+container_flags = []              # fail-closed resource/metadata allowlist
 unreadable_paths = []
+
+# Explicit environment for model-command children. Resolution order is:
+# inherit -> default secret-name exclusions -> custom excludes -> fixed set
+# -> optional include allowlist. The harness/provider process is unaffected.
+[sandbox.env]
+inherit = "core"                  # all | core | none
+set = { MPLCONFIGDIR = "/tmp/mpl", PAGER = "cat", NO_COLOR = "1", TERM = "dumb", FORCE_COLOR = "0", PYTHONIOENCODING = "utf-8" }
+ignore_default_excludes = false   # inherited names containing KEY/SECRET/TOKEN
+allow_login_shell = false         # profiles/rc files stay disabled by default
+
+[sandbox.env.filters]
+# "AWS_*" = "exclude"
+# "PATH" = "include"             # any include rule creates an allowlist
+
+[runtime]
+# Give one direct/assistant session its own retained Git worktree and branch.
+# "auto" derives the branch name; another string is used as the branch name.
+worktree = "off"  # off | auto | <branch-name>
 
 # ---------------------------------------------------------------------------
 # File path conventions (not overridable — documented here for reference).

@@ -2,6 +2,7 @@
 import logging
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 from .._tool_filters import (
@@ -11,6 +12,10 @@ from .._tool_filters import (
 from ..sandbox import (
     AMBIENT_CONTAINER, _build_bwrap_argv, container_mode,
     get_persistent_runner,
+)
+from ..sandbox.env_policy import (
+    build_bash_argv,
+    build_subprocess_env,
 )
 
 log = logging.getLogger(__name__)
@@ -88,6 +93,12 @@ def _run_in_sandbox(
     cmd: str, *, cwd: str, timeout: int, sandbox: bool,
     bwrap_bin: str, sandbox_required: bool = False,
     unreadable_paths: tuple[str, ...] = (),
+    sandbox_backend: str = "bwrap",
+    container_runtime: str = "docker",
+    container_image: str = "",
+    container_flags: tuple[str, ...] = (),
+    effective_env: Mapping[str, str] | None = None,
+    allow_login_shell: bool = False,
 ) -> tuple[str, int | None, bool]:
     """Execute a shell command and return (filtered_text, exit_code, timed_out).
 
@@ -112,8 +123,76 @@ def _run_in_sandbox(
     # check at line 36 would fall through to `sandbox_required` and
     # raise, even though the outer container is providing isolation.
     mode = container_mode() if sandbox else None
+    process_env = (
+        None
+        if effective_env is None
+        else build_subprocess_env(effective_env)
+    )
+
+    def _run_host(prefix: tuple[str, ...] = ()):
+        """Run outside bwrap while preserving legacy direct-call behavior."""
+        if effective_env is None and not allow_login_shell:
+            if prefix:
+                return subprocess.run(
+                    [*prefix, "/bin/sh", "-c", cmd], cwd=cwd,
+                    capture_output=True, text=True, timeout=timeout,
+                )
+            return subprocess.run(
+                cmd, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=timeout,
+            )
+        return subprocess.run(
+            [*prefix, *build_bash_argv(
+                cmd, allow_login_shell=allow_login_shell,
+            )],
+            cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            env=process_env,
+        )
     try:
-        if mode == AMBIENT_CONTAINER:
+        if sandbox and sandbox_backend == "container":
+            if mode is not None:
+                raise RuntimeError(
+                    "sandbox.backend='container' cannot be combined with "
+                    "legacy YUJ_CONTAINER; unset YUJ_CONTAINER or select "
+                    "sandbox.backend='bwrap'"
+                )
+            from ..sandbox.container_backend import ContainerBackend
+
+            backend = ContainerBackend(
+                runtime=container_runtime,
+                image=container_image,
+                flags=container_flags,
+            )
+            runtime_bin = backend.resolve_runtime(
+                sandbox_required=sandbox_required,
+            )
+            if runtime_bin is None:
+                log.warning(
+                    "sandbox.backend=container but runtime %s is missing — "
+                    "running without sandbox because sandbox_required=false",
+                    container_runtime,
+                )
+                result = _run_host()
+            else:
+                argv = backend.build_argv(
+                    cmd,
+                    cwd,
+                    runtime_bin=runtime_bin,
+                    effective_env=effective_env,
+                    unreadable_paths=unreadable_paths,
+                    sandbox_required=sandbox_required,
+                    allow_login_shell=allow_login_shell,
+                )
+                result = subprocess.run(
+                    argv, cwd=None,
+                    capture_output=True, text=True, timeout=timeout,
+                )
+        elif sandbox and sandbox_backend != "bwrap":
+            raise RuntimeError(
+                "sandbox.backend must be 'bwrap' or 'container'; "
+                f"got {sandbox_backend!r}"
+            )
+        elif mode == AMBIENT_CONTAINER:
             # Ambient container mode: the harness is already running
             # inside a container that provides the sandbox boundary.
             # Run bash directly. No bwrap, no docker-exec round-trip.
@@ -124,22 +203,17 @@ def _run_in_sandbox(
             # Falls back to plain subprocess if unshare is unavailable
             # (probed once, cached at module scope).
             if _probe_ambient_unshare_net():
-                argv = ["unshare", "-n", "/bin/sh", "-c", cmd]
-                result = subprocess.run(
-                    argv, cwd=cwd,
-                    capture_output=True, text=True, timeout=timeout,
-                )
+                result = _run_host(("unshare", "-n"))
             else:
-                result = subprocess.run(
-                    cmd, shell=True, cwd=cwd,
-                    capture_output=True, text=True, timeout=timeout,
-                )
+                result = _run_host()
         elif mode is not None:
             # docker-exec container mode (FB testbed shape).
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
                 sandbox_required=sandbox_required,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
             result = subprocess.run(
                 argv, capture_output=True, text=True, timeout=timeout,
@@ -175,6 +249,8 @@ def _run_in_sandbox(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
                 sandbox_required=sandbox_required,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
             result = subprocess.run(
                 argv, capture_output=True, text=True, timeout=timeout,
@@ -200,10 +276,7 @@ def _run_in_sandbox(
                     "sandbox_bash=true but %s not found — running without sandbox",
                     bwrap_bin,
                 )
-            result = subprocess.run(
-                cmd, shell=True, cwd=cwd,
-                capture_output=True, text=True, timeout=timeout,
-            )
+            result = _run_host()
         out = result.stdout + result.stderr
         out = _strip_ls_timestamps(out)
         out = _strip_runner_timing(out)

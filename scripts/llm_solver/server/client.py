@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 
 from ._streaming import assemble_stream
 from . import request_controls
-from .types import SideRequestResult, ToolCall
+from .types import SideRequestResult, ToolCall, TurnResult, Usage
 
 
 def _streaming_enabled() -> bool:
@@ -51,6 +52,13 @@ def parse_args(raw) -> dict:
     except (json.JSONDecodeError, TypeError):
         log.warning("Failed to parse tool arguments: %r", raw)
         return {}
+
+
+def _member(value, name: str, default=None):
+    """Read one field from an SDK object or a primitive response mapping."""
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
 
 
 class LlamaClient:
@@ -351,86 +359,144 @@ class LlamaClient:
         self, messages: list[dict], tools: list[dict], turn: int
     ):
         """Profile-driven chat: denormalize → HTTP → normalize → TurnResult."""
-        from .types import TurnResult
+        request = self._prepare_profile_chat_request(messages, tools)
+        raw_response = self._call_raw_profile_request(request)
+        normalized = self.profile.normalize(dict(raw_response))
+        return self._turn_result_from_normalized(
+            normalized,
+            raw_response["usage"],
+            turn,
+            fallback_finish_reason=raw_response["finish_reason"],
+        )
 
+    def _prepare_profile_chat_request(
+        self, messages: list[dict], tools: list[dict]
+    ) -> dict:
+        """Build the exact profile-denormalized first-call request."""
         profile = self.profile
-
-        # DENORM_IN: canonical messages as harness sent them
+        if profile is None:
+            raise RuntimeError("profile request preparation requires a profile")
         log.debug("DENORM_IN messages=%d tools=%d", len(messages), len(tools))
-
-        # Denormalize messages for wire format
         wire_messages = profile.denormalize_messages(messages)
-
-        # DENORM_OUT: wire-format messages after denormalization
         log.debug("DENORM_OUT messages=%d", len(wire_messages))
-
-        payload = {
+        request = {
             "model": self.cfg.model,
             "messages": wire_messages,
             "max_tokens": self.cfg.max_tokens,
         }
         if profile.supports_tool_calls:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            request["tools"] = tools
+            request["tool_choice"] = "auto"
         elif tools:
             log.info("Profile %s reports supports_tool_calls=false; omitting tool schema payload", profile.name)
+        request = self._attach_constrained_tool_decoding(request)
+        return self._attach_request_controls(request, side_request=False)
 
-        payload = self._attach_request_controls(payload, side_request=False)
-        resp = self._call_api(payload)
+    def _attach_constrained_tool_decoding(self, request: dict) -> dict:
+        """Attach a profile-approved constraint to a normal tool-call request."""
+        tools = request.get("tools")
+        mode = getattr(self.cfg, "tools_constrained_decoding", "off")
+        if mode == "off" or not isinstance(tools, list) or not tools:
+            return request
+        from ..harness.tool_validation import (
+            ToolSchemaSet,
+            attach_constrained_decoding,
+            resolve_constrained_decoding,
+        )
 
-        msg = resp.choices[0].message
-        reason = resp.choices[0].finish_reason or "stop"
+        resolution = resolve_constrained_decoding(
+            mode=mode,
+            schemas=ToolSchemaSet.from_openai_tools(tools),
+            supports_constrained_tools=getattr(
+                self.profile, "supports_constrained_tools", False
+            ),
+        )
+        if resolution.fallback_reason:
+            log.warning(
+                "constrained decoding disabled for profile %s: %s",
+                getattr(self.profile, "name", ""),
+                resolution.fallback_reason,
+            )
+        return attach_constrained_decoding(request, resolution)
+
+    def _call_raw_profile_request(self, request: dict) -> dict:
+        """Make one profile request and return its pre-normalize response."""
+        resp = self._call_api(request)
+        choices = _member(resp, "choices", ()) or ()
+        if not choices:
+            raise ValueError("model response contains no choices")
+        choice = choices[0]
+        msg = _member(choice, "message")
+        if msg is None:
+            raise ValueError("model response choice contains no message")
+        reason = _member(choice, "finish_reason") or "stop"
         usage = request_controls.usage_from_response(resp)
-
-        # Build raw response dict for normalize pipeline
         raw_tool_calls = []
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                raw_tool_calls.append({
-                    "id": getattr(tc, "id", None) or "",
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                })
+        for tc in (_member(msg, "tool_calls", ()) or ()):
+            function = _member(tc, "function", {}) or {}
+            raw_tool_calls.append({
+                "id": _member(tc, "id", "") or "",
+                "type": "function",
+                "function": {
+                    "name": _member(function, "name", "") or "",
+                    "arguments": _member(function, "arguments", "{}"),
+                },
+            })
 
         raw_response = {
-            "content": getattr(msg, "content", None),
+            "content": _member(msg, "content"),
             "tool_calls": raw_tool_calls,
             "finish_reason": reason,
+            "usage": usage,
         }
+        log.debug(
+            "NORM_IN content=%s tool_calls=%d finish_reason=%s",
+            repr(raw_response["content"][:100])
+            if raw_response["content"] else None,
+            len(raw_tool_calls),
+            reason,
+        )
+        return raw_response
 
-        # NORM_IN: raw model response
-        log.debug("NORM_IN content=%s tool_calls=%d finish_reason=%s",
-                   repr(raw_response["content"][:100]) if raw_response["content"] else None,
-                   len(raw_tool_calls), reason)
-
-        # Normalize
-        normalized = profile.normalize(raw_response)
-
-        # NORM_OUT: canonical TurnResult
+    def _turn_result_from_normalized(
+        self,
+        normalized: Mapping,
+        usage: Usage,
+        turn: int,
+        *,
+        fallback_finish_reason: str = "stop",
+    ) -> TurnResult:
+        """Build the canonical turn without invoking normalize again."""
+        if not isinstance(normalized, Mapping):
+            raise TypeError("normalized response must be a mapping")
+        if not isinstance(usage, Usage):
+            raise TypeError("response usage must be canonical Usage")
         content = normalized.get("content")
         if content == "":
             content = None
-        norm_reason = normalized.get("finish_reason", reason)
+        norm_reason = (
+            normalized.get("finish_reason") or fallback_finish_reason
+        )
         norm_tool_calls_raw = normalized.get("tool_calls", [])
 
-        # Build canonical ToolCall list
         tool_calls: list[ToolCall] = []
         if norm_tool_calls_raw and norm_reason in ("tool_calls", "tool"):
             for i, tc in enumerate(norm_tool_calls_raw):
-                if isinstance(tc, dict):
-                    tc_id = f"call_{turn}_{i}"  # deterministic; server IDs are random
+                if isinstance(tc, Mapping):
+                    tc_id = f"call_{turn}_{i}"
                     func = tc.get("function", {})
-                    name = func.get("name", "")
-                    arguments = parse_args(func.get("arguments", "{}"))
-                    tool_calls.append(ToolCall(id=tc_id, name=name, arguments=arguments))
+                    name = _member(func, "name", "") or ""
+                    arguments = parse_args(_member(func, "arguments", "{}"))
+                    tool_calls.append(
+                        ToolCall(id=tc_id, name=name, arguments=arguments)
+                    )
 
-        log.debug("NORM_OUT content=%s tool_calls=%d finish_reason=%s",
-                   repr(content[:100]) if content else None,
-                   len(tool_calls), norm_reason)
-
+        log.debug(
+            "NORM_OUT content=%s tool_calls=%d finish_reason=%s",
+            repr(content[:100]) if content else None,
+            len(tool_calls),
+            norm_reason,
+        )
         return TurnResult(
             content=content,
             tool_calls=tool_calls,

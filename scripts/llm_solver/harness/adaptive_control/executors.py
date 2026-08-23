@@ -233,12 +233,13 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
         return None
     from .._loop.profile_resolution import apply_profile_to_schemas
     from ..schemas import get_tool_schemas
+    from ..tool_validation import ToolSchemaSet
     from ..tools import validate_tool_handlers
 
     schemas = apply_profile_to_schemas(get_tool_schemas(new_cfg.tool_desc), new_cfg, session.client)
     schema_names = [s["function"]["name"] for s in schemas]
     validate_tool_handlers(schema_names, registry=session._tool_registry)
-    return schemas
+    return schemas, ToolSchemaSet.from_openai_tools(schemas)
 
 
 def _prepare_guardrail_state(session, new_cfg, changed: set[str]):
@@ -259,6 +260,15 @@ def _prepare_guardrail_state(session, new_cfg, changed: set[str]):
             recent = recent[-maxlen:]
         recent_calls = deque(recent, maxlen=maxlen)
     return state, fresh, recent_calls
+
+
+def _prepare_permission_policy(new_cfg, changed: set[str]):
+    if not changed & {"permissions_rules", "permissions_ask_fallback"}:
+        return None
+    from ..tool_policy import PermissionPolicy, normalize_ask_fallback
+
+    normalize_ask_fallback(new_cfg.permissions_ask_fallback)
+    return PermissionPolicy.from_rule_tables(new_cfg.permissions_rules)
 
 
 def _commit_guardrail_state(prepared) -> tuple[str, ...]:
@@ -286,14 +296,18 @@ def _refresh_runtime_surfaces(
     try:
         schemas = _prepare_tool_schemas(session, new_cfg, changed)
         guard_state = _prepare_guardrail_state(session, new_cfg, changed)
+        permission_policy = _prepare_permission_policy(new_cfg, changed)
     except Exception:
         return False, "runtime_surface_refresh_failed", (), tuple(sorted(changed))
 
     if context is not None:
         refreshed.extend(_refresh_context(context, new_cfg, targets))
     if schemas is not None:
-        session._tool_schemas = schemas
+        session._tool_schemas, session._tool_schema_set = schemas
         refreshed.append("tool_schemas")
+    if permission_policy is not None:
+        session._permission_policy = permission_policy
+        refreshed.append("permission_policy")
     refreshed.extend(_commit_guardrail_state(guard_state))
 
     if changed & {f for f in changed if f.startswith("loop_") or f.endswith("_enabled")}:

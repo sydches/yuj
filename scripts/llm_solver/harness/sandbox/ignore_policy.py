@@ -21,16 +21,24 @@ files and accidentally reversing it.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
+from typing import Iterator
 
 
 DEFAULT_IGNORE_FILE_NAMES: tuple[str, ...] = (".yujignore",)
 MAX_IGNORE_FILE_BYTES = 1024 * 1024
 MAX_IGNORE_RULES = 50_000
+
+
+_ACTIVE_IGNORE_POLICY: ContextVar["IgnorePolicy | None"] = ContextVar(
+    "yuj_active_ignore_policy", default=None,
+)
 
 
 class IgnorePolicyError(ValueError):
@@ -282,6 +290,13 @@ def _validate_file_names(file_names: Sequence[str]) -> tuple[str, ...]:
     return tuple(validated)
 
 
+def validate_ignore_file_names(
+    file_names: Sequence[str],
+) -> tuple[str, ...]:
+    """Validate and normalize configured task-root ignore file names."""
+    return _validate_file_names(file_names)
+
+
 def _aggregate_hash(sources: tuple[IgnoreSource, ...]) -> str | None:
     if not sources:
         return None
@@ -377,6 +392,30 @@ class IgnorePolicy:
         if self.is_ignored(path, is_dir=is_dir):
             raise IgnoredPathError(os.fspath(path))
 
+    def is_model_hidden(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        is_dir: bool | None = None,
+    ) -> bool:
+        """Return whether an entry is inaccessible in the effective view.
+
+        An ignored directory with a later-negated visible descendant must
+        remain traversable. ``existing_ignored_paths`` captures precisely that
+        distinction: opaque directories (or one of their ancestors) appear as
+        mask roots, while traversable ignored parents do not.
+        """
+        relative, target = self._relative(path)
+        directory = target.is_dir() if is_dir is None else bool(is_dir)
+        if not self.is_ignored(relative, is_dir=directory):
+            return False
+        if not directory:
+            return True
+        return any(
+            target == root or target.is_relative_to(root)
+            for root in map(Path, self.existing_ignored_paths())
+        )
+
     def filter_paths(
         self, paths: Iterable[str | os.PathLike[str]],
     ) -> tuple[str | os.PathLike[str], ...]:
@@ -439,6 +478,52 @@ class IgnorePolicy:
         ]
         return tuple(sorted(str(path) for path in (*kept_dirs, *hidden_files)))
 
+    def sandbox_unreadable_paths(self) -> tuple[str, ...]:
+        """Return optional masks for the policy's currently existing paths.
+
+        A model may remove an ignored entry between policy load and a later
+        sandbox call.  ``optional:`` keeps that ordinary workspace mutation
+        from turning a strict sandbox setup into a false configuration error.
+        The policy rules remain immutable; only the set of existing entries
+        matching those rules is refreshed.
+        """
+        return tuple(
+            f"optional:{path}" for path in self.existing_ignored_paths()
+        )
+
+
+@contextmanager
+def activate_ignore_policy(
+    policy: IgnorePolicy | None,
+) -> Iterator[None]:
+    """Expose one run-owned policy to a single dispatch call.
+
+    ``ContextVar`` keeps concurrent read-only dispatch workers isolated.  A
+    ``None`` argument deliberately preserves an already-active outer scope so
+    direct helper composition does not accidentally clear its policy.
+    """
+    if policy is None:
+        yield
+        return
+    token = _ACTIVE_IGNORE_POLICY.set(policy)
+    try:
+        yield
+    finally:
+        _ACTIVE_IGNORE_POLICY.reset(token)
+
+
+def active_ignore_policy(
+    cwd: str | os.PathLike[str] | None = None,
+) -> IgnorePolicy | None:
+    """Return the dispatch policy when it owns ``cwd`` (if supplied)."""
+    policy = _ACTIVE_IGNORE_POLICY.get()
+    if policy is None or cwd is None:
+        return policy
+    try:
+        return policy if Path(cwd).resolve() == policy.root else None
+    except OSError:
+        return None
+
 
 def load_ignore_policy(
     root: str | os.PathLike[str],
@@ -452,7 +537,7 @@ def load_ignore_policy(
         raise IgnorePolicyError(f"task root is not a directory: {root_path}")
     if not isinstance(enabled, bool):
         raise IgnorePolicyError("state.ignore_file_enabled must be a boolean")
-    names = _validate_file_names(file_names)
+    names = validate_ignore_file_names(file_names)
     if not enabled:
         return IgnorePolicy(root_path, (), enabled=False)
 

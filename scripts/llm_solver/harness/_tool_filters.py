@@ -15,8 +15,27 @@ from pathlib import Path
 
 from ..config import Config
 from .sandbox import _DEFAULT_BWRAP_BIN, _build_bwrap_argv
+from .tool_policy import PermissionPolicy, PermissionResolution
 
 log = logging.getLogger(__name__)
+
+
+def resolve_tool_permission(
+    *,
+    policy: PermissionPolicy,
+    tool_name: str,
+    arguments: dict,
+    cfg: Config,
+    approval_available: bool,
+) -> PermissionResolution:
+    """Evaluate the general policy before any tool-specific filter layer."""
+    return policy.evaluate(
+        tool_name=tool_name,
+        arguments=arguments,
+        runtime_mode=getattr(cfg, "runtime_mode", "measurement"),
+        ask_fallback=getattr(cfg, "permissions_ask_fallback", "deny"),
+        approval_available=approval_available,
+    )
 
 # ── ANSI pattern ────────────────────────────────────────────────────────
 # Terminal control protocol — universal across subprocess output. Stripping

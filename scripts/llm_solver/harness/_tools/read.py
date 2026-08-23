@@ -1,5 +1,6 @@
 """read tool: return file contents with line numbers + optional reminders."""
 from ...config import Config
+from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _path_hint, _resolve
 
 
@@ -45,6 +46,9 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
         return f"ERROR: limit must be >= 0, got {limit}"
     try:
         target = _resolve(cwd, path)
+        policy = active_ignore_policy(cwd)
+        if policy is not None:
+            policy.require_visible(target, is_dir=target.is_dir())
         if target.is_dir():
             return (
                 f"ERROR: {path} is a directory — "

@@ -14,6 +14,8 @@ passing the resulting mapping to each sandbox backend.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import fnmatch
 import os
@@ -26,6 +28,16 @@ CORE_ENVIRONMENT_NAMES: tuple[str, ...] = ("PATH", "HOME", "LANG", "TERM")
 DEFAULT_EXCLUDED_NAME_PARTS: tuple[str, ...] = ("KEY", "SECRET", "TOKEN")
 """Case-insensitive substrings excluded from inherited values by default."""
 
+DEFAULT_FIXED_ENVIRONMENT: Mapping[str, str] = MappingProxyType({
+    "FORCE_COLOR": "0",
+    "MPLCONFIGDIR": "/tmp/mpl",
+    "NO_COLOR": "1",
+    "PAGER": "cat",
+    "PYTHONIOENCODING": "utf-8",
+    "TERM": "dumb",
+})
+"""Historical deterministic command defaults now owned by ``sandbox.env``."""
+
 _INHERIT_MODES = frozenset({"all", "core", "none"})
 _FILTER_ACTIONS = frozenset({"include", "exclude"})
 _POLICY_KEYS = frozenset({
@@ -35,6 +47,10 @@ _POLICY_KEYS = frozenset({
     "ignore_default_excludes",
     "allow_login_shell",
 })
+
+_active_environment: ContextVar[
+    tuple[Mapping[str, str], bool] | None
+] = ContextVar("yuj_active_environment", default=None)
 
 
 class EnvironmentPolicyError(ValueError):
@@ -276,6 +292,43 @@ def build_subprocess_env(environment: Mapping[str, str]) -> dict[str, str]:
     """Return an independent validated mapping for ``subprocess.run(env=...)``."""
     explicit = _copy_environment(environment, field_name="effective environment")
     return {name: explicit[name] for name in sorted(explicit)}
+
+
+def build_clean_exec_argv(
+    argv: list[str] | tuple[str, ...], environment: Mapping[str, str],
+) -> list[str]:
+    """Prefix an argv with ``env -i`` and one deterministic environment.
+
+    This is used by ambient and unsandboxed long-lived children, where there
+    is no bwrap/container boundary at which to apply ``--clearenv``.
+    """
+    explicit = build_subprocess_env(environment)
+    return [
+        "/usr/bin/env", "-i",
+        *(f"{name}={explicit[name]}" for name in explicit),
+        *argv,
+    ]
+
+
+@contextmanager
+def activate_environment(
+    environment: Mapping[str, str], *, allow_login_shell: bool = False,
+):
+    """Install one immutable command environment for nested tool handlers."""
+    explicit = MappingProxyType(build_subprocess_env(environment))
+    token = _active_environment.set((explicit, bool(allow_login_shell)))
+    try:
+        yield explicit
+    finally:
+        _active_environment.reset(token)
+
+
+def active_environment() -> tuple[Mapping[str, str] | None, bool]:
+    """Return the dispatch-scoped command environment and login-shell flag."""
+    active = _active_environment.get()
+    if active is None:
+        return None, False
+    return active
 
 
 def build_bash_argv(

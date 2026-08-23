@@ -13,6 +13,9 @@ context_size = 262144
 chat_template = "chatml"
 supports_tool_calls = true
 supports_system_role = true
+# The pinned llama-server template renders assistant content with generation
+# prompt disabled and supports continuing that final message.
+supports_prefill = true
 
 [tokens]
 method = "chars_div_4"

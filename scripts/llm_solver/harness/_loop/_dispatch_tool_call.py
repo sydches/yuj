@@ -30,7 +30,7 @@ from .trace_output import build_tool_call_trace_fields
 
 __all__ = [
     "TCOutcome", "TurnState",
-    "dispatch_one_tool_call",
+    "dispatch_one_tool_call", "record_tool_start",
 ]
 
 
@@ -133,19 +133,239 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
     )
 
 
+def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> None:
+    """Capture one host-side workspace checkpoint after an executed call."""
+    store = getattr(state.session, "_checkpoint_store", None)
+    if store is None:
+        return
+    from ..workspace_checkpoints import tool_call_needs_checkpoint
+    if not tool_call_needs_checkpoint(tc.name, executed=executed):
+        return
+    checkpoint = store.capture(state.turn)
+    state.session._emit(
+        "checkpoint",
+        session_number=state.session._session_number,
+        **checkpoint.trace_fields(),
+    )
+
+
+def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
+    """Run automatic diagnostics after a successful edit or write."""
+    if tc.name not in {"edit", "write"} or is_error_result(result):
+        return result
+    manager = getattr(state.session, "_lsp_manager", None)
+    if manager is None:
+        return result
+    report = manager.after_edit(str(tc.arguments.get("path", "")))
+    from ..lsp_support import append_diagnostics_to_tool_result
+    return append_diagnostics_to_tool_result(
+        result,
+        report,
+        max_output_chars=state.cfg.max_output_chars,
+        tool_name=tc.name,
+    )
+
+
+def _run_rejection_error_ladder(tc, state: "TurnState", result: str):
+    """Count a pre-dispatch rejection without declaring another phase site.
+
+    Schema and permission failures intentionally feed the ordinary error
+    ladder, but they are branches of the single post-tool phase rather than
+    additional ordered guardrails. ``dict.get`` keeps the literal phase-order
+    inventory in the main dispatch path authoritative.
+    """
+    ladder = state.tool_post.get("error_ladder")
+    if ladder is None:  # registry validation should make this unreachable
+        raise RuntimeError("guardrail registry is missing error_ladder")
+    return ladder(
+        state.session._guards,
+        state.cfg,
+        tc_name=tc.name,
+        result=result,
+    )
+
+
+def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
+    """Record one non-executed, repairable schema rejection."""
+    session = state.session
+    cfg = state.cfg
+    result = validation.error_envelope()
+    session._emit(
+        "schema_reject",
+        session_number=session._session_number,
+        turn_number=state.turn,
+        **validation.trace_fields(),
+    )
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = action_metadata(tc.name, tc.arguments)
+    session.context.add_tool_result(
+        tc.id,
+        result,
+        tool_name=tc.name,
+        gate_blocked=True,
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="schema_reject",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(
+            end=True,
+            reason=error_decision.reason,
+            done=False,
+        )
+    return TCOutcome(end=False)
+
+
+def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
+    """Record one policy-denied call without entering any handler or quirk."""
+    session = state.session
+    cfg = state.cfg
+    result = resolution.denial_envelope()
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = action_metadata(tc.name, tc.arguments)
+    session.context.add_tool_result(
+        tc.id,
+        result,
+        tool_name=tc.name,
+        gate_blocked=True,
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="permission_denied",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    return TCOutcome(end=False)
+
+
+def record_tool_start(tc, state: "TurnState") -> None:
+    """Make one bounded ``tool_start`` row durable before dispatch."""
+    diagnostics = getattr(state.session, "_exit_diagnostics", None)
+    if diagnostics is None:
+        return
+    diagnostics.record_tool_start(
+        tool_call_id=tc.id,
+        tool_name=tc.name,
+        turn_number=state.turn,
+        args_summary=_truncate_for_trace(
+            _summarize_args(
+                tc.arguments, state.cfg.trace_args_summary_chars
+            ),
+            state.cfg.trace_args_summary_chars,
+        ),
+        intent=_truncate_for_trace(
+            state.content or "", state.cfg.trace_reasoning_store_chars
+        ),
+    )
+
+
+def _record_tool_finished(tc, state: "TurnState") -> None:
+    """Clear pending state only after ordinary result evidence is durable."""
+    diagnostics = getattr(state.session, "_exit_diagnostics", None)
+    if diagnostics is None:
+        return
+    writer = getattr(state.session, "_async_trace_writer", None)
+    if writer is None:
+        raise RuntimeError("tool exit diagnostics require an active trace writer")
+    writer.barrier()
+    if not diagnostics.record_tool_finished(tc.id):
+        raise RuntimeError(
+            f"tool call {tc.id!r} finished without a pending tool_start"
+        )
+
+
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
     Sub-phases (in fixed order):
-      6a. done_guard           — accept→END(done), BLOCK→next tc, END→END
-      6b. mutation_repeat      — END / BLOCK / WARN
-      6c. contract_gate        — END / BLOCK / WARN
-      6c.5 pre_mutation_gate   — BLOCK only (continue to next tc)
-      6d. rumination_gate      — END / BLOCK / WARN-grace dispatch
-      6d. dispatch (when no gate intercepted)
-      6e. error_ladder         — WARN / END
+      6a. schema validation    — reject before every handler and guard
+      6b. permission policy    — deny before every handler and quirk
+      6c. done_guard           — accept→END(done), BLOCK→next tc, END→END
+      6d. mutation_repeat      — END / BLOCK / WARN
+      6d. contract_gate        — END / BLOCK / WARN
+      6d.5 pre_mutation_gate   — BLOCK only (continue to next tc)
+      6e. rumination_gate      — END / BLOCK / WARN-grace dispatch
+      6e. dispatch (when no gate intercepted)
+      6f. error_ladder         — WARN / END
       Post-dispatch projection (bash only, non-error)
-      6f. test_read_ladder + rumination_ladder + observers
+      6g. test_read_ladder + rumination_ladder + observers
       Output dedup + mutation-cache reset
       add_tool_result + trace emit
     """
@@ -178,8 +398,22 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # that re-enter the emit path (gate_intercepted, normal,
     # error_ladder END). Empty list = no rewrite happened.
     rewrite_log: list = []
+    dispatch_started = tc.id in state.preexecuted
 
-    # 6a. done_guard — accept path ends session; otherwise BLOCK
+    if getattr(cfg, "tools_schema_validation", "off") == "reject":
+        validation = state.schema_validations.get(tc.id)
+        if validation is None:
+            validation = session._tool_schema_set.validate(
+                tc.name, tc.arguments
+            )
+        if not validation.valid:
+            return _handle_schema_reject(tc, state, validation)
+
+    permission = state.permission_resolutions.get(tc.id)
+    if permission is not None and permission.denied:
+        return _handle_permission_denial(tc, state, permission)
+
+    # done_guard — accept path ends session; otherwise BLOCK
     # (or END once cfg.done_loop_abort_after rejected calls accumulate).
     if tc.name == "done":
         return _handle_done_tool(tc, state)
@@ -282,16 +516,26 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             )
             result = state.preexecuted.get(tc.id)
             if result is None:
+                record_tool_start(tc, state)
+                dispatch_started = True
                 _disp_t0 = time.perf_counter()
                 result = dispatch(tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
                                   output_control=effective_output_control,
                                   universal_rewrites=effective_universal_rewrites,
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                                  redirect_rules=getattr(session, "redirect_rules", None),
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
+                                  stale_guard=session._stale_guard,
+                                  active_tools=getattr(session, "active_tool_names", ()),
+                                  redirect_event_sink=getattr(session, "_redirect_event_sink", None),
+                                  ignore_policy=session._ignore_policy,
+                                  effective_env=session._effective_env,
+                                  allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+            result = _append_lsp_diagnostics(tc, state, result)
             result += "\n\n" + gate_decision.text
             gate_intercepted = True
         else:
@@ -304,24 +548,34 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             )
             result = state.preexecuted.get(tc.id)
             if result is None:
+                record_tool_start(tc, state)
+                dispatch_started = True
                 _disp_t0 = time.perf_counter()
                 result = dispatch(tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
                                   output_control=effective_output_control,
                                   universal_rewrites=effective_universal_rewrites,
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                                  redirect_rules=getattr(session, "redirect_rules", None),
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
+                                  stale_guard=session._stale_guard,
+                                  active_tools=getattr(session, "active_tool_names", ()),
+                                  redirect_event_sink=getattr(session, "_redirect_event_sink", None),
+                                  ignore_policy=session._ignore_policy,
+                                  effective_env=session._effective_env,
+                                  allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
-            if tc.name == "bash":
+            result = _append_lsp_diagnostics(tc, state, result)
+            if tc.name == "bash" and not is_error_result(result):
                 session._observe_test_signal(tc.arguments.get("cmd", ""), result)
             # 6e. error_ladder (WARN / END tiers). Log every error
             # for trace visibility; the ladder decides escalation.
             err_decision = tool_post["error_ladder"](
                 session._guards, cfg, tc_name=tc.name, result=result
             )
-            if result.startswith("ERROR:"):
+            if is_error_result(result):
                 state.turn_had_pressure = True
                 log.info("Tool error: %s consecutive=%d",
                          tc.name, session._guards.consecutive_errors.get(tc.name, 0))
@@ -339,6 +593,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 # passed through verbatim.
                 session._emit(
                     "tool_call",
+                    tool_call_id=tc.id,
                     session_number=session._session_number,
                     turn_number=turn,
                     tool_name=tc.name,
@@ -360,6 +615,12 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                     completion_tokens=completion_tokens,
                     **({"cmd_pre_rewrite": _truncate_for_trace(rewrite_log[0]["original"], cfg.trace_args_summary_chars)} if rewrite_log else {}),
                 )
+                _capture_workspace_checkpoint(
+                    tc, state,
+                    executed=bool(execution_metadata.get("executed", True)),
+                )
+                if dispatch_started:
+                    _record_tool_finished(tc, state)
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
@@ -371,7 +632,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             # model can read the file when it wants the full
             # content. Structured projection replaces raw with a
             # compact digest for test commands.
-            if tc.name == "bash" and not result.startswith("ERROR:"):
+            if tc.name == "bash" and not is_error_result(result):
                 cmd = tc.arguments.get("cmd", "")
                 result = session._project_and_sink(tc.name, cmd, result, turn)
 
@@ -417,7 +678,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # the context's own signal (separate concern — stateful
     # compaction, not thrash control).
     if (tc.name in ("write", "edit")
-            and not result.startswith("ERROR:")
+            and not is_error_result(result)
             and hasattr(session.context, "reset_dedup_counts")):
         session.context.reset_dedup_counts()
 
@@ -462,12 +723,17 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # records a rewind/branch point for this turn. Gate-blocked calls
     # never executed, so nothing changed on disk — no snapshot.
     _snapshot_sha = None
+    call_executed = (
+        not gate_blocked_flag
+        and bool(execution_metadata.get("executed", True))
+    )
     if (getattr(cfg, "turn_snapshots_enabled", False)
-            and metadata.get("source_write_like") and not gate_blocked_flag):
+            and metadata.get("source_write_like") and call_executed):
         from ..turn_snapshots import snapshot as _turn_snapshot
         _snapshot_sha = _turn_snapshot(session.cwd, turn, session=session)
     session._emit(
         "tool_call",
+        tool_call_id=tc.id,
         session_number=session._session_number,
         turn_number=turn,
         tool_name=tc.name,
@@ -496,12 +762,17 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         **({"cmd_pre_rewrite": _truncate_for_trace(_pre, cfg.trace_args_summary_chars)} if _pre else {}),
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
     )
+    _capture_workspace_checkpoint(
+        tc, state, executed=call_executed,
+    )
+    if dispatch_started:
+        _record_tool_finished(tc, state)
 
     # Gate-blocked calls were never executed — don't store a
     # cmd_signature (prevents later calls of the same command
     # from matching against a non-execution).
     cmd_sig = ""
-    if not gate_blocked_flag:
+    if call_executed:
         cmd_sig = _dedup_signature(tc)[1] if tc.name == "bash" else ""
 
     # Collapse byte-identical repeats per (tool_name, focus_key) into a

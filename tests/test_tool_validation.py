@@ -23,6 +23,8 @@ from scripts.llm_solver.harness.tool_validation import (
 
 VALID_ARGUMENTS = {
     "bash": {"cmd": "git status --short"},
+    "bash_poll": {"proc_id": "p0001", "timeout_s": 2.5},
+    "bash_kill": {"proc_id": "p0001"},
     "read": {"path": "src/app.py", "offset": 2, "limit": 20},
     "write": {"path": "src/app.py", "content": "value = 1\n"},
     "edit": {
@@ -32,6 +34,10 @@ VALID_ARGUMENTS = {
     },
     "glob": {"pattern": "**/*.py", "path": "src", "page": 1},
     "grep": {"pattern": "value", "path": "src", "glob": "*.py", "page": 2},
+    "lsp": {
+        "kind": "definition", "path": "src/app.py",
+        "line": 4, "character": 2,
+    },
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
@@ -41,6 +47,8 @@ VALID_ARGUMENTS = {
 INVALID_ARGUMENTS = (
     ("bash", {}, "$.cmd", "required"),
     ("bash", {"cmd": 7}, "$.cmd", "type"),
+    ("bash_poll", {}, "$.proc_id", "required"),
+    ("bash_kill", {"proc_id": 7}, "$.proc_id", "type"),
     ("read", {}, "$.path", "required"),
     ("read", {"path": 7}, "$.path", "type"),
     ("write", {"path": "x.py"}, "$.content", "required"),

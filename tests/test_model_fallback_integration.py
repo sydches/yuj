@@ -219,6 +219,9 @@ def test_retry_exhaustion_atomically_rebinds_profile_context_and_estimator(
     assert session.client.profile.name == "weak"
     assert session.cfg.context_size == 4096
     assert session.cfg.max_tokens == 2048
+    assert session._tool_schema_set.names == tuple(
+        schema["function"]["name"] for schema in session._tool_schemas
+    )
     assert session.context._tok_cache is None
     assert session._server_ctx_cache == 4096
     event = next(

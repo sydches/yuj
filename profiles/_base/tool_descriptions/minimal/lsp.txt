@@ -1,0 +1,1 @@
+Query the configured language server. Use kind="definition" or "references" with a zero-based line and character, or kind="symbols" for document symbols.

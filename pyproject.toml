@@ -12,6 +12,14 @@ dependencies = [
     "orjson",
     "requests",
     "transformers",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-language-pack>=1.12.5",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-go",
+    "tree-sitter-rust",
+    "tree-sitter-java",
 ]
 
 [project.scripts]

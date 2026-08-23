@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 
 import openai
 
+from ...server.types import Usage
 from .compaction import CompactionOverflowError, maybe_compact_messages
+from .length_continuation import continue_length_response
 from .model_fallback_runtime import activate_next_fallback
 
 if TYPE_CHECKING:
@@ -22,6 +24,83 @@ _TRANSIENT_ERRORS = (
 )
 
 _API_ERROR_DETAIL_CHARS = 400
+
+
+def _aggregate_usage(usages: list[Usage]) -> Usage:
+    """Sum raw-call usage while preserving unknown cache telemetry."""
+    if not usages or not all(isinstance(usage, Usage) for usage in usages):
+        raise TypeError("length continuation requires canonical Usage per call")
+    prompt_tokens = sum(usage.prompt_tokens for usage in usages)
+    completion_tokens = sum(usage.completion_tokens for usage in usages)
+    if all(usage.cached_tokens is not None for usage in usages):
+        cached_tokens = sum(int(usage.cached_tokens or 0) for usage in usages)
+        cache_hit_ratio = (
+            cached_tokens / prompt_tokens if prompt_tokens > 0 else None
+        )
+    else:
+        cached_tokens = None
+        cache_hit_ratio = None
+    return Usage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
+        cache_hit_ratio=cache_hit_ratio,
+    )
+
+
+def _can_continue_raw(client) -> bool:
+    profile = getattr(client, "profile", None)
+    return bool(
+        profile is not None
+        and callable(getattr(profile, "normalize", None))
+        and callable(getattr(client, "_prepare_profile_chat_request", None))
+        and callable(getattr(client, "_call_raw_profile_request", None))
+        and callable(getattr(client, "_turn_result_from_normalized", None))
+    )
+
+
+def _chat_with_length_continuation(
+    session, outgoing, turn: int, *, max_attempts: int,
+):
+    """Execute one logical response through raw profile phases."""
+    client = session.client
+    base_request = client._prepare_profile_chat_request(
+        outgoing, session._tool_schemas
+    )
+    initial_raw = client._call_raw_profile_request(base_request)
+    usages = [initial_raw.get("usage")]
+
+    def call_model(request):
+        response = client._call_raw_profile_request(request)
+        usages.append(response.get("usage"))
+        return response
+
+    result = continue_length_response(
+        base_request=base_request,
+        initial_response=initial_raw,
+        max_attempts=max_attempts,
+        supports_prefill=client.profile.supports_prefill,
+        call_model=call_model,
+        normalize=client.profile.normalize,
+    )
+    for attempt in result.attempts:
+        session._emit(
+            "length_continue",
+            session_number=session._session_number,
+            turn_number=turn,
+            attempt=attempt.attempt,
+            tokens=attempt.tokens,
+            prompt_tokens=attempt.prompt_tokens,
+            overlap_chars=attempt.overlap_chars,
+            finish_reason=attempt.finish_reason,
+        )
+    session._length_continuation_count += result.continuation_count
+    return client._turn_result_from_normalized(
+        result.response,
+        _aggregate_usage(usages),
+        turn,
+        fallback_finish_reason=result.raw_response["finish_reason"],
+    )
 
 
 def _fallback_reason(exc: Exception, default: str | None) -> str | None:
@@ -45,6 +124,19 @@ def _fallback_reason(exc: Exception, default: str | None) -> str | None:
     if any(marker in detail for marker in oom_markers):
         return "server_oom"
     return default
+
+
+def _length_continue_max(cfg) -> int:
+    """Return an enabled bound only for the validated primitive shape.
+
+    Lightweight integrations historically supply partial ``MagicMock`` or
+    namespace configs. A synthetic attribute must not opt into a model call;
+    production config validation still rejects invalid explicit values.
+    """
+    value = getattr(cfg, "length_continue_max", 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
 
 
 def _has_fallback(session: "Session") -> bool:
@@ -83,9 +175,16 @@ def chat_with_retry(session: "Session", turn: int):
                 outgoing = maybe_compact_messages(
                     session, session.context.get_messages()
                 )
-                result = session.client.chat(
-                    outgoing, session._tool_schemas, turn=turn,
-                )
+                length_continue_max = _length_continue_max(cfg)
+                if length_continue_max > 0 and _can_continue_raw(session.client):
+                    result = _chat_with_length_continuation(
+                        session, outgoing, turn,
+                        max_attempts=length_continue_max,
+                    )
+                else:
+                    result = session.client.chat(
+                        outgoing, session._tool_schemas, turn=turn,
+                    )
                 if result is not None and getattr(
                     result, "finish_reason", ""
                 ) == "replay_stop_turn":

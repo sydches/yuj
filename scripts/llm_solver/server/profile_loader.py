@@ -39,6 +39,8 @@ class Profile:
     chat_template: str
     supports_tool_calls: bool
     supports_system_role: bool
+    supports_prefill: bool
+    supports_constrained_tools: bool
 
     # Token estimation
     token_method: str
@@ -363,6 +365,16 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
 
     inherits = prof.get("inherits", "")
     reasoning_levels = validate_reasoning_levels(reasoning_levels)
+    supports_prefill = model.get("supports_prefill", False)
+    if not isinstance(supports_prefill, bool):
+        raise ValueError(
+            "profile [model].supports_prefill must be a boolean"
+        )
+    supports_constrained_tools = model.get("supports_constrained_tools", False)
+    if not isinstance(supports_constrained_tools, bool):
+        raise ValueError(
+            "profile [model].supports_constrained_tools must be a boolean"
+        )
 
     return Profile(
         name=prof.get("name", profile_dir.name),
@@ -374,6 +386,8 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
         chat_template=model.get("chat_template", "chatml"),
         supports_tool_calls=model.get("supports_tool_calls", True),
         supports_system_role=model.get("supports_system_role", True),
+        supports_prefill=supports_prefill,
+        supports_constrained_tools=supports_constrained_tools,
         token_method=tokens.get("method", "chars_div_4"),
         tokenizer_path=tokens.get("tokenizer", ""),
         preamble=capacity.get("preamble", ""),

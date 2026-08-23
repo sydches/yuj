@@ -17,14 +17,26 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ...config import Config
+from ..._shared.paths import expand_user_path
 from ..._shared.telemetry_paths import ensure_telemetry_dir, trace_path
 from ..context_contract import build_context_contract
 from ..guardrails import build_guardrail_registry
-from ..solver import build_system_prompt, collect_provenance
+from ..injections import Injection, load_injections_with_metadata
+from ..project_instructions import (
+    discover_project_instructions,
+    find_project_root,
+    resolve_project_instruction_imports,
+)
+from ..solver import (
+    assemble_system_prompt,
+    collect_provenance,
+    resolve_system_prompt_source,
+)
 from . import (
     _apply_profile_preamble,
     _load_bash_transforms,
@@ -33,6 +45,41 @@ from . import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PromptAssemblyMetadata:
+    """Secret-free metadata for trace and exact prompt-component costing."""
+
+    arm_label: str | None = None
+    arm_chars: int = 0
+    project_instruction_files: tuple[dict[str, object], ...] = ()
+    project_instruction_bytes: int = 0
+    project_instruction_imported_bytes: int = 0
+    project_instruction_resolved_bytes: int = 0
+    project_instruction_chars: int = 0
+    project_instructions_truncated: bool = False
+    prompt_import_tree: tuple[dict[str, object], ...] = ()
+
+    def trace_fields(self) -> dict[str, object]:
+        return {
+            "project_instruction_files": [
+                dict(record) for record in self.project_instruction_files
+            ],
+            "project_instruction_bytes": self.project_instruction_bytes,
+            "project_instruction_imported_bytes": (
+                self.project_instruction_imported_bytes
+            ),
+            "project_instruction_resolved_bytes": (
+                self.project_instruction_resolved_bytes
+            ),
+            "project_instructions_truncated": (
+                self.project_instructions_truncated
+            ),
+            "prompt_import_tree": [
+                dict(record) for record in self.prompt_import_tree
+            ],
+        }
 
 
 def resolve_run_paths(
@@ -60,12 +107,13 @@ def setup_run_outputs(
     transcript_dir: Path | None,
     system_prompt: str,
     system_prompt_file: Path | None,
+    prompt_metadata: PromptAssemblyMetadata,
 ) -> None:
     """Open the correct output files without placing assistant state in the repo."""
     if not assistant_artifacts:
         setup_savings_and_transcript(
             cfg, client, work_dir, savings_dir, transcript_dir,
-            system_prompt, system_prompt_file,
+            system_prompt, system_prompt_file, prompt_metadata,
         )
         return
 
@@ -73,7 +121,9 @@ def setup_run_outputs(
     from ..system_log import open_system_log
     open_ledger(artifact_dir / "savings.jsonl")
     open_system_log(artifact_dir / "system_log.jsonl").set_task(work_dir.name)
-    _record_session_start_costs(cfg, client, system_prompt, system_prompt_file)
+    _record_session_start_costs(
+        cfg, client, system_prompt, system_prompt_file, prompt_metadata
+    )
     if hasattr(client, "set_transcript"):
         client.set_transcript(artifact_dir / "transcript.log")
 
@@ -81,19 +131,102 @@ def setup_run_outputs(
 def load_system_prompt_and_provenance(
     cfg: Config,
     client,
+    work_dir: Path,
     system_prompt_file: Path | None,
     profile_path: Path | None,
     run_metadata: dict | None,
     context_class,
-) -> tuple[str, dict, dict]:
+    *,
+    unreadable_paths: tuple[str, ...] | None = None,
+) -> tuple[str, dict, dict, PromptAssemblyMetadata]:
     """Build system_prompt, provenance, and context_contract.
 
-    Returns (system_prompt, provenance, context_contract). The provenance
-    dict is mutated in place with variant_name + prompt_addendum if the
-    config sets them.
+    Returns the system prompt, provenance, context contract, and safe prompt
+    component metadata. The provenance dict is mutated in place with
+    variant_name + prompt_addendum if the config sets them.
     """
+    prompt_unreadable_paths = (
+        cfg.unreadable_paths
+        if unreadable_paths is None
+        else unreadable_paths
+    )
+    project_root = find_project_root(work_dir, cfg.project_root_markers)
+    arm_roots: list[Path] = [project_root]
+    if system_prompt_file is not None:
+        arm_parent = system_prompt_file.resolve().parent
+        if arm_parent not in arm_roots:
+            arm_roots.append(arm_parent)
+    arm = resolve_system_prompt_source(
+        system_prompt_file,
+        imports_enabled=cfg.imports_enabled,
+        allowed_dirs=tuple(arm_roots),
+        max_depth=cfg.imports_max_depth,
+        unreadable_paths=prompt_unreadable_paths,
+    )
+    resolved_arm = arm.content if arm is not None else None
+    prompt_import_tree: list[dict[str, object]] = []
+    if arm is not None:
+        prompt_import_tree.append(arm.trace_record())
+    project_content = ""
+    project_records: tuple[dict[str, object], ...] = ()
+    project_bytes = 0
+    project_imported_bytes = 0
+    project_resolved_bytes = 0
+    project_truncated = False
+    if cfg.project_docs_enabled:
+        global_dir = (
+            expand_user_path(cfg.project_doc_global_dir)
+            if cfg.project_doc_global_dir.strip()
+            else None
+        )
+        project = discover_project_instructions(
+            work_dir,
+            global_dir=global_dir,
+            doc_names=cfg.project_doc_names,
+            max_bytes=cfg.project_doc_max_bytes,
+            root_markers=cfg.project_root_markers,
+            unreadable_paths=prompt_unreadable_paths,
+            defer_byte_cap=True,
+        )
+        project = resolve_project_instruction_imports(
+            project,
+            enabled=cfg.imports_enabled,
+            max_depth=cfg.imports_max_depth,
+            unreadable_paths=prompt_unreadable_paths,
+        )
+        project_content = project.content
+        project_records = tuple(project.trace_records())
+        project_bytes = project.document_bytes
+        project_imported_bytes = project.imported_bytes
+        project_resolved_bytes = project.resolved_bytes
+        project_truncated = project.truncated
+        prompt_import_tree.extend(project.prompt_import_tree)
+        for diagnostic in project.diagnostics:
+            log.warning(
+                "project_instruction_read: path=%s kind=%s message=%s",
+                diagnostic.path,
+                diagnostic.error_kind,
+                diagnostic.message,
+            )
+    prompt_metadata = PromptAssemblyMetadata(
+        arm_label=(
+            arm.source if arm is not None else None
+        ),
+        arm_chars=len(resolved_arm.rstrip()) if resolved_arm is not None else 0,
+        project_instruction_files=project_records,
+        project_instruction_bytes=project_bytes,
+        project_instruction_imported_bytes=project_imported_bytes,
+        project_instruction_resolved_bytes=project_resolved_bytes,
+        project_instruction_chars=len(project_content),
+        project_instructions_truncated=project_truncated,
+        prompt_import_tree=tuple(prompt_import_tree),
+    )
     system_prompt = _apply_profile_preamble(
-        build_system_prompt(cfg.system_header, system_prompt_file),
+        assemble_system_prompt(
+            cfg.system_header,
+            resolved_arm=resolved_arm,
+            project_instructions=project_content,
+        ),
         client,
     )
     # Pass the resolved system prompt so its sha256 lands in provenance.
@@ -111,7 +244,32 @@ def load_system_prompt_and_provenance(
     if cfg.variant_name:
         provenance["variant_name"] = cfg.variant_name
         provenance["prompt_addendum"] = cfg.prompt_addendum
-    return system_prompt, provenance, context_contract
+    return system_prompt, provenance, context_contract, prompt_metadata
+
+
+def load_session_injections(
+    cfg: Config,
+    work_dir: Path,
+    *,
+    unreadable_paths: tuple[str, ...] | None = None,
+) -> tuple[tuple[Injection, ...], tuple[dict[str, object], ...]]:
+    """Resolve injection files before ``session_start`` is emitted."""
+    if not cfg.injections_enabled:
+        return (), ()
+    project_root = find_project_root(work_dir, cfg.project_root_markers)
+    prompt_unreadable_paths = (
+        cfg.unreadable_paths
+        if unreadable_paths is None
+        else unreadable_paths
+    )
+    loaded = load_injections_with_metadata(
+        work_dir / cfg.injections_dir,
+        imports_enabled=cfg.imports_enabled,
+        imports_max_depth=cfg.imports_max_depth,
+        allowed_dirs=(project_root,),
+        unreadable_paths=prompt_unreadable_paths,
+    )
+    return loaded.injections, loaded.prompt_import_tree
 
 
 def thinking_trace_fields(cfg: Config, client) -> dict[str, object]:
@@ -130,6 +288,7 @@ def setup_savings_and_transcript(
     transcript_dir: Path | None,
     system_prompt: str,
     system_prompt_file: Path | None,
+    prompt_metadata: PromptAssemblyMetadata,
 ) -> None:
     """Open savings ledger, set client transcript, record session-start costs.
 
@@ -155,7 +314,9 @@ def setup_savings_and_transcript(
     # attributable.
     from ..system_log import open_system_log
     open_system_log(_savings_dir.parent / "system_log.jsonl").set_task(repo_dir.name)
-    _record_session_start_costs(cfg, client, system_prompt, system_prompt_file)
+    _record_session_start_costs(
+        cfg, client, system_prompt, system_prompt_file, prompt_metadata
+    )
 
     # Keep one transcript of every HTTP exchange for the task. Write it
     # outside repo_dir so sandbox searches cannot read it. Keep the counter
@@ -201,14 +362,17 @@ def resolve_task_format(cfg: Config, repo_dir: Path) -> Config:
 
 def load_transforms_and_estimator(cfg: Config, client, repo_dir: Path):
     """Return (output_control, universal_rewrites, forbidden_rules,
-    redactions, output_parser, token_estimator).
+    redirect_rules, redactions, output_parser, token_estimator).
 
     Also emits two task-format or pagination warnings as side effects:
       - task_format_mismatch when the detected runner does not match
         cfg.analysis_task_format;
       - tool_quirks/glob caps disabled when search_pagination is off.
     """
-    output_control, universal_rewrites, forbidden_rules, redactions, output_parser = _load_bash_transforms(
+    (
+        output_control, universal_rewrites, forbidden_rules, redirect_rules,
+        redactions, output_parser,
+    ) = _load_bash_transforms(
         cfg,
         force_load_all=bool(getattr(cfg, "adaptive_policy_enabled", False)),
     )
@@ -242,7 +406,7 @@ def load_transforms_and_estimator(cfg: Config, client, repo_dir: Path):
 
     token_estimator = _resolve_token_estimator(client)
     return (
-        output_control, universal_rewrites, forbidden_rules,
+        output_control, universal_rewrites, forbidden_rules, redirect_rules,
         redactions, output_parser, token_estimator,
     )
 
@@ -262,7 +426,11 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
     a sandboxed run from a silently degraded unsandboxed run.
     """
     _container_id = os.environ.get("YUJ_CONTAINER", "")
+    _configured_backend = getattr(cfg, "sandbox_backend", "bwrap")
     _bwrap_present = Path(cfg.bwrap_bin).is_file()
+    _container_runtime: str | None = None
+    _container_image_digest: str | None = None
+    _container_preflight_err: str | None = None
     # Bwrap PREFLIGHT (Codex S3): actually exec a tiny command in
     # a fresh user+net namespace and check exit. Catches the
     # silent class of failures where bwrap is INSTALLED but the
@@ -272,7 +440,57 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
     # produce a per-call warning + silent unsandboxed fallback.
     # Cached at module level: pays once per process. Skipped
     # entirely in container mode (docker exec doesn't use bwrap).
-    if _container_id:
+    if _configured_backend == "container":
+        if _container_id:
+            raise RuntimeError(
+                "sandbox.backend='container' cannot be combined with legacy "
+                "YUJ_CONTAINER; unset YUJ_CONTAINER or select "
+                "sandbox.backend='bwrap'"
+            )
+        _ambient_unshare_net = None
+        _bwrap_preflight_passed = None
+        _bwrap_preflight_err = None
+        _container_runtime = getattr(
+            cfg, "sandbox_container_runtime", "docker"
+        )
+        if not cfg.sandbox_bash:
+            _sandbox_mode = "none"
+            _sandbox_engaged = False
+        else:
+            from ..sandbox.container_backend import (
+                ContainerBackend,
+                ContainerBackendError,
+            )
+
+            backend = ContainerBackend(
+                runtime=_container_runtime,
+                image=getattr(cfg, "sandbox_container_image", ""),
+                flags=tuple(
+                    getattr(cfg, "sandbox_container_flags", ()) or ()
+                ),
+            )
+            try:
+                runtime_bin = backend.resolve_runtime(
+                    sandbox_required=bool(
+                        getattr(cfg, "sandbox_required", False)
+                    )
+                )
+                if runtime_bin is None:
+                    _container_preflight_err = (
+                        f"container runtime {_container_runtime!r} is missing"
+                    )
+                else:
+                    _container_image_digest = backend.image_digest(runtime_bin)
+            except ContainerBackendError as exc:
+                _container_preflight_err = str(exc)
+            _sandbox_engaged = bool(_container_image_digest)
+            _sandbox_mode = "container" if _sandbox_engaged else "none"
+    elif _configured_backend != "bwrap":
+        raise ValueError(
+            "sandbox.backend must be 'bwrap' or 'container'; "
+            f"got {_configured_backend!r}"
+        )
+    elif _container_id:
         _sandbox_mode = "container"
         _sandbox_engaged = True
         _bwrap_preflight_passed: bool | None = None
@@ -363,6 +581,10 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
         session=1,
         sandbox_mode=_sandbox_mode,
         sandbox_engaged=_sandbox_engaged,
+        sandbox_backend=_configured_backend,
+        container_runtime=_container_runtime,
+        container_image_digest=_container_image_digest,
+        container_preflight_error=_container_preflight_err,
         sandbox_bash_cfg=bool(cfg.sandbox_bash),
         sandbox_required_cfg=bool(getattr(cfg, "sandbox_required", False)),
         bwrap_bin=cfg.bwrap_bin,
@@ -384,6 +606,8 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
         # Bump this on any argv-shape change. Today's set includes
         # --unshare-{net,pid,ipc,uts,cgroup,user},
         # --tmpfs $cwd/.git/hooks, --setenv (5 entries),
-        # unreadable_paths masks. Bump to 3 if any of those change.
-        sandbox_policy_version=2,
+        # unreadable_paths masks. Version 3 adds the first-class per-call
+        # Docker/Podman backend with no-pull, no-network, read-only-root,
+        # capability-drop, identical-cwd mount, and explicit environment.
+        sandbox_policy_version=3,
     )

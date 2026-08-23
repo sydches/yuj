@@ -234,9 +234,20 @@ class Config:
     resume_length: str
     resume_last_n_actions: int
     tool_desc: str = "minimal"
+    interrupted_turn_mode: str = "mechanical"
+    length_continue_max: int = 0
+    project_docs_enabled: bool = False
+    project_doc_names: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md")
+    project_doc_max_bytes: int = 32768
+    project_root_markers: tuple[str, ...] = (".git", ".hg", ".sl")
+    project_doc_global_dir: str = "~/.config/yuj"
+    imports_enabled: bool = True
+    imports_max_depth: int = 5
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
+    permissions_rules: dict[str, object] = field(default_factory=dict)
+    permissions_ask_fallback: str = "deny"
     analysis_task_format: str = "auto"  # resolved per-repo via detect_runner; multilingual default
     provider: str = "openai-compatible"
     rumination_gate_max_blocks: int = 0
@@ -345,6 +356,57 @@ class Config:
     # list_definitions tool — Python-AST source outline. Disabled by
     # default. Enable it through config.local.toml or another overlay.
     tools_list_definitions_enabled: bool = False
+    # Optional repository-wide tree-sitter symbol definition/reference mode.
+    tools_ast_search_enabled: bool = False
+    tools_ast_search_max_rows: int = 1000
+    # Independent shadow-Git checkpoints after every potentially mutating
+    # model tool call. The store is outside the task cwd and restore remains
+    # a harness/operator function, never a model-facing tool.
+    tools_file_checkpoints_enabled: bool = False
+    tools_file_checkpoints_exclude: tuple[str, ...] = (
+        ".solver/**",
+        ".tool_output/**",
+        "prompt.txt",
+        "checkpoint.json",
+        "metrics.json",
+    )
+    # Session-local read-before-edit policy, rebuilt from raw trace events.
+    tools_stale_guard_mode: str = "warn"
+    # Compound-aware shell redirects. Read-side interception is an opt-in;
+    # write-side rules remain gated by the availability of their target tool.
+    tools_bash_redirect_read_side: bool = False
+    tools_schema_validation: str = "off"
+    tools_constrained_decoding: str = "off"
+    tools_background_enabled: bool = False
+    tools_background_max_procs: int = 4
+    tools_background_poll_timeout: float = 300.0
+    # First-class shell sandbox backend. Container mode creates one ephemeral
+    # Docker/Podman container per command and preserves the absolute cwd.
+    sandbox_backend: str = "bwrap"
+    sandbox_container_runtime: str = "docker"
+    sandbox_container_image: str = ""
+    sandbox_container_flags: tuple[str, ...] = ()
+    # Explicit environment passed only to sandboxed/model-command children.
+    # Provider clients and the harness process retain their host environment.
+    sandbox_env_inherit: str = "core"
+    sandbox_env_set: dict[str, str] = field(default_factory=lambda: {
+        "FORCE_COLOR": "0",
+        "MPLCONFIGDIR": "/tmp/mpl",
+        "NO_COLOR": "1",
+        "PAGER": "cat",
+        "PYTHONIOENCODING": "utf-8",
+        "TERM": "dumb",
+    })
+    sandbox_env_filters: dict[str, str] = field(default_factory=dict)
+    sandbox_env_ignore_default_excludes: bool = False
+    sandbox_env_allow_login_shell: bool = False
+    runtime_worktree: str = "off"
+    # Lazy language-server diagnostics and optional navigation tool.
+    lsp_enabled: bool = False
+    lsp_servers: dict[str, object] = field(default_factory=dict)
+    lsp_diagnostics_timeout_s: float = 2.0
+    lsp_min_severity: str = "error"
+    lsp_tool_enabled: bool = False
     # apply_patch tool — Codex-style multi-file DSL. Disabled by default.
     # Enable it when the selected settings allow multi-file patches.
     tools_apply_patch_enabled: bool = False
@@ -391,6 +453,8 @@ class Config:
     state_writer_enabled: bool = True
     context_ignore_state: bool = False
     state_imperative_projection_enabled: bool = False
+    state_ignore_file_enabled: bool = True
+    state_ignore_file_names: tuple[str, ...] = (".yujignore",)
     # Paginated search envelopes for grep/glob. Defaults ship on.
     search_pagination_enabled: bool = True
     grep_max_matches_per_page: int = 25
@@ -716,6 +780,11 @@ def dump_config(cfg: Config) -> dict:
     d["api_key"] = "<redacted>"
     d["model_roles"] = _redact_target_keys(d["model_roles"])
     d["model_fallback_chain"] = _redact_target_keys(d["model_fallback_chain"])
+    # Fixed environment values can themselves be credentials. Preserve only
+    # the names in public run metadata/config hashes.
+    d["sandbox_env_set"] = {
+        name: "<redacted>" for name in sorted(cfg.sandbox_env_set)
+    }
     # retry_backoff is a tuple; convert for JSON
     d["retry_backoff"] = list(cfg.retry_backoff)
     return d

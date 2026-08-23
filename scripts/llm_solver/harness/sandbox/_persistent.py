@@ -26,6 +26,7 @@ import secrets
 import shlex
 import subprocess
 import threading
+from collections.abc import Mapping
 
 
 _persistent_local = threading.local()
@@ -100,6 +101,8 @@ class PersistentBashSession:
         bwrap_bin: str | None = None,
         unreadable_paths: tuple[str, ...] = (),
         sandbox_required: bool = False,
+        effective_env: Mapping[str, str] | None = None,
+        allow_login_shell: bool = False,
     ) -> None:
         # bwrap_bin default resolved lazily to avoid an import cycle
         # with the package __init__ which exports this class.
@@ -110,6 +113,8 @@ class PersistentBashSession:
         self.bwrap_bin = bwrap_bin
         self.unreadable_paths = unreadable_paths
         self.sandbox_required = sandbox_required
+        self.effective_env = effective_env
+        self.allow_login_shell = bool(allow_login_shell)
         self._proc: subprocess.Popen | None = None
         # Lock so concurrent .run() calls (should never happen by
         # contract, but defense in depth) at least serialize on the
@@ -124,13 +129,18 @@ class PersistentBashSession:
         # this class, so the cycle is broken by deferring this lookup
         # until call time (by which point the package is fully loaded).
         from . import _build_bwrap_argv
+        from .env_policy import build_bash_argv
         argv = _build_bwrap_argv(
             cmd="",  # ignored when tail is set
             cwd=self.cwd,
             bwrap_bin=self.bwrap_bin,
             unreadable_paths=self.unreadable_paths,
             sandbox_required=self.sandbox_required,
-            tail=["bash", "--noprofile", "--norc", "-s"],
+            effective_env=self.effective_env,
+            allow_login_shell=self.allow_login_shell,
+            tail=build_bash_argv(
+                None, allow_login_shell=self.allow_login_shell,
+            ),
         )
         self._proc = subprocess.Popen(
             argv,

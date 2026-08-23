@@ -10,11 +10,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from llm_solver.harness.structural_index import (
+    StructuralBackendUnavailable,
     StructuralIndex,
     StructuralRow,
     TreeSitterTagExtractor,
     format_rows,
 )
+from _config_helpers import make_config
+from llm_solver.config import load_config
+from llm_solver.harness._tools import list_definitions as list_definitions_module
+from llm_solver.harness._tools.list_definitions import list_definitions
+from llm_solver.harness.schemas import get_tool_schemas
+from llm_solver.harness.tools import dispatch
 
 
 class _RecordingExtractor:
@@ -245,3 +252,183 @@ def test_real_language_pack_tag_queries_find_definitions_and_references(
     assert any(row.name == reference for row in references.rows)
     assert all(row.path == filename for row in definitions.rows + references.rows)
     assert all(row.signature for row in definitions.rows)
+
+
+def test_default_backend_uses_preinstalled_grammars_for_acceptance_languages(tmp_path):
+    fixtures = {
+        "sample.py": (
+            "python_target",
+            "def python_target():\n    return 1\npython_target()\n",
+        ),
+        "sample.js": (
+            "javascript_target",
+            "function javascript_target() { return 1; }\njavascript_target();\n",
+        ),
+        "sample.ts": (
+            "typescript_target",
+            "function typescript_target(): number { return 1; }\ntypescript_target();\n",
+        ),
+        "sample.go": (
+            "go_target",
+            "package sample\nfunc go_target() int { return 1 }\nfunc run() { go_target() }\n",
+        ),
+        "sample.rs": (
+            "rust_target",
+            "fn rust_target() -> i32 { 1 }\nfn run() { rust_target(); }\n",
+        ),
+        "Sample.java": (
+            "java_target",
+            "class Sample { static int java_target() { return 1; } "
+            "void run() { java_target(); } }\n",
+        ),
+    }
+    for filename, (_symbol, source) in fixtures.items():
+        (tmp_path / filename).write_text(source)
+
+    index = StructuralIndex(tmp_path)
+    for symbol, _source in fixtures.values():
+        assert index.search(symbol=symbol, kind="def").rows
+        assert index.search(symbol=symbol, kind="ref").rows
+
+
+def test_list_definitions_legacy_single_file_shape_is_unchanged(tmp_path):
+    (tmp_path / "one.py").write_text("def alpha(value: int) -> int:\n    return value\n")
+    cfg = make_config(tools_list_definitions_enabled=True)
+
+    result = list_definitions("one.py", cwd=str(tmp_path), cfg=cfg)
+
+    assert result == (
+        '<list_definitions status="ok" path="one.py" count="1" '
+        'surface="0" v="1">\n'
+        '# definitions\n'
+        '[L   1] def alpha(value: int) -&gt; int\n'
+        '</list_definitions>'
+    )
+
+
+def test_repository_mode_requires_both_feature_gates(tmp_path):
+    (tmp_path / "one.py").write_text("def alpha():\n    pass\n")
+    cfg = make_config(
+        tools_list_definitions_enabled=True,
+        tools_ast_search_enabled=False,
+    )
+
+    result = list_definitions(
+        ".", cwd=str(tmp_path), cfg=cfg, repo_wide=True, symbol="alpha",
+    )
+
+    assert 'status="error" error_kind="ast_search_disabled"' in result
+
+
+def test_dispatch_threads_repository_search_pages_cache_and_unreadable_policy(tmp_path):
+    (tmp_path / "a.py").write_text("def target():\n    return 1\ntarget()\n")
+    (tmp_path / "b.py").write_text("def target():\n    return 2\ntarget()\n")
+    secret = tmp_path / "secret.py"
+    secret.write_text("def target():\n    return 3\ntarget()\n")
+    cfg = make_config(
+        tools_list_definitions_enabled=True,
+        tools_ast_search_enabled=True,
+        tools_ast_search_max_rows=10,
+        search_pagination_enabled=True,
+        grep_max_matches_per_page=1,
+        unreadable_paths=(str(secret),),
+        max_output_chars=2000,
+    )
+    list_definitions_module._clear_structural_index_registry()
+    arguments = {
+        "path": ".", "repo_wide": True,
+        "symbol": "target", "kind": "def", "page": 1,
+    }
+
+    first = dispatch("list_definitions", arguments, cwd=str(tmp_path), cfg=cfg)
+    second = dispatch(
+        "list_definitions", {**arguments, "page": 2},
+        cwd=str(tmp_path), cfg=cfg,
+    )
+
+    assert first.startswith(
+        '<list_definitions status="ok" mode="repository" path="." '
+        'total="2" available="2" shown="1" page="1" next_page="2"'
+    )
+    assert "a.py:1 def target" in first
+    assert "secret.py" not in first + second
+    assert 'page="2" next_page="0"' in second
+    assert 'cache_hits="2"' in second
+    assert second.endswith("</list_definitions>")
+
+
+def test_repository_mode_honors_exact_output_budget_without_cutting_rows(tmp_path):
+    for number in range(12):
+        (tmp_path / f"file_{number}.py").write_text(
+            f"def symbol_{number}_with_a_long_descriptive_name(value: int) -> int:\n"
+            "    return value\n"
+        )
+    cfg = make_config(
+        tools_list_definitions_enabled=True,
+        tools_ast_search_enabled=True,
+        tools_ast_search_max_rows=100,
+        search_pagination_enabled=False,
+        max_output_chars=420,
+    )
+    list_definitions_module._clear_structural_index_registry()
+
+    result = list_definitions(
+        ".", cwd=str(tmp_path), cfg=cfg, repo_wide=True,
+    )
+
+    assert len(result) <= cfg.max_output_chars
+    assert result.endswith("</list_definitions>")
+    assert 'char_limited="true"' in result
+    body = result.split("\n")[1:-1]
+    assert all(":1 def symbol_" in row for row in body)
+
+
+def test_repository_mode_returns_typed_missing_backend_error(tmp_path, monkeypatch):
+    class MissingIndex:
+        def search(self, **_kwargs):
+            raise StructuralBackendUnavailable("missing")
+
+    monkeypatch.setattr(list_definitions_module, "_structural_index", lambda *_a: MissingIndex())
+    cfg = make_config(
+        tools_list_definitions_enabled=True,
+        tools_ast_search_enabled=True,
+    )
+
+    result = list_definitions(".", cwd=str(tmp_path), cfg=cfg, repo_wide=True)
+
+    assert 'status="error" error_kind="backend_unavailable"' in result
+    assert str(tmp_path) not in result
+
+
+def test_structural_tool_schema_declares_repository_arguments():
+    schema = next(
+        item["function"]
+        for item in get_tool_schemas("minimal")
+        if item["function"]["name"] == "list_definitions"
+    )
+    properties = schema["parameters"]["properties"]
+
+    assert schema["parameters"]["required"] == ["path"]
+    assert properties["symbol"]["type"] == "string"
+    assert properties["kind"]["enum"] == ["def", "ref"]
+    assert properties["repo_wide"]["type"] == "boolean"
+    assert properties["page"]["type"] == "integer"
+
+
+def test_ast_search_config_defaults_overlay_and_cap_validation(tmp_path):
+    defaults = load_config()
+    assert defaults.tools_ast_search_enabled is False
+    assert defaults.tools_ast_search_max_rows == 1000
+
+    overlay = tmp_path / "ast.toml"
+    overlay.write_text(
+        "[tools]\nast_search_enabled = true\nast_search_max_rows = 17\n"
+    )
+    configured = load_config(user_config=overlay)
+    assert configured.tools_ast_search_enabled is True
+    assert configured.tools_ast_search_max_rows == 17
+
+    for invalid in ("0", "true", "1.5"):
+        overlay.write_text(f"[tools]\nast_search_max_rows = {invalid}\n")
+        with pytest.raises(ValueError, match="tools.ast_search_max_rows"):
+            load_config(user_config=overlay)

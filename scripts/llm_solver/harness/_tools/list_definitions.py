@@ -1,5 +1,9 @@
 """list_definitions tool: structural outline of a single source file."""
+from collections import OrderedDict
+from pathlib import Path
+
 from ...config import Config
+from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _path_hint, _resolve, _xml_attr, _xml_body
 
 
@@ -8,9 +12,23 @@ from ._common import _path_hint, _resolve, _xml_attr, _xml_body
 # current shape: status="..." [error_kind="..."] path="..."
 # [count="N" surface="M"] v="1".
 _LIST_DEFINITIONS_ENVELOPE_VERSION = "1"
+_REPOSITORY_ENVELOPE_VERSION = "2"
+_STRUCTURAL_INDEX_REGISTRY_MAX = 8
+_STRUCTURAL_INDEX_REGISTRY: OrderedDict[tuple[str, tuple[str, ...]], object] = (
+    OrderedDict()
+)
 
 
-def list_definitions(path: str, *, cwd: str, cfg: Config) -> str:
+def list_definitions(
+    path: str,
+    *,
+    cwd: str,
+    cfg: Config,
+    symbol: str | None = None,
+    kind: str | None = None,
+    repo_wide: bool = False,
+    page: int = 1,
+) -> str:
     """Return a structural outline of a single source file.
 
     For Python files, walks the AST and emits one line per top-level and
@@ -38,10 +56,32 @@ def list_definitions(path: str, *, cwd: str, cfg: Config) -> str:
             path, "disabled",
             "list_definitions tool is disabled (tools.list_definitions.enabled=false)",
         )
+    if repo_wide:
+        return _list_repository_symbols(
+            path,
+            cwd=cwd,
+            cfg=cfg,
+            symbol=symbol,
+            kind=kind,
+            page=page,
+        )
+    if symbol is not None or kind is not None or page != 1:
+        return _list_definitions_error(
+            path,
+            "repository_mode_required",
+            "symbol, kind, and non-default page require repo_wide=true",
+        )
     try:
         abs_path = _resolve(cwd, path)
     except ValueError as e:
         return _list_definitions_error(path, "path_outside_cwd", str(e))
+    policy = active_ignore_policy(cwd)
+    if policy is not None and policy.is_ignored(
+        abs_path, is_dir=abs_path.is_dir()
+    ):
+        return _list_definitions_error(
+            path, "not_found", f"file not found: {path}",
+        )
     if not abs_path.is_file():
         return _list_definitions_error(
             path, "not_found", f"file not found: {path}{_path_hint(cwd, path)}",
@@ -77,6 +117,154 @@ def list_definitions(path: str, *, cwd: str, cfg: Config) -> str:
             ctx={"path": path, "suffix": abs_path.suffix.lower()},
         )
     return envelope
+
+
+def _structural_index(root: Path, cfg: Config):
+    """Return one bounded, content-cached index for an effective policy."""
+    from ..structural_index import StructuralIndex
+
+    unreadable = tuple(str(item) for item in (cfg.unreadable_paths or ()))
+    policy = active_ignore_policy()
+    if policy is not None:
+        unreadable = tuple(dict.fromkeys(
+            (*unreadable, *policy.sandbox_unreadable_paths())
+        ))
+    key = (str(root.resolve()), unreadable)
+    existing = _STRUCTURAL_INDEX_REGISTRY.get(key)
+    if existing is not None:
+        _STRUCTURAL_INDEX_REGISTRY.move_to_end(key)
+        return existing
+    index = StructuralIndex(root, unreadable_paths=unreadable)
+    _STRUCTURAL_INDEX_REGISTRY[key] = index
+    _STRUCTURAL_INDEX_REGISTRY.move_to_end(key)
+    while len(_STRUCTURAL_INDEX_REGISTRY) > _STRUCTURAL_INDEX_REGISTRY_MAX:
+        _STRUCTURAL_INDEX_REGISTRY.popitem(last=False)
+    return index
+
+
+def _clear_structural_index_registry() -> None:
+    """Clear repository indexes (test/setup lifecycle helper)."""
+    _STRUCTURAL_INDEX_REGISTRY.clear()
+
+
+def _repository_opening(page_result, *, path: str, shown: int,
+                        char_limited: bool) -> str:
+    return (
+        f'<list_definitions status="ok" mode="repository" '
+        f'path="{_xml_attr(path)}" total="{page_result.total}" '
+        f'available="{page_result.available}" shown="{shown}" '
+        f'page="{page_result.page}" next_page="{page_result.next_page}" '
+        f'capped="{str(page_result.capped).lower()}" '
+        f'char_limited="{str(char_limited).lower()}" '
+        f'files_scanned="{page_result.files_scanned}" '
+        f'cache_hits="{page_result.cache_hits}" '
+        f'diagnostics="{len(page_result.diagnostics)}" '
+        f'v="{_REPOSITORY_ENVELOPE_VERSION}">'
+    )
+
+
+def _render_repository_page(page_result, *, path: str, max_chars: int) -> str:
+    """Render whole escaped rows without leaving the public output budget."""
+    from ..structural_index import format_rows
+
+    closing = "</list_definitions>"
+    provisional = _repository_opening(
+        page_result, path=path, shown=len(page_result.rows), char_limited=False,
+    )
+    body_budget = max(0, max_chars - len(provisional) - len(closing) - 2)
+    formatted = format_rows(page_result.rows, max_output_chars=body_budget)
+    rows = formatted.text.splitlines() if formatted.text else []
+    escaped_rows = [_xml_body(row) for row in rows]
+
+    # XML escaping can expand a signature. Recompute against the exact final
+    # envelope and remove complete tail rows until it fits; never cut a row.
+    while True:
+        char_limited = formatted.char_limited or len(escaped_rows) < len(rows)
+        opening = _repository_opening(
+            page_result,
+            path=path,
+            shown=len(escaped_rows),
+            char_limited=char_limited,
+        )
+        body = "\n".join(escaped_rows)
+        result = opening + "\n" + body + "\n" + closing
+        if len(result) <= max_chars or not escaped_rows:
+            return result
+        escaped_rows.pop()
+
+
+def _list_repository_symbols(
+    path: str,
+    *,
+    cwd: str,
+    cfg: Config,
+    symbol: str | None,
+    kind: str | None,
+    page: int,
+) -> str:
+    if not getattr(cfg, "tools_ast_search_enabled", False):
+        return _list_definitions_error(
+            path,
+            "ast_search_disabled",
+            "repository structural search is disabled "
+            "(tools.ast_search_enabled=false)",
+        )
+    if kind not in {None, "def", "ref"}:
+        return _list_definitions_error(
+            path, "invalid_kind", "kind must be 'def' or 'ref'",
+        )
+    if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+        return _list_definitions_error(
+            path, "invalid_page", "page must be an integer >= 1",
+        )
+    pagination = bool(getattr(cfg, "search_pagination_enabled", True))
+    if not pagination and page != 1:
+        return _list_definitions_error(
+            path, "pagination_disabled", "page must be 1 when pagination is disabled",
+        )
+    try:
+        root = _resolve(cwd, path)
+    except ValueError as exc:
+        return _list_definitions_error(path, "path_outside_cwd", str(exc))
+    policy = active_ignore_policy(cwd)
+    if policy is not None and policy.is_model_hidden(
+        root, is_dir=root.is_dir()
+    ):
+        return _list_definitions_error(
+            path, "not_directory", f"repository scope is not a directory: {path}",
+        )
+    if not root.is_dir():
+        return _list_definitions_error(
+            path, "not_directory", f"repository scope is not a directory: {path}",
+        )
+
+    max_rows = int(cfg.tools_ast_search_max_rows)
+    per_page = (
+        int(cfg.grep_max_matches_per_page) if pagination else max_rows
+    )
+    try:
+        result = _structural_index(root, cfg).search(
+            symbol=(symbol if symbol not in {None, ""} else None),
+            kind=kind,
+            page=page,
+            per_page=per_page,
+            max_rows=max_rows,
+        )
+    except Exception as exc:
+        from ..structural_index import StructuralBackendUnavailable
+        if isinstance(exc, StructuralBackendUnavailable):
+            return _list_definitions_error(
+                path,
+                "backend_unavailable",
+                "structural-search backend unavailable; reinstall Yuj with "
+                "its tree-sitter dependencies",
+            )
+        return _list_definitions_error(
+            path, "structural_search_error", "structural search failed",
+        )
+    return _render_repository_page(
+        result, path=path, max_chars=int(cfg.max_output_chars),
+    )
 
 
 def _list_definitions_error(path: str, error_kind: str, reason: str) -> str:

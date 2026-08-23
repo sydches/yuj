@@ -2,7 +2,9 @@
 
 Internal to scripts.llm_solver; load_config() in config.py is the public entry.
 """
+import copy
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +14,15 @@ from ._shared.toml_compat import tomllib
 
 
 from .config import Config, _REQUIRED_SECTIONS
+
+
+def _string_tuple(value: object, *, path: str) -> tuple[str, ...]:
+    """Validate a TOML string array without coercing scalars to characters."""
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise ValueError(f"config error: {path} must be an array of strings.")
+    return tuple(value)
 
 def _require(data: dict, section: str, key: str) -> object:
     if section not in data:
@@ -33,6 +44,17 @@ def _extract_config_fields(d: dict) -> dict:
 
     experiment = d.get("experiment", {})
     analysis = d.get("analysis", {})
+    from .harness.sandbox.env_policy import (
+        DEFAULT_FIXED_ENVIRONMENT,
+        EnvironmentPolicy,
+    )
+    sandbox_section = d.get("sandbox", {})
+    sandbox_env_raw = sandbox_section.get("env")
+    if sandbox_env_raw is None:
+        # Preserve the pre-policy deterministic command baseline for older
+        # complete configs that do not yet carry [sandbox.env].
+        sandbox_env_raw = {"set": dict(DEFAULT_FIXED_ENVIRONMENT)}
+    sandbox_env = EnvironmentPolicy.from_mapping(sandbox_env_raw)
     return {
         "base_url": _require(d, "server", "base_url"),
         "api_key": _require(d, "server", "api_key"),
@@ -109,11 +131,68 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_run_tests_assertion_context_lines": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5)),
         "tools_run_tests_assertion_context_max": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3)),
         "tools_list_definitions_enabled": bool(d.get("tools", {}).get("list_definitions", {}).get("enabled", False)),
+        "tools_ast_search_enabled": bool(
+            d.get("tools", {}).get("ast_search_enabled", False)
+        ),
+        "tools_ast_search_max_rows": d.get("tools", {}).get(
+            "ast_search_max_rows", 1000
+        ),
+        "tools_file_checkpoints_enabled": bool(
+            d.get("tools", {}).get("file_checkpoints_enabled", False)
+        ),
+        "tools_file_checkpoints_exclude": _string_tuple(
+            d.get("tools", {}).get(
+                "file_checkpoints_exclude",
+                [
+                    ".solver/**",
+                    ".tool_output/**",
+                    "prompt.txt",
+                    "checkpoint.json",
+                    "metrics.json",
+                ],
+            ),
+            path="tools.file_checkpoints_exclude",
+        ),
+        "tools_stale_guard_mode": d.get("tools", {}).get(
+            "stale_guard_mode", "warn"
+        ),
+        "tools_bash_redirect_read_side": d.get("tools", {}).get(
+            "bash_redirect_read_side", False
+        ),
+        "tools_schema_validation": d.get("tools", {}).get(
+            "schema_validation", "off"
+        ),
+        "tools_constrained_decoding": d.get("tools", {}).get(
+            "constrained_decoding", "off"
+        ),
+        "tools_background_enabled": d.get("tools", {}).get(
+            "background_enabled", False
+        ),
+        "tools_background_max_procs": d.get("tools", {}).get(
+            "background_max_procs", 4
+        ),
+        "tools_background_poll_timeout": d.get("tools", {}).get(
+            "background_poll_timeout", 300.0
+        ),
+        "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
+        "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
+        "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
+            "diagnostics_timeout_s", 2.0
+        ),
+        "lsp_min_severity": d.get("lsp", {}).get("min_severity", "error"),
+        "lsp_tool_enabled": bool(d.get("lsp", {}).get("tool_enabled", False)),
         "tools_apply_patch_enabled": bool(d.get("tools", {}).get("apply_patch", {}).get("enabled", False)),
         "tools_unified_envelope_enabled": bool(d.get("tools", {}).get("unified_envelope", {}).get("enabled", False)),
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
         "context_ignore_state": d.get("state", {}).get("context_ignore", False),
         "state_imperative_projection_enabled": d.get("state", {}).get("imperative_projection_enabled", False),
+        "state_ignore_file_enabled": d.get("state", {}).get(
+            "ignore_file_enabled", True
+        ),
+        "state_ignore_file_names": _string_tuple(
+            d.get("state", {}).get("ignore_file_names", [".yujignore"]),
+            path="state.ignore_file_names",
+        ),
         "parallel_readonly_enabled": d.get("loop", {}).get("parallel_readonly_enabled", False),
         "parallel_max_workers": d.get("loop", {}).get("parallel_max_workers", 4),
         "injections_enabled": d.get("injections", {}).get("enabled", False),
@@ -301,8 +380,60 @@ def _extract_config_fields(d: dict) -> dict:
         "unreadable_paths": tuple(
             d.get("sandbox", {}).get("unreadable_paths", []) or []
         ),
+        "sandbox_backend": d.get("sandbox", {}).get("backend", "bwrap"),
+        "sandbox_container_runtime": d.get("sandbox", {}).get(
+            "container_runtime", "docker"
+        ),
+        "sandbox_container_image": d.get("sandbox", {}).get(
+            "container_image", ""
+        ),
+        "sandbox_container_flags": _string_tuple(
+            d.get("sandbox", {}).get("container_flags", []),
+            path="sandbox.container_flags",
+        ),
+        "sandbox_env_inherit": sandbox_env.inherit,
+        "sandbox_env_set": dict(sandbox_env.set),
+        "sandbox_env_filters": dict(sandbox_env.filters),
+        "sandbox_env_ignore_default_excludes": (
+            sandbox_env.ignore_default_excludes
+        ),
+        "sandbox_env_allow_login_shell": sandbox_env.allow_login_shell,
+        "runtime_worktree": d.get("runtime", {}).get("worktree", "off"),
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
         "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
+        "interrupted_turn_mode": d.get("loop", {}).get(
+            "interrupted_turn_mode", "mechanical"
+        ),
+        "length_continue_max": d.get("loop", {}).get(
+            "length_continue_max", 0
+        ),
+        "project_docs_enabled": d.get("prompts", {}).get(
+            "project_docs_enabled", False
+        ),
+        "project_doc_names": _string_tuple(
+            d.get("prompts", {}).get(
+                "project_doc_names", ["AGENTS.md", "CLAUDE.md"]
+            ),
+            path="prompts.project_doc_names",
+        ),
+        "project_doc_max_bytes": d.get("prompts", {}).get(
+            "project_doc_max_bytes", 32768
+        ),
+        "project_root_markers": _string_tuple(
+            d.get("prompts", {}).get(
+                "project_root_markers", [".git", ".hg", ".sl"]
+            ),
+            path="prompts.project_root_markers",
+        ),
+        "project_doc_global_dir": d.get("prompts", {}).get(
+            "project_doc_global_dir", "~/.config/yuj"
+        ),
+        "imports_enabled": d.get("prompts", {}).get(
+            "imports_enabled", True
+        ),
+        "imports_max_depth": d.get("prompts", {}).get(
+            "imports_max_depth", 5
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -399,6 +530,12 @@ def _extract_config_fields(d: dict) -> dict:
         "prompt_addendum": experiment.get("prompt_addendum", ""),
         "variant_name": experiment.get("variant_name", ""),
         "runtime_mode": d.get("runtime", {}).get("mode", "measurement"),
+        "permissions_rules": copy.deepcopy(
+            d.get("permissions", {}).get("rules", {})
+        ),
+        "permissions_ask_fallback": d.get("permissions", {}).get(
+            "ask_fallback", "deny"
+        ),
         "analysis_task_format": analysis.get("task_format", "auto"),
     }
 
@@ -437,6 +574,168 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
+    if cfg.tools_stale_guard_mode not in {"off", "warn", "block"}:
+        raise ValueError(
+            "config error: tools.stale_guard_mode must be 'off', 'warn', "
+            f"or 'block', got {cfg.tools_stale_guard_mode!r}."
+        )
+    if not isinstance(cfg.tools_bash_redirect_read_side, bool):
+        raise ValueError(
+            "config error: tools.bash_redirect_read_side must be a boolean."
+        )
+    from .harness.tool_validation import (
+        normalize_constrained_decoding_mode,
+        normalize_schema_validation_mode,
+    )
+    normalize_schema_validation_mode(cfg.tools_schema_validation)
+    normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    from .harness.tool_policy import (
+        PermissionPolicy,
+        normalize_ask_fallback,
+    )
+    PermissionPolicy.from_rule_tables(cfg.permissions_rules)
+    normalize_ask_fallback(cfg.permissions_ask_fallback)
+    if not isinstance(cfg.tools_background_enabled, bool):
+        raise ValueError(
+            "config error: tools.background_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_background_max_procs, bool)
+        or not isinstance(cfg.tools_background_max_procs, int)
+        or cfg.tools_background_max_procs < 1
+    ):
+        raise ValueError(
+            "config error: tools.background_max_procs must be an integer >= 1."
+        )
+    if (
+        isinstance(cfg.tools_background_poll_timeout, bool)
+        or not isinstance(cfg.tools_background_poll_timeout, (int, float))
+        or not math.isfinite(float(cfg.tools_background_poll_timeout))
+        or float(cfg.tools_background_poll_timeout) < 0
+    ):
+        raise ValueError(
+            "config error: tools.background_poll_timeout must be a finite "
+            "number >= 0."
+        )
+    if cfg.sandbox_backend not in {"bwrap", "container"}:
+        raise ValueError(
+            "config error: sandbox.backend must be 'bwrap' or 'container', "
+            f"got {cfg.sandbox_backend!r}."
+        )
+    if not isinstance(cfg.runtime_worktree, str) or not cfg.runtime_worktree.strip():
+        raise ValueError(
+            "config error: runtime.worktree must be 'off', 'auto', or a "
+            "non-empty Git branch name."
+        )
+    if cfg.interrupted_turn_mode not in {"off", "mechanical"}:
+        raise ValueError(
+            "config error: loop.interrupted_turn_mode must be 'off' or "
+            f"'mechanical', got {cfg.interrupted_turn_mode!r}."
+        )
+    if (
+        isinstance(cfg.length_continue_max, bool)
+        or not isinstance(cfg.length_continue_max, int)
+        or cfg.length_continue_max < 0
+    ):
+        raise ValueError(
+            "config error: loop.length_continue_max must be a non-negative "
+            "integer."
+        )
+    if not isinstance(cfg.project_docs_enabled, bool):
+        raise ValueError(
+            "config error: prompts.project_docs_enabled must be a boolean."
+        )
+    if not isinstance(cfg.state_ignore_file_enabled, bool):
+        raise ValueError(
+            "config error: state.ignore_file_enabled must be a boolean."
+        )
+    from .harness.sandbox.ignore_policy import validate_ignore_file_names
+    validate_ignore_file_names(cfg.state_ignore_file_names)
+    if not isinstance(cfg.project_doc_global_dir, str):
+        raise ValueError(
+            "config error: prompts.project_doc_global_dir must be a string."
+        )
+    if not isinstance(cfg.imports_enabled, bool):
+        raise ValueError(
+            "config error: prompts.imports_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.imports_max_depth, bool)
+        or not isinstance(cfg.imports_max_depth, int)
+        or cfg.imports_max_depth < 0
+    ):
+        raise ValueError(
+            "config error: prompts.imports_max_depth must be a non-negative "
+            "integer."
+        )
+    from .harness.project_instructions import (
+        validate_project_instruction_settings,
+    )
+    try:
+        validate_project_instruction_settings(
+            cfg.project_doc_names,
+            cfg.project_doc_max_bytes,
+            cfg.project_root_markers,
+        )
+    except ValueError as exc:
+        raise ValueError(f"config error: prompts.{exc}") from exc
+    from .harness.sandbox.container_backend import (
+        CONTAINER_RUNTIMES,
+        ContainerBackend,
+        normalize_container_flags,
+    )
+    if cfg.sandbox_container_runtime not in CONTAINER_RUNTIMES:
+        raise ValueError(
+            "config error: sandbox.container_runtime must be 'docker' or "
+            f"'podman', got {cfg.sandbox_container_runtime!r}."
+        )
+    normalize_container_flags(cfg.sandbox_container_flags)
+    from .harness.sandbox.env_policy import (
+        EnvironmentPolicy,
+        EnvironmentPolicyError,
+    )
+    try:
+        EnvironmentPolicy(
+            inherit=cfg.sandbox_env_inherit,
+            set=cfg.sandbox_env_set,
+            filters=cfg.sandbox_env_filters,
+            ignore_default_excludes=cfg.sandbox_env_ignore_default_excludes,
+            allow_login_shell=cfg.sandbox_env_allow_login_shell,
+        )
+    except EnvironmentPolicyError as exc:
+        raise ValueError(f"config error: {exc}") from exc
+    if cfg.sandbox_backend == "container":
+        ContainerBackend(
+            runtime=cfg.sandbox_container_runtime,
+            image=cfg.sandbox_container_image,
+            flags=cfg.sandbox_container_flags,
+        )
+    if (
+        isinstance(cfg.tools_ast_search_max_rows, bool)
+        or not isinstance(cfg.tools_ast_search_max_rows, int)
+        or cfg.tools_ast_search_max_rows < 1
+    ):
+        raise ValueError(
+            "config error: tools.ast_search_max_rows must be an integer >= 1."
+        )
+    if isinstance(cfg.lsp_diagnostics_timeout_s, bool) or not isinstance(
+        cfg.lsp_diagnostics_timeout_s, (int, float)
+    ) or not math.isfinite(float(cfg.lsp_diagnostics_timeout_s)) or float(
+        cfg.lsp_diagnostics_timeout_s
+    ) < 0:
+        raise ValueError(
+            "config error: lsp.diagnostics_timeout_s must be a finite "
+            "non-negative number."
+        )
+    from .harness.lsp_support import LspManager, parse_server_specs
+    parse_server_specs(cfg.lsp_servers)
+    # Constructing a disabled manager validates the public severity value
+    # without starting a process or touching the task filesystem.
+    LspManager(
+        cwd=Path.cwd(), servers=(), argv_builder=lambda _spec, _root: (),
+        diagnostics_timeout_s=float(cfg.lsp_diagnostics_timeout_s),
+        min_severity=cfg.lsp_min_severity, enabled=False,
+    )
     from .harness._loop.model_roles import (
         normalize_fallback_revert,
         validate_fallback_chains,

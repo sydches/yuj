@@ -34,6 +34,8 @@ class TurnState:
     phase_token_ms: float
     turn_t0: float
     preexecuted: dict[str, str]
+    schema_validations: dict[str, Any]
+    permission_resolutions: dict[str, Any]
     dispatch: Callable[..., str]
     log: Any
     tool_pre: dict

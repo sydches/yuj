@@ -19,6 +19,11 @@ from ..llm_solver.harness import TaskSpec, solve_task
 from ..llm_solver.harness.context_strategies import resolve_context_class
 from ..llm_solver.harness._loop.model_role_runtime import build_model_role_runtime
 from ..llm_solver.harness.loop import _load_trace_events
+from ..llm_solver.harness.worktree_runtime import (
+    WorktreeRuntimeError,
+    create_session_worktree,
+    inspect_session_worktree,
+)
 from ..llm_solver.models import resolve_model
 from ..llm_solver.server import LlamaClient, load_profile
 from ._anthropic import AnthropicClient
@@ -91,7 +96,6 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
     """Run exactly one harness outer session for an assistant record."""
     artifact_dir = record.artifact_path
     clear_interrupt_marker(artifact_dir)
-    store.update_session(record.session_id, status="running", last_finish_reason=None)
 
     config_paths = [Path(p) for p in record.config_paths]
     overrides = {
@@ -101,6 +105,10 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
     }
     cfg = load_config(user_config=config_paths, overrides=overrides)
     require_runtime_mode(cfg, expected="assistant", caller="scripts.llm_assist")
+    worktree_info, record = _resolve_session_worktree(
+        store, record, cfg=cfg, resume=resume
+    )
+    store.update_session(record.session_id, status="running", last_finish_reason=None)
 
     profile = _load_profile(cfg)
     client = _make_client(cfg, profile)
@@ -138,7 +146,7 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
             )
 
     success = solve_task(
-        Path(record.cwd),
+        worktree_info.session_cwd if worktree_info is not None else Path(record.cwd),
         cfg,
         client,
         system_prompt_file=Path(record.system_prompt_path) if record.system_prompt_path else None,
@@ -146,6 +154,7 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
         task_spec=TaskSpec(prompt_text=prompt_text),
         artifacts_dir=artifact_dir,
         resume_from_artifacts=resume,
+        worktree_info=worktree_info,
     )
     finish_reason = last_finish_reason(artifact_dir)
     store.update_session(
@@ -154,6 +163,92 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
         last_finish_reason=finish_reason,
     )
     return success, finish_reason
+
+
+def _resolve_session_worktree(
+    store: SessionStore,
+    record: SessionRecord,
+    *,
+    cfg,
+    resume: bool,
+):
+    """Create once or strictly reuse the worktree owned by this record."""
+    mode = str(getattr(cfg, "runtime_worktree", "off") or "off").strip()
+    stored = (
+        record.worktree_path,
+        record.worktree_branch,
+        record.worktree_base_commit,
+    )
+    has_any_stored = any(value is not None for value in stored)
+    has_all_stored = all(bool(value) for value in stored)
+
+    if resume:
+        if has_any_stored and not has_all_stored:
+            raise WorktreeRuntimeError(
+                "saved session has incomplete worktree identity"
+            )
+        if has_all_stored and mode == "off":
+            raise WorktreeRuntimeError(
+                "saved session owns a worktree but runtime.worktree is off"
+            )
+        if not has_all_stored:
+            if mode != "off":
+                raise WorktreeRuntimeError(
+                    "cannot resume with worktree isolation: the saved session "
+                    "has no worktree identity"
+                )
+            return None, record
+        inspected = inspect_session_worktree(Path(record.cwd), record.session_id)
+        expected = (
+            Path(str(record.worktree_path)).resolve(),
+            str(record.worktree_branch),
+            str(record.worktree_base_commit),
+        )
+        inspected_actual = (
+            inspected.worktree_path.resolve(),
+            inspected.branch,
+            inspected.base_commit,
+        )
+        if inspected_actual != expected:
+            raise WorktreeRuntimeError(
+                "saved worktree identity does not match the owned Git worktree"
+            )
+        info = create_session_worktree(
+            Path(record.cwd),
+            mode=mode,
+            run_id=record.session_id,
+            reuse=True,
+        )
+        assert info is not None
+        actual = (info.worktree_path.resolve(), info.branch, info.base_commit)
+        if actual != expected:
+            raise WorktreeRuntimeError(
+                "saved worktree identity does not match the owned Git worktree"
+            )
+        return info, record
+
+    if mode == "off":
+        return None, record
+    if has_any_stored:
+        raise WorktreeRuntimeError("new session already has worktree identity")
+    info = create_session_worktree(
+        Path(record.cwd),
+        mode=mode,
+        run_id=record.session_id,
+        reuse=False,
+    )
+    assert info is not None
+    store.update_session_worktree(
+        record.session_id,
+        path=info.worktree_path,
+        branch=info.branch,
+        base_commit=info.base_commit,
+    )
+    refreshed = store.get_session(record.session_id)
+    if refreshed is None:
+        raise WorktreeRuntimeError("session disappeared while saving worktree identity")
+    _write_session_metadata(refreshed)
+    return info, refreshed
 
 
 def last_finish_reason(artifact_dir: Path) -> str | None:
@@ -369,6 +464,12 @@ def _seed_session_artifacts(record: SessionRecord) -> None:
     (artifact_dir / ".solver" / "state.json").write_text(
         json.dumps(_EMPTY_STATE, indent=2) + "\n"
     )
+    _write_session_metadata(record)
+
+
+def _write_session_metadata(record: SessionRecord) -> None:
+    artifact_dir = record.artifact_path
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     meta = {
         "session_id": record.session_id,
         "cwd": record.cwd,
@@ -377,6 +478,9 @@ def _seed_session_artifacts(record: SessionRecord) -> None:
         "context_mode": record.context_mode,
         "system_prompt_path": record.system_prompt_path,
         "config_paths": record.config_paths,
+        "worktree_path": record.worktree_path,
+        "worktree_branch": record.worktree_branch,
+        "worktree_base_commit": record.worktree_base_commit,
     }
     (artifact_dir / "session.json").write_text(json.dumps(meta, indent=2) + "\n")
 

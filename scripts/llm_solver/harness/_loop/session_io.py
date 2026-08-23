@@ -151,15 +151,16 @@ def _normalize_repo_timestamps(repo_dir: Path) -> None:
 
 
 def _record_session_start_costs(cfg: Config, client, system_prompt: str,
-                                 system_prompt_file: Path | None) -> None:
+                                 system_prompt_file: Path | None,
+                                 prompt_metadata=None) -> None:
     """Record one-time per-task costs on the savings ledger.
 
-    Captures (5 buckets):
+    Captures prompt/tool component buckets:
       system_prompt         — tokens paid by the configured system_header.
       tool_surface          — tokens paid by tool schemas at the active
                               tool_desc mode.
-      protocol_commandments — tokens paid by --system-prompt content
-                              (with_yuj only; zero when no file given).
+      protocol_commandments — tokens paid by resolved --system-prompt content.
+      project_instructions  — tokens paid by resolved project-document blocks.
       profile_behavioral    — tokens paid by the profile's behavioral
                               suffix (probe: run denormalize on a
                               minimal Commandments-tagged message and
@@ -201,8 +202,22 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
     except Exception as e:
         log.debug("Tool-surface cost record skipped: %s", e)
 
-    # Protocol commandments: content of the --system-prompt file, if any.
-    if system_prompt_file is not None and Path(system_prompt_file).is_file():
+    # Protocol commandments: the resolved arm content that was actually
+    # assembled, including legacy @imports. New callers pass metadata so this
+    # path never re-reads a mutable source file after prompt resolution.
+    arm_label = getattr(prompt_metadata, "arm_label", None)
+    arm_chars = getattr(prompt_metadata, "arm_chars", None)
+    if arm_label is not None and arm_chars is not None:
+        ledger.record(
+            bucket="protocol_commandments",
+            layer="L4_protocol",
+            mechanism=arm_label,
+            input_chars=0,
+            output_chars=arm_chars,
+            measure_type="exact",
+            ctx={"path": arm_label},
+        )
+    elif system_prompt_file is not None and Path(system_prompt_file).is_file():
         try:
             commandments_chars = len(Path(system_prompt_file).read_text())
             ledger.record(
@@ -212,10 +227,53 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                 input_chars=0,
                 output_chars=commandments_chars,
                 measure_type="exact",
-                ctx={"path": str(system_prompt_file)},
+                ctx={"path": Path(system_prompt_file).name},
             )
         except OSError as e:
             log.debug("Protocol commandments cost record skipped: %s", e)
+
+    project_chars = int(
+        getattr(prompt_metadata, "project_instruction_chars", 0) or 0
+    )
+    if project_chars:
+        records = tuple(
+            getattr(prompt_metadata, "project_instruction_files", ()) or ()
+        )
+        ledger.record(
+            bucket="project_instructions",
+            layer="L4_protocol",
+            mechanism="repository_instruction_files",
+            input_chars=0,
+            output_chars=project_chars,
+            measure_type="exact",
+            ctx={
+                "files": [str(record.get("path", "")) for record in records],
+                "source_bytes": int(
+                    getattr(prompt_metadata, "project_instruction_bytes", 0) or 0
+                ),
+                "imported_bytes": int(
+                    getattr(
+                        prompt_metadata,
+                        "project_instruction_imported_bytes",
+                        0,
+                    )
+                    or 0
+                ),
+                "resolved_bytes": int(
+                    getattr(
+                        prompt_metadata,
+                        "project_instruction_resolved_bytes",
+                        0,
+                    )
+                    or 0
+                ),
+                "truncated": bool(
+                    getattr(
+                        prompt_metadata, "project_instructions_truncated", False
+                    )
+                ),
+            },
+        )
 
     # Profile behavioral: probe the denormalize pipeline on a minimal
     # system message marked with "Commandments" so any gated behavioral
@@ -258,15 +316,16 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
 def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
     """Load the bash transform layers respected by Session.
 
-    Each layer has its own enabled flag. Returns a 5-tuple in this order:
+    Each layer has its own enabled flag. Returns a 6-tuple in this order:
       1. output_control       — task-format output control
                                 (pytest --tb=short, condense PASSED)
       2. universal_rewrites   — universal rewrites
                                 (pip -q, npm --loglevel=error, make -s)
       3. forbidden_rules      — bash_quirks forbidden-rule list
-      4. redactions           — secret-redaction patterns applied to
+      4. redirect_rules       — compound-aware dedicated-tool redirects
+      5. redactions           — secret-redaction patterns applied to
                                 tool output
-      5. output_parser        — structured test-run digest parser
+      6. output_parser        — structured test-run digest parser
 
     Any element can be None if the corresponding layer is disabled or
     misconfigured. A total load failure is logged at warning level and
@@ -276,6 +335,7 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
     output_control = None
     universal_rewrites = None
     forbidden_rules = None
+    redirect_rules = None
     redactions = None
     output_parser = None
     try:
@@ -286,6 +346,7 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
             load_universal_rewrites,
         )
         from ...bash_quirks.transforms import load_forbidden_rules
+        from ..command_redirect import load_redirect_rules
         if cfg.bash_transforms_universal_enabled or force_load_all:
             universal_rewrites = load_universal_rewrites()
             if universal_rewrites:
@@ -299,6 +360,9 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
         else:
             # This flag controls forbidden command rules.
             log.info("Bash forbidden rules disabled via config")
+        redirect_rules = load_redirect_rules()
+        if redirect_rules:
+            log.info("Loaded %d bash redirect rules", len(redirect_rules))
         # Secret redaction always loads; redactions.toml presence is
         # sufficient to enable. No config gate — redacting tokens is
         # always-on safety.
@@ -337,4 +401,7 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
         # would silently fall back to raw-bash semantics with no signal
         # in standard log streams.
         log.warning("bash_transforms_load_failed: %s", e)
-    return output_control, universal_rewrites, forbidden_rules, redactions, output_parser
+    return (
+        output_control, universal_rewrites, forbidden_rules, redirect_rules,
+        redactions, output_parser,
+    )

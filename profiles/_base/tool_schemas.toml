@@ -11,7 +11,17 @@
 [[tools]]
 name = "bash"
 required = ["cmd"]
-properties = { cmd = { type = "string" } }
+properties = { cmd = { type = "string" }, background = { type = "boolean" } }
+
+[[tools]]
+name = "bash_poll"
+required = ["proc_id"]
+properties = { proc_id = { type = "string" }, timeout_s = { type = "number" } }
+
+[[tools]]
+name = "bash_kill"
+required = ["proc_id"]
+properties = { proc_id = { type = "string" } }
 
 [[tools]]
 name = "read"
@@ -46,12 +56,17 @@ properties = { path = { type = "string" }, k = { type = "string" }, last_failed 
 [[tools]]
 name = "list_definitions"
 required = ["path"]
-properties = { path = { type = "string" } }
+properties = { path = { type = "string" }, symbol = { type = "string" }, kind = { type = "string", enum = ["def", "ref"] }, repo_wide = { type = "boolean" }, page = { type = "integer" } }
 
 [[tools]]
 name = "apply_patch"
 required = ["patch"]
 properties = { patch = { type = "string" } }
+
+[[tools]]
+name = "lsp"
+required = ["kind", "path"]
+properties = { kind = { type = "string", enum = ["definition", "references", "symbols"] }, path = { type = "string" }, line = { type = "integer" }, character = { type = "integer" } }
 
 [[tools]]
 name = "done"

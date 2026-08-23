@@ -23,11 +23,16 @@ from typing import TYPE_CHECKING
 
 from ..guardrails import Action, Decision, PASS
 from ..action_metadata import action_metadata
-from ..approvals import approval_decision
+from ..approvals import approval_decision, approval_transport_available
+from .._tool_filters import resolve_tool_permission
 from ..system_log import get_system_log, provenance_for
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
-from ._dispatch_tool_call import TurnState, dispatch_one_tool_call
+from ._dispatch_tool_call import (
+    TurnState,
+    dispatch_one_tool_call,
+    record_tool_start,
+)
 from .compaction import preflight_reclip_oversized
 from .trace_output import build_tool_call_trace_fields
 
@@ -182,6 +187,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
     turn_start = int(getattr(session, "_turn_start_offset", 0) or 0)
     for local_turn in range(session.cfg.max_turns):
         turn = turn_start + local_turn
+        # Session-owned services (for example the lazy LSP manager) emit
+        # trace records outside this loop module.  Stamp their events with
+        # the turn whose tool call triggered the service.
+        session._current_turn = turn
         cfg = session.cfg
         # stop_resume delivery: the controller decided to intervene last
         # turn and requested a graceful hand-off. End before the next API
@@ -520,38 +529,34 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # read/glob/grep calls. Mutating tools (write/edit/bash)
         # always run sequentially — they never enter this path.
         preexecuted: dict[str, str] = {}
-        if (
-            cfg.parallel_readonly_enabled
-            and len(tool_calls) > 1
-            and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
-        ):
-            effective_output_control = (
-                session.output_control if cfg.bash_transforms_task_format_enabled else None
+        schema_validations = {}
+        if getattr(cfg, "tools_schema_validation", "off") == "reject":
+            schema_validations = {
+                tc.id: session._tool_schema_set.validate(
+                    tc.name, tc.arguments
+                )
+                for tc in tool_calls
+            }
+        permission_resolutions = {}
+        approval_available = approval_transport_available(session._trace_path)
+        for tc in tool_calls:
+            validation = schema_validations.get(tc.id)
+            if validation is not None and not validation.valid:
+                continue
+            resolution = resolve_tool_permission(
+                policy=session._permission_policy,
+                tool_name=tc.name,
+                arguments=tc.arguments,
+                cfg=cfg,
+                approval_available=approval_available,
             )
-            effective_universal_rewrites = (
-                session.universal_rewrites if cfg.bash_transforms_universal_enabled else None
+            permission_resolutions[tc.id] = resolution
+            session._emit(
+                "permission",
+                session_number=session._session_number,
+                turn_number=turn,
+                **resolution.trace_fields(),
             )
-            with ThreadPoolExecutor(
-                max_workers=max(1, cfg.parallel_max_workers)
-            ) as _ex:
-                futures = {
-                    tc.id: _ex.submit(
-                        dispatch, tc.name, tc.arguments,
-                        cwd=session.cwd, cfg=cfg,
-                        output_control=effective_output_control,
-                        universal_rewrites=effective_universal_rewrites,
-                        forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
-                        redactions=session.redactions,
-                        tool_registry=session._tool_registry,
-                    )
-                    for tc in tool_calls
-                }
-                for tc_id, fut in futures.items():
-                    try:
-                        preexecuted[tc_id] = fut.result()
-                    except Exception as e:
-                        preexecuted[tc_id] = f"ERROR: {e}"
-
         state = TurnState(
             session=session,
             turn=turn,
@@ -564,6 +569,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
             phase_token_ms=_phase_token_ms,
             turn_t0=_turn_t0,
             preexecuted=preexecuted,
+            schema_validations=schema_validations,
+            permission_resolutions=permission_resolutions,
             dispatch=dispatch,
             log=log,
             tool_pre=tool_pre,
@@ -571,47 +578,114 @@ def run_session_loop(session: "Session") -> "SessionResult":
             observers=observers,
             turn_had_pressure=turn_had_pressure,
         )
+        if (
+            cfg.parallel_readonly_enabled
+            and len(tool_calls) > 1
+            and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
+            and all(
+                validation.valid
+                for validation in schema_validations.values()
+            )
+            and all(
+                resolution.allowed
+                for resolution in permission_resolutions.values()
+            )
+        ):
+            effective_output_control = (
+                session.output_control if cfg.bash_transforms_task_format_enabled else None
+            )
+            effective_universal_rewrites = (
+                session.universal_rewrites if cfg.bash_transforms_universal_enabled else None
+            )
+            with ThreadPoolExecutor(
+                max_workers=max(1, cfg.parallel_max_workers)
+            ) as _ex:
+                futures = {}
+                for tc in tool_calls:
+                    # The durability point must precede submission: the
+                    # worker may start executing as soon as ``submit``
+                    # returns, and multiple read calls can overlap.
+                    record_tool_start(tc, state)
+                    futures[tc.id] = _ex.submit(
+                        dispatch, tc.name, tc.arguments,
+                        cwd=session.cwd, cfg=cfg,
+                        output_control=effective_output_control,
+                        universal_rewrites=effective_universal_rewrites,
+                        forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
+                        redirect_rules=getattr(session, "redirect_rules", None),
+                        redactions=session.redactions,
+                        tool_registry=session._tool_registry,
+                        stale_guard=session._stale_guard,
+                        active_tools=getattr(session, "active_tool_names", ()),
+                        redirect_event_sink=getattr(session, "_redirect_event_sink", None),
+                        ignore_policy=session._ignore_policy,
+                        effective_env=session._effective_env,
+                        allow_login_shell=session._allow_login_shell,
+                    )
+                for tc_id, fut in futures.items():
+                    try:
+                        preexecuted[tc_id] = fut.result()
+                    except Exception as e:
+                        preexecuted[tc_id] = f"ERROR: {e}"
         for tc in tool_calls:
             args_summary = _summarize_args(tc.arguments, cfg.args_summary_chars)
-            approval_allowed, approval_reason = approval_decision(
-                runtime_mode=getattr(cfg, "runtime_mode", "measurement"),
-                cwd=session.cwd,
-                trace_path=session._trace_path,
-                tool_name=tc.name,
-                tool_args=tc.arguments,
-                args_summary=args_summary,
-            )
-            if not approval_allowed:
-                session.context.add_tool_result(
-                    tc.id,
-                    "APPROVAL REQUIRED: This tool call was not executed. "
-                    f"Reason: {approval_reason}. Review it with `yuj show`, "
-                    "approve it with `yuj approve <session_id>`, then resume.",
-                    tool_name=tc.name,
-                    gate_blocked=True,
-                )
-                session._emit(
-                    "approval_request",
-                    session_number=session._session_number,
-                    turn_number=turn,
-                    tool_name=tc.name,
-                    args_summary=_truncate_for_trace(
-                        args_summary, cfg.trace_args_summary_chars
-                    ),
-                    reason=approval_reason,
-                    reasoning=_truncate_for_trace(
-                        content or "", cfg.trace_reasoning_store_chars
-                    ),
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                )
-                return SessionResult(
-                    turn,
-                    "approval_required",
-                    done=False,
-                    total_prompt_tokens=total_prompt,
-                    total_completion_tokens=total_completion,
-                )
+            validation = schema_validations.get(tc.id)
+            resolution = permission_resolutions.get(tc.id)
+            if validation is None or validation.valid:
+                if resolution is not None and not resolution.denied:
+                    approval_allowed, approval_reason = approval_decision(
+                        runtime_mode=getattr(
+                            cfg, "runtime_mode", "measurement"
+                        ),
+                        cwd=session.cwd,
+                        trace_path=session._trace_path,
+                        tool_name=tc.name,
+                        tool_args=tc.arguments,
+                        args_summary=args_summary,
+                        required_reason=(
+                            resolution.approval_reason()
+                            if resolution.approval_required
+                            else None
+                        ),
+                        permission_rule=(
+                            resolution.rule
+                            if resolution.approval_required
+                            else None
+                        ),
+                    )
+                    if not approval_allowed:
+                        session.context.add_tool_result(
+                            tc.id,
+                            "APPROVAL REQUIRED: This tool call was not "
+                            "executed. "
+                            f"Reason: {approval_reason}. Review it with "
+                            "`yuj show`, approve it with "
+                            "`yuj approve <session_id>`, then resume.",
+                            tool_name=tc.name,
+                            gate_blocked=True,
+                        )
+                        session._emit(
+                            "approval_request",
+                            session_number=session._session_number,
+                            turn_number=turn,
+                            tool_name=tc.name,
+                            args_summary=_truncate_for_trace(
+                                args_summary, cfg.trace_args_summary_chars
+                            ),
+                            reason=approval_reason,
+                            reasoning=_truncate_for_trace(
+                                content or "", cfg.trace_reasoning_store_chars
+                            ),
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                        )
+                        return SessionResult(
+                            turn,
+                            "approval_required",
+                            done=False,
+                            total_prompt_tokens=total_prompt,
+                            total_completion_tokens=total_completion,
+                        )
             outcome = dispatch_one_tool_call(tc, state)
             if outcome.end:
                 return SessionResult(

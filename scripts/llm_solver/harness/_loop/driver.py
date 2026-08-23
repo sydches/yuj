@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ...config import Config
@@ -28,12 +30,14 @@ from . import (
 )
 from ._driver_setup import (
     compute_runtime_envelope_fields,
-    load_system_prompt_and_provenance, load_transforms_and_estimator,
+    load_session_injections, load_system_prompt_and_provenance,
+    load_transforms_and_estimator,
     resolve_task_format, resolve_run_paths,
     setup_run_outputs, thinking_trace_fields,
 )
 from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
+from .interrupted_turn import RecoveryPlan, recover_interrupted_trace
 from . import model_role_runtime
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
@@ -55,6 +59,7 @@ def solve_task(
     run_metadata: dict | None = None,
     artifacts_dir: Path | None = None,
     resume_from_artifacts: bool = False,
+    worktree_info=None,
 ) -> bool:
     """Outer loop: run sessions until done or max_sessions exhausted.
 
@@ -73,6 +78,49 @@ def solve_task(
     log = _loop_mod.log  # so test patches on loop.log intercept these emits
 
     work_dir, artifact_dir, trace_path = resolve_run_paths(repo_dir, artifacts_dir)
+    checkpoint_store = None
+    if getattr(cfg, "tools_file_checkpoints_enabled", False):
+        from ..workspace_checkpoints import (
+            WorkspaceCheckpointStore,
+            default_shadow_dir,
+        )
+        candidate = artifact_dir / ".shadow_git"
+        try:
+            candidate.resolve().relative_to(work_dir.resolve())
+        except ValueError:
+            shadow_dir = candidate
+        else:
+            shadow_dir = default_shadow_dir(work_dir)
+        checkpoint_store = WorkspaceCheckpointStore(
+            work_dir,
+            shadow_dir=shadow_dir,
+            excludes=getattr(cfg, "tools_file_checkpoints_exclude", ()),
+        )
+        cfg = replace(
+            cfg,
+            unreadable_paths=tuple(cfg.unreadable_paths)
+            + checkpoint_store.sandbox_unreadable_paths,
+        )
+    from ..tools import _effective_command_environment
+    resolved_env, allow_login_shell = _effective_command_environment(cfg)
+    # One immutable snapshot is shared by every session and command surface;
+    # later host-process environment mutations cannot change this run.
+    effective_env = MappingProxyType(resolved_env)
+    from ..sandbox.ignore_policy import load_ignore_policy
+    ignore_policy = load_ignore_policy(
+        work_dir,
+        enabled=getattr(cfg, "state_ignore_file_enabled", True),
+        file_names=getattr(
+            cfg, "state_ignore_file_names", (".yujignore",)
+        ),
+    )
+    # Context discovery happens before the first model call. Give it the same
+    # startup view as the tools while retaining the immutable compiled policy
+    # for dynamic path decisions later in the run.
+    prompt_unreadable_paths = tuple(dict.fromkeys((
+        *tuple(cfg.unreadable_paths),
+        *ignore_policy.sandbox_unreadable_paths(),
+    )))
     prompt_file = artifact_dir / "prompt.txt"
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
@@ -85,9 +133,23 @@ def solve_task(
         task_prompt = prompt_file.read_text()
 
     start_time = time.time()
-    system_prompt, provenance, context_contract = load_system_prompt_and_provenance(
-        cfg, client, system_prompt_file, profile_path, run_metadata, context_class,
+    (system_prompt, provenance, context_contract,
+     prompt_metadata) = load_system_prompt_and_provenance(
+        cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
+        context_class,
+        unreadable_paths=prompt_unreadable_paths,
     )
+    resolved_injections, injection_import_tree = load_session_injections(
+        cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
+    )
+    if injection_import_tree:
+        prompt_metadata = replace(
+            prompt_metadata,
+            prompt_import_tree=(
+                *prompt_metadata.prompt_import_tree,
+                *injection_import_tree,
+            ),
+        )
     prev_session: "Session | None" = None
     prev_result: "SessionResult | None" = None
     pending_handoff = None
@@ -106,6 +168,7 @@ def solve_task(
     agg_verify_repeat = 0
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
+    agg_length_continuations = 0
     cache_usage = CacheUsageAccumulator()
     role_usage = model_role_runtime.role_token_ledger(client)
     done_loop_aborted = False
@@ -129,10 +192,13 @@ def solve_task(
         transcript_dir=transcript_dir,
         system_prompt=system_prompt,
         system_prompt_file=system_prompt_file,
+        prompt_metadata=prompt_metadata,
     )
 
-    (output_control, universal_rewrites, forbidden_rules, redactions,
-     output_parser, token_estimator) = load_transforms_and_estimator(cfg, client, work_dir)
+    (output_control, universal_rewrites, forbidden_rules, redirect_rules,
+     redactions, output_parser, token_estimator) = load_transforms_and_estimator(
+         cfg, client, work_dir
+     )
 
     # YUJ_HOLD_UNTIL — explicit pre-launch gate (same env-var contract style
     # as YUJ_CONTAINER). An orchestrator that pipelines tasks can start this
@@ -159,9 +225,39 @@ def solve_task(
     pretest_parsed_verdict: dict | None = None
     from ..savings import close_ledger
     from ..system_log import close_system_log
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    recovery_plan = RecoveryPlan(recovered=False)
+    if resume_from_artifacts or resume_path is not None:
+        recovery_plan = recover_interrupted_trace(
+            trace_path,
+            mode=getattr(cfg, "interrupted_turn_mode", "mechanical"),
+        )
     start_session_num = _next_session_number(trace_path) if resume_from_artifacts else 1
     end_session_num = start_session_num + cfg.max_sessions - 1
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve the selected backend before pretests or model tool calls. A
+    # successful container preflight pins execution to the inspected image ID;
+    # a non-strict failure degrades once, loudly, rather than retrying an
+    # unavailable runtime on every command.
+    env_fields = compute_runtime_envelope_fields(cfg, work_dir)
+    if (
+        getattr(cfg, "sandbox_backend", "bwrap") == "container"
+        and cfg.sandbox_bash
+    ):
+        if env_fields["sandbox_engaged"]:
+            cfg = replace(
+                cfg,
+                sandbox_container_image=env_fields["container_image_digest"],
+            )
+        elif not getattr(cfg, "sandbox_required", False):
+            log.warning(
+                "container_preflight: %s — running without sandbox because "
+                "sandbox_required=false",
+                env_fields.get("container_preflight_error") or "unavailable",
+            )
+            cfg = replace(cfg, sandbox_bash=False)
+        if "cfg" in getattr(client, "__dict__", {}):
+            client.cfg = cfg
 
     with open(trace_path, "a") as trace_file:
         # First-event-of-task envelope: records the runtime conditions that
@@ -171,32 +267,39 @@ def solve_task(
         # when the trace was empty at task start (i.e. session 1 of a fresh
         # task, not a resumed task whose prior sessions already wrote).
         if trace_path.stat().st_size == 0:
-            env_fields = compute_runtime_envelope_fields(cfg, work_dir)
             _emit_trace_event(trace_file, "runtime_envelope", **env_fields)
             log.info(
-                "runtime_envelope: sandbox_mode=%s engaged=%s bwrap=%s preflight=%s container=%r",
-                env_fields["sandbox_mode"], env_fields["sandbox_engaged"],
+                "runtime_envelope: sandbox_mode=%s backend=%s engaged=%s "
+                "bwrap=%s preflight=%s container=%r runtime=%r digest=%r",
+                env_fields["sandbox_mode"], env_fields["sandbox_backend"],
+                env_fields["sandbox_engaged"],
                 env_fields["bwrap_present"], env_fields["bwrap_preflight_passed"],
                 env_fields["yuj_container"],
+                env_fields["container_runtime"],
+                env_fields["container_image_digest"],
             )
             if env_fields["bwrap_preflight_error"] and not env_fields["yuj_container"]:
                 log.warning("bwrap_preflight: %s", env_fields["bwrap_preflight_error"])
             # Strict mode: refuse to start the session loop unsandboxed.
             # _run_in_sandbox would also catch this on the first bash call,
             # but failing here is louder and avoids any pretest noise.
-            if (getattr(cfg, "sandbox_required", False)
-                    and cfg.sandbox_bash
-                    and not env_fields["sandbox_engaged"]):
-                raise RuntimeError(
-                    f"sandbox_required=true but sandbox_engaged=false "
-                    f"(sandbox_mode={env_fields['sandbox_mode']}, "
-                    f"bwrap_bin={cfg.bwrap_bin!r}, "
-                    f"bwrap_present={env_fields['bwrap_present']}, "
-                    f"bwrap_preflight_passed={env_fields['bwrap_preflight_passed']}, "
-                    f"bwrap_preflight_error={env_fields['bwrap_preflight_error']!r}, "
-                    f"yuj_container={env_fields['yuj_container']!r}). Refusing to start a "
-                    "session that would run the model's bash unsandboxed."
-                )
+        if (getattr(cfg, "sandbox_required", False)
+                and cfg.sandbox_bash
+                and not env_fields["sandbox_engaged"]):
+            raise RuntimeError(
+                f"sandbox_required=true but sandbox_engaged=false "
+                f"(sandbox_mode={env_fields['sandbox_mode']}, "
+                f"sandbox_backend={env_fields['sandbox_backend']!r}, "
+                f"bwrap_bin={cfg.bwrap_bin!r}, "
+                f"bwrap_present={env_fields['bwrap_present']}, "
+                f"bwrap_preflight_passed={env_fields['bwrap_preflight_passed']}, "
+                f"bwrap_preflight_error={env_fields['bwrap_preflight_error']!r}, "
+                f"container_runtime={env_fields['container_runtime']!r}, "
+                f"container_preflight_error="
+                f"{env_fields['container_preflight_error']!r}, "
+                f"yuj_container={env_fields['yuj_container']!r}). Refusing "
+                "to start a session that would run model commands unsandboxed."
+            )
         for session_num in range(start_session_num, end_session_num + 1):
             # Pretest: run failing tests BEFORE every session. Verdict becomes
             # the first block of the session's first user message. On sessions
@@ -276,6 +379,12 @@ def solve_task(
                     initial = build_resume_prompt_from_trace(
                         trace_path, cfg, task_description
                     ) or task_prompt
+                    if recovery_plan.recovered:
+                        initial = (
+                            recovery_plan.resume_prompt_line
+                            + "\n\n"
+                            + initial
+                        )
                 else:
                     initial = task_prompt
                 if cfg.prompt_addendum and not resume_from_artifacts:
@@ -303,8 +412,18 @@ def solve_task(
                 trace_file, "session_start",
                 session_number=session_num,
                 context_contract=context_contract,
+                sandbox_backend=env_fields["sandbox_backend"],
+                container_runtime=env_fields["container_runtime"],
+                container_image_digest=env_fields["container_image_digest"],
+                sandbox_env_names=list(effective_env),
+                **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
+                **ignore_policy.trace_fields(),
+                **(
+                    worktree_info.session_start_fields()
+                    if worktree_info is not None else {}
+                ),
             )
             if state_path is not None:
                 write_state_from_trace(trace_path, state_path,
@@ -324,20 +443,32 @@ def solve_task(
                 output_control=output_control,
                 universal_rewrites=universal_rewrites,
                 forbidden_rules=forbidden_rules,
+                redirect_rules=redirect_rules,
                 redactions=redactions,
                 output_parser=output_parser,
                 pretest_parsed=pretest_parsed_verdict,
+                checkpoint_store=checkpoint_store,
+                injections=resolved_injections,
+                artifact_dir=artifact_dir,
                 adaptive_control_baseline_config_paths=tuple(
                     (run_metadata or {}).get("config_paths", ())
                     or getattr(cfg, "adaptive_control_baseline_config_paths", ())
                 ),
+                ignore_policy=ignore_policy,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(
                 session, session_client, role_usage,
             )
             if session_num == start_session_num and resume_path is not None:
-                inject_resume_messages(session, resume_path, initial)
+                inject_resume_messages(
+                    session,
+                    resume_path,
+                    initial,
+                    recovery=recovery_plan,
+                )
             # Emit resolved thresholds so trace replay across config changes
             # is reproducible. At
             # session 2+ also include the prior session's terminal
@@ -374,6 +505,9 @@ def solve_task(
             agg_prompt += result.total_prompt_tokens
             agg_completion += result.total_completion_tokens
             agg_turns += result.turns
+            agg_length_continuations += int(
+                getattr(session, "_length_continuation_count", 0) or 0
+            )
             _guards = getattr(session, "_guards", None)
             if _guards is not None:
                 agg_done_blocked += getattr(_guards, "done_blocked_count", 0)
@@ -485,6 +619,7 @@ def solve_task(
         "mutation_repeat_total": agg_mutation_repeat,
         "verify_repeat_total": agg_verify_repeat,
         "trace_corrupt_count": agg_trace_corrupt,
+        "length_continuations": agg_length_continuations,
         "done_loop_aborted": done_loop_aborted,
     }
     if sessions_used > 0:
@@ -494,6 +629,16 @@ def solve_task(
     metrics.update(cache_usage.metrics_fields())
     metrics.update(role_usage.metrics_fields())
     metrics.update(model_role_runtime.model_fallback_metrics(client))
+    metrics["file_checkpoints"] = (
+        checkpoint_store.metrics_payload()
+        if checkpoint_store is not None
+        else {
+            "enabled": False,
+            "count": 0,
+            "total_duration_ms": 0.0,
+            "per_call": [],
+        }
+    )
     write_run_metrics(artifact_dir, metrics, provenance)
     close_ledger()
     close_system_log()

@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..tools import _bash_unreadable_paths
 from ..sandbox import (
     PersistentBashSession,
     container_mode,
@@ -44,6 +45,8 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
         return None
     if not session.cfg.sandbox_bash:
         return None
+    if getattr(session.cfg, "sandbox_backend", "bwrap") != "bwrap":
+        return None
     if container_mode() is not None:
         return None
     if not Path(session.cfg.bwrap_bin).is_file():
@@ -53,10 +56,12 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
     runner = PersistentBashSession(
         cwd=session.cwd,
         bwrap_bin=session.cfg.bwrap_bin,
-        unreadable_paths=tuple(
-            getattr(session.cfg, "unreadable_paths", ()) or ()
+        unreadable_paths=_bash_unreadable_paths(
+            session.cwd, session.cfg, session._ignore_policy,
         ),
         sandbox_required=getattr(session.cfg, "sandbox_required", False),
+        effective_env=session._effective_env,
+        allow_login_shell=session._allow_login_shell,
     )
     set_persistent_runner(runner)
     return runner
