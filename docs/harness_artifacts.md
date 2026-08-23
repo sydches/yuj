@@ -152,6 +152,15 @@ and `container_image_digest`. Runtime and digest are null for the bwrap
 backend. These fields are run-start provenance and are not projected into
 `.solver/state.json`.
 
+When project instruction discovery is enabled, every `session_start` row also
+records `project_instruction_files` (ordered safe labels plus source bytes,
+scope, and truncation), `project_instruction_bytes`, and
+`project_instructions_truncated`. Instruction bodies and absolute source paths
+do not enter the trace or `.solver/state.json`. The matching `metrics.json`
+provenance `system_prompt_sha256` and `system_prompt_chars` describe the final
+resolved prompt after the arm file and project blocks are assembled; the
+prompt body is not stored in provenance.
+
 The row also records `model_target`, `model`, `profile_name`,
 `base_url`, and `context_size` for the effective main target. API keys are
 excluded. `model_fallback` events and the post-run fallback metrics are raw

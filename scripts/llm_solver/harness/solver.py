@@ -73,23 +73,56 @@ def _resolve_imports(
     return _IMPORT_RE.sub(_sub, text)
 
 
-def build_system_prompt(header: str, system_prompt_file: Path | None = None) -> str:
-    """Assemble system prompt: optional file content + header.
+def resolve_system_prompt_file(system_prompt_file: Path | None) -> str | None:
+    """Load and resolve one arm file, preserving the legacy import behavior."""
+    if system_prompt_file is None:
+        return None
+    if not system_prompt_file.is_file():
+        raise FileNotFoundError(f"System prompt file not found: {system_prompt_file}")
+    raw = system_prompt_file.read_text()
+    return _resolve_imports(raw, base_dir=system_prompt_file.parent)
+
+
+def assemble_system_prompt(
+    header: str,
+    *,
+    resolved_arm: str | None = None,
+    project_instructions: str = "",
+) -> str:
+    """Assemble resolved arm, project instructions, then harness header."""
+    parts: list[str] = []
+    if resolved_arm is not None:
+        parts.append(resolved_arm.rstrip())
+    if project_instructions.strip():
+        parts.append(project_instructions.rstrip())
+    parts.append(header)
+    return "\n\n".join(parts)
+
+
+def build_system_prompt(
+    header: str,
+    system_prompt_file: Path | None = None,
+    *,
+    project_instructions: str = "",
+) -> str:
+    """Assemble system prompt: optional file, project documents, and header.
 
     header: the harness header text (wired from cfg.system_header).
     system_prompt_file: if provided, its content is prepended to the
     header. The file is processed for `@path/file` import directives
     with bounded depth and cycle detection. The harness still does not
     INTERPRET the content — it could be any protocol — it only resolves
-    imports as a load-time concatenation.
+    imports as a load-time concatenation. Project instructions are already
+    resolved and bounded by the context
+    layer.  They are inserted after the arm file and before the harness
+    header.  When both optional inputs are absent, the returned bytes remain
+    exactly the configured header.
     """
-    if system_prompt_file is None:
-        return header
-    if not system_prompt_file.is_file():
-        raise FileNotFoundError(f"System prompt file not found: {system_prompt_file}")
-    raw = system_prompt_file.read_text()
-    expanded = _resolve_imports(raw, base_dir=system_prompt_file.parent)
-    return expanded.rstrip() + "\n\n" + header
+    return assemble_system_prompt(
+        header,
+        resolved_arm=resolve_system_prompt_file(system_prompt_file),
+        project_instructions=project_instructions,
+    )
 
 
 def write_checkpoint(repo_dir: Path, model: str, status: str) -> None:

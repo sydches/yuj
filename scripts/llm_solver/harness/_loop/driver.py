@@ -110,8 +110,10 @@ def solve_task(
         task_prompt = prompt_file.read_text()
 
     start_time = time.time()
-    system_prompt, provenance, context_contract = load_system_prompt_and_provenance(
-        cfg, client, system_prompt_file, profile_path, run_metadata, context_class,
+    (system_prompt, provenance, context_contract,
+     prompt_metadata) = load_system_prompt_and_provenance(
+        cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
+        context_class,
     )
     prev_session: "Session | None" = None
     prev_result: "SessionResult | None" = None
@@ -155,6 +157,7 @@ def solve_task(
         transcript_dir=transcript_dir,
         system_prompt=system_prompt,
         system_prompt_file=system_prompt_file,
+        prompt_metadata=prompt_metadata,
     )
 
     (output_control, universal_rewrites, forbidden_rules, redirect_rules,
@@ -377,6 +380,7 @@ def solve_task(
                 sandbox_backend=env_fields["sandbox_backend"],
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
+                **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
             )

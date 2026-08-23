@@ -441,10 +441,17 @@ task_format = "pytest"     # default task format
 
 [prompts]
 handoff_max_tokens = 2000  # maximum validated model-written handoff size
-# Harness system header. Injected as the system prompt when no
-# --system-prompt file is supplied; otherwise appended to the file's
-# contents. Task-agnostic — names no benchmark, test framework, or
-# tool invocation convention.
+# Repository instruction discovery is an opt-in treatment. When enabled, Yuj
+# reads one non-empty override/default file from the global directory and each
+# directory from the project root to the task cwd, bounded by UTF-8 bytes.
+project_docs_enabled = false
+project_doc_names = ["AGENTS.md", "CLAUDE.md"]
+project_doc_max_bytes = 32768
+project_root_markers = [".git", ".hg", ".sl"]
+project_doc_global_dir = "~/.config/yuj"
+# Harness system header. It follows an optional --system-prompt arm file and
+# optional project-instruction blocks. Task-agnostic — names no benchmark,
+# test framework, or tool invocation convention.
 system_header = """\
 You are a software engineering solver. Work in the current directory. Use tools to read, write, edit, search, and run commands."""
 

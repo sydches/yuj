@@ -364,6 +364,27 @@ def _extract_config_fields(d: dict) -> dict:
         "length_continue_max": d.get("loop", {}).get(
             "length_continue_max", 0
         ),
+        "project_docs_enabled": d.get("prompts", {}).get(
+            "project_docs_enabled", False
+        ),
+        "project_doc_names": _string_tuple(
+            d.get("prompts", {}).get(
+                "project_doc_names", ["AGENTS.md", "CLAUDE.md"]
+            ),
+            path="prompts.project_doc_names",
+        ),
+        "project_doc_max_bytes": d.get("prompts", {}).get(
+            "project_doc_max_bytes", 32768
+        ),
+        "project_root_markers": _string_tuple(
+            d.get("prompts", {}).get(
+                "project_root_markers", [".git", ".hg", ".sl"]
+            ),
+            path="prompts.project_root_markers",
+        ),
+        "project_doc_global_dir": d.get("prompts", {}).get(
+            "project_doc_global_dir", "~/.config/yuj"
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -526,6 +547,25 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
             "config error: loop.length_continue_max must be a non-negative "
             "integer."
         )
+    if not isinstance(cfg.project_docs_enabled, bool):
+        raise ValueError(
+            "config error: prompts.project_docs_enabled must be a boolean."
+        )
+    if not isinstance(cfg.project_doc_global_dir, str):
+        raise ValueError(
+            "config error: prompts.project_doc_global_dir must be a string."
+        )
+    from .harness.project_instructions import (
+        validate_project_instruction_settings,
+    )
+    try:
+        validate_project_instruction_settings(
+            cfg.project_doc_names,
+            cfg.project_doc_max_bytes,
+            cfg.project_root_markers,
+        )
+    except ValueError as exc:
+        raise ValueError(f"config error: prompts.{exc}") from exc
     from .harness.sandbox.container_backend import (
         CONTAINER_RUNTIMES,
         ContainerBackend,

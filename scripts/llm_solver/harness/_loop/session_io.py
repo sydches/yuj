@@ -151,15 +151,16 @@ def _normalize_repo_timestamps(repo_dir: Path) -> None:
 
 
 def _record_session_start_costs(cfg: Config, client, system_prompt: str,
-                                 system_prompt_file: Path | None) -> None:
+                                 system_prompt_file: Path | None,
+                                 prompt_metadata=None) -> None:
     """Record one-time per-task costs on the savings ledger.
 
-    Captures (5 buckets):
+    Captures prompt/tool component buckets:
       system_prompt         — tokens paid by the configured system_header.
       tool_surface          — tokens paid by tool schemas at the active
                               tool_desc mode.
-      protocol_commandments — tokens paid by --system-prompt content
-                              (with_yuj only; zero when no file given).
+      protocol_commandments — tokens paid by resolved --system-prompt content.
+      project_instructions  — tokens paid by resolved project-document blocks.
       profile_behavioral    — tokens paid by the profile's behavioral
                               suffix (probe: run denormalize on a
                               minimal Commandments-tagged message and
@@ -201,8 +202,22 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
     except Exception as e:
         log.debug("Tool-surface cost record skipped: %s", e)
 
-    # Protocol commandments: content of the --system-prompt file, if any.
-    if system_prompt_file is not None and Path(system_prompt_file).is_file():
+    # Protocol commandments: the resolved arm content that was actually
+    # assembled, including legacy @imports. New callers pass metadata so this
+    # path never re-reads a mutable source file after prompt resolution.
+    arm_label = getattr(prompt_metadata, "arm_label", None)
+    arm_chars = getattr(prompt_metadata, "arm_chars", None)
+    if arm_label is not None and arm_chars is not None:
+        ledger.record(
+            bucket="protocol_commandments",
+            layer="L4_protocol",
+            mechanism=arm_label,
+            input_chars=0,
+            output_chars=arm_chars,
+            measure_type="exact",
+            ctx={"path": arm_label},
+        )
+    elif system_prompt_file is not None and Path(system_prompt_file).is_file():
         try:
             commandments_chars = len(Path(system_prompt_file).read_text())
             ledger.record(
@@ -212,10 +227,37 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                 input_chars=0,
                 output_chars=commandments_chars,
                 measure_type="exact",
-                ctx={"path": str(system_prompt_file)},
+                ctx={"path": Path(system_prompt_file).name},
             )
         except OSError as e:
             log.debug("Protocol commandments cost record skipped: %s", e)
+
+    project_chars = int(
+        getattr(prompt_metadata, "project_instruction_chars", 0) or 0
+    )
+    if project_chars:
+        records = tuple(
+            getattr(prompt_metadata, "project_instruction_files", ()) or ()
+        )
+        ledger.record(
+            bucket="project_instructions",
+            layer="L4_protocol",
+            mechanism="repository_instruction_files",
+            input_chars=0,
+            output_chars=project_chars,
+            measure_type="exact",
+            ctx={
+                "files": [str(record.get("path", "")) for record in records],
+                "source_bytes": int(
+                    getattr(prompt_metadata, "project_instruction_bytes", 0) or 0
+                ),
+                "truncated": bool(
+                    getattr(
+                        prompt_metadata, "project_instructions_truncated", False
+                    )
+                ),
+            },
+        )
 
     # Profile behavioral: probe the denormalize pipeline on a minimal
     # system message marked with "Commandments" so any gated behavioral

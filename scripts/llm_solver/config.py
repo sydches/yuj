@@ -236,6 +236,11 @@ class Config:
     tool_desc: str = "minimal"
     interrupted_turn_mode: str = "mechanical"
     length_continue_max: int = 0
+    project_docs_enabled: bool = False
+    project_doc_names: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md")
+    project_doc_max_bytes: int = 32768
+    project_root_markers: tuple[str, ...] = (".git", ".hg", ".sl")
+    project_doc_global_dir: str = "~/.config/yuj"
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"

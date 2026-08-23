@@ -552,6 +552,42 @@ response or request text. Post-run `metrics.length_continuations` counts the
 follow-up requests, while the normal prompt/completion totals include every
 initial and follow-up call.
 
+### Load project instruction files
+
+Repository instruction discovery is an opt-in prompt treatment. The public
+defaults preserve bench parity:
+
+```toml
+[prompts]
+project_docs_enabled = false
+project_doc_names = ["AGENTS.md", "CLAUDE.md"]
+project_doc_max_bytes = 32768
+project_root_markers = [".git", ".hg", ".sl"]
+project_doc_global_dir = "~/.config/yuj"
+```
+
+When enabled, Yuj first considers the global directory, then walks from the
+nearest marked project root down to the task working directory. At each
+location it loads at most one non-empty file. `AGENTS.override.md` has first
+precedence; configured `project_doc_names` are fallbacks in their listed
+order. Empty files are skipped so the next candidate can apply. A blank
+`project_doc_global_dir` disables only the global location.
+
+The final selected chain is capped by `project_doc_max_bytes` measured as
+UTF-8 source bytes; a final document can be clipped only at a valid character
+boundary. Files and directories matched by `[sandbox].unreadable_paths` are
+rejected before any content read, including absolute masks for the global
+directory. Symlinks cannot escape the project or global scope. Each selected
+document is wrapped as `<project-instructions path="...">` using a safe
+project-relative or `global/<name>` label.
+
+Prompt order is the resolved `--system-prompt` arm file, project-instruction
+blocks, then `prompts.system_header`; a model-profile preamble remains
+outermost. The trace records only safe file labels, source byte counts, and
+truncation state. `metrics.json` provenance hashes and counts the complete
+resolved prompt, never its body. Enabling this feature changes model input and
+must be treated as an experimental condition.
+
 ## Apply a small TOML file
 
 Change only the values that you need:

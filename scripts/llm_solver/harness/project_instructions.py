@@ -141,6 +141,22 @@ def _validated_names(names: Iterable[str], *, field: str) -> tuple[str, ...]:
     return tuple(output)
 
 
+def validate_project_instruction_settings(
+    doc_names: Sequence[str],
+    max_bytes: int,
+    root_markers: Sequence[str],
+) -> None:
+    """Validate public settings without touching the filesystem."""
+    _validated_names(doc_names, field="project_doc_names")
+    _validated_names(root_markers, field="project_root_markers")
+    if (
+        isinstance(max_bytes, bool)
+        or not isinstance(max_bytes, int)
+        or max_bytes < 0
+    ):
+        raise ValueError("project_doc_max_bytes must be a non-negative integer")
+
+
 def _walk_root_to_cwd(root: Path, cwd: Path) -> tuple[Path, ...]:
     try:
         relative = cwd.relative_to(root)

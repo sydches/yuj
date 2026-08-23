@@ -17,14 +17,21 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ...config import Config
+from ..._shared.paths import expand_user_path
 from ..._shared.telemetry_paths import ensure_telemetry_dir, trace_path
 from ..context_contract import build_context_contract
 from ..guardrails import build_guardrail_registry
-from ..solver import build_system_prompt, collect_provenance
+from ..project_instructions import discover_project_instructions
+from ..solver import (
+    assemble_system_prompt,
+    collect_provenance,
+    resolve_system_prompt_file,
+)
 from . import (
     _apply_profile_preamble,
     _load_bash_transforms,
@@ -33,6 +40,29 @@ from . import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PromptAssemblyMetadata:
+    """Secret-free metadata for trace and exact prompt-component costing."""
+
+    arm_label: str | None = None
+    arm_chars: int = 0
+    project_instruction_files: tuple[dict[str, object], ...] = ()
+    project_instruction_bytes: int = 0
+    project_instruction_chars: int = 0
+    project_instructions_truncated: bool = False
+
+    def trace_fields(self) -> dict[str, object]:
+        return {
+            "project_instruction_files": [
+                dict(record) for record in self.project_instruction_files
+            ],
+            "project_instruction_bytes": self.project_instruction_bytes,
+            "project_instructions_truncated": (
+                self.project_instructions_truncated
+            ),
+        }
 
 
 def resolve_run_paths(
@@ -60,12 +90,13 @@ def setup_run_outputs(
     transcript_dir: Path | None,
     system_prompt: str,
     system_prompt_file: Path | None,
+    prompt_metadata: PromptAssemblyMetadata,
 ) -> None:
     """Open the correct output files without placing assistant state in the repo."""
     if not assistant_artifacts:
         setup_savings_and_transcript(
             cfg, client, work_dir, savings_dir, transcript_dir,
-            system_prompt, system_prompt_file,
+            system_prompt, system_prompt_file, prompt_metadata,
         )
         return
 
@@ -73,7 +104,9 @@ def setup_run_outputs(
     from ..system_log import open_system_log
     open_ledger(artifact_dir / "savings.jsonl")
     open_system_log(artifact_dir / "system_log.jsonl").set_task(work_dir.name)
-    _record_session_start_costs(cfg, client, system_prompt, system_prompt_file)
+    _record_session_start_costs(
+        cfg, client, system_prompt, system_prompt_file, prompt_metadata
+    )
     if hasattr(client, "set_transcript"):
         client.set_transcript(artifact_dir / "transcript.log")
 
@@ -81,19 +114,64 @@ def setup_run_outputs(
 def load_system_prompt_and_provenance(
     cfg: Config,
     client,
+    work_dir: Path,
     system_prompt_file: Path | None,
     profile_path: Path | None,
     run_metadata: dict | None,
     context_class,
-) -> tuple[str, dict, dict]:
+) -> tuple[str, dict, dict, PromptAssemblyMetadata]:
     """Build system_prompt, provenance, and context_contract.
 
-    Returns (system_prompt, provenance, context_contract). The provenance
-    dict is mutated in place with variant_name + prompt_addendum if the
-    config sets them.
+    Returns the system prompt, provenance, context contract, and safe prompt
+    component metadata. The provenance dict is mutated in place with
+    variant_name + prompt_addendum if the config sets them.
     """
+    resolved_arm = resolve_system_prompt_file(system_prompt_file)
+    project_content = ""
+    project_records: tuple[dict[str, object], ...] = ()
+    project_bytes = 0
+    project_truncated = False
+    if cfg.project_docs_enabled:
+        global_dir = (
+            expand_user_path(cfg.project_doc_global_dir)
+            if cfg.project_doc_global_dir.strip()
+            else None
+        )
+        project = discover_project_instructions(
+            work_dir,
+            global_dir=global_dir,
+            doc_names=cfg.project_doc_names,
+            max_bytes=cfg.project_doc_max_bytes,
+            root_markers=cfg.project_root_markers,
+            unreadable_paths=cfg.unreadable_paths,
+        )
+        project_content = project.content
+        project_records = tuple(project.trace_records())
+        project_bytes = project.document_bytes
+        project_truncated = project.truncated
+        for diagnostic in project.diagnostics:
+            log.warning(
+                "project_instruction_read: path=%s kind=%s message=%s",
+                diagnostic.path,
+                diagnostic.error_kind,
+                diagnostic.message,
+            )
+    prompt_metadata = PromptAssemblyMetadata(
+        arm_label=(
+            system_prompt_file.name if system_prompt_file is not None else None
+        ),
+        arm_chars=len(resolved_arm.rstrip()) if resolved_arm is not None else 0,
+        project_instruction_files=project_records,
+        project_instruction_bytes=project_bytes,
+        project_instruction_chars=len(project_content),
+        project_instructions_truncated=project_truncated,
+    )
     system_prompt = _apply_profile_preamble(
-        build_system_prompt(cfg.system_header, system_prompt_file),
+        assemble_system_prompt(
+            cfg.system_header,
+            resolved_arm=resolved_arm,
+            project_instructions=project_content,
+        ),
         client,
     )
     # Pass the resolved system prompt so its sha256 lands in provenance.
@@ -111,7 +189,7 @@ def load_system_prompt_and_provenance(
     if cfg.variant_name:
         provenance["variant_name"] = cfg.variant_name
         provenance["prompt_addendum"] = cfg.prompt_addendum
-    return system_prompt, provenance, context_contract
+    return system_prompt, provenance, context_contract, prompt_metadata
 
 
 def thinking_trace_fields(cfg: Config, client) -> dict[str, object]:
@@ -130,6 +208,7 @@ def setup_savings_and_transcript(
     transcript_dir: Path | None,
     system_prompt: str,
     system_prompt_file: Path | None,
+    prompt_metadata: PromptAssemblyMetadata,
 ) -> None:
     """Open savings ledger, set client transcript, record session-start costs.
 
@@ -155,7 +234,9 @@ def setup_savings_and_transcript(
     # attributable.
     from ..system_log import open_system_log
     open_system_log(_savings_dir.parent / "system_log.jsonl").set_task(repo_dir.name)
-    _record_session_start_costs(cfg, client, system_prompt, system_prompt_file)
+    _record_session_start_costs(
+        cfg, client, system_prompt, system_prompt_file, prompt_metadata
+    )
 
     # Keep one transcript of every HTTP exchange for the task. Write it
     # outside repo_dir so sandbox searches cannot read it. Keep the counter
