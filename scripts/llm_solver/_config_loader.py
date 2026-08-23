@@ -274,6 +274,8 @@ def _extract_config_fields(d: dict) -> dict:
         "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
         "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
         "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
+        "handoff_summary_enabled": d.get("loop", {}).get("handoff_summary_enabled", False),
+        "handoff_max_tokens": d.get("prompts", {}).get("handoff_max_tokens", 2000),
         "edit_strict_match": d.get("tools", {}).get("edit_strict_match", True),
         "edit_fuzzy_cascade_enabled": d.get("tools", {}).get("edit_fuzzy_cascade_enabled", False),
         "edit_candidate_count": d.get("tools", {}).get("edit_candidate_count", 3),
@@ -423,6 +425,11 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     if cfg.checkpoint_max_summary_tokens <= 0:
         raise ValueError(
             "config error: context.checkpoint_max_summary_tokens must be positive."
+        )
+    if cfg.handoff_summary_enabled and cfg.handoff_max_tokens <= 0:
+        raise ValueError(
+            "config error: prompts.handoff_max_tokens must be positive when "
+            "loop.handoff_summary_enabled is true."
         )
     if (cfg.bash_transforms_structured_output_enabled
             and not cfg.bash_transforms_task_format_enabled):

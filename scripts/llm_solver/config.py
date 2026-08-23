@@ -417,6 +417,11 @@ class Config:
     compaction_method: str = "digest"
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
+    # Optional model-written fresh-session handoff. The existing mechanical
+    # resume prompt remains the exact fallback whenever this is disabled or
+    # the side request fails validation.
+    handoff_summary_enabled: bool = False
+    handoff_max_tokens: int = 2000
     # edit() match policy. Strict is the default (database-of-
     # primitives principle: no silent relaxation). Cascade restores
     # the optional auto-apply behavior.

@@ -68,6 +68,7 @@ tokenizer_id = ""            # optional Hugging Face tokenizer ID or local path;
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
+handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
 duplicate_abort = 3         # abort session after N identical consecutive tool calls
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
 retry_backoff = [10]        # seconds between retries (index = attempt number)
@@ -385,6 +386,7 @@ task_format = "pytest"     # default task format
 # ---------------------------------------------------------------------------
 
 [prompts]
+handoff_max_tokens = 2000  # maximum validated model-written handoff size
 # Harness system header. Injected as the system prompt when no
 # --system-prompt file is supplied; otherwise appended to the file's
 # contents. Task-agnostic — names no benchmark, test framework, or

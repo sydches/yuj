@@ -95,6 +95,8 @@ order in the
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
+| `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
+| `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the requested `bwrap` sandbox. |
@@ -185,6 +187,21 @@ Yuj records only compaction metadata in the trace and state projection; it
 does not copy model-written checkpoint text into `.solver/state.json`. If two
 compactions occur within `digest_keep_recent_turns`, later compactions in that
 run segment use digest to avoid a compaction loop.
+
+### Summarize work for a fresh session
+
+Set `[loop].handoff_summary_enabled = true` to make one no-tool side request
+when a session ends because of `context_full`, `length`, or `max_turns` and
+another session is available. `[prompts].handoff_max_tokens` defaults to
+`2000` and limits the returned summary. Thinking is off for this request.
+
+Yuj validates the seven required sections, the response size, and coverage of
+every modified path found in the raw trace. A valid `<handoff>` is placed after
+the task statement and before the existing mechanical resume tail. A missing
+section, omitted path, oversized response, request failure, or model failure
+leaves that mechanical prompt byte-for-byte unchanged. The trace records only
+the attempt's token count, validity, fallback, and model role; model-written
+handoff text is not copied into `.solver/state.json`.
 
 ## Apply a small TOML file
 
