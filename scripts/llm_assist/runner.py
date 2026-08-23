@@ -17,6 +17,7 @@ from ..llm_solver.config import (
 )
 from ..llm_solver.harness import TaskSpec, solve_task
 from ..llm_solver.harness.context_strategies import resolve_context_class
+from ..llm_solver.harness._loop.model_role_runtime import build_model_role_runtime
 from ..llm_solver.harness.loop import _load_trace_events
 from ..llm_solver.models import resolve_model
 from ..llm_solver.server import LlamaClient, load_profile
@@ -103,8 +104,16 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
 
     profile = _load_profile(cfg)
     client = _make_client(cfg, profile)
+    if hasattr(client, "set_session_id"):
+        client.set_session_id(record.session_id)
     cfg = _apply_effective_context(cfg, client)
     client.cfg = cfg
+    build_model_role_runtime(
+        cfg=cfg,
+        main_client=client,
+        profiles_dir=PROJECT_ROOT / "profiles",
+        client_factory=_make_client,
+    )
 
     prompt_text = record.prompt_text
     if resume:
@@ -298,7 +307,8 @@ def session_turn_tail(artifact_dir: Path, *, limit: int = 5) -> list[str]:
 
 def session_compact_summary(artifact_dir: Path) -> dict[str, object]:
     """Return a compact operator summary derived from trace events."""
-    events = _load_trace_events(Path(artifact_dir) / ".trace.jsonl")
+    artifact_dir = Path(artifact_dir)
+    events = _load_trace_events(artifact_dir / ".trace.jsonl")
     changed_files: list[str] = []
     changed_seen: set[str] = set()
     last_test_cmd: str | None = None
@@ -330,11 +340,24 @@ def session_compact_summary(artifact_dir: Path) -> dict[str, object]:
                 last_test_cmd = cmd
                 last_test_result = _classify_test_outcome(result_summary)
 
+    cache_metrics: dict = {}
+    try:
+        metrics_payload = json.loads((artifact_dir / "metrics.json").read_text())
+        candidate = metrics_payload.get("metrics", {}).get("prompt_cache", {})
+        if isinstance(candidate, dict):
+            cache_metrics = candidate
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+
     return {
         "changed_files": changed_files,
         "last_test_cmd": last_test_cmd,
         "last_test_result": last_test_result or "unknown",
         "finish_reason": finish_reason,
+        "cache_metrics_present": bool(cache_metrics),
+        "cache_hit_ratio": cache_metrics.get("cache_hit_ratio"),
+        "cache_requests_observed": cache_metrics.get("requests_observed", 0),
+        "cache_requests_unobserved": cache_metrics.get("requests_unobserved", 0),
     }
 
 

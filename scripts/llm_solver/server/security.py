@@ -72,11 +72,21 @@ def validate_file(path: Path) -> list[str]:
 
 
 def validate_profile(profile_dir: Path) -> list[str]:
-    """Validate all .py files in a profile directory. Returns list of violations."""
+    """Validate profile Python and resolved TOML semantics."""
     violations: list[str] = []
     for py_file in sorted(profile_dir.rglob("*.py")):
         # Skip __pycache__ and fixtures
         if "__pycache__" in py_file.parts:
             continue
         violations.extend(validate_file(py_file))
+    if not violations:
+        try:
+            from .profile_loader import load_profile
+
+            load_profile(profile_dir.name, profile_dir.parent)
+        except Exception as exc:  # noqa: BLE001 - validator reports all schema errors
+            violations.append(
+                f"{profile_dir / 'profile.toml'}: invalid profile: "
+                f"{type(exc).__name__}: {exc}"
+            )
     return violations

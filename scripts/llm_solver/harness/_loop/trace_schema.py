@@ -39,8 +39,53 @@ class TraceEventSpec:
 
 
 TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
-    TraceEventSpec("session_start", frozenset({"session_number"})),
+    TraceEventSpec(
+        "session_start", frozenset({"session_number", "thinking_level"})
+    ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
+    TraceEventSpec(
+        "compaction",
+        frozenset({
+            "session_number",
+            "turn_number",
+            "tokens_before",
+            "tokens_after",
+            "first_kept_turn",
+            "method",
+            "fallback",
+            "role",
+        }),
+    ),
+    TraceEventSpec(
+        "handoff",
+        frozenset({
+            "session_number", "tokens", "valid", "fallback", "role",
+        }),
+    ),
+    TraceEventSpec(
+        "turn",
+        frozenset({
+            "session_number", "turn_number", "role", "prompt_tokens",
+            "cached_tokens", "cache_hit_ratio",
+        }),
+    ),
+    TraceEventSpec(
+        "model_fallback",
+        frozenset({
+            "session_number",
+            "turn_number",
+            "role",
+            "from",
+            "to",
+            "reason",
+            "from_profile",
+            "to_profile",
+            "from_model",
+            "to_model",
+            "from_context_size",
+            "to_context_size",
+        }),
+    ),
     TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),

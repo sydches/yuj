@@ -10,8 +10,20 @@
 # schemas) belong here.
 
 # ---------------------------------------------------------------------------
-# Model aliases — short names → full model identifiers
+# Model roles and aliases
 # ---------------------------------------------------------------------------
+
+[models]
+fallback_revert = "never"  # "never" keeps a fallback active; "next_session" returns to the primary target
+
+[models.roles]
+weak = ""    # optional profile name or inline target for summaries/classifiers; empty uses the main model
+editor = ""  # optional profile name or inline target for edit-focused side work; empty uses the main model
+
+[models.fallback_chain]
+main = []    # opt-in entries use "<profile>@<endpoint>" or an inline target
+weak = []
+editor = []
 
 [models.aliases]
 # Local models (llm_solver via llama-server)
@@ -57,6 +69,10 @@ health_poll_interval = 2               # seconds between /health polls during la
 health_timeout = 2                     # per-attempt socket timeout for /health probe
 launch_timeout = 120                   # seconds to wait for server to become healthy on launch
 stop_settle = 2                        # seconds to wait after killing server processes
+request_extra = {}                     # llama-server JSON body fields passed through OpenAI SDK extra_body
+cache_affinity = false                 # false/0 disables; true pins to slot 0; positive integer hashes sessions across that many slots
+cache_retention = "off"                # "off" | "session"; session enables cache_prompt on normal turns
+cache_miss_warn_ratio = 0.0            # warn after the first turn below this hit ratio; 0 disables warnings
 
 [model]
 name = "qwen3-vl-8b"       # model identifier sent to the server; must match --model or alias
@@ -64,10 +80,12 @@ context_size = 40960        # FALLBACK ONLY. The harness queries llama-server's 
 context_fill_ratio = 0.95   # fail-safe upper bound for end-of-turn pt vs context_size. With server-reported pt now driving the gate (no chars/4 undershoot), 0.95 leaves a small margin to avoid 400 errors. Primary mechanism is digest compaction in Session._maybe_compact_messages, which fires at 0.85 — well below this fail-safe.
 max_tokens_fraction = 0.25  # generation cap as a fraction of context_size. At ctx=65,536 → max_tokens=16,384 (preserves prior default). Scales correctly when context_size changes — a 32k server gets 8k generation cap, a 128k server gets 32k. Replaces the hardcoded max_tokens=16384 which was wrong-shape at any ctx ≠ 65,536.
 tokenizer_id = ""            # optional Hugging Face tokenizer ID or local path; empty uses the character-count estimate. Runtime files set this for exact experiment runs.
+thinking_level = "off"        # off | minimal | low | medium | high | xhigh | max; profile mapping is applied per request
 
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
+handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
 duplicate_abort = 3         # abort session after N identical consecutive tool calls
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
 retry_backoff = [10]        # seconds between retries (index = attempt number)
@@ -197,7 +215,12 @@ pretest_head_chars = 2000
 pretest_tail_chars = 1500
 
 [context]
-# Digest-compaction settings.
+# Context-compaction settings. Digest is the compatibility-safe default and
+# performs no model side request. Checkpoint asks the active model for a
+# structured summary and mechanically falls back to digest on any failure.
+compaction_method = "digest"            # "digest" | "checkpoint"
+checkpoint_keep_recent_tokens = 0       # 0 = max(4096, floor(20% of live context))
+checkpoint_max_summary_tokens = 4000    # hard-capped at 4000 by the runtime
 # The compaction threshold is derived, not configured directly:
 #     threshold = (1 - model.max_tokens_fraction) - digest_compaction_safety_margin
 # At max_tokens_fraction=0.25 + safety_margin=0.05 → threshold=0.70.
@@ -380,6 +403,7 @@ task_format = "pytest"     # default task format
 # ---------------------------------------------------------------------------
 
 [prompts]
+handoff_max_tokens = 2000  # maximum validated model-written handoff size
 # Harness system header. Injected as the system prompt when no
 # --system-prompt file is supplied; otherwise appended to the file's
 # contents. Task-agnostic — names no benchmark, test framework, or

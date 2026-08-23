@@ -414,6 +414,26 @@ class Config:
     digest_compaction_safety_margin: float = 0.05
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
+    compaction_method: str = "digest"
+    checkpoint_keep_recent_tokens: int = 0
+    checkpoint_max_summary_tokens: int = 4000
+    # Optional model-written fresh-session handoff. The existing mechanical
+    # resume prompt remains the exact fallback whenever this is disabled or
+    # the side request fails validation.
+    handoff_summary_enabled: bool = False
+    handoff_max_tokens: int = 2000
+    # OpenAI-compatible llama-server request controls. Custom fields are
+    # transported under SDK extra_body; cache policy is merged last.
+    server_request_extra: dict[str, object] = field(default_factory=dict)
+    cache_affinity: bool | int = False
+    cache_retention: str = "off"
+    cache_miss_warn_ratio: float = 0.0
+    thinking_level: str = "off"
+    model_roles: dict[str, object] = field(default_factory=dict)
+    model_fallback_chain: dict[str, object] | list[object] = field(
+        default_factory=dict
+    )
+    model_fallback_revert: str = "never"
     # edit() match policy. Strict is the default (database-of-
     # primitives principle: no silent relaxation). Cascade restores
     # the optional auto-apply behavior.
@@ -680,6 +700,22 @@ def dump_config(cfg: Config) -> dict:
     """Return a serializable snapshot of a resolved Config for run metadata."""
     from dataclasses import asdict
     d = asdict(cfg)
+
+    def _redact_target_keys(value):
+        if isinstance(value, dict):
+            return {
+                key: ("<redacted>" if key == "api_key" else _redact_target_keys(child))
+                for key, child in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [_redact_target_keys(child) for child in value]
+        return value
+
+    # Role/fallback targets may carry endpoint-local credentials. They are
+    # needed at runtime but never belong in metrics provenance or config hashes.
+    d["api_key"] = "<redacted>"
+    d["model_roles"] = _redact_target_keys(d["model_roles"])
+    d["model_fallback_chain"] = _redact_target_keys(d["model_fallback_chain"])
     # retry_backoff is a tuple; convert for JSON
     d["retry_backoff"] = list(cfg.retry_backoff)
     return d

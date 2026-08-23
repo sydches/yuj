@@ -475,6 +475,18 @@ def project(events: list[dict], *, max_result_chars: int,
             sn = ev.get("session_number")
             turns = ev.get("turns") or 0
             state["last_verify"] = f"session {sn} ended: {fr} after {turns} turns"
+        elif et == "compaction":
+            # Mechanical trace projection only. The model-authored summary
+            # stays in the conversation and is never copied into state.json.
+            state["last_compaction"] = {
+                "session_number": ev.get("session_number"),
+                "turn_number": ev.get("turn_number"),
+                "tokens_before": ev.get("tokens_before"),
+                "tokens_after": ev.get("tokens_after"),
+                "first_kept_turn": ev.get("first_kept_turn"),
+                "method": ev.get("method"),
+                "fallback": ev.get("fallback"),
+            }
         # session_start: no state mutation.
 
     state.setdefault("current_attempt", "")

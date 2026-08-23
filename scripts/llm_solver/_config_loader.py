@@ -43,6 +43,10 @@ def _extract_config_fields(d: dict) -> dict:
         "health_timeout": _require(d, "server", "health_timeout"),
         "launch_timeout": _require(d, "server", "launch_timeout"),
         "stop_settle": _require(d, "server", "stop_settle"),
+        "server_request_extra": dict(d.get("server", {}).get("request_extra", {})),
+        "cache_affinity": d.get("server", {}).get("cache_affinity", False),
+        "cache_retention": d.get("server", {}).get("cache_retention", "off"),
+        "cache_miss_warn_ratio": d.get("server", {}).get("cache_miss_warn_ratio", 0.0),
         "model": _require(d, "model", "name"),
         "profile_name": d.get("model", {}).get("profile_name", ""),
         "context_size": _require(d, "model", "context_size"),
@@ -57,6 +61,12 @@ def _extract_config_fields(d: dict) -> dict:
         # once and uses it for exact token counts in
         # _maybe_compact_messages. Empty string falls back to chars_div_4.
         "tokenizer_id": d.get("model", {}).get("tokenizer_id", ""),
+        "thinking_level": d.get("model", {}).get("thinking_level", "off"),
+        "model_roles": dict(d.get("models", {}).get("roles", {})),
+        "model_fallback_chain": d.get("models", {}).get("fallback_chain", {}),
+        "model_fallback_revert": d.get("models", {}).get(
+            "fallback_revert", "never"
+        ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
         "duplicate_abort": _require(d, "loop", "duplicate_abort"),
@@ -271,6 +281,11 @@ def _extract_config_fields(d: dict) -> dict:
         "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
+        "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
+        "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
+        "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
+        "handoff_summary_enabled": d.get("loop", {}).get("handoff_summary_enabled", False),
+        "handoff_max_tokens": d.get("prompts", {}).get("handoff_max_tokens", 2000),
         "edit_strict_match": d.get("tools", {}).get("edit_strict_match", True),
         "edit_fuzzy_cascade_enabled": d.get("tools", {}).get("edit_fuzzy_cascade_enabled", False),
         "edit_candidate_count": d.get("tools", {}).get("edit_candidate_count", 3),
@@ -407,6 +422,48 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         falls back to the heuristic otherwise; a warning makes the
         silent downgrade visible.
     """
+    from .server.request_controls import (
+        normalize_cache_affinity,
+        normalize_cache_retention,
+        normalize_thinking_level,
+        validate_cache_miss_warn_ratio,
+        validate_request_extra,
+    )
+
+    validate_request_extra(
+        cfg.server_request_extra, path="server.request_extra"
+    )
+    normalize_cache_affinity(cfg.cache_affinity)
+    normalize_cache_retention(cfg.cache_retention)
+    validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
+    normalize_thinking_level(cfg.thinking_level)
+    from .harness._loop.model_roles import (
+        normalize_fallback_revert,
+        validate_fallback_chains,
+        validate_role_specs,
+    )
+    validate_role_specs(cfg.model_roles)
+    validate_fallback_chains(cfg.model_fallback_chain)
+    normalize_fallback_revert(cfg.model_fallback_revert)
+    if cfg.compaction_method not in {"digest", "checkpoint"}:
+        raise ValueError(
+            "config error: context.compaction_method must be 'digest' or "
+            f"'checkpoint', got {cfg.compaction_method!r}."
+        )
+    if cfg.checkpoint_keep_recent_tokens < 0:
+        raise ValueError(
+            "config error: context.checkpoint_keep_recent_tokens must be "
+            "zero (auto) or a positive integer."
+        )
+    if cfg.checkpoint_max_summary_tokens <= 0:
+        raise ValueError(
+            "config error: context.checkpoint_max_summary_tokens must be positive."
+        )
+    if cfg.handoff_summary_enabled and cfg.handoff_max_tokens <= 0:
+        raise ValueError(
+            "config error: prompts.handoff_max_tokens must be positive when "
+            "loop.handoff_summary_enabled is true."
+        )
     if (cfg.bash_transforms_structured_output_enabled
             and not cfg.bash_transforms_task_format_enabled):
         raise ValueError(

@@ -34,6 +34,12 @@ THINKING_LEVELS: tuple[str, ...] = (
 # requested non-off effort maps to the profile's generic ``on`` body.
 PROFILE_THINKING_LEVELS: frozenset[str] = frozenset((*THINKING_LEVELS, "on"))
 
+DEFAULT_REASONING_LEVELS: dict[str, dict[str, object]] = {
+    "off": {"chat_template_kwargs": {"enable_thinking": False}},
+    "on": {"chat_template_kwargs": {"enable_thinking": True}},
+}
+"""Boolean fallback for the supported legacy/no-profile request path."""
+
 CACHE_RETENTION_LEVELS: tuple[str, ...] = ("off", "session")
 """llama-server cache-retention modes supported by the request layer."""
 
@@ -408,6 +414,42 @@ def resolve_cache_request(
     )
 
 
+def apply_request_controls(
+    payload: Mapping[str, object],
+    *,
+    session_id: str,
+    server_request_extra: Mapping[str, object],
+    cache_affinity: object,
+    cache_retention: str,
+    side_request: bool,
+    policy_extra: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    """Merge configured/per-request extras with cache policy last."""
+    cache = resolve_cache_request(
+        session_id=session_id,
+        cache_affinity=cache_affinity,
+        cache_retention=cache_retention,
+        side_request=side_request,
+    )
+    request = copy.deepcopy(dict(payload))
+    existing = dict(request.get("extra_body") or {})
+    configured = dict(server_request_extra or {})
+    # Cache fields are policy-owned. Removing earlier copies also guarantees
+    # that a side request cannot retain an id_slot merely because the final
+    # side policy intentionally omits it.
+    for field in ("cache_prompt", "id_slot"):
+        existing.pop(field, None)
+        configured.pop(field, None)
+    if existing or "extra_body" in request:
+        request["extra_body"] = existing
+    merged = merge_request_extra(
+        configured,
+        policy_extra,
+        cache.request_extra,
+    )
+    return attach_request_extra(request, merged)
+
+
 def validate_cache_miss_warn_ratio(value: object) -> float:
     """Validate a cache-hit ratio threshold in the closed interval [0, 1]."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -500,6 +542,26 @@ def extract_cache_observation(response: object) -> CacheObservation | None:
         cached_tokens=cached,
         hit_ratio=hit_ratio,
         source="+".join(source_parts) or "unknown",
+    )
+
+
+def usage_from_response(response: object):
+    """Return canonical Usage with additive cache telemetry."""
+    from .types import Usage
+
+    usage = getattr(response, "usage", None)
+    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    observation = extract_cache_observation(response)
+    if observation is None:
+        return Usage(
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=completion_tokens,
+        )
+    return Usage(
+        prompt_tokens=observation.prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_tokens=observation.cached_tokens,
+        cache_hit_ratio=observation.hit_ratio,
     )
 
 

@@ -276,6 +276,9 @@ def _build_run_metadata(
 
     meta: dict = {
         "run_metadata_schema_version": 1,
+        "session_id": hashlib.sha256(
+            f"{run_dir.resolve()}\0{started_at}".encode("utf-8")
+        ).hexdigest()[:32],
         "started_at": started_at,
         "session_started_at": started_at,
         "run_dir": str(run_dir),

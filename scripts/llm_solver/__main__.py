@@ -13,8 +13,13 @@ from .harness.context_strategies import (
     list_context_modes,
     resolve_context_class,
 )
+from .harness._loop.model_role_runtime import (
+    build_model_role_runtime,
+    validate_model_role_profiles,
+)
 from .models import resolve_model
 from .server import LlamaClient, load_profile
+from .server.request_controls import THINKING_LEVELS
 
 # Helpers extracted to keep this file under the 500-line cap.
 from ._main_helpers import (
@@ -49,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
         help="directory for run-level records; multi-task mode reads RUN_DIR/repos",
     )
     parser.add_argument("--model", "-m", help="model ID or known short name")
+    parser.add_argument(
+        "--thinking", choices=THINKING_LEVELS,
+        help="per-request reasoning effort",
+    )
     parser.add_argument("--port", "-p", type=int, help="use this model-server port")
     parser.add_argument("--config", "-c", type=Path, action="append", default=[],
                         help="TOML settings file; repeat to apply more files; later values win")
@@ -146,9 +155,9 @@ def main(argv: list[str] | None = None) -> int:
     _replay_prov = None
     if args.replay_from is not None:
         from .server.replay_client import load_replay_provenance
-        if args.config or args.model:
+        if args.config or args.model or args.thinking is not None:
             parser.error("--replay-from adopts the recording's config; "
-                         "--config/--model are not allowed in replay mode")
+                         "--config/--model/--thinking are not allowed in replay mode")
         try:
             _replay_prov = load_replay_provenance(args.replay_from)
         except (OSError, ValueError) as e:
@@ -172,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     overrides: dict = {}
     if args.model:
         overrides["model"] = resolve_model(args.model)
+    if args.thinking is not None:
+        overrides["thinking_level"] = args.thinking
     if args.port:
         # Reuse scheme+host from [server] base_url; only the port changes.
         from urllib.parse import urlparse, urlunparse
@@ -233,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Loaded profile: %s (inherits=%s)", profile.name, profile.inherits)
         except FileNotFoundError:
             log.info("No profile found for '%s', using legacy mode", profile_key)
+    validate_model_role_profiles(
+        cfg=cfg, main_profile=profile, profiles_dir=profiles_dir,
+    )
 
     try:
         run_metadata = _build_run_metadata(
@@ -289,6 +303,10 @@ def main(argv: list[str] | None = None) -> int:
                  not args.replay_allow_divergence, args.replay_continue_live)
     else:
         client = _build_client(cfg, profile)
+    if hasattr(client, "set_session_id"):
+        client.set_session_id(
+            str(run_metadata.get("session_id") or f"{run_dir.resolve()}:{started_at}")
+        )
     server_metadata_path: Path | None = None
     server_metadata_sha256: str | None = None
     try:
@@ -360,6 +378,15 @@ def main(argv: list[str] | None = None) -> int:
     # max_tokens=0 from _extract_config_fields. Without this re-bind, a
     # request can still use the placeholder after Yuj derives the real value.
     client.cfg = cfg
+    if args.replay_from is None:
+        build_model_role_runtime(
+            cfg=cfg,
+            main_client=client,
+            profiles_dir=profiles_dir,
+            client_factory=lambda role_cfg, role_profile: LlamaClient(
+                role_cfg, profile=role_profile
+            ),
+        )
 
     try:
         run_metadata = _build_run_metadata(

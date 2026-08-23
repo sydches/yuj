@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import resolve_project_path
+from .._loop.model_role_runtime import consumer_role_client, record_role_usage
 from .llm_detector_apply import _maybe_apply_detector_intervention, _pending_watch
 from .llm_detector_core import (
     PROMPT_VERSION,
@@ -68,6 +69,7 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
 
     messages = render_detector_messages(packet)
     raw_response = ""
+    routed = None
     backend = str(getattr(cfg, "llm_hurdle_detector_backend", "llm") or "llm")
     try:
         if backend == "trace_nets":
@@ -76,10 +78,26 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
             verdict = evaluate_trace_nets(session, int(turn))
             raw_response = "trace_nets_backend"
         else:
-            result = session.client.chat(messages, [], turn=int(turn))
-            if getattr(result, "tool_calls", None):
-                raise ValueError("detector returned tool calls despite no tools being provided")
-            raw_response = str(getattr(result, "content", "") or "")
+            routed = consumer_role_client(session, "weak")
+            if routed.resolution is None:
+                # Preserve the injectable legacy test/replay client contract.
+                result = routed.client.chat(messages, [], turn=int(turn))
+                if getattr(result, "tool_calls", None):
+                    raise ValueError(
+                        "detector returned tool calls despite no tools being provided"
+                    )
+                raw_response = str(getattr(result, "content", "") or "")
+            else:
+                role_cfg = getattr(routed.client, "cfg", cfg)
+                response = routed.client.complete_side_request({
+                    "model": getattr(role_cfg, "model", cfg.model),
+                    "messages": messages,
+                    "max_tokens": max(
+                        1, int(getattr(role_cfg, "max_tokens", 1024) or 1024)
+                    ),
+                })
+                record_role_usage(session, routed, response.usage)
+                raw_response = response.content
             verdict = parse_detector_verdict(raw_response)
         row = build_detector_log_row(
             packet=packet,
@@ -110,6 +128,8 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
             verdict=verdict,
         )
         row["detector_error"] = f"{type(exc).__name__}: {exc}"
+    if routed is not None:
+        row.update(routed.trace_fields())
     _maybe_apply_detector_intervention(session, int(turn), verdict, row)
     append_detector_log(log_path, row)
     return row

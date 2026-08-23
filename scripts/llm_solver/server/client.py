@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from .profile_loader import Profile
 
 from ._streaming import assemble_stream
-from .types import ToolCall
+from . import request_controls
+from .types import SideRequestResult, ToolCall
 
 
 def _streaming_enabled() -> bool:
@@ -72,11 +73,56 @@ class LlamaClient:
         # Write the verbatim transcript at the HTTP boundary.
         # Set per task via set_transcript(); each HTTP call is one input/output
         # pair tagged only with a monotonic call counter and direction.
-        # File handle held for the task lifetime to avoid 4 syscalls/turn
-        # (2x open + close for input + output) — close_transcript() releases it.
+        # Held for the task lifetime to avoid 4 syscalls/turn; close_transcript releases it.
         self._transcript_path: Path | None = None
         self._transcript_file = None
         self._transcript_call_n: int = 0
+        self._session_id: str = ""
+        self._thinking_resolution = None
+        self._thinking_signature = None
+        _ = self.thinking_resolution
+
+    @property
+    def thinking_resolution(self):
+        requested = getattr(self.cfg, "thinking_level", "off")
+        signature = (requested, id(self.profile))
+        if getattr(self, "_thinking_signature", None) != signature:
+            levels = getattr(self.profile, "reasoning_levels", None)
+            self._thinking_resolution = request_controls.resolve_thinking_level(
+                requested, levels or request_controls.DEFAULT_REASONING_LEVELS
+            )
+            self._thinking_signature = signature
+        return self._thinking_resolution
+
+    def set_session_id(self, session_id: str) -> None:
+        """Bind subsequent requests to one stable product session identity."""
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("session_id must be a non-empty string")
+        self._session_id = session_id
+
+    def _attach_request_controls(
+        self,
+        payload: dict,
+        *,
+        side_request: bool,
+        policy_extra: dict | None = None,
+    ) -> dict:
+        """Apply configured extras and final llama cache policy."""
+        if side_request:
+            policy_extra = {"chat_template_kwargs": {"enable_thinking": False}}
+        elif policy_extra is None:
+            policy_extra = dict(self.thinking_resolution.request_extra)
+        return request_controls.apply_request_controls(
+            payload,
+            session_id=getattr(self, "_session_id", ""),
+            server_request_extra=getattr(
+                self.cfg, "server_request_extra", {}
+            ) or {},
+            cache_affinity=getattr(self.cfg, "cache_affinity", False),
+            cache_retention=getattr(self.cfg, "cache_retention", "off"),
+            side_request=side_request,
+            policy_extra=policy_extra,
+        )
 
     def set_transcript(self, path: Path | None, append: bool = False) -> None:
         """Enable verbatim transcript at `path`. Truncates and resets counter.
@@ -117,7 +163,7 @@ class LlamaClient:
             self._transcript_file.write("\n")
         self._transcript_file.flush()
 
-    def _call_api(self, payload: dict):
+    def _call_api(self, payload: dict, *, record_transcript: bool = True):
         """Send one HTTP request and save its payload and response.
 
         Routes to streaming when YUJ_STREAMING is on. The
@@ -128,12 +174,14 @@ class LlamaClient:
         and are classified by chat_with_retry's _TRANSIENT_ERRORS
         tuple. See server/_streaming.py for the assembly contract.
         """
-        self._transcript_call_n += 1
-        n = self._transcript_call_n
-        self._write_transcript(
-            f"turn {n:03d} input",
-            json.dumps(payload, default=str),
-        )
+        n = 0
+        if record_transcript:
+            self._transcript_call_n += 1
+            n = self._transcript_call_n
+            self._write_transcript(
+                f"turn {n:03d} input",
+                json.dumps(payload, default=str),
+            )
         if _streaming_enabled():
             stream_payload = dict(payload)
             stream_payload["stream"] = True
@@ -146,26 +194,60 @@ class LlamaClient:
                 stream = self.client.chat.completions.create(**stream_payload)
                 resp = assemble_stream(stream)
             except Exception as e:
-                self._write_transcript(
-                    f"turn {n:03d} output (stream error)",
-                    f"{type(e).__name__}: {e}",
-                )
+                if record_transcript:
+                    self._write_transcript(
+                        f"turn {n:03d} output (stream error)",
+                        f"{type(e).__name__}: {e}",
+                    )
                 raise
-            self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
+            if record_transcript:
+                self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
             return resp
         try:
             resp = self.client.chat.completions.create(**payload)
         except Exception as e:
-            self._write_transcript(
-                f"turn {n:03d} output", f"{type(e).__name__}: {e}"
-            )
+            if record_transcript:
+                self._write_transcript(
+                    f"turn {n:03d} output", f"{type(e).__name__}: {e}"
+                )
             raise
         try:
             body = resp.model_dump_json()
         except AttributeError:
             body = json.dumps(resp, default=str)
-        self._write_transcript(f"turn {n:03d} output", body)
+        if record_transcript:
+            self._write_transcript(f"turn {n:03d} output", body)
         return resp
+
+    def complete_side_request(self, payload: dict) -> SideRequestResult:
+        """Send one harness-owned no-tool completion without a solver turn.
+
+        Side requests share this client's endpoint, model profile, and HTTP
+        transport, but they never add ``tools``/``tool_choice`` and never
+        write ``=== turn N ===`` transcript blocks. This keeps transcript
+        resume parsing scoped to the actual solver conversation.
+        """
+        if "tools" in payload or "tool_choice" in payload:
+            raise ValueError("side requests must omit tools and tool_choice")
+        request = dict(payload)
+        messages = request.get("messages")
+        if not isinstance(messages, list):
+            raise ValueError("side request messages must be a list")
+        if self.profile is not None:
+            request["messages"] = self.profile.denormalize_messages(messages)
+        request["model"] = self.cfg.model
+        request = self._attach_request_controls(request, side_request=True)
+        response = self._call_api(request, record_transcript=False)
+        message = response.choices[0].message
+        if getattr(message, "tool_calls", None):
+            raise ValueError("side request returned tool calls")
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            raise ValueError("side request returned no text content")
+        return SideRequestResult(
+            content=content,
+            usage=request_controls.usage_from_response(response),
+        )
 
     def health_check(self) -> list[str]:
         """Verify server is reachable via /v1/models. Raises on connection failure."""
@@ -269,7 +351,7 @@ class LlamaClient:
         self, messages: list[dict], tools: list[dict], turn: int
     ):
         """Profile-driven chat: denormalize → HTTP → normalize → TurnResult."""
-        from .types import TurnResult, Usage
+        from .types import TurnResult
 
         profile = self.profile
 
@@ -293,12 +375,12 @@ class LlamaClient:
         elif tools:
             log.info("Profile %s reports supports_tool_calls=false; omitting tool schema payload", profile.name)
 
+        payload = self._attach_request_controls(payload, side_request=False)
         resp = self._call_api(payload)
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"
-        prompt_tokens = resp.usage.prompt_tokens if resp.usage else 0
-        completion_tokens = resp.usage.completion_tokens if resp.usage else 0
+        usage = request_controls.usage_from_response(resp)
 
         # Build raw response dict for normalize pipeline
         raw_tool_calls = []
@@ -353,27 +435,27 @@ class LlamaClient:
             content=content,
             tool_calls=tool_calls,
             finish_reason=norm_reason,
-            usage=Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+            usage=usage,
         )
 
     def _chat_legacy(
         self, messages: list[dict], tools: list[dict], turn: int
     ):
         """Legacy chat without profile — ad-hoc quirk handling."""
-        from .types import TurnResult, Usage
+        from .types import TurnResult
 
-        resp = self._call_api({
+        payload = self._attach_request_controls({
             "model": self.cfg.model,
             "messages": messages,
             "tools": tools,
             "tool_choice": "auto",
             "max_tokens": self.cfg.max_tokens,
-        })
+        }, side_request=False)
+        resp = self._call_api(payload)
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"
-        prompt_tokens = resp.usage.prompt_tokens if resp.usage else 0
-        completion_tokens = resp.usage.completion_tokens if resp.usage else 0
+        usage = request_controls.usage_from_response(resp)
 
         # Strip thinking blocks from content
         raw_content = getattr(msg, "content", None)
@@ -394,7 +476,7 @@ class LlamaClient:
             content=content,
             tool_calls=tool_calls,
             finish_reason=reason,
-            usage=Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+            usage=usage,
         )
 
     def build_assistant_message(

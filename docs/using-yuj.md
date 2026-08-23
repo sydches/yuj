@@ -132,6 +132,7 @@ Yuj calls the starting group of settings a base.
 | `--prompt-text TEXT` | Use this text as the task. |
 | `--prompt-file PATH` | Read the task from this file. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
+| `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--provider NAME` | Use `local`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
@@ -144,8 +145,8 @@ Yuj calls the starting group of settings a base.
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
 
-`--provider`, `--base-url`, and `--api-key-env` change only the new
-session. Yuj saves these settings in the session's `provider.toml`.
+`--provider`, `--base-url`, `--api-key-env`, and `--thinking` change only the
+new session. Yuj saves these settings in the session's `provider.toml`.
 
 When you use `--api-key-env`, `provider.toml` stores the variable name. It
 does not store the key.

@@ -90,11 +90,22 @@ order in the
 | `[server].provider` | Select the OpenAI-compatible or Anthropic API format. |
 | `[server].base_url` | Use another online model service or local model server. |
 | `[server].api_key` | Use a key value or an `$ENV:VARIABLE_NAME` reference. |
+| `[server].request_extra` | Add llama-server JSON request fields through the OpenAI SDK `extra_body`. |
+| `[server].cache_affinity` | Pin one product session to a deterministic llama-server slot. |
+| `[server].cache_retention` | Turn explicit per-request prompt-cache writes off or on for the session. |
+| `[server].cache_miss_warn_ratio` | Warn after the first turn when observed prefix reuse falls below this ratio. |
 | `[model].name` | Set the exact model ID that the service accepts. |
 | `[model].profile_name` | Use settings for a model's message and tool-call format. |
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
+| `[model].thinking_level` | Select the requested per-run reasoning effort. |
+| `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
+| `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
+| `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
+| `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
+| `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
+| `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the requested `bwrap` sandbox. |
@@ -115,6 +126,147 @@ normal use.
 The paper runtime files set the tokenizer for each reported model. Apply the
 files in the [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
 when you reproduce an experiment.
+
+## Configure auxiliary model roles
+
+Named roles let harness-owned side requests use a smaller model without
+changing the model that works on the task. The public roles are `weak` and
+`editor`. A blank role uses the main model and endpoint. Set a profile name for
+a role that shares the main endpoint:
+
+```toml
+[models.roles]
+weak = "qwen3-small"
+```
+
+Use an inline target when a role has its own served model or endpoint:
+
+```toml
+[models.roles.weak]
+profile = "qwen3-small"
+endpoint = "http://127.0.0.1:8181/v1"
+model = "served-small"
+context_size = 32768
+```
+
+`endpoint` must be an absolute HTTP or HTTPS URL without embedded
+credentials. An inline target may also set `api_key`, but keep literal secrets
+in ignored local configuration and prefer environment-backed credentials.
+Yuj loads and validates the main profile and every configured role profile at
+startup. An invalid role stops the run before model work begins.
+
+Checkpoint summaries, fresh-session handoffs, and the model-backed hurdle
+classifier request the `weak` role. If it is unset, the resolver returns the
+actual main client and records that fallback in side-request telemetry. Role
+clients are created only when first used and are reused for the same resolved
+target. Yuj does not launch or supervise another server: a distinct endpoint
+normally means you must run a second llama-server process yourself.
+
+Every model response is charged once to its effective role. Post-run
+`metrics.json` reports request, prompt, completion, cached, and total token
+counts under `metrics.tokens_by_role`.
+
+## Configure model fallback
+
+Fallback is off by default. Each role's chain is an empty list until you opt
+in. A string entry uses exact `<profile>@<endpoint>` syntax:
+
+```toml
+[models]
+fallback_revert = "never"
+
+[models.fallback_chain]
+main = ["qwen3-small@http://127.0.0.1:8181/v1"]
+weak = []
+editor = []
+```
+
+An inline target may also set `model`, `context_size`, or an endpoint-specific
+`api_key`. Credentials are used for requests but excluded from trace and
+provenance artifacts:
+
+```toml
+[[models.fallback_chain.main]]
+profile = "qwen3-small"
+endpoint = "http://127.0.0.1:8181/v1"
+model = "served-small"
+context_size = 32768
+```
+
+Yuj validates every fallback profile at startup. During a solver turn, it
+uses the configured transient retry budget on the active target first. It may
+then advance the `main` chain for an exhausted connection/timeout/server
+failure, a server out-of-memory failure, or a recognized context-overflow
+response. Authentication failures, arbitrary bad requests, malformed
+profiles, and tool/protocol errors stay fatal.
+
+Before sending any task message to a replacement, Yuj queries that target's
+live context window, applies its profile to the canonical messages and tool
+schemas, and checks the resulting prompt against `context_fill_ratio`. A
+candidate that cannot fit is traced and skipped. A candidate that fits gets a
+fresh retry budget. Client, profile, context-derived limits, tool schemas, and
+the context token estimator switch together; old-profile wire messages are
+never reused.
+
+`fallback_revert = "never"` keeps the selected target for later sessions.
+`"next_session"` returns to the primary target when the next session begins.
+Every transition changes the treatment and is recorded as `model_fallback`.
+Post-run metrics include `model_fallback_used`, `model_fallback_count`,
+`model_fallback_roles`, and `model_fallback_active_targets`, so studies can
+exclude runs that changed models.
+
+## Configure llama-server prompt caching
+
+The `[server]` cache settings apply to the OpenAI-compatible llama-server
+client. They do not describe provider TTLs.
+
+`request_extra` is a TOML table of additional JSON body fields. Yuj passes
+these through the OpenAI SDK's `extra_body`. `cache_affinity = false` disables
+slot selection; `true` selects slot 0; a positive integer hashes the stable
+product session ID across that many slot numbers. Configure no more slots than
+the active llama-server actually exposes.
+
+`cache_retention = "off"` sends `cache_prompt=false`. Set it to `"session"`
+to send `cache_prompt=true` on normal solver turns. When affinity is enabled,
+the same requests also carry the derived `id_slot`. Cache policy owns both
+fields and overrides copies placed in `request_extra`.
+
+`cache_miss_warn_ratio` accepts a value from 0 through 1. Zero disables the
+warning. A positive value logs a warning when an observed cache hit ratio is
+below the threshold after the session's first request. Missing server cache
+telemetry stays unknown and does not produce a false miss warning.
+
+Compaction, handoff, and other harness side requests always send
+`cache_prompt=false` and omit `id_slot`, so they cannot replace the solver
+conversation's retained prefix. Each solver response records prompt tokens,
+cached tokens, and its hit ratio in a `turn` trace row. `metrics.json` contains
+the token-weighted run ratio under `metrics.prompt_cache`, and the installed
+session summary reports that latest ratio.
+
+## Select reasoning effort
+
+Set `[model].thinking_level` or pass `--thinking` with one of `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The checked-in default
+is `off`.
+
+Each model profile declares the request body for its supported levels under
+`[reasoning_levels.<level>]`. The base profile provides boolean `off` and `on`
+mappings through `chat_template_kwargs.enable_thinking`. A model-specific
+profile may instead map levels to fields such as `reasoning_effort` or
+`thinking_budget`.
+
+If the profile does not declare the exact requested level, Yuj clamps
+deterministically and logs a warning. It chooses the closest supported effort
+that does not exceed the request when possible; a boolean-only profile maps
+any positive effort to its internal `on` capability. The effective level is
+applied on every normal model request. Harness side requests still force
+thinking off.
+
+Profile `[server].reasoning_mode` and `reasoning_disable_flag` remain model
+server launch defaults. They do not replace the per-request choice. Each
+`session_start` trace row records the effective level (and the requested level
+when clamped), while run provenance records requested, effective, and clamp
+status.
 
 ## Choose a context mode
 
@@ -158,6 +310,48 @@ purpose.
 
 A context mode changes what the model can see. Record the mode when you compare
 sessions.
+
+### Compact a nearly full context
+
+Compaction runs only after the existing context threshold and mutation gate
+allow it. These settings live under `[context]`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `compaction_method` | `"digest"` | Use the deterministic trace digest, or opt into a model-written `"checkpoint"`. |
+| `checkpoint_keep_recent_tokens` | `0` | Verbatim recent-tail target. Zero means 20% of the live context window, with a 4,096-token minimum. |
+| `checkpoint_max_summary_tokens` | `4000` | Maximum checkpoint response; the runtime also applies a 4,000-token hard cap and the available-reserve limit. |
+| `digest_compaction_safety_margin` | `0.05` | Margin used by the derived compaction threshold. |
+| `digest_keep_recent_turns` | `8` | Digest tail size and the close-compaction guard window. |
+| `digest_compaction_gate_min_mutations` | `0` | Minimum successful mutations before compaction may run. |
+
+Checkpoint mode makes one no-tool call through the `weak` model role. Thinking
+is off for that call. Yuj keeps the system prompt and task message unchanged, places
+the validated checkpoint after the task, and keeps a verbatim recent tail
+beginning at an assistant-turn boundary. The checkpoint must contain every
+required section and every mechanically observed modified path, fit the
+budget, and reduce the prompt token count. Any request, response, validation,
+or size failure uses the deterministic digest instead.
+
+Yuj records only compaction metadata in the trace and state projection; it
+does not copy model-written checkpoint text into `.solver/state.json`. If two
+compactions occur within `digest_keep_recent_turns`, later compactions in that
+run segment use digest to avoid a compaction loop.
+
+### Summarize work for a fresh session
+
+Set `[loop].handoff_summary_enabled = true` to make one no-tool `weak`-role side request
+when a session ends because of `context_full`, `length`, or `max_turns` and
+another session is available. `[prompts].handoff_max_tokens` defaults to
+`2000` and limits the returned summary. Thinking is off for this request.
+
+Yuj validates the seven required sections, the response size, and coverage of
+every modified path found in the raw trace. A valid `<handoff>` is placed after
+the task statement and before the existing mechanical resume tail. A missing
+section, omitted path, oversized response, request failure, or model failure
+leaves that mechanical prompt byte-for-byte unchanged. The trace records only
+the attempt's token count, validity, fallback, and model role; model-written
+handoff text is not copied into `.solver/state.json`.
 
 ## Apply a small TOML file
 

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from ..llm_solver.config import PROJECT_ROOT, get_server_base_url, load_config
+from ..llm_solver.server.request_controls import THINKING_LEVELS
 from .progress import TraceFollower
 from .runner import (
     _make_client,
@@ -88,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--prompt-file", type=Path, help="read task prompt from file")
         p.add_argument("--model", "-m", help="model name or short alias")
         p.add_argument(
+            "--thinking", choices=THINKING_LEVELS,
+            help="per-request reasoning effort",
+        )
+        p.add_argument(
             "--provider",
             choices=sorted(_PROVIDER_PRESETS),
             help="model service: local, openai, anthropic, zai, openrouter, or custom",
@@ -164,6 +169,10 @@ def main(argv: list[str] | None = None) -> int:
     smoke_parser.add_argument("--assist-home", type=Path, default=None,
                               help="session root (default: normal HARNESS_ASSIST_HOME)")
     smoke_parser.add_argument("--model", "-m", help="preferred model alias or exact model id")
+    smoke_parser.add_argument(
+        "--thinking", choices=THINKING_LEVELS,
+        help="per-request reasoning effort",
+    )
     smoke_parser.add_argument(
         "--provider",
         choices=sorted(_PROVIDER_PRESETS),
@@ -864,12 +873,17 @@ def _transport_overrides_from_args(args) -> dict:
     provider = getattr(args, "provider", None)
     base_url = getattr(args, "base_url", None)
     api_key_env = getattr(args, "api_key_env", None)
-    if not provider and not base_url and not api_key_env:
+    thinking_level = getattr(args, "thinking", None)
+    if not provider and not base_url and not api_key_env and not thinking_level:
         return {}
     if provider == "custom" and not base_url:
         raise SystemExit("--provider custom requires --base-url")
 
-    overrides = dict(_PROVIDER_PRESETS.get(provider or "custom", {}))
+    overrides = (
+        dict(_PROVIDER_PRESETS.get(provider or "custom", {}))
+        if provider or base_url or api_key_env
+        else {}
+    )
     if base_url:
         overrides["base_url"] = base_url
     if api_key_env:
@@ -880,6 +894,8 @@ def _transport_overrides_from_args(args) -> dict:
             raise SystemExit(
                 f"--provider {provider} expects {env_name}; set it or pass --api-key-env"
             )
+    if thinking_level:
+        overrides["thinking_level"] = thinking_level
     return overrides
 
 
@@ -901,11 +917,19 @@ def _persist_session_config_overlay(
 
 
 def _render_provider_overlay(overrides: dict) -> str:
-    lines = ["[server]"]
+    lines: list[str] = []
+    server_lines: list[str] = []
     for key in ("provider", "base_url", "api_key"):
         if key in overrides and overrides[key] is not None:
             value = str(overrides[key]).replace("\\", "\\\\").replace('"', '\\"')
-            lines.append(f'{key} = "{value}"')
+            server_lines.append(f'{key} = "{value}"')
+    if server_lines:
+        lines.extend(["[server]", *server_lines])
+    if overrides.get("thinking_level") is not None:
+        if lines:
+            lines.append("")
+        value = str(overrides["thinking_level"])
+        lines.extend(["[model]", f'thinking_level = "{value}"'])
     return "\n".join(lines) + "\n"
 
 
@@ -946,8 +970,10 @@ def _print_run_compact_summary(record) -> None:
     changed_files = list(summary.get("changed_files", []))
     last_test_cmd = str(summary.get("last_test_cmd") or "")
     last_test_result = str(summary.get("last_test_result") or "unknown")
+    cache_metrics_present = bool(summary.get("cache_metrics_present"))
+    cache_hit_ratio = summary.get("cache_hit_ratio")
 
-    if not changed_files and not last_test_cmd:
+    if not changed_files and not last_test_cmd and not cache_metrics_present:
         return
 
     print("summary:")
@@ -963,6 +989,11 @@ def _print_run_compact_summary(record) -> None:
         print(f"  last_test_result: {last_test_result}")
     else:
         print("  last_test: none observed")
+    if cache_metrics_present:
+        if isinstance(cache_hit_ratio, (int, float)):
+            print(f"  cache_hit_ratio: {float(cache_hit_ratio):.1%}")
+        else:
+            print("  cache_hit_ratio: unknown")
 
 
 def _handle_keyboard_interrupt(store: SessionStore, record) -> int:

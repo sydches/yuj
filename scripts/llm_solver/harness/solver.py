@@ -109,6 +109,8 @@ def collect_provenance(
     *,
     resolved_system_prompt: str | None = None,
     run_metadata: dict | None = None,
+    thinking_resolution=None,
+    fallback_provenance: dict[str, object] | None = None,
 ) -> dict:
     """Gather reproducibility metadata for a run.
 
@@ -128,6 +130,17 @@ def collect_provenance(
         "config": dump_config(cfg),
         "pretest_enabled": True,
     }
+    if thinking_resolution is not None:
+        prov.update(thinking_resolution.provenance_fields())
+    else:
+        configured_thinking = getattr(cfg, "thinking_level", "off")
+        prov.update({
+            "thinking_level_requested": configured_thinking,
+            "thinking_level_effective": configured_thinking,
+            "thinking_level_clamped": False,
+        })
+    if fallback_provenance:
+        prov.update(fallback_provenance)
     if run_metadata:
         # Explicit run envelope threaded from the CLI. Keep these as
         # top-level provenance fields so downstream ledgers can pin a task to

@@ -7,10 +7,10 @@ reusable by compaction, handoff, advisor, and classifier consumers.
 """
 from __future__ import annotations
 
-import re
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -525,9 +525,18 @@ class ModelFallbackController:
     def current(self, role: str = MAIN_MODEL_ROLE) -> ResolvedModelRole:
         requested = normalize_model_role(role)
         chain = self._chains.get(requested)
-        if chain is None:
-            return self.resolver.resolve(requested)
-        return chain[self._indices[requested]]
+        resolution = (
+            self.resolver.resolve(requested)
+            if chain is None
+            else chain[self._indices[requested]]
+        )
+        if requested != MAIN_MODEL_ROLE and resolution.uses_main_fallback:
+            return replace(
+                self.current(MAIN_MODEL_ROLE),
+                requested_role=requested,
+                uses_main_fallback=True,
+            )
+        return resolution
 
     def advance(
         self,
@@ -545,16 +554,26 @@ class ModelFallbackController:
         to_index = from_index + 1
         if to_index >= len(chain):
             return None
+        from_resolution = self.current(requested)
         self._indices[requested] = to_index
         self._fallback_count += 1
         self._fallback_roles.add(requested)
         return ModelFallbackTransition(
             role=requested,
-            from_resolution=chain[from_index],
+            from_resolution=from_resolution,
             to_resolution=chain[to_index],
             reason=reason_code,
             from_index=from_index,
             to_index=to_index,
+        )
+
+    def has_next(self, role: str = MAIN_MODEL_ROLE) -> bool:
+        """Return whether advancing this role would select another target."""
+        requested = normalize_model_role(role)
+        chain = self._chains.get(requested)
+        return bool(
+            chain is not None
+            and self._indices[requested] + 1 < len(chain)
         )
 
     def begin_session(self) -> bool:
@@ -578,6 +597,17 @@ class ModelFallbackController:
             "model_fallback_count": self._fallback_count,
             "model_fallback_roles": sorted(self._fallback_roles),
             "model_fallback_active_targets": active,
+        }
+
+    def provenance_fields(self) -> dict[str, object]:
+        """Return the configured secret-free chain and initial target."""
+        return {
+            "model_fallback_revert": self.fallback_revert,
+            "model_fallback_chains": {
+                role: [resolution.target.label() for resolution in chain[1:]]
+                for role, chain in sorted(self._chains.items())
+            },
+            "initial_model_target": self.resolver.main.target.label(),
         }
 
 

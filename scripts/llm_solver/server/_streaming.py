@@ -78,9 +78,21 @@ class _StreamedChoice:
 
 
 @dataclass
+class _StreamedPromptTokenDetails:
+    cached_tokens: int | None = None
+
+
+@dataclass
 class _StreamedUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    prompt_tokens_details: _StreamedPromptTokenDetails | None = None
+
+
+@dataclass
+class _StreamedTimings:
+    prompt_n: int | None = None
+    cache_n: int | None = None
 
 
 @dataclass
@@ -88,6 +100,7 @@ class _StreamedResponse:
     """Quacks like the non-stream openai response. Attribute-access only."""
     choices: list[_StreamedChoice]
     usage: _StreamedUsage = field(default_factory=_StreamedUsage)
+    timings: _StreamedTimings | None = None
 
     def model_dump_json(self) -> str:
         """Render to JSON for the verbatim transcript log."""
@@ -116,14 +129,37 @@ class _StreamedResponse:
                 },
                 "finish_reason": c.finish_reason,
             })
-        return json.dumps({
+        usage_dump = {
+            "prompt_tokens": self.usage.prompt_tokens,
+            "completion_tokens": self.usage.completion_tokens,
+        }
+        if self.usage.prompt_tokens_details is not None:
+            usage_dump["prompt_tokens_details"] = {
+                "cached_tokens": self.usage.prompt_tokens_details.cached_tokens,
+            }
+        body = {
             "choices": choices_dump,
-            "usage": {
-                "prompt_tokens": self.usage.prompt_tokens,
-                "completion_tokens": self.usage.completion_tokens,
-            },
+            "usage": usage_dump,
             "_streamed": True,
-        })
+        }
+        if self.timings is not None:
+            body["timings"] = {
+                "prompt_n": self.timings.prompt_n,
+                "cache_n": self.timings.cache_n,
+            }
+        return json.dumps(body)
+
+
+def _field(value, name: str):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value.get(name)
+    direct = getattr(value, name, None)
+    if direct is not None:
+        return direct
+    extra = getattr(value, "model_extra", None)
+    return extra.get(name) if isinstance(extra, dict) else None
 
 
 # ── Stream assembly ──────────────────────────────────────────────────
@@ -150,6 +186,9 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
     finish_reason: str | None = None
     prompt_tokens = 0
     completion_tokens = 0
+    cached_tokens: int | None = None
+    timing_prompt_n: int | None = None
+    timing_cache_n: int | None = None
     received_any_chunk = False
 
     for chunk in chunks:
@@ -158,6 +197,19 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
         if usage is not None:
             prompt_tokens = usage.prompt_tokens
             completion_tokens = usage.completion_tokens
+            details = _field(usage, "prompt_tokens_details")
+            if details is None:
+                details = _field(usage, "input_tokens_details")
+            observed_cached = _field(details, "cached_tokens")
+            if isinstance(observed_cached, int) and observed_cached >= 0:
+                cached_tokens = observed_cached
+        timings = _field(chunk, "timings")
+        observed_prompt_n = _field(timings, "prompt_n")
+        observed_cache_n = _field(timings, "cache_n")
+        if isinstance(observed_prompt_n, int) and observed_prompt_n >= 0:
+            timing_prompt_n = observed_prompt_n
+        if isinstance(observed_cache_n, int) and observed_cache_n >= 0:
+            timing_cache_n = observed_cache_n
         choices = getattr(chunk, "choices", None) or []
         if not choices:
             continue
@@ -234,5 +286,18 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
         usage=_StreamedUsage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            prompt_tokens_details=(
+                _StreamedPromptTokenDetails(cached_tokens=cached_tokens)
+                if cached_tokens is not None
+                else None
+            ),
+        ),
+        timings=(
+            _StreamedTimings(
+                prompt_n=timing_prompt_n,
+                cache_n=timing_cache_n,
+            )
+            if timing_prompt_n is not None or timing_cache_n is not None
+            else None
         ),
     )

@@ -19,3 +19,9 @@ tokenizer = ""
 preamble = ""
 max_tools = 8
 simplify_schemas = false
+
+[reasoning_levels.off]
+chat_template_kwargs = { enable_thinking = false }
+
+[reasoning_levels.on]
+chat_template_kwargs = { enable_thinking = true }
