@@ -418,13 +418,16 @@ tool_enabled = false
 # Injection subsystem (harness/injections.py)
 # ---------------------------------------------------------------------------
 # When enabled, the harness loads every *.md in `dir` at session
-# start. Each file is a <injected-fragment> block that fires either
-# always (once per session) or on keyword match against the most
-# recent user / tool-result message. See harness/injections.py for
-# the file format and LEAKAGE_RULES constraints on fragment content.
+# start. Each file is a <injected-fragment> block that fires always,
+# on a keyword match against the most recent user / tool-result message,
+# or after an executed file tool targets a matching project-relative path.
+# See harness/injections.py for the strict TOML-frontmatter format and
+# LEAKAGE_RULES constraints on fragment content.
 [injections]
 enabled = false
 dir = ".harness/injections"
+path_rules_enabled = false  # opt in to paths= glob matching for read/edit/write/apply_patch and single-file bash reads
+path_rule_repeat = false    # default false fires each path rule once per session; per-rule repeat overrides it
 
 # ---------------------------------------------------------------------------
 # Declarative per-tool permission policy. Empty rules preserve allow-by-default

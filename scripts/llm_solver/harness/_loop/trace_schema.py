@@ -167,6 +167,12 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         frozenset({"session_number", "turn_number", "tool", "errors"}),
     ),
     TraceEventSpec(
+        "injection",
+        frozenset({
+            "session_number", "turn_number", "rule", "trigger", "path",
+        }),
+    ),
+    TraceEventSpec(
         "proc_start",
         frozenset({
             "session_number", "proc_id", "command_sha256", "log_path",

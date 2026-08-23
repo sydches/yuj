@@ -527,10 +527,12 @@ class Config:
     # state still updates sequentially per-tc after concurrent I/O.
     parallel_readonly_enabled: bool = False
     parallel_max_workers: int = 4
-    # Injection subsystem (keyword-triggered markdown fragments).
+    # Injection subsystem (keyword/path-triggered markdown fragments).
     # Off by default; data-directory convention .harness/injections/.
     injections_enabled: bool = False
     injections_dir: str = ".harness/injections"
+    injections_path_rules_enabled: bool = False
+    injections_path_rule_repeat: bool = False
     loop_detect_recovery: str = (
         "<system-reminder>Loop detected: the last {streak} tool calls all "
         "have identical name and arguments. Stop repeating. Re-read the "

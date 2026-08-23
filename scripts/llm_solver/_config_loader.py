@@ -197,6 +197,12 @@ def _extract_config_fields(d: dict) -> dict:
         "parallel_max_workers": d.get("loop", {}).get("parallel_max_workers", 4),
         "injections_enabled": d.get("injections", {}).get("enabled", False),
         "injections_dir": d.get("injections", {}).get("dir", ".harness/injections"),
+        "injections_path_rules_enabled": d.get("injections", {}).get(
+            "path_rules_enabled", False
+        ),
+        "injections_path_rule_repeat": d.get("injections", {}).get(
+            "path_rule_repeat", False
+        ),
         "loop_detect_enabled": d.get("loop", {}).get("loop_detect_enabled", False),
         "turn_snapshots_enabled": d.get("loop", {}).get("turn_snapshots_enabled", False),
         "loop_detect_threshold": d.get("loop", {}).get("loop_detect_threshold", 5),
@@ -667,6 +673,27 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: prompts.imports_max_depth must be a non-negative "
             "integer."
+        )
+    if not isinstance(cfg.injections_enabled, bool):
+        raise ValueError(
+            "config error: injections.enabled must be a boolean."
+        )
+    if not isinstance(cfg.injections_dir, str) or not cfg.injections_dir.strip():
+        raise ValueError(
+            "config error: injections.dir must be a non-empty string."
+        )
+    if not isinstance(cfg.injections_path_rules_enabled, bool):
+        raise ValueError(
+            "config error: injections.path_rules_enabled must be a boolean."
+        )
+    if not isinstance(cfg.injections_path_rule_repeat, bool):
+        raise ValueError(
+            "config error: injections.path_rule_repeat must be a boolean."
+        )
+    if cfg.injections_path_rules_enabled and not cfg.injections_enabled:
+        raise ValueError(
+            "config error: injections.path_rules_enabled requires "
+            "injections.enabled=true."
         )
     from .harness.project_instructions import (
         validate_project_instruction_settings,

@@ -175,6 +175,13 @@ byte metadata; they contain no imported body or absolute host path. An
 injection envelope records resolution, not a claim that the fragment fired.
 This raw provenance is not projected into `.solver/state.json`.
 
+A later `injection` row is raw conditional-fire metadata. It records the rule,
+`path` or `keyword` trigger, and a canonical task-relative path; keyword fires
+use an empty path. This row is not projected into `.solver/state.json`. A
+path-triggered fragment is separately appended to the model-visible tool
+result. The ordinary `tool_call` row and its mechanical projection represent
+that result subject to their existing result-summary clipping limits.
+
 When project instruction discovery is enabled, the same row records
 `project_instruction_files` (ordered safe labels plus source bytes, scope, and
 truncation), `project_instruction_bytes`,
