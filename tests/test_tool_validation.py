@@ -230,6 +230,29 @@ def test_schema_compilation_rejects_duplicate_tools_and_unknown_keywords():
     with pytest.raises(ToolSchemaDefinitionError, match="unsupported keyword"):
         ToolSchemaSet.from_openai_tools([malformed])
 
+    missing_object_type = json.loads(json.dumps(one))
+    missing_object_type["function"]["parameters"].pop("type")
+    with pytest.raises(ToolSchemaDefinitionError, match="declare type='object'"):
+        ToolSchemaSet.from_openai_tools([missing_object_type])
+
+
+def test_schema_compilation_rejects_circular_local_references():
+    circular = [
+        {
+            "type": "function",
+            "function": {
+                "name": "recursive",
+                "parameters": {
+                    "type": "object",
+                    "$defs": {"node": {"$ref": "#/$defs/node"}},
+                    "properties": {"node": {"$ref": "#/$defs/node"}},
+                },
+            },
+        }
+    ]
+    with pytest.raises(ToolSchemaDefinitionError, match="circular"):
+        ToolSchemaSet.from_openai_tools(circular)
+
 
 def test_local_schema_refs_survive_embedding_in_constrained_wrapper():
     tools = [

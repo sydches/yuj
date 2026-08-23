@@ -230,17 +230,18 @@ class ToolSchemaSet:
             if name in parameters:
                 raise ToolSchemaDefinitionError(f"duplicate tool schema: {name!r}")
             schema = function.get("parameters")
-            if not isinstance(schema, (Mapping, bool)):
+            if not isinstance(schema, Mapping):
                 raise ToolSchemaDefinitionError(
-                    f"{path}.function.parameters must be a JSON schema"
+                    f"{path}.function.parameters must be an object JSON schema"
                 )
             _validate_schema_definition(schema, f"{path}.function.parameters")
-            if isinstance(schema, Mapping):
-                declared_type = schema.get("type")
-                if declared_type not in (None, "object"):
-                    raise ToolSchemaDefinitionError(
-                        f"{path}.function.parameters must describe an object"
-                    )
+            if schema.get("type") != "object":
+                raise ToolSchemaDefinitionError(
+                    f"{path}.function.parameters must declare type='object'"
+                )
+            # Resolve once at startup to reject missing or circular local
+            # references before either runtime validation or grammar building.
+            _dereference_schema(schema, schema)
             names.append(name)
             parameters[name] = copy.deepcopy(schema)
 
@@ -784,13 +785,28 @@ def _resolve_local_ref(root: object, reference: object) -> object:
     return current
 
 
-def _dereference_schema(schema: object, root: object) -> object:
+def _dereference_schema(
+    schema: object,
+    root: object,
+    reference_stack: frozenset[str] = frozenset(),
+) -> object:
     """Return a deep copy with local references resolved in their old root."""
     if isinstance(schema, bool):
         return schema
     assert isinstance(schema, Mapping)
     if "$ref" in schema:
-        target = _dereference_schema(_resolve_local_ref(root, schema["$ref"]), root)
+        reference = schema["$ref"]
+        if not isinstance(reference, str):
+            raise ToolSchemaDefinitionError("JSON-schema $ref must be a string")
+        if reference in reference_stack:
+            raise ToolSchemaDefinitionError(
+                f"circular JSON-schema reference is unsupported: {reference!r}"
+            )
+        target = _dereference_schema(
+            _resolve_local_ref(root, reference),
+            root,
+            reference_stack | {reference},
+        )
         siblings = {key: value for key, value in schema.items() if key != "$ref"}
         if not siblings:
             return target
@@ -800,24 +816,27 @@ def _dereference_schema(schema: object, root: object) -> object:
             target = {}
         assert isinstance(target, Mapping)
         merged = copy.deepcopy(dict(target))
-        merged.update(_dereference_schema(siblings, root))
+        merged.update(_dereference_schema(siblings, root, reference_stack))
         return merged
 
     result = copy.deepcopy(dict(schema))
     for keyword in _SCHEMA_MAP_KEYWORDS:
         if keyword in result:
             result[keyword] = {
-                key: _dereference_schema(value, root)
+                key: _dereference_schema(value, root, reference_stack)
                 for key, value in result[keyword].items()
             }
     for keyword in _SCHEMA_LIST_KEYWORDS:
         if keyword in result:
             result[keyword] = [
-                _dereference_schema(value, root) for value in result[keyword]
+                _dereference_schema(value, root, reference_stack)
+                for value in result[keyword]
             ]
     for keyword in _SCHEMA_SINGLE_KEYWORDS:
         if keyword in result:
-            result[keyword] = _dereference_schema(result[keyword], root)
+            result[keyword] = _dereference_schema(
+                result[keyword], root, reference_stack
+            )
     return result
 
 
