@@ -61,6 +61,7 @@ def _extract_config_fields(d: dict) -> dict:
         # once and uses it for exact token counts in
         # _maybe_compact_messages. Empty string falls back to chars_div_4.
         "tokenizer_id": d.get("model", {}).get("tokenizer_id", ""),
+        "thinking_level": d.get("model", {}).get("thinking_level", "off"),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
         "duplicate_abort": _require(d, "loop", "duplicate_abort"),
@@ -419,6 +420,7 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     from .server.request_controls import (
         normalize_cache_affinity,
         normalize_cache_retention,
+        normalize_thinking_level,
         validate_cache_miss_warn_ratio,
         validate_request_extra,
     )
@@ -429,6 +431,7 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_affinity(cfg.cache_affinity)
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
+    normalize_thinking_level(cfg.thinking_level)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

@@ -39,7 +39,9 @@ class TraceEventSpec:
 
 
 TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
-    TraceEventSpec("session_start", frozenset({"session_number"})),
+    TraceEventSpec(
+        "session_start", frozenset({"session_number", "thinking_level"})
+    ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
     TraceEventSpec(
         "compaction",

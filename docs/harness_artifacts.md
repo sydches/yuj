@@ -140,6 +140,12 @@ folder does not change them.
 | `<run_dir>/harness_<model>_<time>.log`, `<run_dir>/harness.stdout.log`, `<run_dir>/harness_run/*.log` | measurement command / launcher | process logs and details used to find errors | `live-prefix` as logs; most readers use them `post-run` | No. | No. | Yes. | No. | Use these files only to debug or audit a run. Do not treat them as scoring results or detector input. |
 | `<run_dir>/system_log.jsonl` or `<session_dir>/system_log.jsonl` | harness system log | warnings and internal harness events | `live-prefix` append-only | No. | No. | Yes. | No. | Use it to debug or audit the harness. Do not use it as model behavior or scoring evidence. |
 
+Every `session_start` trace row records `thinking_level`, plus
+`thinking_level_requested` when profile capabilities forced a clamp. The
+matching `metrics.json` provenance records `thinking_level_requested`,
+`thinking_level_effective`, and `thinking_level_clamped`. These are run
+conditions, not model-side state or evidence of task success.
+
 A one-task measurement can receive its prompt through `--prompt-text` or
 `--prompt-file`. The command does not copy that prompt to `prompt.txt` or save
 its source in `session.json`. Save the input yourself when you need a separate

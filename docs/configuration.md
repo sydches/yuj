@@ -98,6 +98,7 @@ order in the
 | `[model].profile_name` | Use settings for a model's message and tool-call format. |
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
+| `[model].thinking_level` | Select the requested per-run reasoning effort. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
@@ -149,6 +150,31 @@ conversation's retained prefix. Each solver response records prompt tokens,
 cached tokens, and its hit ratio in a `turn` trace row. `metrics.json` contains
 the token-weighted run ratio under `metrics.prompt_cache`, and the installed
 session summary reports that latest ratio.
+
+## Select reasoning effort
+
+Set `[model].thinking_level` or pass `--thinking` with one of `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The checked-in default
+is `off`.
+
+Each model profile declares the request body for its supported levels under
+`[reasoning_levels.<level>]`. The base profile provides boolean `off` and `on`
+mappings through `chat_template_kwargs.enable_thinking`. A model-specific
+profile may instead map levels to fields such as `reasoning_effort` or
+`thinking_budget`.
+
+If the profile does not declare the exact requested level, Yuj clamps
+deterministically and logs a warning. It chooses the closest supported effort
+that does not exceed the request when possible; a boolean-only profile maps
+any positive effort to its internal `on` capability. The effective level is
+applied on every normal model request. Harness side requests still force
+thinking off.
+
+Profile `[server].reasoning_mode` and `reasoning_disable_flag` remain model
+server launch defaults. They do not replace the per-request choice. Each
+`session_start` trace row records the effective level (and the requested level
+when clamped), while run provenance records requested, effective, and clamp
+status.
 
 ## Choose a context mode
 

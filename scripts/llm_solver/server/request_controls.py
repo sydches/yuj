@@ -34,6 +34,12 @@ THINKING_LEVELS: tuple[str, ...] = (
 # requested non-off effort maps to the profile's generic ``on`` body.
 PROFILE_THINKING_LEVELS: frozenset[str] = frozenset((*THINKING_LEVELS, "on"))
 
+DEFAULT_REASONING_LEVELS: dict[str, dict[str, object]] = {
+    "off": {"chat_template_kwargs": {"enable_thinking": False}},
+    "on": {"chat_template_kwargs": {"enable_thinking": True}},
+}
+"""Boolean fallback for the supported legacy/no-profile request path."""
+
 CACHE_RETENTION_LEVELS: tuple[str, ...] = ("off", "session")
 """llama-server cache-retention modes supported by the request layer."""
 

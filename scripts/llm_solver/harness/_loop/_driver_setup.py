@@ -97,9 +97,12 @@ def load_system_prompt_and_provenance(
         client,
     )
     # Pass the resolved system prompt so its sha256 lands in provenance.
+    thinking_resolution = getattr(client, "__dict__", {}).get(
+        "_thinking_resolution"
+    )
     provenance = collect_provenance(
         cfg, profile_path, resolved_system_prompt=system_prompt,
-        run_metadata=run_metadata,
+        run_metadata=run_metadata, thinking_resolution=thinking_resolution,
     )
     context_contract = build_context_contract(context_class, cfg)
     provenance["context_contract"] = context_contract
@@ -107,6 +110,14 @@ def load_system_prompt_and_provenance(
         provenance["variant_name"] = cfg.variant_name
         provenance["prompt_addendum"] = cfg.prompt_addendum
     return system_prompt, provenance, context_contract
+
+
+def thinking_trace_fields(cfg: Config, client) -> dict[str, object]:
+    """Return effective per-run reasoning fields for session_start."""
+    resolution = getattr(client, "__dict__", {}).get("_thinking_resolution")
+    if resolution is not None:
+        return resolution.trace_fields()
+    return {"thinking_level": cfg.thinking_level}
 
 
 def setup_savings_and_transcript(

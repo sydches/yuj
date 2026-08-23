@@ -29,11 +29,9 @@ from . import (
 )
 from ._driver_setup import (
     compute_runtime_envelope_fields,
-    load_system_prompt_and_provenance,
-    load_transforms_and_estimator,
-    resolve_task_format,
-    resolve_run_paths,
-    setup_run_outputs,
+    load_system_prompt_and_provenance, load_transforms_and_estimator,
+    resolve_task_format, resolve_run_paths,
+    setup_run_outputs, thinking_trace_fields,
 )
 from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
@@ -117,6 +115,7 @@ def solve_task(
     success = False
 
     task_description = task_prompt
+    thinking_fields = thinking_trace_fields(cfg, client)
     # Mechanical state.json writer: active iff cfg.state_writer_enabled is
     # true. The writer creates .solver/state.json from .trace.jsonl at session
     # boundaries and after tool events; callers do not need to pre-seed the
@@ -310,6 +309,7 @@ def solve_task(
                 trace_file, "session_start",
                 session_number=session_num,
                 context_contract=context_contract,
+                **thinking_fields,
             )
             if state_path is not None:
                 write_state_from_trace(trace_path, state_path,

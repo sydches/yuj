@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .._shared.toml_compat import tomllib
+from .request_controls import validate_reasoning_levels
 from .rules_engine import (
     RuleFn,
     apply_normalize_rules,
@@ -47,6 +48,7 @@ class Profile:
     preamble: str
     max_tools: int
     simplify_schemas: bool
+    reasoning_levels: dict[str, dict[str, object]] = field(default_factory=dict)
 
     # Server launch config
     server_model_path: str = ""
@@ -314,6 +316,7 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
     tokens: dict = {}
     capacity: dict = {}
     server: dict = {}
+    reasoning_levels: dict[str, dict[str, object]] = {}
 
     for current_dir in chain:
         data = _load_profile_data(current_dir)
@@ -328,6 +331,7 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
         tokens.update(data.get("tokens", {}))
         capacity.update(data.get("capacity", {}))
         server.update(data.get("server", {}))
+        reasoning_levels.update(data.get("reasoning_levels", {}))
 
         norm_section = data.get("normalize", {})
         for rf in norm_section.get("rules", []):
@@ -358,6 +362,7 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
                 )
 
     inherits = prof.get("inherits", "")
+    reasoning_levels = validate_reasoning_levels(reasoning_levels)
 
     return Profile(
         name=prof.get("name", profile_dir.name),
@@ -374,6 +379,7 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
         preamble=capacity.get("preamble", ""),
         max_tools=capacity.get("max_tools", 6),
         simplify_schemas=capacity.get("simplify_schemas", False),
+        reasoning_levels=reasoning_levels,
         server_model_path=server.get("model_path", ""),
         server_ctx_size=server.get("ctx_size", 8192),
         server_n_gpu_layers=server.get("n_gpu_layers", 99),

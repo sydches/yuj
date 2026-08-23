@@ -15,6 +15,7 @@ from .harness.context_strategies import (
 )
 from .models import resolve_model
 from .server import LlamaClient, load_profile
+from .server.request_controls import THINKING_LEVELS
 
 # Helpers extracted to keep this file under the 500-line cap.
 from ._main_helpers import (
@@ -49,6 +50,10 @@ def main(argv: list[str] | None = None) -> int:
         help="directory for run-level records; multi-task mode reads RUN_DIR/repos",
     )
     parser.add_argument("--model", "-m", help="model ID or known short name")
+    parser.add_argument(
+        "--thinking", choices=THINKING_LEVELS,
+        help="per-request reasoning effort",
+    )
     parser.add_argument("--port", "-p", type=int, help="use this model-server port")
     parser.add_argument("--config", "-c", type=Path, action="append", default=[],
                         help="TOML settings file; repeat to apply more files; later values win")
@@ -146,9 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     _replay_prov = None
     if args.replay_from is not None:
         from .server.replay_client import load_replay_provenance
-        if args.config or args.model:
+        if args.config or args.model or args.thinking is not None:
             parser.error("--replay-from adopts the recording's config; "
-                         "--config/--model are not allowed in replay mode")
+                         "--config/--model/--thinking are not allowed in replay mode")
         try:
             _replay_prov = load_replay_provenance(args.replay_from)
         except (OSError, ValueError) as e:
@@ -172,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     overrides: dict = {}
     if args.model:
         overrides["model"] = resolve_model(args.model)
+    if args.thinking is not None:
+        overrides["thinking_level"] = args.thinking
     if args.port:
         # Reuse scheme+host from [server] base_url; only the port changes.
         from urllib.parse import urlparse, urlunparse

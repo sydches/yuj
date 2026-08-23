@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .profile_loader import Profile
 
 from ._streaming import assemble_stream
-from .request_controls import apply_request_controls, usage_from_response
+from . import request_controls
 from .types import SideRequestResult, ToolCall
 
 
@@ -73,12 +73,26 @@ class LlamaClient:
         # Write the verbatim transcript at the HTTP boundary.
         # Set per task via set_transcript(); each HTTP call is one input/output
         # pair tagged only with a monotonic call counter and direction.
-        # File handle held for the task lifetime to avoid 4 syscalls/turn
-        # (2x open + close for input + output) — close_transcript() releases it.
+        # Held for the task lifetime to avoid 4 syscalls/turn; close_transcript releases it.
         self._transcript_path: Path | None = None
         self._transcript_file = None
         self._transcript_call_n: int = 0
         self._session_id: str = ""
+        self._thinking_resolution = None
+        self._thinking_signature = None
+        _ = self.thinking_resolution
+
+    @property
+    def thinking_resolution(self):
+        requested = getattr(self.cfg, "thinking_level", "off")
+        signature = (requested, id(self.profile))
+        if getattr(self, "_thinking_signature", None) != signature:
+            levels = getattr(self.profile, "reasoning_levels", None)
+            self._thinking_resolution = request_controls.resolve_thinking_level(
+                requested, levels or request_controls.DEFAULT_REASONING_LEVELS
+            )
+            self._thinking_signature = signature
+        return self._thinking_resolution
 
     def set_session_id(self, session_id: str) -> None:
         """Bind subsequent requests to one stable product session identity."""
@@ -94,7 +108,11 @@ class LlamaClient:
         policy_extra: dict | None = None,
     ) -> dict:
         """Apply configured extras and final llama cache policy."""
-        return apply_request_controls(
+        if side_request:
+            policy_extra = {"chat_template_kwargs": {"enable_thinking": False}}
+        elif policy_extra is None:
+            policy_extra = dict(self.thinking_resolution.request_extra)
+        return request_controls.apply_request_controls(
             payload,
             session_id=getattr(self, "_session_id", ""),
             server_request_extra=getattr(
@@ -228,7 +246,7 @@ class LlamaClient:
             raise ValueError("side request returned no text content")
         return SideRequestResult(
             content=content,
-            usage=usage_from_response(response),
+            usage=request_controls.usage_from_response(response),
         )
 
     def health_check(self) -> list[str]:
@@ -362,7 +380,7 @@ class LlamaClient:
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"
-        usage = usage_from_response(resp)
+        usage = request_controls.usage_from_response(resp)
 
         # Build raw response dict for normalize pipeline
         raw_tool_calls = []
@@ -437,7 +455,7 @@ class LlamaClient:
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"
-        usage = usage_from_response(resp)
+        usage = request_controls.usage_from_response(resp)
 
         # Strip thinking blocks from content
         raw_content = getattr(msg, "content", None)

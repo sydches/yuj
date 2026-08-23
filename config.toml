@@ -68,6 +68,7 @@ context_size = 40960        # FALLBACK ONLY. The harness queries llama-server's 
 context_fill_ratio = 0.95   # fail-safe upper bound for end-of-turn pt vs context_size. With server-reported pt now driving the gate (no chars/4 undershoot), 0.95 leaves a small margin to avoid 400 errors. Primary mechanism is digest compaction in Session._maybe_compact_messages, which fires at 0.85 — well below this fail-safe.
 max_tokens_fraction = 0.25  # generation cap as a fraction of context_size. At ctx=65,536 → max_tokens=16,384 (preserves prior default). Scales correctly when context_size changes — a 32k server gets 8k generation cap, a 128k server gets 32k. Replaces the hardcoded max_tokens=16384 which was wrong-shape at any ctx ≠ 65,536.
 tokenizer_id = ""            # optional Hugging Face tokenizer ID or local path; empty uses the character-count estimate. Runtime files set this for exact experiment runs.
+thinking_level = "off"        # off | minimal | low | medium | high | xhigh | max; profile mapping is applied per request
 
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end

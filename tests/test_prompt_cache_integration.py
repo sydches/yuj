@@ -73,6 +73,7 @@ def test_llama_client_applies_affinity_retention_and_usage_from_fake_transport()
 
     assert captured[0]["extra_body"] == {
         "seed": 7,
+        "chat_template_kwargs": {"enable_thinking": False},
         "cache_prompt": True,
         "id_slot": derive_cache_slot("stable-session", 8),
     }

@@ -39,6 +39,12 @@ Missing file referenced in errors? Write it — use error output, interface desc
 After every mutation, run the initial validation command. Read output. Fix. Repeat to exit code 0. No proxy checks.
 All paths relative. No absolute paths."""
 
+[reasoning_levels.off]
+chat_template_kwargs = { enable_thinking = false }
+
+[reasoning_levels.on]
+chat_template_kwargs = { enable_thinking = true }
+
 [server]
 model_path = ""
 ctx_size = 8192

@@ -428,6 +428,7 @@ class Config:
     cache_affinity: bool | int = False
     cache_retention: str = "off"
     cache_miss_warn_ratio: float = 0.0
+    thinking_level: str = "off"
     # edit() match policy. Strict is the default (database-of-
     # primitives principle: no silent relaxation). Cascade restores
     # the optional auto-apply behavior.
