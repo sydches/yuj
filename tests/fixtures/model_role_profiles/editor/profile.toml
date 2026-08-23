@@ -1,0 +1,9 @@
+[profile]
+format_version = 1
+canonical_version = "openai-v1"
+name = "editor"
+family = "fixture-editor"
+inherits = "_base"
+
+[model]
+context_size = 16384

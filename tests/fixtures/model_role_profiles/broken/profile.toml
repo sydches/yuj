@@ -1,0 +1,6 @@
+[profile]
+format_version = 2
+canonical_version = "openai-v1"
+name = "broken"
+family = "fixture-broken"
+inherits = "_base"
