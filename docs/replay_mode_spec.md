@@ -70,6 +70,16 @@ Replay joins the parts and gives their turns one continuous order.
 Replay does not restore a saved working tree. It runs the saved actions again
 on the fresh task copy.
 
+When `[tools].checkpoint_enabled` was active, replay also executes the saved
+`checkpoint` and `rewind` calls through the normal session handlers. The
+checkpoint becomes active only after its complete tool-call turn; rewind then
+rebuilds the model-facing conversation from that prefix plus the retained
+user-role report. The replay trace remains append-only, and replay does not
+restore files changed during the abandoned conversation interval. Focused
+tests compare every model-facing message in such a source/replay pair. The
+general runtime request-comparison limit below still applies: replay does not
+yet enforce full-request equality as a fidelity gate for arbitrary runs.
+
 Background process lifecycle is the exception to command re-execution:
 `proc_start`, `proc_poll`, and `proc_kill` rows form an ordered auxiliary
 stream. Replay validates the recorded start command hash, returns each saved

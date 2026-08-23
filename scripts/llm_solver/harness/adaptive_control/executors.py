@@ -226,6 +226,7 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
         "tools_run_tests_enabled",
         "tools_list_definitions_enabled",
         "tools_apply_patch_enabled",
+        "tools_checkpoint_enabled",
     }
     if not (changed & tool_fields):
         return None

@@ -396,7 +396,12 @@ class Session:
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
+        from .checkpoint_rewind import build_session_tool_handlers
+        handlers.update(build_session_tool_handlers(self))
         self._tool_registry = ToolRegistry(handlers=handlers)
+        self._context_checkpoint = None
+        self._pending_context_checkpoint = None
+        self._pending_context_rewind = None
         self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
         validate_tool_handlers(schema_names, registry=self._tool_registry)
@@ -493,6 +498,9 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        if self._trace_events:
+            from .checkpoint_rewind import restore_rewind_reports
+            restore_rewind_reports(self.context, self._trace_events)
         if self._process_manager is None and getattr(
             cfg, "tools_background_enabled", False
         ):

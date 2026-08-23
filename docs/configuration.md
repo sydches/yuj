@@ -123,6 +123,7 @@ order in the
 | `[state].ignore_file_enabled` | Apply task-root Gitignore-style model-view files. On by default. |
 | `[state].ignore_file_names` | List ignore files in precedence order. Defaults to `.yujignore`. |
 | `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
+| `[tools].checkpoint_enabled` | Add the paired `checkpoint(goal)` and `rewind(report)` conversation tools. Both are off by default. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 | `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
@@ -287,6 +288,42 @@ mode, and symlink targets; they do not preserve owners, ACLs, or extended
 attributes. Each raw `checkpoint` trace row identifies the commit and cost,
 and `metrics.json.file_checkpoints.per_call` reports duration, file count, and
 byte count for every capture.
+
+### Collapse an exploration branch
+
+`[tools].checkpoint_enabled = false` is the shipped default. Set it to `true`
+to add both `checkpoint(goal)` and `rewind(report)` to the effective
+model-facing tool set. The tools are gated as a pair; Yuj never exposes only
+one of them.
+
+`checkpoint` marks the end of its complete tool-call turn. If that assistant
+turn contains several calls, Yuj waits for every result before activating the
+mark. This guarantees that a later cut cannot separate an assistant tool call
+from its result. One checkpoint is active at a time in each session, and a
+later checkpoint replaces it.
+
+`rewind` requires an active checkpoint. A call without one returns a typed
+`no_active_checkpoint` error. A valid call is deferred until every result in
+the current turn has been recorded. Yuj then restores the saved conversation
+prefix and appends one user-role message:
+
+```text
+<rewind-report goal="GOAL">
+SHORT FINDINGS REPORT
+</rewind-report>
+```
+
+The raw `.trace.jsonl` remains append-only. Its `rewind` row records the full
+goal/report plus `from_turn`, `to_turn`, and `report_chars`; the mechanical
+state writer derives a truncated model-state view while retaining the raw
+event count. Replay sends recorded checkpoint/rewind calls through the same
+turn-boundary logic.
+
+This feature changes conversation context only. It does not restore, delete,
+or rewrite task files. Any filesystem effects produced during exploration
+remain present. Use the separate
+[`file_checkpoints_enabled`](#save-restorable-file-checkpoints) operator
+facility when you need a restorable workspace snapshot.
 
 ### Return language-server diagnostics after edits
 
