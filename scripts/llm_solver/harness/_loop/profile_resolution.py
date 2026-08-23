@@ -28,13 +28,22 @@ def _resolve_profile(client):
 _CAP_IMMUNE_TOOLS: frozenset[str] = CAP_IMMUNE_TOOL_NAMES
 
 
-def _apply_profile_tool_cap(tool_schemas: list[dict], client) -> list[dict]:
+def _apply_profile_tool_cap(
+    tool_schemas: list[dict],
+    client,
+    *,
+    priority_tools: frozenset[str] = frozenset(),
+) -> list[dict]:
     """Apply profile max_tools cap to the declared tool surface.
 
     Cap-immune tools (currently just `done`) are partitioned to the
     head of the result so they always survive the truncation. Without
     this guard, a tight max_tools cap that happened to land before
     `done` would silently strip the session terminator.
+
+    Conditional priority tools stay within the cap and retain their original
+    relative order. Agent Skills use this to keep their activation mechanism,
+    `read`, ahead of optional tools without changing disabled runs.
     """
     profile = _resolve_profile(client)
     if profile is None:
@@ -48,6 +57,16 @@ def _apply_profile_tool_cap(tool_schemas: list[dict], client) -> list[dict]:
     for schema in tool_schemas:
         name = schema.get("function", {}).get("name", "")
         (immune if name in _CAP_IMMUNE_TOOLS else rest).append(schema)
+
+    if priority_tools:
+        prioritized = [
+            schema for schema in rest
+            if schema.get("function", {}).get("name", "") in priority_tools
+        ]
+        rest = prioritized + [
+            schema for schema in rest
+            if schema.get("function", {}).get("name", "") not in priority_tools
+        ]
 
     keep_rest = max(0, max_tools - len(immune))
     capped = immune + rest[:keep_rest]
@@ -124,13 +143,27 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
     for both Session.__init__ and _record_session_start_costs. The same
     composition was once open-coded in two places and could drift.
     """
-    return _apply_profile_tool_cap(
+    skills_active = bool(
+        getattr(cfg, "skills_enabled", False)
+        and tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+    )
+    output = _apply_profile_tool_cap(
         _apply_profile_schema_simplify(
             _filter_disabled_tools(tool_schemas, cfg),
             client,
         ),
         client,
+        priority_tools=frozenset({"read"}) if skills_active else frozenset(),
     )
+    if skills_active and not any(
+        schema.get("function", {}).get("name", "") == "read"
+        for schema in output
+    ):
+        raise ValueError(
+            "skills_enabled requires the read tool in the effective profile; "
+            "increase profile max_tools"
+        )
+    return output
 
 
 def _apply_profile_preamble(system_prompt: str, client) -> str:

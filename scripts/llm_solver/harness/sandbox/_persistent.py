@@ -100,6 +100,7 @@ class PersistentBashSession:
         cwd: str,
         bwrap_bin: str | None = None,
         unreadable_paths: tuple[str, ...] = (),
+        readable_paths: tuple[str, ...] = (),
         sandbox_required: bool = False,
         effective_env: Mapping[str, str] | None = None,
         allow_login_shell: bool = False,
@@ -112,6 +113,7 @@ class PersistentBashSession:
         self.cwd = cwd
         self.bwrap_bin = bwrap_bin
         self.unreadable_paths = unreadable_paths
+        self.readable_paths = readable_paths
         self.sandbox_required = sandbox_required
         self.effective_env = effective_env
         self.allow_login_shell = bool(allow_login_shell)
@@ -135,6 +137,7 @@ class PersistentBashSession:
             cwd=self.cwd,
             bwrap_bin=self.bwrap_bin,
             unreadable_paths=self.unreadable_paths,
+            readable_paths=self.readable_paths,
             sandbox_required=self.sandbox_required,
             effective_env=self.effective_env,
             allow_login_shell=self.allow_login_shell,

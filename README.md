@@ -88,6 +88,8 @@ continue through more than one run segment.
 - You can inspect, pause, approve, reject, and resume a session.
 - Yuj can shorten old command output when the model nears its input limit.
 - Yuj can suggest a next step when the model repeats a known failed step.
+- Yuj can disclose validated Agent Skills metadata and let the model read the
+  matching instructions on demand.
 - A Yuj quirk is a TOML rule that users can read, share, and measure.
 - Yuj saves the settings, model-message records, tool calls, and final status.
 - After most run segments, Yuj tries to stage all uncommitted changes in the

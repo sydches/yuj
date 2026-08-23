@@ -108,6 +108,9 @@ order in the
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
+| `[prompts].skills_enabled` | Discover validated Agent Skills and add their metadata catalog to the system prompt. Off by default. |
+| `[prompts].skills_dirs` | Search these skill collection directories in order. Relative entries are searched from the task cwd to its project root. |
+| `[prompts].skill_paths` | Load these exact `SKILL.md` files or skill directories before directory discovery. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
@@ -804,14 +807,102 @@ global scope. Each selected document is wrapped as
 `global/<name>` label.
 
 Prompt order is the resolved `--system-prompt` arm file, project-instruction
-blocks, then `prompts.system_header`; a model-profile preamble remains
-outermost. `session_start.prompt_import_tree` records ordered source envelopes
-and nested status/depth/byte metadata with safe labels. It stores no prompt
+blocks, `prompts.system_header`, then an enabled Agent Skills catalog; a
+model-profile preamble remains outermost. `session_start.prompt_import_tree`
+records ordered source envelopes and nested status/depth/byte metadata with
+safe labels. It stores no prompt
 body or absolute host path, and injection entries mean a fragment was resolved,
 not that it fired. Project source, imported, and admitted resolved bytes are
 reported separately. `metrics.json` provenance hashes and counts the exact
 fully resolved prompt, never its body. Enabling project instruction discovery
 changes model input and must be treated as an experimental condition.
+
+### Load Agent Skills on demand
+
+Yuj supports [Agent Skills](https://agentskills.io/specification) directories.
+This is progressive disclosure: startup reads and validates only YAML
+frontmatter, then adds each model-invocable skill's name, description, and
+absolute `SKILL.md` path to a `<skills>` system-prompt block. The Markdown body
+and bundled scripts, references, and assets stay out of the prompt until the
+model reads them.
+
+The feature is off by default. Enable it with a small overlay:
+
+```toml
+[prompts]
+skills_enabled = true
+skills_dirs = [
+  "~/.pi/agent/skills",
+  "~/.agents/skills",
+  ".pi/skills",
+  ".agents/skills",
+]
+skill_paths = ["/opt/team-skills/release/SKILL.md"]
+```
+
+`skill_paths` is the exact-path layer and is considered first, in declaration
+order. An entry may name `SKILL.md` or its containing directory; a missing
+exact path is a startup error. Yuj then searches `skills_dirs` in declaration
+order. It ignores a missing collection directory. An absolute, `~`-expanded,
+or environment-expanded entry names one collection. A relative entry is
+searched at the task cwd and each ancestor through the nearest directory with
+one of `[prompts].project_root_markers`. Collection discovery is deterministic
+across subdirectories, with a six-level and 2,000-directory safety bound. A
+subdirectory is a skill only when it contains a file named exactly `SKILL.md`;
+a collection-root `SKILL.md` is not discovered implicitly and should instead
+be named in `skill_paths`.
+
+When more than one validated skill has the same frontmatter `name`, Yuj logs a
+warning and keeps the first. Exact paths therefore let an overlay take
+precedence over collection discovery. Multiple collection roots retain their
+declared order.
+
+Startup validates these frontmatter rules before any model call:
+
+- `name` is required, has at most 64 characters, uses lowercase letters,
+  digits, and single hyphens, and matches the parent directory;
+- `description` is required, non-empty, and at most 1,024 characters;
+- `license` and experimental `allowed-tools` are non-empty strings when set;
+- `compatibility` is a non-empty string of at most 500 characters when set;
+- `metadata` maps string keys to string values; and
+- `disable-model-invocation` is a boolean when set.
+
+`disable-model-invocation = true` keeps a validated skill out of the `<skills>`
+block. It remains in raw startup provenance and can still be read when its path
+is explicitly supplied. `allowed-tools` is validated metadata only: a skill
+cannot weaken `[permissions]`, approvals, sandboxing, or the effective profile
+tool set.
+
+The catalog tells the model to use the ordinary `read` tool with the listed
+absolute path and to resolve relative resource references from the skill
+directory. Every successfully loaded skill directory is added to that run's
+skill-readable path set. An external skill directory is readable through `read` and
+available read-only to bwrap and the first-class container backend; `write`
+and `edit` reject its absolute paths. A project skill already under the task
+cwd follows the normal task rule and remains writable. Configured unreadable
+masks still apply to external skill reads and shell mounts; `.yujignore`
+continues to govern project-local skills. A masked discovered skill is skipped,
+while a masked exact `skill_paths` entry is a conflicting startup error.
+
+Every raw `session_start` trace row contains `loaded_skills`, including the
+canonical path and `disable_model_invocation` value for each first-wins skill.
+This provenance is not projected into `.solver/state.json`. Post-run resolved
+configuration records the effective skill-readable directories, and the savings
+ledger records only the visible catalog's character cost, not any skill body.
+
+Apply this overlay with the normal CLI configuration surface:
+
+```bash
+yuj code --config skills.toml "Prepare the release."
+```
+
+All model profiles use the same discovery, prompt catalog, normal `read` tool,
+and sandbox boundary. When at least one skill loads and a profile caps its tool
+count, `read` gets first priority after the always-present `done` tool; a cap
+too small to retain `read` stops startup. Yuj does not add a separate
+skill-loader tool. These are run-start settings; a live adaptive TOML
+transaction cannot change them after the catalog and skill-readable roots have
+been fixed.
 
 ## Apply a small TOML file
 

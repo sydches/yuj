@@ -86,6 +86,63 @@ def _resolve(cwd: str, path: str) -> Path:
     return target
 
 
+def _resolve_read(
+    cwd: str,
+    path: str,
+    *,
+    readonly_roots: tuple[str, ...] = (),
+) -> Path:
+    """Resolve a read path under cwd or an explicit read-only skill root.
+
+    Only absolute paths can select an external root. This keeps ordinary
+    relative tool behavior rooted at the task while allowing the system
+    prompt to disclose exact ``SKILL.md`` and resource paths.
+    """
+    if path.startswith("/") and readonly_roots:
+        target = Path(path).resolve(strict=False)
+        for raw_root in readonly_roots:
+            root = Path(raw_root).resolve(strict=False)
+            if target == root or root in target.parents:
+                return target
+    return _resolve(cwd, path)
+
+
+def _is_external_readonly_path(
+    cwd: str,
+    path: str,
+    *,
+    readonly_roots: tuple[str, ...] = (),
+) -> bool:
+    """Return whether an absolute target belongs to an external skill root."""
+    if not path.startswith("/"):
+        return False
+    target = Path(path).resolve(strict=False)
+    cwd_path = Path(cwd).resolve(strict=False)
+    if target == cwd_path or cwd_path in target.parents:
+        return False
+    return any(
+        target == (root := Path(raw_root).resolve(strict=False))
+        or root in target.parents
+        for raw_root in readonly_roots
+    )
+
+
+def _require_external_readable(
+    cwd: str,
+    target: Path,
+    *,
+    unreadable_paths: tuple[str, ...] = (),
+) -> None:
+    """Apply configured masks to an otherwise allowed external read."""
+    cwd_path = Path(cwd).resolve(strict=False)
+    if target == cwd_path or cwd_path in target.parents or not unreadable_paths:
+        return
+    from ..project_instructions import _UnreadableMatcher
+
+    if _UnreadableMatcher(cwd_path, unreadable_paths).blocks(target):
+        raise FileNotFoundError(str(target))
+
+
 def _path_hint(cwd: str, path: str) -> str:
     """Suggest a corrected path when a file-not-found error occurs.
 

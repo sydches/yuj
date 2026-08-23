@@ -49,7 +49,8 @@ from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
-    ToolRegistry, _bash_unreadable_paths, admit_tool_output,
+    ToolRegistry, _bash_readable_paths, _bash_unreadable_paths,
+    admit_tool_output,
     _effective_command_environment, build_tool_registry, dispatch,
     validate_tool_handlers,
 )
@@ -323,6 +324,7 @@ class Session:
                 unreadable_paths=_bash_unreadable_paths(
                     cwd, cfg, self._ignore_policy,
                 ),
+                readable_paths=_bash_readable_paths(cfg),
                 sandbox_required=getattr(cfg, "sandbox_required", False),
                 sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                 sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -537,6 +539,7 @@ class Session:
                     unreadable_paths=_bash_unreadable_paths(
                         cwd, cfg, self._ignore_policy,
                     ),
+                    readable_paths=_bash_readable_paths(cfg),
                     sandbox_required=getattr(cfg, "sandbox_required", False),
                     sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                     sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),

@@ -91,6 +91,13 @@ def _bash_unreadable_paths(
     return tuple(dict.fromkeys((*configured, *additions)))
 
 
+def _bash_readable_paths(cfg) -> tuple[str, ...]:
+    """Return startup-validated external skill roots for shell sandboxes."""
+    return tuple(dict.fromkeys(
+        tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+    ))
+
+
 def _dispatch_bash(args, cwd, cfg):
     if bool(args.get("background", False)):
         return "ERROR: background process manager is unavailable"
@@ -102,6 +109,7 @@ def _dispatch_bash(args, cwd, cfg):
         bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
         unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        readable_paths=_bash_readable_paths(cfg),
         sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
         container_runtime=getattr(
             cfg, "sandbox_container_runtime", "docker"
@@ -433,7 +441,14 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         succeeded = not is_error_result(raw_result)
         try:
             if succeeded and name == "read":
-                stale_guard.observe_read(str(arguments.get("path", "")))
+                read_path = str(arguments.get("path", ""))
+                candidate = Path(read_path)
+                if (
+                    not candidate.is_absolute()
+                    or candidate.resolve(strict=False) == Path(cwd).resolve()
+                    or Path(cwd).resolve() in candidate.resolve(strict=False).parents
+                ):
+                    stale_guard.observe_read(read_path)
             elif succeeded and name in {"write", "edit"}:
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name

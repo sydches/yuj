@@ -243,6 +243,17 @@ class Config:
     project_doc_global_dir: str = "~/.config/yuj"
     imports_enabled: bool = True
     imports_max_depth: int = 5
+    skills_enabled: bool = False
+    skills_dirs: tuple[str, ...] = (
+        "~/.pi/agent/skills",
+        "~/.agents/skills",
+        ".pi/skills",
+        ".agents/skills",
+    )
+    skill_paths: tuple[str, ...] = ()
+    # Effective, validated roots fixed by startup discovery. This is not a
+    # user knob: it lets read and shell sandboxes expose only loaded skills.
+    skills_readable_dirs: tuple[str, ...] = ()
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"

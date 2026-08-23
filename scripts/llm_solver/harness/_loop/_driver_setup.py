@@ -60,6 +60,8 @@ class PromptAssemblyMetadata:
     project_instruction_chars: int = 0
     project_instructions_truncated: bool = False
     prompt_import_tree: tuple[dict[str, object], ...] = ()
+    loaded_skills: tuple[dict[str, object], ...] = ()
+    skills_catalog_chars: int = 0
 
     def trace_fields(self) -> dict[str, object]:
         return {
@@ -78,6 +80,9 @@ class PromptAssemblyMetadata:
             ),
             "prompt_import_tree": [
                 dict(record) for record in self.prompt_import_tree
+            ],
+            "loaded_skills": [
+                dict(record) for record in self.loaded_skills
             ],
         }
 
@@ -138,6 +143,7 @@ def load_system_prompt_and_provenance(
     context_class,
     *,
     unreadable_paths: tuple[str, ...] | None = None,
+    skill_catalog=None,
 ) -> tuple[str, dict, dict, PromptAssemblyMetadata]:
     """Build system_prompt, provenance, and context_contract.
 
@@ -208,6 +214,17 @@ def load_system_prompt_and_provenance(
                 diagnostic.error_kind,
                 diagnostic.message,
             )
+    if skill_catalog is None:
+        from ..skills import discover_skills
+        skill_catalog = discover_skills(
+            work_dir,
+            enabled=getattr(cfg, "skills_enabled", False),
+            skills_dirs=getattr(cfg, "skills_dirs", ()),
+            skill_paths=getattr(cfg, "skill_paths", ()),
+            root_markers=cfg.project_root_markers,
+            unreadable_paths=prompt_unreadable_paths,
+        )
+    skills_block = skill_catalog.format_prompt_block()
     prompt_metadata = PromptAssemblyMetadata(
         arm_label=(
             arm.source if arm is not None else None
@@ -220,12 +237,15 @@ def load_system_prompt_and_provenance(
         project_instruction_chars=len(project_content),
         project_instructions_truncated=project_truncated,
         prompt_import_tree=tuple(prompt_import_tree),
+        loaded_skills=tuple(skill_catalog.trace_records()),
+        skills_catalog_chars=len(skills_block),
     )
     system_prompt = _apply_profile_preamble(
         assemble_system_prompt(
             cfg.system_header,
             resolved_arm=resolved_arm,
             project_instructions=project_content,
+            skills=skills_block,
         ),
         client,
     )
