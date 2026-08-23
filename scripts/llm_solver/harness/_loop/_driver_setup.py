@@ -32,6 +32,11 @@ from ..project_instructions import (
     find_project_root,
     resolve_project_instruction_imports,
 )
+from ..security_scan import (
+    SecurityFinding,
+    SecurityScanner,
+    prepend_finding_markers,
+)
 from ..solver import (
     assemble_system_prompt,
     collect_provenance,
@@ -60,6 +65,8 @@ class PromptAssemblyMetadata:
     project_instruction_chars: int = 0
     project_instructions_truncated: bool = False
     prompt_import_tree: tuple[dict[str, object], ...] = ()
+    security_findings: tuple[SecurityFinding, ...] = ()
+    security_blocked: bool = False
 
     def trace_fields(self) -> dict[str, object]:
         return {
@@ -208,18 +215,41 @@ def load_system_prompt_and_provenance(
                 diagnostic.error_kind,
                 diagnostic.message,
             )
+    scanner = SecurityScanner.from_config(cfg)
+    prompt_security_findings: list[SecurityFinding] = []
+    prompt_security_blocked = False
+    arm_chars = len(resolved_arm.rstrip()) if resolved_arm is not None else 0
+    project_instruction_chars = len(project_content)
+    if resolved_arm is not None:
+        arm_scan = scanner.scan_text(resolved_arm, stage="result")
+        prompt_security_findings.extend(arm_scan.findings)
+        prompt_security_blocked = prompt_security_blocked or arm_scan.blocked
+        resolved_arm = prepend_finding_markers(
+            resolved_arm, arm_scan.findings
+        )
+    if project_content:
+        project_scan = scanner.scan_text(project_content, stage="result")
+        prompt_security_findings.extend(project_scan.findings)
+        prompt_security_blocked = (
+            prompt_security_blocked or project_scan.blocked
+        )
+        project_content = prepend_finding_markers(
+            project_content, project_scan.findings
+        )
     prompt_metadata = PromptAssemblyMetadata(
         arm_label=(
             arm.source if arm is not None else None
         ),
-        arm_chars=len(resolved_arm.rstrip()) if resolved_arm is not None else 0,
+        arm_chars=arm_chars,
         project_instruction_files=project_records,
         project_instruction_bytes=project_bytes,
         project_instruction_imported_bytes=project_imported_bytes,
         project_instruction_resolved_bytes=project_resolved_bytes,
-        project_instruction_chars=len(project_content),
+        project_instruction_chars=project_instruction_chars,
         project_instructions_truncated=project_truncated,
         prompt_import_tree=tuple(prompt_import_tree),
+        security_findings=tuple(prompt_security_findings),
+        security_blocked=prompt_security_blocked,
     )
     system_prompt = _apply_profile_preamble(
         assemble_system_prompt(
@@ -270,6 +300,32 @@ def load_session_injections(
         unreadable_paths=prompt_unreadable_paths,
     )
     return loaded.injections, loaded.prompt_import_tree
+
+
+def scan_session_injections(
+    cfg: Config,
+    injections: tuple[Injection, ...],
+) -> tuple[tuple[Injection, ...], tuple[SecurityFinding, ...], bool]:
+    """Scan resolved injection bodies without scanning task text."""
+    from dataclasses import replace
+
+    scanner = SecurityScanner.from_config(cfg)
+    admitted: list[Injection] = []
+    findings: list[SecurityFinding] = []
+    blocked = False
+    for injection in injections:
+        outcome = scanner.scan_text(injection.body, stage="result")
+        findings.extend(outcome.findings)
+        blocked = blocked or outcome.blocked
+        admitted.append(
+            replace(
+                injection,
+                body=prepend_finding_markers(
+                    injection.body, outcome.findings
+                ),
+            )
+        )
+    return tuple(admitted), tuple(findings), blocked
 
 
 def thinking_trace_fields(cfg: Config, client) -> dict[str, object]:

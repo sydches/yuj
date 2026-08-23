@@ -37,6 +37,7 @@ Do not pass a descriptor file with `--config`.
 | A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
+| A prompt-injection scan rule | `security/patterns.toml` or another reviewed registry | The dispatcher and imported-instruction loader apply `[security]` settings. | No, for the current pattern shape. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
@@ -145,6 +146,7 @@ The public data files have separate jobs.
 | `profiles/` | Adapt model messages, tool schemas, and replies. |
 | `scripts/llm_solver/language_quirks/` | Describe test runners and their output. |
 | `scripts/llm_solver/bash_quirks/` | Describe shell rewrites, refusals, and redactions. |
+| `security/patterns.toml` | Define prompt-injection scan rules and finding classes. |
 | `scripts/llm_solver/tool_quirks/` | Describe supported result changes for non-shell tools. |
 
 Do not mix these jobs in one file.
@@ -467,6 +469,19 @@ for `glob`. Put its numeric limits in a settings overlay under `[tools]`.
 The current `tool_quirks` loader is not a general tool plugin loader. A new
 result transform needs Python in `tool_quirks/transforms.py` and a call from
 the tool handler.
+
+### Change a prompt-injection pattern
+
+Copy the checked-in `security/patterns.toml` registry, review every regular
+expression, and point a small settings overlay at the copy with
+`[security].patterns_file`. Test both matching and non-matching text for every
+rule. The current registry shape supports a rule name, finding class, `args`
+or `result` stages, and one regular expression. A new scan stage, classifier,
+or action needs Python.
+
+Read [Configuration](configuration.html#scan-untrusted-text-for-prompt-injection)
+for the canonical `security.scan_mode`, `security.patterns_file`, and
+`security.block_classes` contract and the exact trace/model boundaries.
 
 ### Change tool schemas or descriptions
 

@@ -298,6 +298,9 @@ class Session:
                 )
 
         self._redirect_event_sink = _redirect_event_sink
+        # Security findings use the same locked, raw-trace-only service sink.
+        # Keep a distinct attribute so dispatch wiring names the owner event.
+        self._security_event_sink = _redirect_event_sink
         self._lsp_manager = lsp_manager
         if self._lsp_manager is None and (
             getattr(cfg, "lsp_enabled", False)
@@ -517,6 +520,22 @@ class Session:
                         )
 
                 def _admit_poll_output(value: str) -> str:
+                    from .security_scan import (
+                        SecurityScanner,
+                        emit_findings,
+                        render_security_block,
+                    )
+
+                    scanner = SecurityScanner.from_config(self.cfg)
+                    outcome = scanner.scan_text(value, stage="result")
+                    try:
+                        emit_findings(
+                            outcome.findings, self._security_event_sink
+                        )
+                    except Exception as exc:
+                        log.warning("security finding emit failed: %s", exc)
+                    if outcome.blocked:
+                        return render_security_block("bash_poll", outcome)
                     return admit_tool_output(
                         "bash_poll",
                         value,
@@ -524,6 +543,7 @@ class Session:
                         cfg=self.cfg,
                         output_control=self.output_control,
                         redactions=self.redactions,
+                        security_findings=outcome.findings,
                     )
 
                 manager_run_dir = Path(

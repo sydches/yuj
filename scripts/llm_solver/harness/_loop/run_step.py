@@ -618,6 +618,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         stale_guard=session._stale_guard,
                         active_tools=getattr(session, "active_tool_names", ()),
                         redirect_event_sink=getattr(session, "_redirect_event_sink", None),
+                        security_event_sink=getattr(session, "_security_event_sink", None),
                         ignore_policy=session._ignore_policy,
                         effective_env=session._effective_env,
                         allow_login_shell=session._allow_login_shell,

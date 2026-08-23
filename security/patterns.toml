@@ -1,0 +1,50 @@
+schema_version = 1
+
+# Broad, destructive deletion of a filesystem root or home/workspace variable.
+[[pattern]]
+rule = "destructive_recursive_delete"
+class = "destructive_command"
+stages = ["args", "result"]
+regex = '''(?im)(?:^|[;&|]\s*)(?:sudo\s+)?rm\s+(?:-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+(?:--\s+)?(?:/|~(?:/|\s|$)|\$(?:HOME|PWD)(?:/|\s|$)|\$\{(?:HOME|PWD)\}(?:/|\s|$))'''
+
+# Direct filesystem/device destruction rather than ordinary file cleanup.
+[[pattern]]
+rule = "destructive_device_write"
+class = "destructive_command"
+stages = ["args", "result"]
+regex = '''(?im)(?:^|[;&|]\s*)(?:sudo\s+)?(?:mkfs(?:\.[a-z0-9_+-]+)?\s+|dd\s+[^\n]{0,500}\bof=/dev/)'''
+
+# Git operations that irreversibly discard an uncommitted working state.
+[[pattern]]
+rule = "destructive_git_discard"
+class = "destructive_command"
+stages = ["args", "result"]
+regex = '''(?im)(?:^|[;&|]\s*)git\s+(?:reset\s+--hard\b|clean\s+-[a-z]*f[a-z]*d[a-z]*\b|clean\s+-[a-z]*d[a-z]*f[a-z]*\b)'''
+
+# Outbound transfer commands coupled to common secret-bearing material.
+[[pattern]]
+rule = "credential_exfiltration_command"
+class = "exfiltration"
+stages = ["args", "result"]
+regex = '''(?is)(?:\b(?:curl|wget|nc|netcat)\b[^\n]{0,500}\b(?:api[_-]?key|token|secret|credentials?|id_rsa|\.env)\b|\b(?:api[_-]?key|token|secret|credentials?|id_rsa|\.env)\b[^\n]{0,500}\b(?:curl|wget|nc|netcat)\b)'''
+
+# Canonical instruction-override language used in prompt-injection payloads.
+[[pattern]]
+rule = "prompt_instruction_override"
+class = "prompt_injection"
+stages = ["args", "result"]
+regex = '''(?i)\b(?:ignore|disregard|forget|override|do\s+not\s+follow)\s+(?:(?:all|any|the)\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|messages?|rules?|prompts?)\b'''
+
+# Characters that can hide or reorder model-visible instructions.
+[[pattern]]
+rule = "invisible_unicode_control"
+class = "invisible_unicode"
+stages = ["args", "result"]
+regex = '''[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]'''
+
+# Tool-call wrappers embedded in otherwise untrusted tool output.
+[[pattern]]
+rule = "embedded_tool_call_syntax"
+class = "embedded_tool_call"
+stages = ["result"]
+regex = '''(?is)(?:<\s*/?\s*(?:tool_call|function_call)\b|["'](?:tool_calls?|function_call)["']\s*:\s*[\[{])'''

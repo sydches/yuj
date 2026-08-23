@@ -530,6 +530,12 @@ def _extract_config_fields(d: dict) -> dict:
         "prompt_addendum": experiment.get("prompt_addendum", ""),
         "variant_name": experiment.get("variant_name", ""),
         "runtime_mode": d.get("runtime", {}).get("mode", "measurement"),
+        "security_scan_mode": _require(d, "security", "scan_mode"),
+        "security_patterns_file": _require(d, "security", "patterns_file"),
+        "security_block_classes": _string_tuple(
+            _require(d, "security", "block_classes"),
+            path="security.block_classes",
+        ),
         "permissions_rules": copy.deepcopy(
             d.get("permissions", {}).get("rules", {})
         ),
@@ -589,6 +595,12 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    from .harness.security_scan import validate_security_settings
+    validate_security_settings(
+        cfg.security_scan_mode,
+        cfg.security_patterns_file,
+        cfg.security_block_classes,
+    )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,
