@@ -531,6 +531,13 @@ class Config:
     # Off by default; data-directory convention .harness/injections/.
     injections_enabled: bool = False
     injections_dir: str = ".harness/injections"
+    # Validated mid-stream rules. The environment-level YUJ_STREAMING switch
+    # selects interrupt-capable SSE transport; completed non-stream responses
+    # still take the reminder-only path when this feature is enabled.
+    stream_rules_enabled: bool = False
+    stream_rules_dir: str = ".harness/stream_rules"
+    stream_rules_context_mode: str = "discard"
+    stream_rules_repeat_gap: int = 10
     loop_detect_recovery: str = (
         "<system-reminder>Loop detected: the last {streak} tool calls all "
         "have identical name and arguments. Stop repeating. Re-read the "

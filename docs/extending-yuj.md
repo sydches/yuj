@@ -37,6 +37,7 @@ Do not pass a descriptor file with `--config`.
 | A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
+| A repository-specific live response correction | `.harness/stream_rules/*.md` in the task repository | The harness validates the enabled rule directory at task startup. | No, for the current rule fields and supported structural languages. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
@@ -56,6 +57,7 @@ files. It stores language, shell, and tool quirks in the matching directories.
 | Model message and tool-call format | One `profiles/NAME/` directory | Copy the directory under `profiles/`. Review every Python module before use. |
 | Test runner or language | One `language_quirks/NAME.toml` file | Copy it under `scripts/llm_solver/language_quirks/`. Give it a unique `detection_priority`. |
 | Shell rewrite, refusal, redirect, or redaction | One or more TOML rule entries | Review and merge the entries into the matching fixed file under `bash_quirks/`. The current loader ignores other TOML files in that directory. |
+| Mid-stream response rule | One `.harness/stream_rules/*.md` file | Review it, copy it below the task repository, and enable `[loop].stream_rules_enabled`. |
 | `glob` refusal text | The changed entries from `tool_quirks/glob.toml` | Review and merge them into that fixed file. The current loader does not scan extra tool-quirk files. |
 | Tool description mode | One complete `tool_descriptions/MODE/` directory | Copy the directory under `profiles/_base/tool_descriptions/`. Include one `.txt` file for every tool. |
 
@@ -146,6 +148,7 @@ The public data files have separate jobs.
 | `scripts/llm_solver/language_quirks/` | Describe test runners and their output. |
 | `scripts/llm_solver/bash_quirks/` | Describe shell rewrites, refusals, and redactions. |
 | `scripts/llm_solver/tool_quirks/` | Describe supported result changes for non-shell tools. |
+| `<task repository>/.harness/stream_rules/` | Describe repository-specific model-output corrections. |
 
 Do not mix these jobs in one file.
 
@@ -408,6 +411,73 @@ Run the language and tool tests:
 .venv/bin/python -m pytest -q \
   tests/test_run_tests_tool.py \
   tests/test_composability.py
+```
+
+## Add a mid-stream rule
+
+A stream-rule file is Markdown with TOML frontmatter between `+++` fences.
+The Markdown body is the correction Yuj sends back to the model:
+
+```markdown
++++
+name = "avoid-recursive-delete"
+condition = '''\brm\s+-rf\b'''
+scope = "tool:bash"
+interruptMode = "tool-only"
+repeatMode = "once"
++++
+Do not use a recursive forced delete. Choose a bounded operation and name its
+exact target.
+```
+
+`name` may be omitted; the filename stem then owns the name. Each file needs
+`condition`, `astCondition`, or both. `condition` is a Python regular
+expression. A string or array of strings is accepted; any matching condition
+triggers the rule.
+
+`scope` accepts a comma-separated string or an array made from `text`,
+`thinking`, `tool`, and `tool:<name>(<glob>)`. `toolcall` is accepted as an
+alias for `tool`. The default is `text` plus `tool`. A scoped tool glob is
+matched against path-like tool arguments. Top-level `globs` adds a path gate
+to every scope in that rule. Repository globs support `*`, `?`, character
+classes, and `**`; `**/*.py` includes a Python file at the repository root.
+
+`astCondition` provides a structural pattern for `edit` and `write` content.
+It runs only when a path selects one of Yuj's installed Python,
+JavaScript/TypeScript, Go, Rust, or Java parsers. Uppercase placeholders such
+as `$ARG` match one syntax node; repeated uses of the same placeholder must
+have identical source text. Structural matching is local and never downloads
+a grammar.
+
+`interruptMode` is `never`, `prose-only`, `tool-only`, or `always`; the default
+is `always`. `repeatMode` is `once` or `after-gap`; the default is `once`.
+An `after-gap` rule may set an integer `repeatGap >= 1`, otherwise it uses
+`[loop].stream_rules_repeat_gap`.
+
+Yuj loads files in filename order and rejects an invalid file or duplicate
+rule name before the first model request. Use a prefix such as `10-` when
+review order matters. Rules are trusted prompt material: review their regular
+expressions, path gates, and Markdown bodies before enabling them.
+
+Enable the directory and streaming interrupt path with a settings overlay:
+
+```toml
+[loop]
+stream_rules_enabled = true
+stream_rules_dir = ".harness/stream_rules"
+stream_rules_context_mode = "discard"
+```
+
+```bash
+YUJ_STREAMING=1 yuj code --config stream-rules.toml "Fix the issue."
+```
+
+Run the focused loader and runtime tests after changing the rule format:
+
+```bash
+.venv/bin/python -m pytest -q \
+  tests/test_stream_rules.py \
+  tests/test_stream_rules_integration.py
 ```
 
 ## Change tool behavior

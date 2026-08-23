@@ -32,6 +32,11 @@ from .injections import (
     load_injections,
     record_fire,
 )
+from .stream_rules import (
+    StreamRuleRuntime,
+    format_interrupt_fragment,
+    load_stream_rules,
+)
 from .guardrails import (
     Action,
     GuardrailState,
@@ -211,6 +216,7 @@ class Session:
         lsp_manager=None,
         process_manager=None,
         injections=None,
+        stream_rules=None,
         artifact_dir: Path | None = None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
         ignore_policy: IgnorePolicy | None = None,
@@ -652,6 +658,26 @@ class Session:
                     cwd, cfg, self._ignore_policy,
                 ),
             )
+        # Stream-rule files are parsed before the task's first model call by
+        # the outer driver. Direct Session construction retains the same loud
+        # startup validation path for focused integrations/tests.
+        self._stream_rule_runtime: StreamRuleRuntime | None = None
+        self._stream_rule_decorated_call_ids: set[str] = set()
+        if getattr(cfg, "stream_rules_enabled", False):
+            resolved_stream_rules = (
+                tuple(stream_rules)
+                if stream_rules is not None
+                else load_stream_rules(
+                    Path(self.cwd) / cfg.stream_rules_dir,
+                    display_dir=cfg.stream_rules_dir,
+                    allowed_root=Path(self.cwd),
+                ).rules
+            )
+            self._stream_rule_runtime = StreamRuleRuntime(
+                resolved_stream_rules,
+                repeat_gap=cfg.stream_rules_repeat_gap,
+                cwd=Path(self.cwd),
+            )
 
     @property
     def active_tool_names(self) -> frozenset[str]:
@@ -698,6 +724,78 @@ class Session:
             record_fire(
                 inj.name, body_chars=len(block), match_mode=inj.trigger,
             )
+
+    def _record_stream_rule_matches(self, records, *, turn: int) -> None:
+        """Write one raw trigger row per matched rule, never its body."""
+        for record in records:
+            self._emit(
+                "stream_rule_triggered",
+                session_number=self._session_number,
+                turn_number=turn,
+                rule=str(record.get("rule") or ""),
+                scope=str(record.get("scope") or ""),
+                offset=int(record.get("offset") or 0),
+                path=str(record.get("path") or ""),
+                tool_name=str(record.get("tool_name") or ""),
+                interrupt=bool(record.get("interrupt", False)),
+            )
+
+    def _record_stream_rule_injection(
+        self,
+        records,
+        *,
+        turn: int,
+        delivery: str,
+    ) -> None:
+        names = [str(record.get("rule") or "") for record in records]
+        if not names:
+            return
+        self._emit(
+            "stream_rule_injection",
+            session_number=self._session_number,
+            turn_number=turn,
+            rules=names,
+            delivery=delivery,
+            context_mode=getattr(
+                self.cfg, "stream_rules_context_mode", "discard"
+            ),
+        )
+
+    def _apply_pending_stream_rule_injections(self, turn: int) -> None:
+        """Deliver deferred prose reminders at the next logical turn."""
+        runtime = self._stream_rule_runtime
+        if runtime is None:
+            return
+        records = runtime.take_prose_injections(turn=turn)
+        if not records:
+            return
+        self.context.add_user(
+            "\n\n".join(format_interrupt_fragment(record) for record in records)
+        )
+        self._record_stream_rule_injection(
+            records, turn=turn, delivery="next_turn"
+        )
+
+    def _decorate_stream_rule_tool_result(
+        self,
+        tool_call_id: str,
+        result: str,
+        *,
+        turn: int,
+    ) -> str:
+        """Prepend queued non-interrupt reminders to their exact tool result."""
+        runtime = self._stream_rule_runtime
+        if runtime is None:
+            return result
+        decorated, records = runtime.decorate_tool_result(
+            tool_call_id, result, turn=turn
+        )
+        if records:
+            self._stream_rule_decorated_call_ids.add(tool_call_id)
+            self._record_stream_rule_injection(
+                records, turn=turn, delivery="tool_result"
+            )
+        return decorated
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx

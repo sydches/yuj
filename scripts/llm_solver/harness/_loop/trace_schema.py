@@ -51,7 +51,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instruction_imported_bytes",
             "project_instruction_resolved_bytes",
             "project_instructions_truncated", "prompt_import_tree",
-            "ignore_file_names",
+            "ignore_file_names", "stream_rule_files",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
@@ -160,6 +160,18 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         frozenset({
             "session_number", "turn_number", "rule", "tool",
             "fragment_index",
+        }),
+    ),
+    TraceEventSpec(
+        "stream_rule_triggered",
+        frozenset({
+            "session_number", "turn_number", "rule", "scope", "offset",
+        }),
+    ),
+    TraceEventSpec(
+        "stream_rule_injection",
+        frozenset({
+            "session_number", "turn_number", "rules", "delivery",
         }),
     ),
     TraceEventSpec(

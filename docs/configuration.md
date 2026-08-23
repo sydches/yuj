@@ -107,6 +107,10 @@ order in the
 | `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
+| `[loop].stream_rules_enabled` | Load repository-owned response rules and check model output. Off by default. |
+| `[loop].stream_rules_dir` | Select the relative rule directory. Defaults to `.harness/stream_rules`. |
+| `[loop].stream_rules_context_mode` | On a streaming interrupt, discard partial output or keep completed partial prose. Defaults to `discard`. |
+| `[loop].stream_rules_repeat_gap` | Set the default completed-turn gap for rules that use `repeatMode = "after-gap"`. Defaults to `10`. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
@@ -148,6 +152,45 @@ Read [Model tools](model-tools.html) for optional tool settings. Read
 [Run a local model](serving_overlay.html) for runtime files and profiles.
 Read [Extend Yuj with TOML files](extending-yuj.html) before you add or change
 a model, language, or tool descriptor.
+
+### Correct known response patterns during generation
+
+Mid-stream rules are repository-owned Markdown files under
+`.harness/stream_rules/*.md`. Enable them with a small overlay:
+
+```toml
+[loop]
+stream_rules_enabled = true
+stream_rules_dir = ".harness/stream_rules"
+stream_rules_context_mode = "discard"
+stream_rules_repeat_gap = 10
+```
+
+With `YUJ_STREAMING=1`, Yuj checks text, thinking, and accumulated tool-call
+arguments after every stream chunk. An interrupting match closes the response,
+records the trigger, adds the rule's hidden `<injected-fragment>` message, and
+requests the same logical turn again. `discard` keeps all partial assistant
+text and incomplete tool calls out of conversation context. `keep` preserves
+only completed partial prose; it never inserts an incomplete tool call.
+
+Without streaming, Yuj checks the completed response post hoc and never aborts
+or retries it. A matching prose rule becomes a hidden fragment at the next
+clean turn boundary. A non-interrupting tool rule prepends its
+`<system-reminder>` to that exact tool result. This completed-response behavior
+also applies when a rule explicitly sets `interruptMode = "never"`.
+
+Rules load once before the task's first model request. Invalid TOML
+frontmatter, regular expressions, scopes, modes, gaps, names, or duplicate
+names stop startup with the rule path in the error. A missing rule directory
+is an empty rule set. The directory must be relative to the task repository
+and cannot contain `..`.
+
+The repeat clock is the logical solver turn, not a stream chunk or retry.
+`repeatMode = "once"` permits one injection per session.
+`repeatMode = "after-gap"` uses the rule's `repeatGap` when present and the
+global `stream_rules_repeat_gap` otherwise. Read
+[Extend Yuj with TOML files](extending-yuj.html#add-a-mid-stream-rule) for the
+rule format and supported scopes.
 
 ### Select a shell sandbox backend
 
@@ -878,7 +921,7 @@ These process controls are optional:
 
 | Variable | What it changes |
 | --- | --- |
-| `YUJ_STREAMING=1` | Read model replies as a stream. Streaming is off by default. |
+| `YUJ_STREAMING=1` | Read model replies as a stream. Streaming is off by default. Enabled stream rules can close and retry a matching response only in this mode. |
 | `YUJ_PERSISTENT_BASH=0` | Start a new shell process for each `bash` tool call. Yuj normally reuses one eligible `bwrap` shell during a run segment. |
 
 Do not use `YUJ_CONFIG_LOCAL` to move local settings. `yuj setup` writes to

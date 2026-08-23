@@ -16,7 +16,7 @@ from ..config import Config
 if TYPE_CHECKING:
     from .profile_loader import Profile
 
-from ._streaming import assemble_stream
+from ._streaming import StreamRuleInterrupt, assemble_stream
 from . import request_controls
 from .types import SideRequestResult, ToolCall, TurnResult, Usage
 
@@ -88,6 +88,11 @@ class LlamaClient:
         self._session_id: str = ""
         self._thinking_resolution = None
         self._thinking_signature = None
+        # Bound by chat_io for one logical solver response.  Keeping the
+        # observer out of the request payload preserves provider/profile
+        # behavior while exposing SSE deltas to the owning harness layer.
+        self._stream_observer = None
+        self._last_call_streamed = False
         _ = self.thinking_resolution
 
     @property
@@ -191,6 +196,7 @@ class LlamaClient:
                 json.dumps(payload, default=str),
             )
         if _streaming_enabled():
+            self._last_call_streamed = True
             stream_payload = dict(payload)
             stream_payload["stream"] = True
             # include_usage on the final chunk gives us prompt_tokens
@@ -200,7 +206,18 @@ class LlamaClient:
             stream_payload["stream_options"] = {"include_usage": True}
             try:
                 stream = self.client.chat.completions.create(**stream_payload)
-                resp = assemble_stream(stream)
+                resp = assemble_stream(
+                    stream, observer=getattr(self, "_stream_observer", None)
+                )
+            except StreamRuleInterrupt as e:
+                # This is an intentional, replayable response outcome, not a
+                # transport failure.  Store valid JSON under the ordinary
+                # output marker so ReplayClient can reproduce the retry.
+                if record_transcript:
+                    self._write_transcript(
+                        f"turn {n:03d} output", e.model_dump_json()
+                    )
+                raise
             except Exception as e:
                 if record_transcript:
                     self._write_transcript(
@@ -211,6 +228,7 @@ class LlamaClient:
             if record_transcript:
                 self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
             return resp
+        self._last_call_streamed = False
         try:
             resp = self.client.chat.completions.create(**payload)
         except Exception as e:

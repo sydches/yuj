@@ -225,6 +225,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Stamp the savings ledger with (session, turn) so every record
         # written by transforms downstream carries the turn context.
         get_ledger().set_turn(session._session_number, turn)
+        # Deferred, non-interrupting prose rules become a hidden user
+        # fragment only at a clean turn boundary. Tool-source reminders are
+        # bound to their own tool result during dispatch instead.
+        session._apply_pending_stream_rule_injections(turn)
         # Inject keyword-triggered fragments (harness/injections.py)
         # against the latest user/tool content before the API call.
         # No-op when the subsystem is disabled or no fragments load.
@@ -411,7 +415,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     cfg.trace_args_summary_chars,
                 )
                 metadata = action_metadata(tc.name, tc.arguments)
-                session.context.add_tool_result(tc.id, intent_decision.text,
+                result = session._decorate_stream_rule_tool_result(
+                    tc.id, intent_decision.text, turn=turn
+                )
+                session.context.add_tool_result(tc.id, result,
                                              tool_name=tc.name, cmd_signature="",
                                              gate_blocked=True)
                 session._emit(
@@ -424,7 +431,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         session,
                         tool_name=tc.name,
                         args_summary=args_summary,
-                        result=intent_decision.text,
+                        result=result,
                         turn=turn,
                         gate_blocked=True,
                         metadata=metadata,
@@ -654,13 +661,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         ),
                     )
                     if not approval_allowed:
-                        session.context.add_tool_result(
-                            tc.id,
+                        result = (
                             "APPROVAL REQUIRED: This tool call was not "
                             "executed. "
                             f"Reason: {approval_reason}. Review it with "
                             "`yuj show`, approve it with "
-                            "`yuj approve <session_id>`, then resume.",
+                            "`yuj approve <session_id>`, then resume."
+                        )
+                        result = session._decorate_stream_rule_tool_result(
+                            tc.id, result, turn=turn
+                        )
+                        session.context.add_tool_result(
+                            tc.id,
+                            result,
                             tool_name=tc.name,
                             gate_blocked=True,
                         )
