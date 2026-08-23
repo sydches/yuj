@@ -104,6 +104,40 @@ def _target_config(cfg: Config, resolution: ResolvedModelRole) -> Config:
     )
 
 
+def _effective_role_specs(cfg: Config) -> dict[str, object]:
+    """Return configured roles plus the canonical ``advisor.*`` target.
+
+    ``advisor.model`` and ``advisor.endpoint`` are the public owners for this
+    role.  Keeping the derived role out of ``cfg.model_roles`` preserves the
+    resolved public configuration while letting the existing validated router
+    construct a distinct endpoint client lazily when needed.
+    """
+    specs = dict(cfg.model_roles)
+    if not getattr(cfg, "advisor_enabled", False):
+        return specs
+    specs.pop("advisor", None)
+    specs["advisor"] = {
+        "profile": cfg.profile_name or cfg.model,
+        "model": getattr(cfg, "advisor_model", "") or cfg.model,
+        "endpoint": getattr(cfg, "advisor_endpoint", "") or cfg.base_url,
+        "context_size": cfg.context_size,
+    }
+    return specs
+
+
+def _validate_advisor_profile(cfg: Config, resolver: ModelRoleResolver) -> None:
+    """Require the tool-call channel used for read-only review and advise."""
+    if not getattr(cfg, "advisor_enabled", False):
+        return
+    profile = resolver.resolve("advisor").profile
+    if profile is not None and not bool(
+        getattr(profile, "supports_tool_calls", False)
+    ):
+        raise ValueError(
+            "advisor requires a model profile with supports_tool_calls=true"
+        )
+
+
 def build_model_role_runtime(
     *,
     cfg: Config,
@@ -132,9 +166,10 @@ def build_model_role_runtime(
             api_key=cfg.api_key,
             context_size=cfg.context_size,
         ),
-        role_specs=cfg.model_roles,
+        role_specs=_effective_role_specs(cfg),
         profile_loader=profile_loader,
     )
+    _validate_advisor_profile(cfg, resolver)
     token_ledger = RoleTokenLedger()
     fallback_controller = ModelFallbackController(
         resolver,
@@ -186,9 +221,10 @@ def validate_model_role_profiles(
             api_key=cfg.api_key,
             context_size=cfg.context_size,
         ),
-        role_specs=cfg.model_roles,
+        role_specs=_effective_role_specs(cfg),
         profile_loader=profile_loader,
     )
+    _validate_advisor_profile(cfg, resolver)
     ModelFallbackController(
         resolver,
         fallback_chain=cfg.model_fallback_chain,

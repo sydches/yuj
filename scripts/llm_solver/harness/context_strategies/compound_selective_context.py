@@ -392,6 +392,8 @@ class CompoundSelectiveContext(CompoundContext):
         if tool_results:
             parts.append(tool_results)
 
+        parts.extend(self._injected_fragments)
+
         if self._suffix:
             parts.append(self._suffix)
 

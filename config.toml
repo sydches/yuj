@@ -25,6 +25,18 @@ main = []    # opt-in entries use "<profile>@<endpoint>" or an inline target
 weak = []
 editor = []
 
+# ---------------------------------------------------------------------------
+# Passive advisor / second-opinion model
+# ---------------------------------------------------------------------------
+
+[advisor]
+enabled = false       # opt in to passive review of bounded primary-turn deltas
+model = ""            # served model ID; empty reuses [model].name
+endpoint = ""         # OpenAI-compatible base URL; empty reuses [server].base_url
+every_n_turns = 5     # sparse review cadence; 1 reviews every completed primary turn
+immune_turns = 3      # completed primary turns skipped after an advisory is emitted
+max_note_chars = 1200 # reject, rather than truncate, an over-limit advisory
+
 [models.aliases]
 # Local models (llm_solver via llama-server)
 "qwen3-vl" = "qwen3-vl-8b"

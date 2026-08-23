@@ -78,6 +78,7 @@ class SolverStateContext(ContextManager):
         # Internal state
         self._system_content: str = ""
         self._all_messages: list[dict] = []  # raw append log (fallback only)
+        self._injected_fragments: list[str] = []
         # Rolling window of recent tool results (newest append). No per-turn
         # reset — a code read at turn 3 must still be visible at turn 5 when
         # the model decides to edit. Bounded by self._recent_tool_results_chars
@@ -120,6 +121,16 @@ class SolverStateContext(ContextManager):
         self._all_messages.append({"role": "user", "content": content})
         self._msg_cache = None
         self._tok_cache = None
+
+    def add_injected_fragment(self, content: str) -> None:
+        self.add_user(content)
+        self._injected_fragments.append(content)
+
+    def consume_injected_fragments(self) -> None:
+        if self._injected_fragments:
+            self._injected_fragments.clear()
+            self._msg_cache = None
+            self._tok_cache = None
 
     def add_assistant(self, message: dict) -> None:
         self._all_messages.append(message)
@@ -344,6 +355,8 @@ class SolverStateContext(ContextManager):
         tool_results = self._format_tool_results()
         if tool_results:
             parts.append(tool_results)
+
+        parts.extend(self._injected_fragments)
 
         if self._suffix:
             parts.append(self._suffix)

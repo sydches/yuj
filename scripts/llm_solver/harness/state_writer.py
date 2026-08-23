@@ -487,6 +487,10 @@ def project(events: list[dict], *, max_result_chars: int,
                 "method": ev.get("method"),
                 "fallback": ev.get("fallback"),
             }
+        elif et == "advisor_note":
+            # Control metadata and the private note transcript are deliberately
+            # outside the mechanical model-state projection.
+            continue
         # session_start: no state mutation.
 
     state.setdefault("current_attempt", "")

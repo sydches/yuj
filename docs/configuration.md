@@ -103,6 +103,12 @@ order in the
 | `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
 | `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
+| `[advisor].enabled` | Ask an isolated second model to review eligible completed primary turns. Off by default. |
+| `[advisor].model` | Set the advisor's served model ID. Empty reuses `[model].name`. |
+| `[advisor].endpoint` | Set the advisor's absolute OpenAI-compatible endpoint. Empty reuses `[server].base_url`. |
+| `[advisor].every_n_turns` | Review every Nth completed primary turn. Defaults to `5`. |
+| `[advisor].immune_turns` | Skip this many completed primary turns after Yuj accepts an advisory. Defaults to `3`. |
+| `[advisor].max_note_chars` | Reject an advisory longer than this character limit. Defaults to `1200`. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
 | `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
@@ -517,6 +523,61 @@ normally means you must run a second llama-server process yourself.
 Every model response is charged once to its effective role. Post-run
 `metrics.json` reports request, prompt, completion, cached, and total token
 counts under `metrics.tokens_by_role`.
+
+## Run a passive second-opinion advisor
+
+The advisor is off by default. Enable it in a small overlay:
+
+```toml
+[advisor]
+enabled = true
+model = "served-review-model"
+endpoint = "http://127.0.0.1:8181/v1"
+every_n_turns = 5
+immune_turns = 3
+max_note_chars = 1200
+```
+
+An empty `model` reuses `[model].name`; an empty `endpoint` reuses
+`[server].base_url`. The advisor uses the selected main model profile and API
+key, so a distinct endpoint must accept the same message and tool-call format.
+Yuj does not launch or schedule that endpoint. On one GPU, running a second
+server or reviewing too frequently can add substantial latency.
+
+Each eligible review starts a new isolated conversation. Its only primary-run
+input is a bounded JSON projection of the just-completed turn: assistant
+reasoning, new tool calls, and the current turn's bounded tool-result rows. It
+does not receive the task prompt, primary transcript, `.trace.jsonl`,
+`.solver/state.json`, or other harness artifacts. It may inspect visible task
+files through exactly `read`, `grep`, and `glob`, then either call
+`advise({severity, note})` or return exactly `NO_ADVISORY`. If the task root has
+a visible `WATCHDOG.md`, Yuj appends at most 16,000 characters from it to the
+advisor's fixed system prompt as repository-specific review priorities.
+
+The advisor has no mutating or shell tool. Yuj quarantines fabricated tools,
+mixed `advise` calls, malformed arguments, unstructured note text, invalid
+severity, and over-limit notes without dispatching them. It also deduplicates
+accepted notes after whitespace/case normalization. After an accepted note,
+`immune_turns` counts completed primary turns; cadence and cooldown continue
+across fresh context sessions in the same run.
+
+Yuj inserts an accepted note into the next model request as:
+
+```text
+<injected-fragment source="advisor" severity="concern">
+Concise, actionable note.
+</injected-fragment>
+```
+
+Projection context modes carry this block through a transient next-request
+field and consume that field only after a successful model response. Append-log
+modes retain the ordinary conversation history. The raw trace stores an
+`advisor_note` row with severity, character count, source turn, ordinal, and a
+note hash, but not the note body. The isolated conversation and note body live
+in `<run_dir>/advisor.jsonl`; `.solver/state.json` does not project either.
+Replay clients never run the advisor. With the default `enabled = false`, no
+advisor client, request, note, trace row, or transcript is created, so recorded
+run replay keeps its existing deterministic path.
 
 ## Configure model fallback
 

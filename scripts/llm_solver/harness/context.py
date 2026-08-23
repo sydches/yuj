@@ -55,6 +55,19 @@ class ContextManager(ABC):
     def add_user(self, content: str) -> None:
         """Append a user message."""
 
+    def add_injected_fragment(self, content: str) -> None:
+        """Add a harness fragment that must reach the next model request.
+
+        Append-log strategies naturally preserve it as a user message.
+        Projection strategies override this method to retain a transient copy
+        inside their synthesized user payload.
+        """
+        self.add_user(content)
+
+    def consume_injected_fragments(self) -> None:
+        """Mark transient fragments delivered after a successful request."""
+        return
+
     @abstractmethod
     def add_assistant(self, message: dict) -> None:
         """Append an assistant message (may contain tool_calls)."""

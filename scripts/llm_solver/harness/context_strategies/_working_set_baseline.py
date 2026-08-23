@@ -148,6 +148,7 @@ class WorkingSetBaselineContext(ContextManager):
 
         self._system_content: str = ""
         self._all_messages: list[dict] = []
+        self._injected_fragments: list[str] = []
         self._turn_entries: list[TurnEntry] = []
         self._ws = WorkingSet(cwd=self._cwd)
         self._turn_count = 0
@@ -168,6 +169,15 @@ class WorkingSetBaselineContext(ContextManager):
     def add_user(self, content: str) -> None:
         self._all_messages.append({"role": "user", "content": content})
         self._invalidate()
+
+    def add_injected_fragment(self, content: str) -> None:
+        self.add_user(content)
+        self._injected_fragments.append(content)
+
+    def consume_injected_fragments(self) -> None:
+        if self._injected_fragments:
+            self._injected_fragments.clear()
+            self._invalidate()
 
     def add_assistant(self, message: dict) -> None:
         self._all_messages.append(message)
@@ -476,6 +486,8 @@ class WorkingSetBaselineContext(ContextManager):
                 continue
             parts.append(f"{section.title}\n{text}")
             remaining -= min(len(text), allocated)
+
+        parts.extend(self._injected_fragments)
 
         if self._suffix:
             parts.append(self._suffix)
