@@ -166,6 +166,25 @@ def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
     )
 
 
+def _run_rejection_error_ladder(tc, state: "TurnState", result: str):
+    """Count a pre-dispatch rejection without declaring another phase site.
+
+    Schema and permission failures intentionally feed the ordinary error
+    ladder, but they are branches of the single post-tool phase rather than
+    additional ordered guardrails. ``dict.get`` keeps the literal phase-order
+    inventory in the main dispatch path authoritative.
+    """
+    ladder = state.tool_post.get("error_ladder")
+    if ladder is None:  # registry validation should make this unreachable
+        raise RuntimeError("guardrail registry is missing error_ladder")
+    return ladder(
+        state.session._guards,
+        state.cfg,
+        tc_name=tc.name,
+        result=result,
+    )
+
+
 def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     """Record one non-executed, repairable schema rejection."""
     session = state.session
@@ -177,12 +196,7 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
         turn_number=state.turn,
         **validation.trace_fields(),
     )
-    error_decision = state.tool_post["error_ladder"](
-        session._guards,
-        cfg,
-        tc_name=tc.name,
-        result=result,
-    )
+    error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
@@ -246,12 +260,7 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     session = state.session
     cfg = state.cfg
     result = resolution.denial_envelope()
-    error_decision = state.tool_post["error_ladder"](
-        session._guards,
-        cfg,
-        tc_name=tc.name,
-        result=result,
-    )
+    error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
