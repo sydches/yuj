@@ -74,3 +74,18 @@ required = []
 [tools.properties]
 [tools.properties.message]
 type = "string"
+
+[[tools]]
+name = "list_functions"
+required = []
+properties = {}
+
+[[tools]]
+name = "get_function_details"
+required = ["names"]
+properties = { names = { type = "array", items = { type = "string" }, minItems = 1, uniqueItems = true } }
+
+[[tools]]
+name = "exec_cell"
+required = ["source"]
+properties = { source = { type = "string", minLength = 1, maxLength = 65536 } }

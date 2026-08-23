@@ -226,6 +226,7 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
         "tools_run_tests_enabled",
         "tools_list_definitions_enabled",
         "tools_apply_patch_enabled",
+        "tools_exec_cell_enabled",
     }
     if not (changed & tool_fields):
         return None
@@ -236,7 +237,16 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
     from ..tool_validation import ToolSchemaSet
     from ..tools import validate_tool_handlers
 
-    schemas = apply_profile_to_schemas(get_tool_schemas(new_cfg.tool_desc), new_cfg, session.client)
+    schemas = apply_profile_to_schemas(
+        get_tool_schemas(
+            new_cfg.tool_desc,
+            code_mode=bool(
+                getattr(new_cfg, "tools_exec_cell_enabled", False)
+            ),
+        ),
+        new_cfg,
+        session.client,
+    )
     schema_names = [s["function"]["name"] for s in schemas]
     validate_tool_handlers(schema_names, registry=session._tool_registry)
     return schemas, ToolSchemaSet.from_openai_tools(schemas)

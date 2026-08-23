@@ -26,6 +26,9 @@ person types into a terminal.
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `list_functions` | None | None | In code mode, list the function names injected into `exec_cell`. |
+| `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
+| `exec_cell` | `source` | None | In code mode, run Python inside the shell sandbox and return printed text. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -39,6 +42,7 @@ schema, description, or result rule.
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
 | `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
 
@@ -71,6 +75,22 @@ structured result.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
 The `done` tool is not removed by that limit.
+
+## Code mode
+
+Code mode replaces the ordinary native catalog with three meta-tools plus
+`done`. Call `list_functions`, request only the needed schemas with
+`get_function_details`, then pass Python source to `exec_cell`. The cell
+injects `read`, `grep`, `glob`, `list_definitions`, and `bash`; each returns a
+text result from the ordinary dispatcher. A program must print the text that
+should become the cell result.
+
+Cells do not trust model-written Python. They run inside the selected shell
+sandbox, have no background-call option, and stop at the configured whole-cell
+timeout. Inner calls retain the normal filters, redaction, result envelope,
+ignore policy, permissions, and trace behavior. See
+[Configuration](configuration.html#run-a-sandboxed-python-cell) for the two
+settings and [Sandbox](sandbox.html#python-code-mode) for the boundary.
 
 When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
 successful `edit` or `write`; this does not require the navigation tool to be

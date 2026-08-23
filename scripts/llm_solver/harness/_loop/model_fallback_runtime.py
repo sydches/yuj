@@ -128,9 +128,15 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             switched.transition,
             to_resolution=effective_resolution,
         )
+        candidate_cfg = routed.client.cfg
         candidate_schemas = apply_profile_to_schemas(
-            get_tool_schemas(routed.client.cfg.tool_desc),
-            routed.client.cfg,
+            get_tool_schemas(
+                candidate_cfg.tool_desc,
+                code_mode=bool(
+                    getattr(candidate_cfg, "tools_exec_cell_enabled", False)
+                ),
+            ),
+            candidate_cfg,
             routed.client,
         )
         candidate_schema_set = ToolSchemaSet.from_openai_tools(

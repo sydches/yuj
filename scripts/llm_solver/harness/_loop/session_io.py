@@ -188,7 +188,16 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
     try:
         # Use one helper for the filter→simplify→cap composition so both
         # call sites cannot drift.
-        schemas = apply_profile_to_schemas(get_tool_schemas(cfg.tool_desc), cfg, client)
+        schemas = apply_profile_to_schemas(
+            get_tool_schemas(
+                cfg.tool_desc,
+                code_mode=bool(
+                    getattr(cfg, "tools_exec_cell_enabled", False)
+                ),
+            ),
+            cfg,
+            client,
+        )
         schema_chars = sum(len(json.dumps(s, default=str)) for s in schemas)
         ledger.record(
             bucket="tool_surface",

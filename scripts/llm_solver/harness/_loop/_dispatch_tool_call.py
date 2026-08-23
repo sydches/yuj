@@ -351,6 +351,69 @@ def _record_tool_finished(tc, state: "TurnState") -> None:
         )
 
 
+def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) -> dict:
+    """Emit cell children once and return exact outer-cell trace fields."""
+    if tc.name != "exec_cell":
+        return {}
+    cell = execution_metadata.get("exec_cell")
+    if not isinstance(cell, dict):
+        return {"cell_source": str(tc.arguments.get("source", ""))}
+    if not execution_metadata.get("_exec_cell_children_emitted"):
+        for raw_call in cell.get("inner_calls", ()):
+            if not isinstance(raw_call, dict):
+                continue
+            name = str(raw_call.get("name") or "")
+            arguments = raw_call.get("arguments")
+            if not name or not isinstance(arguments, dict):
+                continue
+            inner_execution = raw_call.get("execution_metadata")
+            if not isinstance(inner_execution, dict):
+                inner_execution = {}
+            args_summary = _truncate_for_trace(
+                _summarize_args(
+                    arguments, state.cfg.trace_args_summary_chars
+                ),
+                state.cfg.trace_args_summary_chars,
+            )
+            result = str(raw_call.get("result") or "")
+            metadata = action_metadata(name, arguments)
+            gate_blocked = bool(inner_execution.get("gate_blocked", False))
+            index = int(raw_call.get("index") or 0)
+            state.session._emit(
+                "tool_call",
+                tool_call_id=f"{tc.id}:cell:{index}",
+                parent_tool_call_id=tc.id,
+                cell_inner_index=index,
+                session_number=state.session._session_number,
+                turn_number=state.turn,
+                tool_name=name,
+                args_summary=args_summary,
+                **build_tool_call_trace_fields(
+                    state.session,
+                    tool_name=name,
+                    args_summary=args_summary,
+                    result=result,
+                    turn=state.turn,
+                    gate_blocked=gate_blocked,
+                    metadata=metadata,
+                    execution_metadata=inner_execution,
+                ),
+                reasoning="",
+                gate_blocked=gate_blocked,
+                **metadata,
+                prompt_tokens=0,
+                completion_tokens=0,
+                tool_dispatch_ms=float(raw_call.get("duration_ms") or 0.0),
+            )
+        execution_metadata["_exec_cell_children_emitted"] = True
+    return {
+        "cell_source": str(cell.get("source") or tc.arguments.get("source", "")),
+        "combined_output_chars": int(cell.get("combined_output_chars") or 0),
+        "combined_output_bytes": int(cell.get("combined_output_bytes") or 0),
+        "inner_call_count": len(cell.get("inner_calls", ())),
+    }
+
+
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
@@ -608,6 +671,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                         metadata=metadata,
                         execution_metadata=execution_metadata,
                     ),
+                    **_exec_cell_trace_fields(tc, state, execution_metadata),
                     reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
                     gate_blocked=False,
                     **metadata,
@@ -748,6 +812,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             metadata=metadata,
             execution_metadata=execution_metadata,
         ),
+        **_exec_cell_trace_fields(tc, state, execution_metadata),
         **({"snapshot_sha": _snapshot_sha} if _snapshot_sha else {}),
         reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
         gate_blocked=gate_blocked_flag,
