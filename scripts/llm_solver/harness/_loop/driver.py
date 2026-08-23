@@ -101,6 +101,19 @@ def solve_task(
             unreadable_paths=tuple(cfg.unreadable_paths)
             + checkpoint_store.sandbox_unreadable_paths,
         )
+    if getattr(cfg, "rewind_enabled", False):
+        if checkpoint_store is None:
+            raise RuntimeError(
+                "conversation rewind requires workspace checkpoints"
+            )
+        from ..turn_snapshots import rewind_snapshot_dir
+        rewind_dir = rewind_snapshot_dir(work_dir, artifact_dir)
+        rewind_dir.mkdir(parents=True, exist_ok=True)
+        rewind_dir.chmod(0o700)
+        cfg = replace(
+            cfg,
+            unreadable_paths=tuple(cfg.unreadable_paths) + (str(rewind_dir),),
+        )
     from ..tools import _effective_command_environment
     resolved_env, allow_login_shell = _effective_command_environment(cfg)
     # One immutable snapshot is shared by every session and command surface;
@@ -462,6 +475,11 @@ def solve_task(
             model_role_runtime.bind_session_model_roles(
                 session, session_client, role_usage,
             )
+            if resume_from_artifacts and getattr(
+                session_cfg, "rewind_enabled", False
+            ):
+                from ..turn_snapshots import apply_pending_rewind_resume
+                apply_pending_rewind_resume(session)
             if session_num == start_session_num and resume_path is not None:
                 inject_resume_messages(
                     session,

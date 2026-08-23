@@ -181,6 +181,78 @@ def _last_turn(events: list[dict]) -> int | None:
     return best
 
 
+def _event_turn(event: dict) -> int | None:
+    """Return an event's turn across the two public trace field spellings."""
+    value = event.get("turn_number", event.get("turn"))
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def active_events(events: list[dict]) -> list[dict]:
+    """Project the active branch while preserving the append-only raw trace.
+
+    A rewind is an instruction to projections, never a deletion from
+    ``.trace.jsonl``. Each completed turn names a persistent active prefix,
+    so a later rewind can select either the current lineage or a turn from a
+    previously discarded branch. Later chronological events then extend that
+    selected prefix. The linked prefixes keep this reconstruction linear in
+    the number of raw events instead of copying the whole view at every turn.
+    """
+    tail = None
+    turn_views: dict[tuple[object, int], tuple] = {}
+
+    def append(event: dict, previous):
+        return (event, previous)
+
+    def flatten(node) -> list[dict]:
+        projected: list[dict] = []
+        while node is not None:
+            event, node = node
+            projected.append(event)
+        projected.reverse()
+        return projected
+
+    def filtered_prefix(node, session_number: object, to_turn: int):
+        filtered = [
+            event
+            for event in flatten(node)
+            if (
+                event.get("session_number") != session_number
+                or (
+                    (_event_turn(event) is not None)
+                    and int(_event_turn(event)) <= to_turn
+                )
+                or (
+                    _event_turn(event) is None
+                    and event.get("event")
+                    not in {"handoff", "session_end", "session_exit"}
+                )
+            )
+        ]
+        rebuilt = None
+        for event in filtered:
+            rebuilt = append(event, rebuilt)
+        return rebuilt
+
+    for event in events:
+        if event.get("event") != "rewind":
+            tail = append(event, tail)
+            turn = _event_turn(event)
+            if turn is not None:
+                turn_views[(event.get("session_number"), turn)] = tail
+            continue
+        session_number = event.get("session_number")
+        to_turn = int(event.get("to_turn", -1))
+        target = turn_views.get((session_number, to_turn))
+        if target is None:
+            # Older or hand-authored traces may lack a turn-bearing row for
+            # the target. Preserve their prior best-effort filtering rule.
+            target = filtered_prefix(tail, session_number, to_turn)
+        tail = append(event, target)
+    return flatten(tail)
+
+
 def _extract_quoted_arg(action: str, name: str) -> str:
     marker = f"{name}="
     start = action.find(marker)
@@ -406,6 +478,8 @@ def project(events: list[dict], *, max_result_chars: int,
     seen) so a downstream reader can detect whether two state.json
     snapshots came from the same trace prefix.
     """
+    raw_events = events
+    events = active_events(events)
     state: dict = {}
     trace: list[dict] = []
     evidence: list[dict] = []
@@ -487,6 +561,16 @@ def project(events: list[dict], *, max_result_chars: int,
                 "method": ev.get("method"),
                 "fallback": ev.get("fallback"),
             }
+        elif et == "rewind":
+            state["last_rewind"] = {
+                "session_number": ev.get("session_number"),
+                "from_turn": ev.get("from_turn"),
+                "to_turn": ev.get("to_turn"),
+                "reason": ev.get("reason"),
+                "commit": ev.get("commit"),
+                "rewind_id": ev.get("rewind_id"),
+                "delivery": ev.get("delivery"),
+            }
         # session_start: no state mutation.
 
     state.setdefault("current_attempt", "")
@@ -505,7 +589,7 @@ def project(events: list[dict], *, max_result_chars: int,
                 STATE_SCHEMA_VERSION_IMPERATIVE
                 if imperative_projection else STATE_SCHEMA_VERSION
             ),
-            "event_count": len(events),
+            "event_count": len(raw_events),
             "last_session": _last_session(events),
             "last_turn": _last_turn(events),
         },
@@ -515,6 +599,8 @@ def project(events: list[dict], *, max_result_chars: int,
         "evidence": evidence,
         "inference": [],
     }
+    if any(event.get("event") == "rewind" for event in raw_events):
+        projected["meta"]["active_event_count"] = len(events)
     if imperative_projection:
         projected["process"] = _project_process(trace)
     return projected
@@ -597,6 +683,7 @@ def _truncate(s: str, n: int) -> str:
 
 
 __all__ = [
+    "active_events",
     "project",
     "project_from_trace",
     "write_state_from_trace",

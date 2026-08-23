@@ -183,6 +183,14 @@ class TaskSpec:
     pretest_script: Path | None = None
 
 
+def rewind_to(
+    session: "Session", turn_number: int, *, reason: str = "operator"
+) -> dict[str, object]:
+    """Public harness entry point for an atomic conversation/tree rewind."""
+    from .turn_snapshots import rewind_to as _rewind_to
+    return _rewind_to(session, turn_number, reason=reason)
+
+
 class Session:
     """One context window — multi-turn tool calling until done or limit."""
 
@@ -398,6 +406,13 @@ class Session:
         handlers["bash_kill"] = _bash_kill_handler
         self._tool_registry = ToolRegistry(handlers=handlers)
         self._checkpoint_store = checkpoint_store
+        self._artifact_dir = Path(artifact_dir or cwd)
+        from .turn_snapshots import rewind_snapshot_dir
+        self._rewind_snapshot_dir = rewind_snapshot_dir(
+            Path(cwd), self._artifact_dir
+        )
+        self._rewind_guard_snapshots: dict[int, GuardrailState] = {}
+        self._pending_rewind: dict[str, object] | None = None
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
         validate_tool_handlers(schema_names, registry=self._tool_registry)
         self._tool_schema_set = ToolSchemaSet.from_openai_tools(
@@ -493,6 +508,12 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        self._rewind_count = sum(
+            1
+            for event in self._trace_events
+            if event.get("event") == "rewind"
+            and int(event.get("session_number", -1)) == int(session_number)
+        )
         if self._process_manager is None and getattr(
             cfg, "tools_background_enabled", False
         ):
@@ -718,6 +739,20 @@ class Session:
     def _emit(self, event_type: str, **fields) -> None:
         from ._loop.trace_schema import emit
         emit(self, event_type, **fields)
+
+    def rewind_to(
+        self, turn_number: int, *, reason: str = "operator"
+    ) -> dict[str, object]:
+        """Restore conversation and workspace state at a completed turn."""
+        from .turn_snapshots import rewind_to
+        return rewind_to(self, turn_number, reason=reason)
+
+    def request_rewind(
+        self, turn_number: int | None = None, *, reason: str = "guardrail"
+    ) -> None:
+        """Queue a rewind for the next complete turn boundary."""
+        from .turn_snapshots import request_rewind
+        request_rewind(self, turn_number, reason=reason)
 
     def _refresh_state(self) -> None:
         from ._loop.state_projection import refresh_state

@@ -234,6 +234,10 @@ class Config:
     resume_length: str
     resume_last_n_actions: int
     tool_desc: str = "minimal"
+    # Operator/guardrail rewind of the canonical model-facing conversation
+    # together with its shadow-Git workspace checkpoint. Off by default.
+    rewind_enabled: bool = False
+    rewind_max_per_session: int = 1
     interrupted_turn_mode: str = "mechanical"
     length_continue_max: int = 0
     project_docs_enabled: bool = False

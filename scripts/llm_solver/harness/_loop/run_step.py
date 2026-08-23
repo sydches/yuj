@@ -82,9 +82,69 @@ def _defer_guard_end_during_active_watch(
 
 def _run_post_turn_hooks(session: "Session", turn: int) -> None:
     """Run observation and adaptive hooks after executed or blocked turns."""
+    from ..turn_snapshots import process_rewind_turn_boundary
+    # A guardrail rewind invalidates this turn. Restore its saved control
+    # state before adaptive observers can learn from the discarded branch.
+    if getattr(session, "_pending_rewind", None) is not None:
+        process_rewind_turn_boundary(session, turn)
+        return
     session._maybe_emit_harness_observation(turn)
     session._maybe_run_llm_hurdle_detector(turn)
     session._maybe_switch_adaptive_phase(turn)
+    process_rewind_turn_boundary(session, turn)
+
+
+def _complete_turn_rewind(
+    session: "Session",
+    decision: Decision,
+    *,
+    turn: int,
+    content: str | None,
+    tool_calls: list,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    """Balance a pre-dispatch turn and queue its guardrail rewind."""
+    cfg = session.cfg
+    for tc in tool_calls:
+        args_summary = _summarize_args(
+            tc.arguments, cfg.trace_args_summary_chars
+        )
+        metadata = action_metadata(tc.name, tc.arguments)
+        session.context.add_tool_result(
+            tc.id,
+            decision.text,
+            tool_name=tc.name,
+            gate_blocked=True,
+        )
+        session._emit(
+            "tool_call",
+            session_number=session._session_number,
+            turn_number=turn,
+            tool_name=tc.name,
+            args_summary=args_summary,
+            **build_tool_call_trace_fields(
+                session,
+                tool_name=tc.name,
+                args_summary=args_summary,
+                result=decision.text,
+                turn=turn,
+                gate_blocked=True,
+                metadata=metadata,
+            ),
+            reasoning=_truncate_for_trace(
+                content or "", cfg.trace_reasoning_store_chars
+            ),
+            gate_blocked=True,
+            gate_reason=decision.reason,
+            **metadata,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    session.request_rewind(
+        decision.target_turn,
+        reason=decision.reason or "rewind_on_guardrail",
+    )
 
 
 def _preflight_estimate(session) -> int:
@@ -399,7 +459,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
             session._guards, cfg,
             turn=turn, content=content, tool_calls=tool_calls,
         ) if guards_armed else PASS
-        if intent_decision.action in (Action.BLOCK, Action.END):
+        if intent_decision.action in (
+            Action.BLOCK,
+            Action.END,
+            Action.REWIND,
+        ):
             session._record_pressure_event(True)
             log.info("Intent gate: rejecting silent tool call at turn %d "
                      "(block #%d, consecutive %d)", turn,
@@ -436,6 +500,15 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
+            if intent_decision.action == Action.REWIND:
+                session.request_rewind(
+                    intent_decision.target_turn,
+                    reason=(
+                        intent_decision.reason or "rewind_on_intent_gate"
+                    ),
+                )
+                _run_post_turn_hooks(session, turn)
+                continue
             if intent_decision.action == Action.END:
                 if not _defer_guard_end_during_active_watch(
                     session,
@@ -453,6 +526,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
 
         # ─── 4. Stop check (natural exit) ────────────────────────────
         if not tool_calls:
+            from ..turn_snapshots import process_rewind_turn_boundary
+            if process_rewind_turn_boundary(session, turn):
+                continue
             if reason == "length":
                 log.info("Response truncated at turn %d (max_tokens hit), ending session", turn)
                 return SessionResult(turn, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
@@ -479,6 +555,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
         dup_decision = turn_pre["duplicate_guard"](
             session._guards, cfg, tool_calls_sig=sig
         ) if guards_armed else PASS
+        if dup_decision.action == Action.REWIND:
+            session._record_pressure_event(True)
+            _complete_turn_rewind(
+                session,
+                dup_decision,
+                turn=turn,
+                content=content,
+                tool_calls=tool_calls,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            _run_post_turn_hooks(session, turn)
+            continue
         if dup_decision.action == Action.END:
             if not _defer_guard_end_during_active_watch(
                 session,
@@ -501,6 +590,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
         loop_decision = turn_pre["loop_detect"](
             session._guards, cfg, tool_calls_sig=sig
         ) if guards_armed else PASS
+        if loop_decision.action == Action.REWIND:
+            session._record_pressure_event(True)
+            _complete_turn_rewind(
+                session,
+                loop_decision,
+                turn=turn,
+                content=content,
+                tool_calls=tool_calls,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            _run_post_turn_hooks(session, turn)
+            continue
         if loop_decision.action == Action.END:
             if not _defer_guard_end_during_active_watch(
                 session,
@@ -687,6 +789,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
                             total_completion_tokens=total_completion,
                         )
             outcome = dispatch_one_tool_call(tc, state)
+            if outcome.rewind:
+                break
             if outcome.end:
                 return SessionResult(
                     turn, outcome.reason, done=outcome.done,

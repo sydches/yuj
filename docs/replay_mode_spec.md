@@ -70,6 +70,15 @@ Replay joins the parts and gives their turns one continuous order.
 Replay does not restore a saved working tree. It runs the saved actions again
 on the fresh task copy.
 
+An enabled in-session `rewind` is part of that action stream. At the recorded
+`from_turn` boundary, replay saves the fresh run's own conversation/checkpoint
+pair, calls the normal rewind path with the recorded target and reason, and
+continues from the restored messages and tree. It compares `from_turn`,
+`to_turn`, reason, and delivery mode. It does not compare the shadow-Git commit
+hash because a fresh replay creates new Git objects. Assistant-shell
+`delivery=next_session` rewind remains subject to the multi-segment replay
+limits below.
+
 Background process lifecycle is the exception to command re-execution:
 `proc_start`, `proc_poll`, and `proc_kill` rows form an ordered auxiliary
 stream. Replay validates the recorded start command hash, returns each saved

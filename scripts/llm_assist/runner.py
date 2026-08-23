@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,10 @@ from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
     create_session_worktree,
     inspect_session_worktree,
+)
+from ..llm_solver.harness.workspace_checkpoints import (
+    WorkspaceCheckpointStore,
+    default_shadow_dir,
 )
 from ..llm_solver.models import resolve_model
 from ..llm_solver.server import LlamaClient, load_profile
@@ -165,6 +170,179 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
     return success, finish_reason
 
 
+def rewind_session(
+    store: SessionStore,
+    record: SessionRecord,
+    *,
+    turn: int,
+    reason: str = "operator_cli",
+) -> dict[str, object]:
+    """Apply an offline assistant rewind and stage its exact next resume."""
+    config_paths = [Path(path) for path in record.config_paths]
+    cfg = load_config(
+        user_config=config_paths,
+        overrides={
+            "runtime_mode": "assistant",
+            "max_sessions": 1,
+            "model": record.model,
+        },
+    )
+    if not cfg.rewind_enabled:
+        raise RuntimeError("loop.rewind_enabled is false for this session")
+    if not cfg.tools_file_checkpoints_enabled:
+        raise RuntimeError("rewind requires tools.file_checkpoints_enabled")
+
+    worktree_identity = (
+        record.worktree_path,
+        record.worktree_branch,
+        record.worktree_base_commit,
+    )
+    if any(worktree_identity) and not all(worktree_identity):
+        raise WorktreeRuntimeError(
+            "saved session has incomplete worktree identity"
+        )
+    workspace = (
+        Path(record.worktree_path)
+        if record.worktree_path
+        else Path(record.cwd)
+    ).resolve()
+    if record.worktree_path:
+        inspected = inspect_session_worktree(
+            Path(record.cwd), record.session_id
+        )
+        expected_worktree = (
+            workspace,
+            str(record.worktree_branch),
+            str(record.worktree_base_commit),
+        )
+        actual_worktree = (
+            inspected.worktree_path.resolve(),
+            inspected.branch,
+            inspected.base_commit,
+        )
+        if actual_worktree != expected_worktree:
+            raise WorktreeRuntimeError(
+                "saved worktree identity does not match the owned Git worktree"
+            )
+
+    artifact_dir = record.artifact_path.resolve()
+    trace_path = artifact_dir / ".trace.jsonl"
+    events = _load_trace_events(trace_path)
+    session_numbers = [
+        int(event["session_number"])
+        for event in events
+        if isinstance(event.get("session_number"), int)
+    ]
+    if not session_numbers:
+        raise RuntimeError("session trace has no session_number")
+    target_session = max(session_numbers)
+    from_turns = [
+        int(event["turn_number"])
+        for event in events
+        if event.get("session_number") == target_session
+        and isinstance(event.get("turn_number"), int)
+    ]
+    if not from_turns:
+        raise RuntimeError("latest session trace has no completed turn")
+    from_turn = max(from_turns)
+    turn = int(turn)
+    if turn < 0 or turn >= from_turn:
+        raise RuntimeError(
+            f"rewind target must be earlier than turn {from_turn}"
+        )
+
+    from ..llm_solver.harness.turn_snapshots import (
+        load_conversation_snapshot,
+        load_pending_rewind,
+        rewind_snapshot_dir,
+        save_pending_rewind,
+    )
+    snapshot_root = rewind_snapshot_dir(workspace, artifact_dir)
+    pending = load_pending_rewind(snapshot_root)
+    if pending and not int(pending.get("applied_session_number", 0) or 0):
+        raise RuntimeError("a prior rewind is still waiting for resume")
+    snapshot = load_conversation_snapshot(
+        snapshot_root, target_session, turn
+    )
+    rewind_count = sum(
+        1
+        for event in events
+        if event.get("event") == "rewind"
+        and event.get("session_number") == target_session
+    )
+    if rewind_count >= cfg.rewind_max_per_session:
+        raise RuntimeError(
+            "rewind limit reached "
+            f"({rewind_count}/{cfg.rewind_max_per_session})"
+        )
+
+    checkpoint_candidate = artifact_dir / ".shadow_git"
+    try:
+        checkpoint_candidate.relative_to(workspace)
+    except ValueError:
+        checkpoint_shadow_dir = checkpoint_candidate
+    else:
+        checkpoint_shadow_dir = default_shadow_dir(workspace)
+    checkpoint_store = WorkspaceCheckpointStore(
+        workspace,
+        shadow_dir=checkpoint_shadow_dir,
+        excludes=cfg.tools_file_checkpoints_exclude,
+    )
+    commit = checkpoint_store.checkpoint_for_turn(turn)
+    if commit != snapshot.checkpoint_commit:
+        raise RuntimeError(
+            "conversation snapshot and workspace checkpoint do not match"
+        )
+    restored = checkpoint_store.restore_checkpoint(turn)
+    rewind_id = uuid.uuid4().hex
+    event = {
+        "session_number": target_session,
+        "turn_number": from_turn,
+        "from_turn": from_turn,
+        "to_turn": turn,
+        "reason": str(reason or "operator_cli"),
+        "commit": restored.commit,
+        "rewind_count": rewind_count + 1,
+        "rewind_id": rewind_id,
+        "delivery": "next_session",
+    }
+    from ..llm_solver.harness._loop.trace_schema import emit_trace_event
+    with open(trace_path, "a") as trace_file:
+        emit_trace_event(trace_file, "rewind", **event)
+    from ..llm_solver.harness.state_writer import write_state_from_trace
+    write_state_from_trace(
+        trace_path,
+        artifact_dir / ".solver" / "state.json",
+        max_result_chars=cfg.max_output_chars,
+        imperative_projection=getattr(
+            cfg, "state_imperative_projection_enabled", False
+        ),
+    )
+    save_pending_rewind(snapshot_root, {
+        "schema_version": 1,
+        "rewind_id": rewind_id,
+        "target_session_number": target_session,
+        "from_turn": from_turn,
+        "to_turn": turn,
+        "reason": event["reason"],
+        "commit": restored.commit,
+        "applied_session_number": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    approval = load_approval_request(artifact_dir)
+    if approval is not None and approval.get("status") == "pending":
+        approval["status"] = "rewound"
+        approval["rejection_reason"] = "superseded by conversation rewind"
+        save_approval_request(artifact_dir, approval)
+    clear_interrupt_marker(artifact_dir)
+    store.update_session(
+        record.session_id,
+        status="paused",
+        last_finish_reason="rewind",
+    )
+    return event
+
+
 def _resolve_session_worktree(
     store: SessionStore,
     record: SessionRecord,
@@ -291,9 +469,16 @@ def derive_live_state(artifact_dir: Path) -> LiveState:
     interrupt = load_interrupt_marker(artifact_dir)
 
     last_lifecycle: dict | None = None
-    for ev in events:
+    last_lifecycle_index = -1
+    last_rewind: dict | None = None
+    last_rewind_index = -1
+    for index, ev in enumerate(events):
         if ev.get("event") in {"session_start", "session_end"}:
             last_lifecycle = ev
+            last_lifecycle_index = index
+        elif ev.get("event") == "rewind":
+            last_rewind = ev
+            last_rewind_index = index
     session_number = (
         int(last_lifecycle.get("session_number", 0) or 0)
         if last_lifecycle is not None
@@ -315,6 +500,19 @@ def derive_live_state(artifact_dir: Path) -> LiveState:
             status="paused",
             finish_reason=finish_reason,
             session_number=session_number,
+        )
+
+    if (
+        last_rewind is not None
+        and last_rewind_index > last_lifecycle_index
+        and last_rewind.get("delivery") == "next_session"
+    ):
+        return LiveState(
+            status="paused",
+            finish_reason="rewind",
+            session_number=int(
+                last_rewind.get("session_number", session_number) or 0
+            ),
         )
 
     if last_lifecycle is None:

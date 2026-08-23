@@ -57,6 +57,8 @@ The normal `assist_home` is `<yuj-installation>/.llm_assist`. Set
 | `<session_id>/checkpoint.json` | End status for the newest run segment. Resume replaces this file. |
 | `<session_id>/metrics.json` | Measures for the newest run segment. Resume replaces this file. |
 | `<session_id>/.shadow_git/` or the task telemetry sibling's `.shadow_git/` | Independent Git object store for enabled file checkpoints. It is outside the model's task view. |
+| `<session_id>/rewind_snapshots/*.json.gz` or the task telemetry sibling's `rewind_snapshots/*.json.gz` | Permission-restricted exact conversation snapshots bound to session, turn, and shadow-Git commit. Normal context and live detectors do not read them; only explicit rewind/resume and replay setup do. |
+| `<session_id>/rewind_snapshots/rewind_pending.json` | One assistant-shell rewind waiting to restore its exact conversation on the next resume. It records identities and turns, not a second trace. |
 | `<session_id>/approval_request.json` | Current tool approval request, stable action identity, matched permission rule when applicable, and status. Bash requests retain `cmd` for compatibility. |
 | `<session_id>/approval_decisions.json` | Exact tool actions accepted or refused with `--always`; legacy bash command keys remain readable. |
 | `<session_id>/shell_interrupt.json` | Time and reason for the latest user interrupt. Resume clears it when the new run segment starts. |
@@ -141,6 +143,16 @@ folder does not change them.
 | `<run_dir>/run_manifest.env`, `<run_dir>/container.id` | launcher / runtime wrapper | launch environment and container identity | `run-start` | No. | Only for fixed provenance that a detector contract names. | Yes. | Yes, to group runs and check provenance. | Do not use it as evidence of behavior. |
 | `<run_dir>/harness_<model>_<time>.log`, `<run_dir>/harness.stdout.log`, `<run_dir>/harness_run/*.log` | measurement command / launcher | process logs and details used to find errors | `live-prefix` as logs; most readers use them `post-run` | No. | No. | Yes. | No. | Use these files only to debug or audit a run. Do not treat them as scoring results or detector input. |
 | `<run_dir>/system_log.jsonl` or `<session_dir>/system_log.jsonl` | harness system log | warnings and internal harness events | `live-prefix` append-only | No. | No. | Yes. | No. | Use it to debug or audit the harness. Do not use it as model behavior or scoring evidence. |
+
+A rewind adds data; it never deletes or rewrites raw evidence. The `rewind`
+trace row identifies `from_turn`, `to_turn`, reason, checkpoint commit, count,
+and delivery mode. State projection treats it as a branch instruction: later
+rows in that session after the target stay in `.trace.jsonl` but leave the
+active projected trace and evidence. `.solver/state.json.last_rewind` names
+the active branch point. Exact compressed snapshots live in the
+harness-owned `rewind_snapshots/` directory outside the model's task view and
+may contain the full saved conversation; normal context and live detectors
+must not read them.
 
 Every `session_start` trace row records `thinking_level`, plus
 `thinking_level_requested` when profile capabilities forced a clamp. The

@@ -104,6 +104,8 @@ order in the
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
 | `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
+| `[loop].rewind_enabled` | Save exact completed-turn conversation snapshots and allow conversation/tree rewind. Off by default and requires file checkpoints. |
+| `[loop].rewind_max_per_session` | Limit successful rewind actions in one harness session. The default is 1. |
 | `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
@@ -287,6 +289,28 @@ mode, and symlink targets; they do not preserve owners, ACLs, or extended
 attributes. Each raw `checkpoint` trace row identifies the commit and cost,
 and `metrics.json.file_checkpoints.per_call` reports duration, file count, and
 byte count for every capture.
+
+### Rewind conversation and files together
+
+Set both `[loop].rewind_enabled = true` and
+`[tools].file_checkpoints_enabled = true` to make completed turns rewindable.
+Yuj rejects an enabled rewind setting without file checkpoints. At every
+balanced turn boundary it saves the lossless conversation history, the exact
+messages sent to the model at that point, and the matching shadow-Git commit.
+A turn without a mutating call receives a boundary checkpoint so conversation
+and files always name the same state.
+
+`[loop].rewind_max_per_session` is a positive integer and defaults to `1`.
+It bounds successful actions, whether an in-session guardrail returns
+`rewind_on_<class>` or an operator runs `yuj rewind SESSION TURN`. A rewind
+target must be an earlier completed turn in the current harness session.
+
+Rewind never truncates `.trace.jsonl`. It appends a `rewind` row with the
+source turn, target turn, reason, checkpoint commit, action count, and delivery
+mode. The state writer treats that row as a branch instruction and rebuilds
+`.solver/state.json` from the active view. Assistant-shell rewind restores the
+tree immediately and stores one pending continuation; the next `yuj resume`
+restores the exact saved model-facing messages before another request.
 
 ### Return language-server diagnostics after edits
 

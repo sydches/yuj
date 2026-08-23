@@ -91,6 +91,12 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
+        "rewind_enabled": bool(
+            d.get("loop", {}).get("rewind_enabled", False)
+        ),
+        "rewind_max_per_session": d.get("loop", {}).get(
+            "rewind_max_per_session", 1
+        ),
         "duplicate_abort": _require(d, "loop", "duplicate_abort"),
         "error_nudge_threshold": _require(d, "loop", "error_nudge_threshold"),
         "rumination_nudge_threshold": _require(d, "loop", "rumination_nudge_threshold"),
@@ -744,6 +750,19 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     validate_role_specs(cfg.model_roles)
     validate_fallback_chains(cfg.model_fallback_chain)
     normalize_fallback_revert(cfg.model_fallback_revert)
+    if (
+        isinstance(cfg.rewind_max_per_session, bool)
+        or not isinstance(cfg.rewind_max_per_session, int)
+        or cfg.rewind_max_per_session < 1
+    ):
+        raise ValueError(
+            "config error: loop.rewind_max_per_session must be an integer >= 1."
+        )
+    if cfg.rewind_enabled and not cfg.tools_file_checkpoints_enabled:
+        raise ValueError(
+            "config error: loop.rewind_enabled requires "
+            "tools.file_checkpoints_enabled = true."
+        )
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

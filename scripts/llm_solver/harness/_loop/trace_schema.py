@@ -110,6 +110,20 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "rewind",
+        frozenset({
+            "session_number", "turn_number", "from_turn", "to_turn",
+            "reason", "commit", "rewind_count", "rewind_id", "delivery",
+        }),
+    ),
+    TraceEventSpec(
+        "rewind_resume",
+        frozenset({
+            "session_number", "rewind_id", "target_session_number",
+            "to_turn", "commit",
+        }),
+    ),
+    TraceEventSpec(
         "tool_start",
         frozenset({
             "tool_call_id", "tool_name", "session_number", "turn_number",
