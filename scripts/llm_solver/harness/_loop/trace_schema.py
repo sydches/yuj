@@ -99,6 +99,15 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "hook",
+        frozenset({"hook_event", "command", "exit", "ms", "outcome"}),
+        frozenset({
+            "session_number", "turn_number", "hook_index", "matcher",
+            "tool_call_id", "tool_name", "reason", "updated_input",
+            "additional_context", "replayed",
+        }),
+    ),
+    TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
     ),

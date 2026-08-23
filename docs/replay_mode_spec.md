@@ -45,7 +45,7 @@ Each saved file has one role:
 
 | File | What replay reads from it |
 | --- | --- |
-| `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls, and saved tool results. |
+| `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls and results, and recorded lifecycle-hook effects. |
 | Transcript | The saved model reply from each `=== turn NNN output ===` block. |
 | `.solver/state.json` | Nothing directly. This file is a view built from `.trace.jsonl`. |
 | `session.json` | The current replay loader reads the model, config paths, and context mode. It ignores the other settings in this file. |
@@ -76,6 +76,15 @@ stream. Replay validates the recorded start command hash, returns each saved
 poll result byte-for-byte, and consumes recorded kills without starting an
 operating-system process. The ordinary replay fidelity check still compares
 the associated `tool_call` result seen by the model.
+
+Configured lifecycle hooks are also an exception. Replay matches each hook
+position by session, event, turn, handler index, and tool-call ID, then applies
+the recorded block, rewrite, annotation, timeout, or error outcome. It writes
+a fresh `hook` row with `replayed = true` and never launches the external
+command. If the configured command differs from the source row at a matched
+position, replay stops with a hook replay error. A synthetic stop or partial
+replay boundary with no source hook row applies no hook effect and still never
+falls back to live execution.
 
 The replay run writes a new transcript. For each replayed turn, the input block
 holds `messages` and `tools` from before model-profile conversion. The output
@@ -345,6 +354,8 @@ repository.
 - Give the model only the current context. Do not give it hidden state from an
   earlier model call.
 - Use the same sandbox rules as a live run.
+- Never launch configured lifecycle-hook commands while replaying; consume
+  their source `hook` rows.
 - Do not add a saved file format only for replay.
 - Do not require a saved snapshot or branch bundle to restore a replay.
 - Treat any cached task copy at turn `N` as disposable.

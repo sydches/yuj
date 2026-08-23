@@ -399,6 +399,12 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "sandbox_env_allow_login_shell": sandbox_env.allow_login_shell,
         "runtime_worktree": d.get("runtime", {}).get("worktree", "off"),
+        "hooks_enabled": d.get("hooks", {}).get("enabled", False),
+        "hooks": {
+            name: copy.deepcopy(value)
+            for name, value in d.get("hooks", {}).items()
+            if name != "enabled"
+        },
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
         "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
         "interrupted_turn_mode": d.get("loop", {}).get(
@@ -595,6 +601,9 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     PermissionPolicy.from_rule_tables(cfg.permissions_rules)
     normalize_ask_fallback(cfg.permissions_ask_fallback)
+    from .harness.hooks import validate_hook_settings
+
+    validate_hook_settings(cfg.hooks_enabled, cfg.hooks)
     if not isinstance(cfg.tools_background_enabled, bool):
         raise ValueError(
             "config error: tools.background_enabled must be a boolean."

@@ -37,6 +37,7 @@ Do not pass a descriptor file with `--config`.
 | A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
+| A trusted command at a harness lifecycle event | A small settings file under `[hooks]`, plus an independently installed executable | The config loader validates the handler and the harness sends it JSON on standard input. | No, for the supported lifecycle effects. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
@@ -56,6 +57,7 @@ files. It stores language, shell, and tool quirks in the matching directories.
 | Model message and tool-call format | One `profiles/NAME/` directory | Copy the directory under `profiles/`. Review every Python module before use. |
 | Test runner or language | One `language_quirks/NAME.toml` file | Copy it under `scripts/llm_solver/language_quirks/`. Give it a unique `detection_priority`. |
 | Shell rewrite, refusal, redirect, or redaction | One or more TOML rule entries | Review and merge the entries into the matching fixed file under `bash_quirks/`. The current loader ignores other TOML files in that directory. |
+| Lifecycle hook | A small settings overlay and the separately distributed executable | Review both. Replace machine-specific executable paths locally, then pass the overlay with `--config`. Do not copy an executable from an untrusted task repository. |
 | `glob` refusal text | The changed entries from `tool_quirks/glob.toml` | Review and merge them into that fixed file. The current loader does not scan extra tool-quirk files. |
 | Tool description mode | One complete `tool_descriptions/MODE/` directory | Copy the directory under `profiles/_base/tool_descriptions/`. Include one `.txt` file for every tool. |
 
@@ -428,6 +430,33 @@ timeout = 300
 ```
 
 Read [Model tools](model-tools.html) for every public tool and input.
+
+### Run a command at a lifecycle event
+
+Use `[hooks]` when a trusted host program must inspect, reject, rewrite, or
+annotate an event without becoming a model-callable tool. The public events
+are `session_start`, `pre_model`, `pre_tool`, `post_tool`, `done`, and
+`session_end`. Keep the executable outside the task repository, pass its path
+as `command`, and enable the group explicitly:
+
+```toml
+[hooks]
+enabled = true
+
+[[hooks.post_tool]]
+matcher = "bash"
+command = ["/opt/yuj-hooks/audit-result"]
+timeout_s = 3
+```
+
+This is a trusted-code extension seam, not a plugin installer or another
+shell-quirk rule. Yuj runs it as the harness account outside the model-command
+sandbox. The task can cause configured events and influence their JSON input,
+so the program must parse that input defensively. Read
+[Configuration](configuration.html#run-trusted-lifecycle-hooks) for payloads,
+effects, ordering, trace, and replay behavior, and read
+[Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task) before enabling
+one on an untrusted repository.
 
 ### Add a shell rule
 

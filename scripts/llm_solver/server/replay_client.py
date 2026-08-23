@@ -269,6 +269,7 @@ class ReplayClient:
         # not the rendered request (windowing/compaction state-dependent)
         self._trace_events: dict[int, dict] = {}
         self.process_events: list[dict] = []
+        self.hook_events: list[dict] = []
         if source_trace_path is not None and Path(source_trace_path).is_file():
             for line in Path(source_trace_path).read_text().splitlines():
                 line = line.strip()
@@ -282,6 +283,8 @@ class ReplayClient:
                     self._trace_events[int(ev.get("turn_number", -1) or -1)] = ev
                 elif ev.get("event") in {"proc_start", "proc_poll", "proc_kill"}:
                     self.process_events.append(ev)
+                elif ev.get("event") == "hook":
+                    self.hook_events.append(ev)
 
     # -- helpers -------------------------------------------------------------
 

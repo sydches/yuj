@@ -487,7 +487,9 @@ def project(events: list[dict], *, max_result_chars: int,
                 "method": ev.get("method"),
                 "fallback": ev.get("fallback"),
             }
-        # session_start: no state mutation.
+        # session_start and hook: no state mutation. Hook effects are raw
+        # execution/replay evidence; only the resulting ordinary model/tool
+        # messages may influence later projected tool_call rows.
 
     state.setdefault("current_attempt", "")
     state.setdefault("last_verify", "")

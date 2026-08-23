@@ -134,6 +134,8 @@ order in the
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
 | `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
 | `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
+| `[hooks].enabled` | Run explicitly configured trusted host commands at harness lifecycle events. Off by default. |
+| `[hooks].pre_tool`, `post_tool`, `pre_model`, `session_start`, `session_end`, `done` | Declare ordered lifecycle handlers with a matcher, command argv, and timeout. Empty by default. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
 | `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
 | `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
@@ -446,12 +448,84 @@ session has no usable approval-artifact path, `ask_fallback` explicitly chooses
 allow or deny. Measurement mode never creates an approval request and always
 turns `ask` into `deny`, regardless of that fallback.
 
-The fixed order is schema validation, the general permission table, operator
-approval, bash-specific redirects/forbidden rules, then the handler. An
-`allow` decision therefore does not bypass `bash_quirks/forbidden.toml`.
+When hooks are disabled, the fixed order is schema validation, the general
+permission table, operator approval, bash-specific redirects/forbidden rules,
+then the handler. With hooks enabled, `pre_tool` runs first so a rewrite passes
+through that entire sequence. An `allow` decision therefore does not bypass
+`bash_quirks/forbidden.toml`.
 Permission denials use the normal error ladder. Raw `permission` trace rows
 record only tool, matched rule, and effective decision; they do not record the
 matched command/path and are not projected into `.solver/state.json`.
+
+### Run trusted lifecycle hooks
+
+Lifecycle hooks let an operator run an existing external program at a harness
+event. They are disabled by default. Configure them in a small file passed
+with `--config`:
+
+```toml
+[hooks]
+enabled = true
+
+[[hooks.pre_tool]]
+matcher = "re:write|edit"
+command = ["/opt/yuj-hooks/check-change", "--policy", "strict"]
+timeout_s = 5
+```
+
+Each event accepts one handler table or an ordered array of tables. `matcher`
+defaults to `"*"`. For `pre_tool` and `post_tool`, it matches the tool name;
+for the other events, it matches the event name. A literal string is an exact
+match, `"*"` matches every event, and a value beginning with `re:` is a full
+regular-expression match. A string `command` is one executable path, not a
+shell command line. Use an array of strings for executable arguments. Yuj
+does not invoke a shell or split a command string.
+
+Yuj writes one JSON object to the handler's standard input. Every payload has
+`event`, `run_id`, `session`, `turn`, `model`, and `profile_name`. Tool events
+also have `tool_call_id`, `tool_name`, and `tool_args`; `post_tool` adds
+`result`. `done` identifies explicit or implicit completion, and
+`session_end` includes the resulting finish reason, completion flag, and turn
+count. Treat every payload field that originated with the model or tool as
+untrusted input.
+
+Handlers may return these effects:
+
+| Handler result | Yuj behavior |
+| --- | --- |
+| Exit `0` with no supported JSON field | Allow the event. |
+| Exit `2` | Block the event. JSON `reason`, `stopReason`, or `error`, or otherwise stdout text, becomes the explanation. |
+| JSON `continue = false`, `decision = "deny"`/`"block"`, or nested `hookSpecificOutput.permissionDecision = "deny"`/`"ask"` | Block the event. |
+| JSON `updated_input` or `updatedInput` from `pre_tool` | Replace the complete tool argument object. Yuj then applies schema validation, permissions, approval, and guardrails to the replacement. |
+| JSON `additional_context` or `additionalContext` | Append the text in an `<injected-fragment source="hook">` envelope. `systemMessage` is accepted as the same annotation. |
+| Timeout | Record `timeout`, warn, and fail open. Yuj kills the handler's process group. |
+| Any other nonzero exit | Record `error`, warn, and fail open. |
+
+All matching handlers run in declaration order until one blocks. A
+`pre_tool` block prevents the tool handler from starting. A `post_tool` block
+happens after the handler has run, so it replaces the returned result with an
+error but cannot undo side effects. `pre_model`, `session_start`, and
+`session_end` can stop their boundary. `done` can reject explicit or implicit
+completion and let the model continue when turns remain. A `session_end`
+annotation remains in its raw hook trace row, but there is no later model
+request to receive it.
+
+Hooks are harness-owned host processes. They run outside `bwrap` and the
+container backend, with the Yuj process's host environment plus
+`YUJ_RUN_DIR`, `YUJ_RUN_ID`, `YUJ_TASK_CWD`, and `YUJ_HOOK_EVENT`. Install and
+review the executable separately; do not point a trusted hook at code the
+task can edit. When `[tools].sandbox_required = true`, Yuj rejects an enabled
+hook whose executable or path argument resolves inside the task directory.
+Read [Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task) for the
+security boundary.
+
+Every invocation writes a raw `hook` trace row with `hook_event`, `command`,
+`exit`, `ms`, and `outcome`, plus any normalized reason, rewrite, or annotation.
+These rows do not enter `.solver/state.json`. Replay consumes those recorded
+effects and never starts the external command. A different configured command
+at the same recorded hook position is a replay error. See
+[Replay a saved run](replay_mode_spec.html#what-happens-on-each-turn) and
+[Saved files](harness_artifacts.html).
 
 ### Run background commands
 
