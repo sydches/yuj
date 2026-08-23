@@ -2,6 +2,17 @@
 from ...config import Config
 
 
+class AppliedPatchResult(str):
+    """String-compatible success result carrying verified file operations."""
+
+    def __new__(cls, text: str, operations) -> "AppliedPatchResult":
+        value = super().__new__(cls, text)
+        value.applied_operations = tuple(
+            (str(operation.kind), str(operation.path)) for operation in operations
+        )
+        return value
+
+
 def apply_patch_tool(patch: str, *, cwd: str, cfg: Config) -> str:
     """Tool dispatcher for the apply_patch DSL.
 
@@ -71,4 +82,4 @@ def apply_patch_tool(patch: str, *, cwd: str, cfg: Config) -> str:
             failed_tail += res.output
     if failed_tail:
         envelope = envelope + failed_tail
-    return envelope
+    return AppliedPatchResult(envelope, ops)

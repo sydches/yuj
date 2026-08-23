@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -209,6 +210,7 @@ class Session:
         self.cwd = cwd
         self._session_number = session_number
         self._current_turn = 0
+        self._service_event_lock = threading.RLock()
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
@@ -253,12 +255,13 @@ class Session:
             def _lsp_event_sink(payload: dict[str, object]) -> None:
                 fields = dict(payload)
                 event_type = str(fields.pop("event", "lsp_diagnostics"))
-                self._emit(
-                    event_type,
-                    session_number=self._session_number,
-                    turn_number=self._current_turn,
-                    **fields,
-                )
+                with self._service_event_lock:
+                    self._emit(
+                        event_type,
+                        session_number=self._session_number,
+                        turn_number=self._current_turn,
+                        **fields,
+                    )
 
             self._lsp_manager = LspManager.sandboxed(
                 cwd=cwd,
@@ -390,6 +393,25 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        from .stale_guard import StaleFileGuard
+
+        def _stale_guard_event_sink(payload: dict[str, object]) -> None:
+            fields = dict(payload)
+            event_type = str(fields.pop("event"))
+            with self._service_event_lock:
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    turn_number=self._current_turn,
+                    **fields,
+                )
+
+        self._stale_guard = StaleFileGuard.from_trace(
+            cwd=self.cwd,
+            mode=getattr(cfg, "tools_stale_guard_mode", "warn"),
+            events=self._trace_events,
+            event_sink=_stale_guard_event_sink,
+        )
         # Seed pretest parity from session 1's parsed pretest verdict (passed
         # as a dict with 'failing' and 'passing' sets). Later sessions inherit
         # the baseline from session 1 via the same mechanism (caller passes

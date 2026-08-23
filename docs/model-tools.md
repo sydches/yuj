@@ -88,6 +88,14 @@ The `glob` and `grep` tools return one page at a time. Read `next_page` in the
 result when another page exists. Yuj can refuse a search that starts too broad.
 Narrow its pattern or path when that happens.
 
+The read-before-edit guard can require current evidence for an `edit`. A typed
+`read`, or one successful single-file `cat`, `head`, `tail`, `sed -n`, `grep`,
+or `rg` shell command, records the current content hash. An external content
+change makes that observation stale. In `warn` mode Yuj applies the edit and
+adds a warning inside its result envelope; in `block` mode it returns
+`ERROR: stale_file: read PATH first` without changing the file. Successful
+`write`, `edit`, and `apply_patch` calls refresh their affected paths.
+
 ## Test runners
 
 `run_tests` detects one of these runners from files in the task repository:

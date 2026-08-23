@@ -8,6 +8,7 @@ unified envelope). Public names (``bash``, ``read``, …, ``_resolve``,
 tests continue to import from ``llm_solver.harness.tools``.
 """
 import hashlib
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -43,6 +44,8 @@ from ._tool_filters import (
     _filter_bash_output, _line_skeleton, truncate_output,
 )
 from .tool_specs import ACTIVE_TOOL_NAMES, is_native_envelope
+
+log = logging.getLogger(__name__)
 
 
 # Unified <tool_result> envelope schema version. Bump when the attribute
@@ -158,6 +161,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              output_control=None, universal_rewrites=None,
              forbidden_rules=None, redactions=None,
              tool_registry: ToolRegistry | None = None,
+             stale_guard=None,
              rewrite_log: list | None = None,
              execution_metadata: dict | None = None) -> str:
     """Route a tool call to its implementation, truncate output.
@@ -186,6 +190,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     # the rule kind. The trace event's args_summary records a short form
     # of the original arguments. cmd_pre_rewrite keeps the full command
     # and the rule kind so later code can classify the rewrite.
+    original_bash_cmd = str(arguments.get("cmd", "")) if name == "bash" else ""
+    bash_was_rewritten = False
     if name == "bash" and (output_control is not None or universal_rewrites or forbidden_rules):
         from ..bash_quirks import rewrite_command
         original_cmd = arguments.get("cmd", "")
@@ -195,6 +201,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             forbidden_rules=forbidden_rules, rule_log=_rules_fired,
         )
         if rewritten_cmd != original_cmd:
+            bash_was_rewritten = True
             arguments = {**arguments, "cmd": rewritten_cmd}
             if rewrite_log is not None:
                 rewrite_log.append({
@@ -204,10 +211,68 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                     "rules": _rules_fired,
                 })
 
-    try:
-        result = handler(arguments, cwd, cfg)
-    except (KeyError, TypeError) as e:
-        return f"ERROR: bad arguments for {name}: {e}"
+    stale_decision = None
+    stale_precheck_error = ""
+    if name == "edit" and stale_guard is not None:
+        try:
+            stale_decision = stale_guard.check_edit(str(arguments.get("path", "")))
+        except Exception as exc:
+            log.warning("stale guard pre-edit check failed: %s", exc)
+            stale_precheck_error = (
+                f"ERROR: stale_file: read {arguments.get('path', '')} first"
+            )
+
+    if stale_precheck_error:
+        result = stale_precheck_error
+    elif stale_decision is not None and stale_decision.blocked:
+        result = stale_decision.message
+    else:
+        try:
+            result = handler(arguments, cwd, cfg)
+        except (KeyError, TypeError) as e:
+            return f"ERROR: bad arguments for {name}: {e}"
+
+    applied_operations = tuple(getattr(result, "applied_operations", ()))
+    raw_exit_status = getattr(result, "exit_status", None)
+    raw_timed_out = bool(getattr(result, "timed_out", False))
+
+    # Update the mechanical read ledger only after an operation actually
+    # succeeded. Observation failures never turn a completed tool call into a
+    # harness exception; they simply leave the next edit conservatively stale.
+    if stale_guard is not None:
+        from .._shared.classification import is_error_result
+        raw_result = str(result)
+        succeeded = not is_error_result(raw_result)
+        try:
+            if succeeded and name == "read":
+                stale_guard.observe_read(str(arguments.get("path", "")))
+            elif succeeded and name in {"write", "edit"}:
+                stale_guard.observe_mutation(
+                    str(arguments.get("path", "")), source=name
+                )
+            elif succeeded and name == "apply_patch":
+                for operation_kind, operation_path in applied_operations:
+                    if operation_kind == "delete":
+                        stale_guard.forget(operation_path, source="apply_patch")
+                    else:
+                        stale_guard.observe_mutation(
+                            operation_path, source="apply_patch"
+                        )
+            elif name == "bash" and not bash_was_rewritten and not raw_timed_out:
+                from .stale_guard import classify_single_file_read
+                shell_read = classify_single_file_read(original_bash_cmd)
+                read_exit = raw_exit_status == 0 or (
+                    raw_exit_status == 1
+                    and shell_read is not None
+                    and shell_read.verb in {"grep", "egrep", "fgrep", "rg"}
+                )
+                if shell_read is not None and read_exit:
+                    stale_guard.observe_shell_read(original_bash_cmd)
+        except Exception as exc:
+            log.warning("stale guard observation failed for %s: %s", name, exc)
+
+    if stale_decision is not None and stale_decision.message and not stale_decision.blocked:
+        result = str(result) + "\n\n" + stale_decision.message
 
     if execution_metadata is not None:
         if hasattr(result, "exit_status"):

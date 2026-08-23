@@ -356,6 +356,8 @@ class Config:
         "checkpoint.json",
         "metrics.json",
     )
+    # Session-local read-before-edit policy, rebuilt from raw trace events.
+    tools_stale_guard_mode: str = "warn"
     # Lazy language-server diagnostics and optional navigation tool.
     lsp_enabled: bool = False
     lsp_servers: dict[str, object] = field(default_factory=dict)

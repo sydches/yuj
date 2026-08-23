@@ -322,6 +322,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
+                                  stale_guard=session._stale_guard,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
@@ -345,6 +346,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
+                                  stale_guard=session._stale_guard,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000

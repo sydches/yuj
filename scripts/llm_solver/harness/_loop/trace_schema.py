@@ -104,6 +104,17 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "server", "status",
         }),
     ),
+    TraceEventSpec(
+        "stale_guard_observe",
+        frozenset({"session_number", "path", "source", "fingerprint"}),
+    ),
+    TraceEventSpec(
+        "stale_guard",
+        frozenset({
+            "session_number", "path", "reason", "mode", "blocked",
+            "expected", "current",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",

@@ -111,6 +111,7 @@ order in the
 | `[tools].sandbox_required` | Stop if Yuj cannot start the requested `bwrap` sandbox. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
+| `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
 | `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
 | `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
@@ -170,6 +171,29 @@ Set `[lsp].tool_enabled = true` to add the `lsp` tool with `definition`,
 `references`, and `symbols` queries. Navigation uses the same lazy server pool.
 Language-server binaries must already exist in the sealed runtime; Yuj never
 downloads them.
+
+### Require current file evidence before editing
+
+`[tools].stale_guard_mode` controls a session-local read ledger. `off` skips
+the check. `warn` (the shipped default) runs an edit but adds
+`WARNING: stale_file: read PATH first` to its result when the file was not
+read or its content changed since the last read. `block` refuses that edit
+with the same message under an `ERROR` prefix. A blocked result has the stable
+error class `stale_file`, so repeated hits participate in the normal error
+ladder.
+
+A successful `read` records the file's size, modification time, and content
+hash. A successful `write`, `edit`, or `apply_patch` refreshes the affected
+paths; a patch deletion removes its path from the ledger. A successful
+single-file `cat`, `head`, `tail`, `sed -n`, `grep`, or `rg` shell command also
+earns read credit. No-match exit status 1 from `grep` or `rg` still earns
+credit because the file was read. Compounds, pipelines, redirects,
+substitutions, recursive or multi-file searches, and aggregate/count forms do
+not earn credit.
+
+The ledger is harness state, not model-side state. Raw
+`stale_guard_observe` trace rows are its only resume source;
+`.solver/state.json` does not copy the ledger.
 
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during

@@ -547,6 +547,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
                         redactions=session.redactions,
                         tool_registry=session._tool_registry,
+                        stale_guard=session._stale_guard,
                     )
                     for tc in tool_calls
                 }

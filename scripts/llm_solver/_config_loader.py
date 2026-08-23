@@ -134,6 +134,9 @@ def _extract_config_fields(d: dict) -> dict:
             ),
             path="tools.file_checkpoints_exclude",
         ),
+        "tools_stale_guard_mode": d.get("tools", {}).get(
+            "stale_guard_mode", "warn"
+        ),
         "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
         "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
         "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
@@ -469,6 +472,11 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
+    if cfg.tools_stale_guard_mode not in {"off", "warn", "block"}:
+        raise ValueError(
+            "config error: tools.stale_guard_mode must be 'off', 'warn', "
+            f"or 'block', got {cfg.tools_stale_guard_mode!r}."
+        )
     import math
     if isinstance(cfg.lsp_diagnostics_timeout_s, bool) or not isinstance(
         cfg.lsp_diagnostics_timeout_s, (int, float)

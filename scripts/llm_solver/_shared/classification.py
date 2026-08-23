@@ -220,6 +220,8 @@ def derive_envelope_status(result: str) -> tuple[str, str | None]:
         return ("blocked", "harness_gate")
     if result.startswith("ERROR: command timed out"):
         return ("timed_out", "timeout")
+    if result.startswith("ERROR: stale_file:"):
+        return ("error", "stale_file")
     if result.startswith("ERROR:"):
         return ("error", "tool_exception")
     m = _EXIT_MARKER_TAIL_RE.search(result)
