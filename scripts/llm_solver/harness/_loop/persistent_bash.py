@@ -60,6 +60,8 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
             session.cwd, session.cfg, session._ignore_policy,
         ),
         sandbox_required=getattr(session.cfg, "sandbox_required", False),
+        effective_env=session._effective_env,
+        allow_login_shell=session._allow_login_shell,
     )
     set_persistent_runner(runner)
     return runner

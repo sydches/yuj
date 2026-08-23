@@ -99,6 +99,27 @@ options are accepted. Mount, network, environment, entrypoint, device,
 privilege, security, and unknown flags are rejected. Container commands are
 per-call; Yuj's persistent bwrap shell is not used.
 
+## Control the command environment
+
+`[sandbox.env]` applies one resolved environment to every command surface,
+including foreground and background shell calls, `run_tests`, post-edit
+checks, and language servers. It applies under bwrap, the first-class
+container backend, both legacy container modes, and an explicitly unsandboxed
+command path.
+
+The default `inherit = "core"` inherits only `PATH`, `HOME`, `LANG`, and
+`TERM` when present. Inherited names containing `KEY`, `SECRET`, or `TOKEN`
+are removed by default. Fixed `set` values override inherited values, and
+case-insensitive wildcard filters can exclude names or form a final include
+allowlist. See [Configuration](configuration.html#control-the-command-environment)
+for the exact order and settings.
+
+Yuj resolves this mapping once at run start. It clears the child environment
+before applying the mapping, including in ambient and unsandboxed command
+modes. The harness and provider client keep their own host environment. Trace
+provenance contains only the effective variable names. Fixed values are
+redacted from saved resolved configuration.
+
 With `[tools].sandbox_required = true`, a missing runtime or local image stops
 the task before a model command. Setting it to false explicitly permits one
 loud startup warning followed by unsandboxed command execution.

@@ -44,6 +44,17 @@ def _extract_config_fields(d: dict) -> dict:
 
     experiment = d.get("experiment", {})
     analysis = d.get("analysis", {})
+    from .harness.sandbox.env_policy import (
+        DEFAULT_FIXED_ENVIRONMENT,
+        EnvironmentPolicy,
+    )
+    sandbox_section = d.get("sandbox", {})
+    sandbox_env_raw = sandbox_section.get("env")
+    if sandbox_env_raw is None:
+        # Preserve the pre-policy deterministic command baseline for older
+        # complete configs that do not yet carry [sandbox.env].
+        sandbox_env_raw = {"set": dict(DEFAULT_FIXED_ENVIRONMENT)}
+    sandbox_env = EnvironmentPolicy.from_mapping(sandbox_env_raw)
     return {
         "base_url": _require(d, "server", "base_url"),
         "api_key": _require(d, "server", "api_key"),
@@ -380,6 +391,13 @@ def _extract_config_fields(d: dict) -> dict:
             d.get("sandbox", {}).get("container_flags", []),
             path="sandbox.container_flags",
         ),
+        "sandbox_env_inherit": sandbox_env.inherit,
+        "sandbox_env_set": dict(sandbox_env.set),
+        "sandbox_env_filters": dict(sandbox_env.filters),
+        "sandbox_env_ignore_default_excludes": (
+            sandbox_env.ignore_default_excludes
+        ),
+        "sandbox_env_allow_login_shell": sandbox_env.allow_login_shell,
         "runtime_worktree": d.get("runtime", {}).get("worktree", "off"),
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
         "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
@@ -672,6 +690,20 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
             f"'podman', got {cfg.sandbox_container_runtime!r}."
         )
     normalize_container_flags(cfg.sandbox_container_flags)
+    from .harness.sandbox.env_policy import (
+        EnvironmentPolicy,
+        EnvironmentPolicyError,
+    )
+    try:
+        EnvironmentPolicy(
+            inherit=cfg.sandbox_env_inherit,
+            set=cfg.sandbox_env_set,
+            filters=cfg.sandbox_env_filters,
+            ignore_default_excludes=cfg.sandbox_env_ignore_default_excludes,
+            allow_login_shell=cfg.sandbox_env_allow_login_shell,
+        )
+    except EnvironmentPolicyError as exc:
+        raise ValueError(f"config error: {exc}") from exc
     if cfg.sandbox_backend == "container":
         ContainerBackend(
             runtime=cfg.sandbox_container_runtime,

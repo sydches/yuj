@@ -386,6 +386,20 @@ class Config:
     sandbox_container_runtime: str = "docker"
     sandbox_container_image: str = ""
     sandbox_container_flags: tuple[str, ...] = ()
+    # Explicit environment passed only to sandboxed/model-command children.
+    # Provider clients and the harness process retain their host environment.
+    sandbox_env_inherit: str = "core"
+    sandbox_env_set: dict[str, str] = field(default_factory=lambda: {
+        "FORCE_COLOR": "0",
+        "MPLCONFIGDIR": "/tmp/mpl",
+        "NO_COLOR": "1",
+        "PAGER": "cat",
+        "PYTHONIOENCODING": "utf-8",
+        "TERM": "dumb",
+    })
+    sandbox_env_filters: dict[str, str] = field(default_factory=dict)
+    sandbox_env_ignore_default_excludes: bool = False
+    sandbox_env_allow_login_shell: bool = False
     runtime_worktree: str = "off"
     # Lazy language-server diagnostics and optional navigation tool.
     lsp_enabled: bool = False
@@ -766,6 +780,11 @@ def dump_config(cfg: Config) -> dict:
     d["api_key"] = "<redacted>"
     d["model_roles"] = _redact_target_keys(d["model_roles"])
     d["model_fallback_chain"] = _redact_target_keys(d["model_fallback_chain"])
+    # Fixed environment values can themselves be credentials. Preserve only
+    # the names in public run metadata/config hashes.
+    d["sandbox_env_set"] = {
+        name: "<redacted>" for name in sorted(cfg.sandbox_env_set)
+    }
     # retry_backoff is a tuple; convert for JSON
     d["retry_backoff"] = list(cfg.retry_backoff)
     return d

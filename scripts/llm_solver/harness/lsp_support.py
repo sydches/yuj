@@ -154,14 +154,24 @@ def build_lsp_sandbox_argv(
     sandbox: bool = True, sandbox_backend: str = "bwrap",
     container_runtime: str = "docker", container_image: str = "",
     container_flags: tuple[str, ...] = (),
+    effective_env: Mapping[str, str] | None = None,
+    allow_login_shell: bool = False,
 ) -> list[str]:
     """Run a stdio server under the same no-network policy as model bash."""
     from .sandbox import AMBIENT_CONTAINER, _build_bwrap_argv, container_mode
 
     command = tuple(command)
     command_text = shlex.join(command)
+    from .sandbox.env_policy import build_clean_exec_argv
+
+    def explicit(argv: list[str]) -> list[str]:
+        return (
+            argv if effective_env is None
+            else build_clean_exec_argv(argv, effective_env)
+        )
+
     if not sandbox:
-        return list(command)
+        return explicit(list(command))
     if sandbox_backend == "container":
         if container_mode() is not None:
             raise LspSupportError(
@@ -179,13 +189,15 @@ def build_lsp_sandbox_argv(
             sandbox_required=sandbox_required,
         )
         if runtime_bin is None:
-            return list(command)
+            return explicit(list(command))
         return backend.build_argv(
             command_text,
             cwd,
             runtime_bin=runtime_bin,
             unreadable_paths=unreadable_paths,
             sandbox_required=sandbox_required,
+            effective_env=effective_env,
+            allow_login_shell=allow_login_shell,
         )
     if sandbox_backend != "bwrap":
         raise LspSupportError(f"unknown sandbox backend {sandbox_backend!r}")
@@ -193,11 +205,13 @@ def build_lsp_sandbox_argv(
         from ._tools._run_in_sandbox import _probe_ambient_unshare_net
 
         prefix = ["unshare", "-n"] if _probe_ambient_unshare_net() else []
-        return [*prefix, *command]
+        return [*prefix, *explicit(list(command))]
     return _build_bwrap_argv(
         command_text, cwd, bwrap_bin,
         unreadable_paths=unreadable_paths,
         sandbox_required=sandbox_required,
+        effective_env=effective_env,
+        allow_login_shell=allow_login_shell,
         tail=list(command),
     )
 
@@ -411,6 +425,8 @@ class LspManager:
         sandbox_required: bool = True, sandbox: bool = True,
         sandbox_backend: str = "bwrap", container_runtime: str = "docker",
         container_image: str = "", container_flags: tuple[str, ...] = (),
+        effective_env: Mapping[str, str] | None = None,
+        allow_login_shell: bool = False,
         **kwargs,
     ) -> "LspManager":
         cwd_text = str(Path(cwd).resolve())
@@ -425,6 +441,8 @@ class LspManager:
                 container_runtime=container_runtime,
                 container_image=container_image,
                 container_flags=container_flags,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
 
         return cls(cwd=cwd_text, servers=servers, argv_builder=argv_builder, **kwargs)

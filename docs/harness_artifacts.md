@@ -153,6 +153,14 @@ and `container_image_digest`. Runtime and digest are null for the bwrap
 backend. These fields are run-start provenance and are not projected into
 `.solver/state.json`.
 
+Every `session_start` also records `sandbox_env_names`, the sorted names in the
+immutable environment passed to command children for that run. Values are
+not emitted in this provenance field or projected into `.solver/state.json`.
+As with any model-visible value, a command can still explicitly print an
+allowed variable into its ordinary traced tool-result evidence.
+`metrics.json` resolved configuration preserves fixed variable names but
+redacts every `[sandbox.env].set` value.
+
 When runtime worktree isolation is enabled, each `session_start` also records
 `worktree_path`, `worktree_branch`, and `worktree_base_commit`. The assistant
 session store and `session.json` retain the same identity for strict resume

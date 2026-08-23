@@ -619,6 +619,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         active_tools=getattr(session, "active_tool_names", ()),
                         redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                         ignore_policy=session._ignore_policy,
+                        effective_env=session._effective_env,
+                        allow_login_shell=session._allow_login_shell,
                     )
                 for tc_id, fut in futures.items():
                     try:

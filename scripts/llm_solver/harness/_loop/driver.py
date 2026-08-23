@@ -14,6 +14,7 @@ import os
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ...config import Config
@@ -100,6 +101,11 @@ def solve_task(
             unreadable_paths=tuple(cfg.unreadable_paths)
             + checkpoint_store.sandbox_unreadable_paths,
         )
+    from ..tools import _effective_command_environment
+    resolved_env, allow_login_shell = _effective_command_environment(cfg)
+    # One immutable snapshot is shared by every session and command surface;
+    # later host-process environment mutations cannot change this run.
+    effective_env = MappingProxyType(resolved_env)
     from ..sandbox.ignore_policy import load_ignore_policy
     ignore_policy = load_ignore_policy(
         work_dir,
@@ -409,6 +415,7 @@ def solve_task(
                 sandbox_backend=env_fields["sandbox_backend"],
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
+                sandbox_env_names=list(effective_env),
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
@@ -448,6 +455,8 @@ def solve_task(
                     or getattr(cfg, "adaptive_control_baseline_config_paths", ())
                 ),
                 ignore_policy=ignore_policy,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(

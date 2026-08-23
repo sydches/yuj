@@ -581,6 +581,19 @@ container_image = ""              # required when backend = "container"
 container_flags = []              # fail-closed resource/metadata allowlist
 unreadable_paths = []
 
+# Explicit environment for model-command children. Resolution order is:
+# inherit -> default secret-name exclusions -> custom excludes -> fixed set
+# -> optional include allowlist. The harness/provider process is unaffected.
+[sandbox.env]
+inherit = "core"                  # all | core | none
+set = { MPLCONFIGDIR = "/tmp/mpl", PAGER = "cat", NO_COLOR = "1", TERM = "dumb", FORCE_COLOR = "0", PYTHONIOENCODING = "utf-8" }
+ignore_default_excludes = false   # inherited names containing KEY/SECRET/TOKEN
+allow_login_shell = false         # profiles/rc files stay disabled by default
+
+[sandbox.env.filters]
+# "AWS_*" = "exclude"
+# "PATH" = "include"             # any include rule creates an allowlist
+
 [runtime]
 # Give one direct/assistant session its own retained Git worktree and branch.
 # "auto" derives the branch name; another string is used as the branch name.

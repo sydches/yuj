@@ -13,6 +13,10 @@ from ..sandbox import (
     AMBIENT_CONTAINER, _build_bwrap_argv, container_mode,
     get_persistent_runner,
 )
+from ..sandbox.env_policy import (
+    build_bash_argv,
+    build_subprocess_env,
+)
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +123,31 @@ def _run_in_sandbox(
     # check at line 36 would fall through to `sandbox_required` and
     # raise, even though the outer container is providing isolation.
     mode = container_mode() if sandbox else None
+    process_env = (
+        None
+        if effective_env is None
+        else build_subprocess_env(effective_env)
+    )
+
+    def _run_host(prefix: tuple[str, ...] = ()):
+        """Run outside bwrap while preserving legacy direct-call behavior."""
+        if effective_env is None and not allow_login_shell:
+            if prefix:
+                return subprocess.run(
+                    [*prefix, "/bin/sh", "-c", cmd], cwd=cwd,
+                    capture_output=True, text=True, timeout=timeout,
+                )
+            return subprocess.run(
+                cmd, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=timeout,
+            )
+        return subprocess.run(
+            [*prefix, *build_bash_argv(
+                cmd, allow_login_shell=allow_login_shell,
+            )],
+            cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            env=process_env,
+        )
     try:
         if sandbox and sandbox_backend == "container":
             if mode is not None:
@@ -143,10 +172,7 @@ def _run_in_sandbox(
                     "running without sandbox because sandbox_required=false",
                     container_runtime,
                 )
-                result = subprocess.run(
-                    cmd, shell=True, cwd=cwd,
-                    capture_output=True, text=True, timeout=timeout,
-                )
+                result = _run_host()
             else:
                 argv = backend.build_argv(
                     cmd,
@@ -177,22 +203,17 @@ def _run_in_sandbox(
             # Falls back to plain subprocess if unshare is unavailable
             # (probed once, cached at module scope).
             if _probe_ambient_unshare_net():
-                argv = ["unshare", "-n", "/bin/sh", "-c", cmd]
-                result = subprocess.run(
-                    argv, cwd=cwd,
-                    capture_output=True, text=True, timeout=timeout,
-                )
+                result = _run_host(("unshare", "-n"))
             else:
-                result = subprocess.run(
-                    cmd, shell=True, cwd=cwd,
-                    capture_output=True, text=True, timeout=timeout,
-                )
+                result = _run_host()
         elif mode is not None:
             # docker-exec container mode (FB testbed shape).
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
                 sandbox_required=sandbox_required,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
             result = subprocess.run(
                 argv, capture_output=True, text=True, timeout=timeout,
@@ -228,6 +249,8 @@ def _run_in_sandbox(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
                 sandbox_required=sandbox_required,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
             )
             result = subprocess.run(
                 argv, capture_output=True, text=True, timeout=timeout,
@@ -253,10 +276,7 @@ def _run_in_sandbox(
                     "sandbox_bash=true but %s not found — running without sandbox",
                     bwrap_bin,
                 )
-            result = subprocess.run(
-                cmd, shell=True, cwd=cwd,
-                capture_output=True, text=True, timeout=timeout,
-            )
+            result = _run_host()
         out = result.stdout + result.stderr
         out = _strip_ls_timestamps(out)
         out = _strip_runner_timing(out)

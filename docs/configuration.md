@@ -115,6 +115,11 @@ order in the
 | `[sandbox].container_runtime` | Select `docker` or `podman` for the container backend. |
 | `[sandbox].container_image` | Name an already-local trusted image. Required for the container backend. |
 | `[sandbox].container_flags` | Add allowlisted resource or metadata flags without weakening isolation. |
+| `[sandbox.env].inherit` | Choose inherited command variables: `all`, `core`, or `none`. `core` means `PATH`, `HOME`, `LANG`, and `TERM` when present. |
+| `[sandbox.env].set` | Add or override fixed command-environment values. Resolved values are redacted from saved configuration. |
+| `[sandbox.env].filters` | Include or exclude variable names with case-insensitive `*` and `?` patterns. Any include rule creates a final allowlist. |
+| `[sandbox.env].ignore_default_excludes` | Permit inherited names containing `KEY`, `SECRET`, or `TOKEN`; false by default. |
+| `[sandbox.env].allow_login_shell` | Let command shells load login profiles. False keeps profile and rc loading disabled. |
 | `[state].ignore_file_enabled` | Apply task-root Gitignore-style model-view files. On by default. |
 | `[state].ignore_file_names` | List ignore files in precedence order. Defaults to `.yujignore`. |
 | `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
@@ -167,6 +172,45 @@ options such as memory, CPU, PID-count, labels, and `--init`. Mount, network,
 environment, entrypoint, device, privilege, and security-boundary flags are
 rejected. See [Sandbox](sandbox.html) for the exact boundary and local-image
 preflight.
+
+### Control the command environment
+
+The command environment is explicit and is resolved once before the first
+session:
+
+```toml
+[sandbox.env]
+inherit = "core"  # all | core | none
+set = { PAGER = "cat", TERM = "dumb" }
+ignore_default_excludes = false
+allow_login_shell = false
+
+[sandbox.env.filters]
+"AWS_*" = "exclude"
+# "PATH" = "include"
+```
+
+Resolution starts with the selected inherited names, removes inherited names
+containing `KEY`, `SECRET`, or `TOKEN` unless the escape hatch is on, applies
+custom excludes, overlays `set`, and finally applies an include allowlist when
+one or more include patterns exist. Matching is case-insensitive. An explicit
+`set` can therefore restore a default-excluded name, but it must also match the
+final include allowlist when one exists.
+
+The checked-in configuration keeps the existing deterministic command
+defaults for noninteractive output: `MPLCONFIGDIR`, `PAGER`, `NO_COLOR`,
+`TERM`, `FORCE_COLOR`, and `PYTHONIOENCODING`. Fixed values override inherited
+values. Set `allow_login_shell = true` only when shell startup files are part
+of the intended treatment, because those files can change the resolved
+environment after Yuj starts the shell.
+
+The same immutable mapping reaches foreground and background `bash`,
+`run_tests`, post-edit checks, and language servers under bwrap, container,
+ambient-container, and explicit unsandboxed modes. It does not replace the
+harness process environment, so provider credentials remain available to the
+host-side client. Each raw `session_start` records sorted variable names in
+`sandbox_env_names`, never values; resolved fixed values are redacted in
+post-run configuration provenance.
 
 ### Hide repository paths from the model view
 

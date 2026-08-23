@@ -66,7 +66,11 @@ def test_build_bwrap_argv_docker_exec(monkeypatch, tmp_path):
     argv = _build_bwrap_argv("echo hi", str(tmp_path), "/usr/bin/bwrap")
     assert argv[:3] == ["docker", "exec", "--workdir"]
     assert "yuj-task-xyz" in argv
-    assert argv[-3:] == ["bash", "-c", "set -o pipefail; echo hi"]
+    assert "/usr/bin/env" in argv
+    assert "-i" in argv
+    assert argv[-7:] == [
+        "bash", "--noprofile", "--norc", "-o", "pipefail", "-c", "echo hi",
+    ]
 
 
 def test_bash_trivial_read_uses_container_path(monkeypatch, tmp_path):

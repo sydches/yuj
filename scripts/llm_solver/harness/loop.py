@@ -1,6 +1,6 @@
 """Agentic loop — Session (inner) + solve_task (outer)."""
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
@@ -12,6 +12,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import IO
 
 import openai
@@ -49,7 +50,8 @@ from .solver import build_system_prompt, collect_provenance, write_checkpoint, w
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
     ToolRegistry, _bash_unreadable_paths, admit_tool_output,
-    build_tool_registry, dispatch, validate_tool_handlers,
+    _effective_command_environment, build_tool_registry, dispatch,
+    validate_tool_handlers,
 )
 
 log = logging.getLogger(__name__)
@@ -212,6 +214,8 @@ class Session:
         artifact_dir: Path | None = None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
         ignore_policy: IgnorePolicy | None = None,
+        effective_env: Mapping[str, str] | None = None,
+        allow_login_shell: bool | None = None,
     ):
         self.cfg = cfg
         self._permission_policy = PermissionPolicy.from_rule_tables(
@@ -219,6 +223,20 @@ class Session:
         )
         self.client = client
         self.cwd = cwd
+        if effective_env is None:
+            resolved_env, resolved_login_shell = (
+                _effective_command_environment(cfg)
+            )
+        else:
+            from .sandbox.env_policy import build_subprocess_env
+            resolved_env = build_subprocess_env(effective_env)
+            resolved_login_shell = bool(
+                getattr(cfg, "sandbox_env_allow_login_shell", False)
+                if allow_login_shell is None
+                else allow_login_shell
+            )
+        self._effective_env = MappingProxyType(resolved_env)
+        self._allow_login_shell = resolved_login_shell
         self._ignore_policy = ignore_policy or load_ignore_policy(
             cwd,
             enabled=getattr(cfg, "state_ignore_file_enabled", True),
@@ -315,6 +333,8 @@ class Session:
                 container_flags=tuple(
                     getattr(cfg, "sandbox_container_flags", ()) or ()
                 ),
+                effective_env=self._effective_env,
+                allow_login_shell=self._allow_login_shell,
                 diagnostics_timeout_s=float(
                     getattr(cfg, "lsp_diagnostics_timeout_s", 2.0)
                 ),
@@ -529,6 +549,8 @@ class Session:
                     container_flags=tuple(
                         getattr(cfg, "sandbox_container_flags", ()) or ()
                     ),
+                    effective_env=self._effective_env,
+                    allow_login_shell=self._allow_login_shell,
                     max_procs=int(cfg.tools_background_max_procs),
                     poll_timeout_s=float(cfg.tools_background_poll_timeout),
                     admit_output=_admit_poll_output,

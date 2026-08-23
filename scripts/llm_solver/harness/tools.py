@@ -50,6 +50,12 @@ from .sandbox.ignore_policy import (
     activate_ignore_policy,
     active_ignore_policy,
 )
+from .sandbox.env_policy import (
+    DEFAULT_FIXED_ENVIRONMENT,
+    EnvironmentPolicy,
+    activate_environment,
+    active_environment,
+)
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +94,9 @@ def _bash_unreadable_paths(
 def _dispatch_bash(args, cwd, cfg):
     if bool(args.get("background", False)):
         return "ERROR: background process manager is unavailable"
+    effective_env, allow_login_shell = active_environment()
+    if effective_env is None:
+        effective_env, allow_login_shell = _effective_command_environment(cfg)
     return bash(
         args["cmd"], cwd=cwd, timeout=cfg.bash_timeout, sandbox=cfg.sandbox_bash,
         bwrap_bin=cfg.bwrap_bin,
@@ -101,7 +110,30 @@ def _dispatch_bash(args, cwd, cfg):
         container_flags=tuple(
             getattr(cfg, "sandbox_container_flags", ()) or ()
         ),
+        effective_env=effective_env,
+        allow_login_shell=allow_login_shell,
     )
+
+
+def _effective_command_environment(cfg: Config) -> tuple[dict[str, str], bool]:
+    """Resolve one Config's command-only environment.
+
+    ``Session`` and the outer driver retain this result for their lifetime.
+    This fallback keeps direct tool calls and small unit fixtures faithful to
+    the same public configuration contract.
+    """
+    policy = EnvironmentPolicy(
+        inherit=getattr(cfg, "sandbox_env_inherit", "core"),
+        set=getattr(cfg, "sandbox_env_set", DEFAULT_FIXED_ENVIRONMENT),
+        filters=getattr(cfg, "sandbox_env_filters", {}),
+        ignore_default_excludes=getattr(
+            cfg, "sandbox_env_ignore_default_excludes", False
+        ),
+        allow_login_shell=getattr(
+            cfg, "sandbox_env_allow_login_shell", False
+        ),
+    )
+    return policy.resolve(), policy.allow_login_shell
 
 
 _DISPATCH = {
@@ -257,7 +289,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              active_tools=(), redirect_event_sink=None,
              rewrite_log: list | None = None,
              execution_metadata: dict | None = None,
-             ignore_policy: IgnorePolicy | None = None) -> str:
+             ignore_policy: IgnorePolicy | None = None,
+             effective_env=None,
+             allow_login_shell: bool | None = None) -> str:
     """Route a tool call to its implementation, truncate output.
 
     output_control: optional OutputControl from bash_quirks, loaded
@@ -361,7 +395,23 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     elif stale_decision is not None and stale_decision.blocked:
         result = stale_decision.message
     else:
-        with activate_ignore_policy(ignore_policy):
+        if effective_env is None:
+            effective_env, resolved_login_shell = (
+                _effective_command_environment(cfg)
+            )
+        else:
+            resolved_login_shell = bool(
+                getattr(cfg, "sandbox_env_allow_login_shell", False)
+                if allow_login_shell is None
+                else allow_login_shell
+            )
+        with (
+            activate_ignore_policy(ignore_policy),
+            activate_environment(
+                effective_env,
+                allow_login_shell=resolved_login_shell,
+            ),
+        ):
             try:
                 executed = True
                 result = handler(arguments, cwd, cfg)

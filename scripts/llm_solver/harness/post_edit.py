@@ -190,7 +190,16 @@ def run_post_edit_checks(
     # check spec used it.
     ext = Path(path).suffix
 
-    from .tools import _bash_unreadable_paths, bash
+    from .sandbox.env_policy import active_environment
+    from .tools import (
+        _bash_unreadable_paths,
+        _effective_command_environment,
+        bash,
+    )
+    effective_env, allow_login_shell = active_environment()
+    if effective_env is None:
+        effective_env, allow_login_shell = _effective_command_environment(cfg)
+
     for raw_spec in checks:
         spec = parse_post_edit_check_spec(raw_spec)
         if trigger not in spec.triggers:
@@ -228,6 +237,8 @@ def run_post_edit_checks(
             container_flags=tuple(
                 getattr(cfg, "sandbox_container_flags", ()) or ()
             ),
+            effective_env=effective_env,
+            allow_login_shell=allow_login_shell,
         )
         failed = ("[exit code:" in out) or out.startswith("ERROR")
         if not failed:

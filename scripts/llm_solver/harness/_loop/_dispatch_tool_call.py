@@ -521,6 +521,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   active_tools=getattr(session, "active_tool_names", ()),
                                   redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                                   ignore_policy=session._ignore_policy,
+                                  effective_env=session._effective_env,
+                                  allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
@@ -551,6 +553,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   active_tools=getattr(session, "active_tool_names", ()),
                                   redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                                   ignore_policy=session._ignore_policy,
+                                  effective_env=session._effective_env,
+                                  allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000

@@ -50,7 +50,15 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
+
+from .env_policy import (
+    DEFAULT_FIXED_ENVIRONMENT,
+    build_bash_argv,
+    build_bwrap_env_argv,
+    build_clean_exec_argv,
+)
 
 # Public + test-private re-exports so ``from harness.sandbox import X``
 # continues to work after the module→package split.
@@ -134,6 +142,8 @@ def _build_bwrap_argv(
     *, unreadable_paths: tuple[str, ...] = (),
     sandbox_required: bool = False,
     tail: list[str] | None = None,
+    effective_env: Mapping[str, str] | None = None,
+    allow_login_shell: bool = False,
 ) -> list[str]:
     """Build the argv that runs `cmd` for the model's bash tool.
 
@@ -144,8 +154,8 @@ def _build_bwrap_argv(
     inside the container ``/testbed`` is the same bytes as ``cwd`` on
     the host. ``cwd`` (the parameter) is unused in this branch — docker
     uses ``--workdir /testbed`` and host paths outside cwd are not
-    visible inside the container. ``set -o
-    pipefail`` is added inline to mirror the bwrap path.
+    visible inside the container. ``env -i`` applies the same explicit
+    command environment as every other backend before bash starts.
 
     When unset, returns the legacy bwrap argv (preserved below).
 
@@ -170,10 +180,16 @@ def _build_bwrap_argv(
       - --chdir to the cwd so $PWD resolves correctly to the task dir.
 
     The result is passed to subprocess.run as an argv list (no shell).
-    The final `bash -c "$cmd"` runs the model's shell command inside the
-    namespace where only `cwd` is writable.
+    The final non-login `bash` runs the model's shell command inside the
+    namespace where only `cwd` is writable. Login profile loading is an
+    explicit environment-policy opt-in.
     """
     mode = container_mode()
+    command_env = (
+        DEFAULT_FIXED_ENVIRONMENT
+        if effective_env is None
+        else effective_env
+    )
     if mode == AMBIENT_CONTAINER:
         # Ambient mode is dispatched in _run_in_sandbox before this
         # function is called. Reaching here means the caller bypassed
@@ -186,12 +202,14 @@ def _build_bwrap_argv(
             "_run_in_sandbox instead."
         )
     if mode is not None:
+        shell_argv = build_bash_argv(
+            cmd, allow_login_shell=allow_login_shell,
+        ) if tail is None else list(tail)
         return [
             "docker", "exec",
             "--workdir", "/testbed",
             mode,
-            "bash", "-c",
-            f"set -o pipefail; {cmd}",
+            *build_clean_exec_argv(shell_argv, command_env),
         ]
 
     argv = [
@@ -242,38 +260,9 @@ def _build_bwrap_argv(
         "--unshare-cgroup",
         "--die-with-parent",
         "--chdir", cwd,
-        # Determinism: pin MPLCONFIGDIR so matplotlib doesn't emit the
-        # random-suffixed "Matplotlib created a temporary cache directory
-        # at /tmp/matplotlib-XXXXXXXX" banner that varies per run.
-        "--setenv", "MPLCONFIGDIR", "/tmp/mpl",
-        # Sandbox env baseline (offload P0-3): mute interactive UI noise
-        # that would otherwise add hundreds-thousands of progress-bar /
-        # color-escape / pager-prompt chars to a typical command's
-        # output. Each setting addresses a specific noise source we have
-        # observed in tool result text:
-        #   PAGER=cat       — git/man/less wrappers stop opening an
-        #                     interactive pager that hangs subprocess.
-        #   NO_COLOR=1      — ANSI color escapes from rg/grep/--color=auto.
-        #                     Belt-and-suspenders with our content-blind
-        #                     strip_ansi pass; setting it upstream means
-        #                     no escape ever enters the pipeline.
-        #   TERM=dumb       — many tools probe TERM to decide whether to
-        #                     emit progress bars / cursor manipulation.
-        #                     "dumb" disables both classes.
-        #   FORCE_COLOR=0   — newer tools (ruff, npm, vitest) ignore
-        #                     NO_COLOR and look at FORCE_COLOR instead.
-        #                     0 = explicit off.
-        #   PYTHONIOENCODING=utf-8 — kills the EncodingWarning emitted
-        #                     by pytest collection on locales without a
-        #                     stable default. Stable bytes per task.
-        # Note: these are PROCESS env baselines, not constraints on the
-        # model — if the model's command sets PAGER explicitly, the
-        # explicit value wins inside that subshell.
-        "--setenv", "PAGER", "cat",
-        "--setenv", "NO_COLOR", "1",
-        "--setenv", "TERM", "dumb",
-        "--setenv", "FORCE_COLOR", "0",
-        "--setenv", "PYTHONIOENCODING", "utf-8",
+        # The command environment is explicit and deterministic. The host
+        # client keeps its own environment; only sandbox children are cleared.
+        *build_bwrap_env_argv(command_env),
     ]
     sock = _resolve_docker_sock()
     if sock is not None:
@@ -317,13 +306,15 @@ def _build_bwrap_argv(
     # exist — leaving the harness verify-gate with no exit signal to read.
     # pipefail propagates the failure of ANY pipe stage as the overall exit.
     #
-    # ``tail`` (default None → legacy ``bash -o pipefail -c <cmd>``) lets
+    # ``tail`` (default None → policy-built non-login bash argv) lets
     # the persistent-bash path append ``bash --noprofile --norc -s``
     # instead, so a single bwrap+bash subprocess can stream commands
     # via stdin across many tool calls (PersistentBashSession in
     # ``_persistent.py``).
     if tail is None:
-        argv += ["bash", "-o", "pipefail", "-c", cmd]
+        argv += build_bash_argv(
+            cmd, allow_login_shell=allow_login_shell,
+        )
     else:
         argv += list(tail)
     return argv
