@@ -1,0 +1,9 @@
+[profile]
+format_version = 1
+canonical_version = "openai-v1"
+name = "weak"
+family = "fixture-weak"
+inherits = "_base"
+
+[model]
+context_size = 4096

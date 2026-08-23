@@ -1,0 +1,21 @@
+[profile]
+format_version = 1
+canonical_version = "openai-v1"
+name = "_base"
+family = "_base"
+inherits = ""
+
+[model]
+context_size = 8192
+chat_template = "chatml"
+supports_tool_calls = true
+supports_system_role = true
+
+[tokens]
+method = "chars_div_4"
+tokenizer = ""
+
+[capacity]
+preamble = ""
+max_tools = 8
+simplify_schemas = false
