@@ -3,6 +3,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from ...config import Config
+from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _path_hint, _resolve, _xml_attr, _xml_body
 
 
@@ -74,6 +75,13 @@ def list_definitions(
         abs_path = _resolve(cwd, path)
     except ValueError as e:
         return _list_definitions_error(path, "path_outside_cwd", str(e))
+    policy = active_ignore_policy(cwd)
+    if policy is not None and policy.is_ignored(
+        abs_path, is_dir=abs_path.is_dir()
+    ):
+        return _list_definitions_error(
+            path, "not_found", f"file not found: {path}",
+        )
     if not abs_path.is_file():
         return _list_definitions_error(
             path, "not_found", f"file not found: {path}{_path_hint(cwd, path)}",
@@ -116,6 +124,11 @@ def _structural_index(root: Path, cfg: Config):
     from ..structural_index import StructuralIndex
 
     unreadable = tuple(str(item) for item in (cfg.unreadable_paths or ()))
+    policy = active_ignore_policy()
+    if policy is not None:
+        unreadable = tuple(dict.fromkeys(
+            (*unreadable, *policy.sandbox_unreadable_paths())
+        ))
     key = (str(root.resolve()), unreadable)
     existing = _STRUCTURAL_INDEX_REGISTRY.get(key)
     if existing is not None:
@@ -213,6 +226,13 @@ def _list_repository_symbols(
         root = _resolve(cwd, path)
     except ValueError as exc:
         return _list_definitions_error(path, "path_outside_cwd", str(exc))
+    policy = active_ignore_policy(cwd)
+    if policy is not None and policy.is_model_hidden(
+        root, is_dir=root.is_dir()
+    ):
+        return _list_definitions_error(
+            path, "not_directory", f"repository scope is not a directory: {path}",
+        )
     if not root.is_dir():
         return _list_definitions_error(
             path, "not_directory", f"repository scope is not a directory: {path}",

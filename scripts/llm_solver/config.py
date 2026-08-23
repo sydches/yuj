@@ -439,6 +439,8 @@ class Config:
     state_writer_enabled: bool = True
     context_ignore_state: bool = False
     state_imperative_projection_enabled: bool = False
+    state_ignore_file_enabled: bool = True
+    state_ignore_file_names: tuple[str, ...] = (".yujignore",)
     # Paginated search envelopes for grep/glob. Defaults ship on.
     search_pagination_enabled: bool = True
     grep_max_matches_per_page: int = 25

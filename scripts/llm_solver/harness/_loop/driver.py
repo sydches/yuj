@@ -100,6 +100,21 @@ def solve_task(
             unreadable_paths=tuple(cfg.unreadable_paths)
             + checkpoint_store.sandbox_unreadable_paths,
         )
+    from ..sandbox.ignore_policy import load_ignore_policy
+    ignore_policy = load_ignore_policy(
+        work_dir,
+        enabled=getattr(cfg, "state_ignore_file_enabled", True),
+        file_names=getattr(
+            cfg, "state_ignore_file_names", (".yujignore",)
+        ),
+    )
+    # Context discovery happens before the first model call. Give it the same
+    # startup view as the tools while retaining the immutable compiled policy
+    # for dynamic path decisions later in the run.
+    prompt_unreadable_paths = tuple(dict.fromkeys((
+        *tuple(cfg.unreadable_paths),
+        *ignore_policy.sandbox_unreadable_paths(),
+    )))
     prompt_file = artifact_dir / "prompt.txt"
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
@@ -116,9 +131,10 @@ def solve_task(
      prompt_metadata) = load_system_prompt_and_provenance(
         cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
         context_class,
+        unreadable_paths=prompt_unreadable_paths,
     )
     resolved_injections, injection_import_tree = load_session_injections(
-        cfg, work_dir
+        cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
     )
     if injection_import_tree:
         prompt_metadata = replace(
@@ -396,6 +412,7 @@ def solve_task(
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
+                **ignore_policy.trace_fields(),
                 **(
                     worktree_info.session_start_fields()
                     if worktree_info is not None else {}
@@ -430,6 +447,7 @@ def solve_task(
                     (run_metadata or {}).get("config_paths", ())
                     or getattr(cfg, "adaptive_control_baseline_config_paths", ())
                 ),
+                ignore_policy=ignore_policy,
             )
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(

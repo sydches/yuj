@@ -190,7 +190,7 @@ def run_post_edit_checks(
     # check spec used it.
     ext = Path(path).suffix
 
-    from .tools import bash
+    from .tools import _bash_unreadable_paths, bash
     for raw_spec in checks:
         spec = parse_post_edit_check_spec(raw_spec)
         if trigger not in spec.triggers:
@@ -219,7 +219,7 @@ def run_post_edit_checks(
             cmd, cwd=cwd, timeout=cfg.post_edit_check_timeout,
             sandbox=cfg.sandbox_bash, bwrap_bin=cfg.bwrap_bin,
             sandbox_required=getattr(cfg, "sandbox_required", False),
-            unreadable_paths=tuple(getattr(cfg, "unreadable_paths", ()) or ()),
+            unreadable_paths=_bash_unreadable_paths(cwd, cfg),
             sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
             container_runtime=getattr(
                 cfg, "sandbox_container_runtime", "docker"

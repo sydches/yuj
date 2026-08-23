@@ -175,6 +175,13 @@ def _extract_config_fields(d: dict) -> dict:
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
         "context_ignore_state": d.get("state", {}).get("context_ignore", False),
         "state_imperative_projection_enabled": d.get("state", {}).get("imperative_projection_enabled", False),
+        "state_ignore_file_enabled": d.get("state", {}).get(
+            "ignore_file_enabled", True
+        ),
+        "state_ignore_file_names": _string_tuple(
+            d.get("state", {}).get("ignore_file_names", [".yujignore"]),
+            path="state.ignore_file_names",
+        ),
         "parallel_readonly_enabled": d.get("loop", {}).get("parallel_readonly_enabled", False),
         "parallel_max_workers": d.get("loop", {}).get("parallel_max_workers", 4),
         "injections_enabled": d.get("injections", {}).get("enabled", False),
@@ -620,6 +627,12 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: prompts.project_docs_enabled must be a boolean."
         )
+    if not isinstance(cfg.state_ignore_file_enabled, bool):
+        raise ValueError(
+            "config error: state.ignore_file_enabled must be a boolean."
+        )
+    from .harness.sandbox.ignore_policy import validate_ignore_file_names
+    validate_ignore_file_names(cfg.state_ignore_file_names)
     if not isinstance(cfg.project_doc_global_dir, str):
         raise ValueError(
             "config error: prompts.project_doc_global_dir must be a string."

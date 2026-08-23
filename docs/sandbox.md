@@ -119,6 +119,15 @@ Use an absolute path or a glob pattern.
 In strict mode, Yuj treats a missing path with no glob as an error. Add
 `optional:` before a path when its absence is valid.
 
+For repository-owned model-view rules, use `.yujignore` instead of repeating
+paths in host configuration. Yuj loads it once from the task root, applies its
+Gitignore-style rules uniformly to file/search tools, and adds currently
+matched paths to the unreadable masks used by bwrap and container commands.
+Simple captured `ls`, `cat`, and `head` calls are filtered before execution so
+an individually masked file is not exposed merely as a directory entry. See
+[Configuration](configuration.html#hide-repository-paths-from-the-model-view)
+for syntax, precedence, and trace provenance.
+
 ## Turn the sandbox off
 
 Create a small TOML file:

@@ -115,6 +115,8 @@ order in the
 | `[sandbox].container_runtime` | Select `docker` or `podman` for the container backend. |
 | `[sandbox].container_image` | Name an already-local trusted image. Required for the container backend. |
 | `[sandbox].container_flags` | Add allowlisted resource or metadata flags without weakening isolation. |
+| `[state].ignore_file_enabled` | Apply task-root Gitignore-style model-view files. On by default. |
+| `[state].ignore_file_names` | List ignore files in precedence order. Defaults to `.yujignore`. |
 | `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
@@ -165,6 +167,37 @@ options such as memory, CPU, PID-count, labels, and `--init`. Mount, network,
 environment, entrypoint, device, privilege, and security-boundary flags are
 rejected. See [Sandbox](sandbox.html) for the exact boundary and local-image
 preflight.
+
+### Hide repository paths from the model view
+
+Yuj loads `.yujignore` from the task root by default:
+
+```toml
+[state]
+ignore_file_enabled = true
+ignore_file_names = [".yujignore"]
+```
+
+The syntax follows Gitignore conventions: blank lines and `#` comments;
+`*`, `?`, character classes, and `**`; a leading `/` for a task-root anchor;
+a trailing `/` for directories; and `!` to make a later match visible again.
+Within one file, the last matching rule wins. If you configure several file
+names, the first file that decides a path wins.
+
+One immutable policy is loaded before the first session. Editing an ignore
+file during that run does not silently change the model's view. The policy is
+applied before totals and pagination in `read`, `glob`, `grep`, and
+`list_definitions`, including repository structural search. The same matched
+paths are supplied as masks to `bash`, background commands, `run_tests`,
+post-edit checks, configured language servers, and either sandbox backend.
+Simple `bash` `ls`, `cat`, and `head` reads use the same filtered view, which
+also prevents an individual masked filename from appearing in their output.
+
+This is a harness/model visibility rule, not a repository deletion or scorer
+rule. External verification still sees the full task tree. Each raw
+`session_start` records the exact loaded-byte hash and loaded file names, but
+never records patterns or file contents. Set `ignore_file_enabled = false` for
+a treatment that must preserve the unfiltered repository view.
 
 ### Isolate a session in a Git worktree
 

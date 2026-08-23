@@ -5,6 +5,7 @@ import subprocess
 
 from ...config import Config
 from .._tool_filters import _strip_cwd_absolute
+from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
 from ._common import _paginated_envelope, _resolve
 
 
@@ -43,6 +44,20 @@ def _sorted_matches(raw: str) -> str:
     return out + "\n" if trailing_newline and out else out
 
 
+def _filter_ignored_matches(raw: str, policy: IgnorePolicy) -> str:
+    """Remove match rows whose path is outside the model-visible view."""
+    if not raw:
+        return raw
+    kept: list[str] = []
+    for line in raw.splitlines():
+        match = _MATCH_LINE_RE.match(line)
+        if match is None or not policy.is_ignored(
+            match.group(1), is_dir=False
+        ):
+            kept.append(line)
+    return "\n".join(kept) + ("\n" if kept and raw.endswith("\n") else "")
+
+
 def grep_files(
     pattern: str, path: str = ".", glob_filter: str = "",
     *, cwd: str, timeout: int = 30,
@@ -56,9 +71,15 @@ def grep_files(
     line-per-match text (backwards compatible).
     """
     try:
-        resolved_path = str(_resolve(cwd, path))
+        resolved = _resolve(cwd, path)
+        resolved_path = str(resolved)
     except ValueError as e:
         return f"ERROR: {e}"
+    policy = active_ignore_policy(cwd)
+    if policy is not None and policy.is_model_hidden(
+        resolved, is_dir=resolved.is_dir()
+    ):
+        return "No matches found."
     rg = shutil.which("rg")
     if rg:
         cmd = [rg, "-n", "--no-heading"]
@@ -83,6 +104,8 @@ def grep_files(
             first = stderr[0] if stderr else f"exit code {result.returncode}"
             return f"ERROR: grep failed: {first}"
         raw = _strip_cwd_absolute(result.stdout, cwd) if result.stdout else result.stdout
+        if policy is not None:
+            raw = _filter_ignored_matches(raw, policy)
         raw = _sorted_matches(raw)
         if cfg is None or not cfg.search_pagination_enabled:
             return raw or "No matches found."

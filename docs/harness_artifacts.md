@@ -191,6 +191,13 @@ argument. It is not projected into `.solver/state.json`. A denied call retains
 a gate-blocked `tool_call` row and its model-visible error, so the ordinary
 error ladder and replay history still see the attempted action.
 
+Every `session_start` records `ignore_file_hash` and `ignore_file_names` for
+the immutable repository model-view policy loaded at run start. The hash is
+SHA-256 over the exact bytes for one loaded file, or a framed aggregate for
+multiple files; it is `null` when no file was loaded or the feature is off.
+Patterns and ignored path names are never copied into the trace or the
+mechanical state projection.
+
 The row also records `model_target`, `model`, `profile_name`,
 `base_url`, and `context_size` for the effective main target. API keys are
 excluded. `model_fallback` events and the post-run fallback metrics are raw

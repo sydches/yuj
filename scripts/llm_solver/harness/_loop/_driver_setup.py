@@ -136,6 +136,8 @@ def load_system_prompt_and_provenance(
     profile_path: Path | None,
     run_metadata: dict | None,
     context_class,
+    *,
+    unreadable_paths: tuple[str, ...] | None = None,
 ) -> tuple[str, dict, dict, PromptAssemblyMetadata]:
     """Build system_prompt, provenance, and context_contract.
 
@@ -143,6 +145,11 @@ def load_system_prompt_and_provenance(
     component metadata. The provenance dict is mutated in place with
     variant_name + prompt_addendum if the config sets them.
     """
+    prompt_unreadable_paths = (
+        cfg.unreadable_paths
+        if unreadable_paths is None
+        else unreadable_paths
+    )
     project_root = find_project_root(work_dir, cfg.project_root_markers)
     arm_roots: list[Path] = [project_root]
     if system_prompt_file is not None:
@@ -154,7 +161,7 @@ def load_system_prompt_and_provenance(
         imports_enabled=cfg.imports_enabled,
         allowed_dirs=tuple(arm_roots),
         max_depth=cfg.imports_max_depth,
-        unreadable_paths=cfg.unreadable_paths,
+        unreadable_paths=prompt_unreadable_paths,
     )
     resolved_arm = arm.content if arm is not None else None
     prompt_import_tree: list[dict[str, object]] = []
@@ -178,14 +185,14 @@ def load_system_prompt_and_provenance(
             doc_names=cfg.project_doc_names,
             max_bytes=cfg.project_doc_max_bytes,
             root_markers=cfg.project_root_markers,
-            unreadable_paths=cfg.unreadable_paths,
+            unreadable_paths=prompt_unreadable_paths,
             defer_byte_cap=True,
         )
         project = resolve_project_instruction_imports(
             project,
             enabled=cfg.imports_enabled,
             max_depth=cfg.imports_max_depth,
-            unreadable_paths=cfg.unreadable_paths,
+            unreadable_paths=prompt_unreadable_paths,
         )
         project_content = project.content
         project_records = tuple(project.trace_records())
@@ -243,17 +250,24 @@ def load_system_prompt_and_provenance(
 def load_session_injections(
     cfg: Config,
     work_dir: Path,
+    *,
+    unreadable_paths: tuple[str, ...] | None = None,
 ) -> tuple[tuple[Injection, ...], tuple[dict[str, object], ...]]:
     """Resolve injection files before ``session_start`` is emitted."""
     if not cfg.injections_enabled:
         return (), ()
     project_root = find_project_root(work_dir, cfg.project_root_markers)
+    prompt_unreadable_paths = (
+        cfg.unreadable_paths
+        if unreadable_paths is None
+        else unreadable_paths
+    )
     loaded = load_injections_with_metadata(
         work_dir / cfg.injections_dir,
         imports_enabled=cfg.imports_enabled,
         imports_max_depth=cfg.imports_max_depth,
         allowed_dirs=(project_root,),
-        unreadable_paths=cfg.unreadable_paths,
+        unreadable_paths=prompt_unreadable_paths,
     )
     return loaded.injections, loaded.prompt_import_tree
 

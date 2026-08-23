@@ -44,12 +44,14 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "session_start", frozenset({
             "session_number", "thinking_level", "sandbox_backend",
             "container_runtime", "container_image_digest",
+            "ignore_file_hash",
         }), frozenset({
             "worktree_path", "worktree_branch", "worktree_base_commit",
             "project_instruction_files", "project_instruction_bytes",
             "project_instruction_imported_bytes",
             "project_instruction_resolved_bytes",
             "project_instructions_truncated", "prompt_import_tree",
+            "ignore_file_names",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),

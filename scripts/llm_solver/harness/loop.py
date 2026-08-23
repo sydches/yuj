@@ -44,6 +44,7 @@ from .._shared.classification import is_error_result
 from .schemas import get_tool_schemas
 from .tool_validation import ToolSchemaSet
 from .tool_policy import PermissionPolicy
+from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
@@ -210,6 +211,7 @@ class Session:
         injections=None,
         artifact_dir: Path | None = None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
+        ignore_policy: IgnorePolicy | None = None,
     ):
         self.cfg = cfg
         self._permission_policy = PermissionPolicy.from_rule_tables(
@@ -217,6 +219,13 @@ class Session:
         )
         self.client = client
         self.cwd = cwd
+        self._ignore_policy = ignore_policy or load_ignore_policy(
+            cwd,
+            enabled=getattr(cfg, "state_ignore_file_enabled", True),
+            file_names=getattr(
+                cfg, "state_ignore_file_names", (".yujignore",)
+            ),
+        )
         self._session_number = session_number
         self._current_turn = 0
         self._service_event_lock = threading.RLock()
@@ -293,7 +302,9 @@ class Session:
                 cwd=cwd,
                 servers=parse_server_specs(getattr(cfg, "lsp_servers", {})),
                 bwrap_bin=cfg.bwrap_bin,
-                unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+                unreadable_paths=_bash_unreadable_paths(
+                    cwd, cfg, self._ignore_policy,
+                ),
                 sandbox_required=getattr(cfg, "sandbox_required", False),
                 sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                 sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -344,6 +355,10 @@ class Session:
             if self._lsp_manager is None:
                 return "ERROR: lsp manager is not configured"
             try:
+                target = Path(self.cwd) / str(args["path"])
+                self._ignore_policy.require_visible(
+                    target, is_dir=target.is_dir()
+                )
                 query = self._lsp_manager.query(
                     str(args["kind"]),
                     path=str(args["path"]),
@@ -499,7 +514,9 @@ class Session:
                     run_dir=manager_run_dir,
                     cwd=cwd,
                     bwrap_bin=cfg.bwrap_bin,
-                    unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+                    unreadable_paths=_bash_unreadable_paths(
+                        cwd, cfg, self._ignore_policy,
+                    ),
                     sandbox_required=getattr(cfg, "sandbox_required", False),
                     sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                     sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -609,7 +626,9 @@ class Session:
                 imports_enabled=getattr(cfg, "imports_enabled", True),
                 imports_max_depth=getattr(cfg, "imports_max_depth", 5),
                 allowed_dirs=(project_root,),
-                unreadable_paths=getattr(cfg, "unreadable_paths", ()),
+                unreadable_paths=_bash_unreadable_paths(
+                    cwd, cfg, self._ignore_policy,
+                ),
             )
 
     @property

@@ -45,6 +45,11 @@ from ._tool_filters import (
 )
 from .tool_specs import ACTIVE_TOOL_NAMES, is_native_envelope
 from .process_manager import AdmittedProcessOutput, ProcessManagerError
+from .sandbox.ignore_policy import (
+    IgnorePolicy,
+    activate_ignore_policy,
+    active_ignore_policy,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,8 +60,10 @@ log = logging.getLogger(__name__)
 _UNIFIED_ENVELOPE_VERSION = "1"
 
 
-def _bash_unreadable_paths(cwd, cfg) -> tuple[str, ...]:
-    """Configured masks plus this run's telemetry dir.
+def _bash_unreadable_paths(
+    cwd, cfg, ignore_policy: IgnorePolicy | None = None,
+) -> tuple[str, ...]:
+    """Configured masks plus run-owned telemetry and ignore-file masks.
 
     Under bwrap the whole host is bound read-only, so the telemetry sibling of
     the task workspace is readable even though it sits outside cwd. Mask it:
@@ -67,9 +74,15 @@ def _bash_unreadable_paths(cwd, cfg) -> tuple[str, ...]:
     a trace (tests, ad-hoc tool use), and a zero-match must not fail closed.
     """
     configured = tuple(getattr(cfg, "unreadable_paths", ()) or ())
-    if not cwd:
-        return configured
-    return configured + (f"optional:{telemetry_dir(Path(cwd))}",)
+    additions: tuple[str, ...] = ()
+    if cwd:
+        additions += (f"optional:{telemetry_dir(Path(cwd))}",)
+    policy = ignore_policy or active_ignore_policy(cwd)
+    if policy is not None:
+        additions += policy.sandbox_unreadable_paths()
+    # Preserve declaration order while avoiding repeated configured,
+    # telemetry, or dynamically rediscovered model-view mounts.
+    return tuple(dict.fromkeys((*configured, *additions)))
 
 
 def _dispatch_bash(args, cwd, cfg):
@@ -243,7 +256,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              stale_guard=None,
              active_tools=(), redirect_event_sink=None,
              rewrite_log: list | None = None,
-             execution_metadata: dict | None = None) -> str:
+             execution_metadata: dict | None = None,
+             ignore_policy: IgnorePolicy | None = None) -> str:
     """Route a tool call to its implementation, truncate output.
 
     output_control: optional OutputControl from bash_quirks, loaded
@@ -347,13 +361,14 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     elif stale_decision is not None and stale_decision.blocked:
         result = stale_decision.message
     else:
-        try:
-            executed = True
-            result = handler(arguments, cwd, cfg)
-        except ProcessManagerError as e:
-            result = f"ERROR: {e}"
-        except (KeyError, TypeError) as e:
-            return f"ERROR: bad arguments for {name}: {e}"
+        with activate_ignore_policy(ignore_policy):
+            try:
+                executed = True
+                result = handler(arguments, cwd, cfg)
+            except ProcessManagerError as e:
+                result = f"ERROR: {e}"
+            except (KeyError, TypeError) as e:
+                return f"ERROR: bad arguments for {name}: {e}"
 
     applied_operations = tuple(getattr(result, "applied_operations", ()))
     raw_exit_status = getattr(result, "exit_status", None)
