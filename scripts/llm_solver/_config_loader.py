@@ -13,6 +13,15 @@ from ._shared.toml_compat import tomllib
 
 from .config import Config, _REQUIRED_SECTIONS
 
+
+def _string_tuple(value: object, *, path: str) -> tuple[str, ...]:
+    """Validate a TOML string array without coercing scalars to characters."""
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise ValueError(f"config error: {path} must be an array of strings.")
+    return tuple(value)
+
 def _require(data: dict, section: str, key: str) -> object:
     if section not in data:
         raise KeyError(f"config.toml missing section [{section}]")
@@ -109,6 +118,22 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_run_tests_assertion_context_lines": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5)),
         "tools_run_tests_assertion_context_max": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3)),
         "tools_list_definitions_enabled": bool(d.get("tools", {}).get("list_definitions", {}).get("enabled", False)),
+        "tools_file_checkpoints_enabled": bool(
+            d.get("tools", {}).get("file_checkpoints_enabled", False)
+        ),
+        "tools_file_checkpoints_exclude": _string_tuple(
+            d.get("tools", {}).get(
+                "file_checkpoints_exclude",
+                [
+                    ".solver/**",
+                    ".tool_output/**",
+                    "prompt.txt",
+                    "checkpoint.json",
+                    "metrics.json",
+                ],
+            ),
+            path="tools.file_checkpoints_exclude",
+        ),
         "tools_apply_patch_enabled": bool(d.get("tools", {}).get("apply_patch", {}).get("enabled", False)),
         "tools_unified_envelope_enabled": bool(d.get("tools", {}).get("unified_envelope", {}).get("enabled", False)),
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),

@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import os
 import stat
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from scripts.llm_solver.config import load_config
+from scripts.llm_solver.harness.loop import solve_task
+from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
+from _config_helpers import make_config
 from scripts.llm_solver.harness.sandbox._preflight import bwrap_preflight
 from scripts.llm_solver.harness.tools import _bash_unreadable_paths, dispatch
 from scripts.llm_solver.harness.workspace_checkpoints import (
@@ -277,3 +282,97 @@ def test_shadow_storage_is_hidden_from_read_glob_and_sandboxed_bash(tmp_path):
     )
     assert "objects" not in bash_result
     assert "checkpoint_metrics.jsonl" not in bash_result
+
+
+def test_checkpoint_config_defaults_and_overlay_validation(tmp_path):
+    defaults = load_config()
+    assert defaults.tools_file_checkpoints_enabled is False
+    assert defaults.tools_file_checkpoints_exclude == (
+        ".solver/**",
+        ".tool_output/**",
+        "prompt.txt",
+        "checkpoint.json",
+        "metrics.json",
+    )
+
+    overlay = tmp_path / "checkpoint.toml"
+    overlay.write_text(
+        "[tools]\nfile_checkpoints_enabled = true\n"
+        'file_checkpoints_exclude = ["scratch/**"]\n'
+    )
+    configured = load_config(user_config=overlay)
+    assert configured.tools_file_checkpoints_enabled is True
+    assert configured.tools_file_checkpoints_exclude == ("scratch/**",)
+
+    overlay.write_text(
+        "[tools]\nfile_checkpoints_exclude = [1]\n"
+    )
+    with pytest.raises(ValueError, match="tools.file_checkpoints_exclude"):
+        load_config(user_config=overlay)
+
+
+def test_solve_task_checkpoints_write_and_reports_metrics(tmp_path):
+    repo = tmp_path / "task"
+    repo.mkdir()
+    artifacts = tmp_path / "artifacts"
+    cfg = make_config(
+        max_turns=2,
+        max_sessions=1,
+        state_writer_enabled=False,
+        turn_snapshots_enabled=False,
+        tools_file_checkpoints_enabled=True,
+    )
+    client = MagicMock()
+    client.chat.side_effect = [
+        TurnResult(
+            content="write",
+            tool_calls=[
+                ToolCall(
+                    id="write-1",
+                    name="write",
+                    arguments={"path": "created.bin", "content": "hello"},
+                )
+            ],
+            finish_reason="tool_calls",
+            usage=Usage(prompt_tokens=10, completion_tokens=2),
+        ),
+        TurnResult(
+            content="done",
+            tool_calls=[],
+            finish_reason="stop",
+            usage=Usage(prompt_tokens=12, completion_tokens=2),
+        ),
+    ]
+    client.build_assistant_message.side_effect = lambda content, tool_calls: {
+        "role": "assistant",
+        "content": content,
+    }
+
+    with (
+        patch("llm_solver.harness.loop._auto_commit"),
+        patch(
+            "llm_solver.harness.loop.Session._get_server_ctx",
+            return_value=cfg.context_size,
+        ),
+    ):
+        assert solve_task(
+            repo,
+            cfg,
+            client,
+            initial_prompt="Create the file.",
+            artifacts_dir=artifacts,
+        ) is True
+
+    assert (repo / "created.bin").read_bytes() == b"hello"
+    events = [
+        json.loads(line) for line in (artifacts / ".trace.jsonl").read_text().splitlines()
+    ]
+    checkpoints = [event for event in events if event.get("event") == "checkpoint"]
+    assert len(checkpoints) == 1
+    assert checkpoints[0]["turn"] == 0
+    assert len(checkpoints[0]["commit"]) >= 40
+    metrics = json.loads((artifacts / "metrics.json").read_text())["metrics"]
+    assert metrics["file_checkpoints"]["enabled"] is True
+    assert metrics["file_checkpoints"]["count"] == 1
+    assert metrics["file_checkpoints"]["per_call"][0]["commit"] == checkpoints[0]["commit"]
+    assert (artifacts / ".shadow_git").is_dir()

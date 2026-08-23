@@ -109,6 +109,8 @@ order in the
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the requested `bwrap` sandbox. |
+| `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
+| `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 
 The checked-in [`config.toml`](https://github.com/sydches/yuj/blob/main/config.toml)
 defines and comments the full public settings shape. Use a small settings file
@@ -118,6 +120,29 @@ Read [Model tools](model-tools.html) for optional tool settings. Read
 [Run a local model](serving_overlay.html) for runtime files and profiles.
 Read [Extend Yuj with TOML files](extending-yuj.html) before you add or change
 a model, language, or tool descriptor.
+
+### Save restorable file checkpoints
+
+Set `[tools].file_checkpoints_enabled = true` to create one independent
+shadow-Git commit after every executed `bash`, `write`, `edit`, or
+`apply_patch` call. A nonzero or timed-out shell call is still checkpointed
+because it may have changed files before it stopped. Calls rejected before
+execution are not checkpointed.
+
+The shadow repository is harness-owned and lives outside the task directory.
+It uses the task directory as its Git work tree without changing the
+project's own Git index, refs, or history. Model file tools cannot traverse to
+it, and sandboxed shell commands mask its absolute path. Restore is an
+operator/harness function, not a model tool:
+`workspace_checkpoints.restore_checkpoint(workspace, turn)`.
+
+Tracked files and non-ignored untracked files are included. Project
+`.gitignore` entries and `[tools].file_checkpoints_exclude` patterns are left
+outside both capture and restore. Git trees preserve file bytes, executable
+mode, and symlink targets; they do not preserve owners, ACLs, or extended
+attributes. Each raw `checkpoint` trace row identifies the commit and cost,
+and `metrics.json.file_checkpoints.per_call` reports duration, file count, and
+byte count for every capture.
 
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during

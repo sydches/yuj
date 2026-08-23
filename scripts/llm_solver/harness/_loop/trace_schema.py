@@ -90,6 +90,13 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
     ),
+    TraceEventSpec(
+        "checkpoint",
+        frozenset({
+            "session_number", "turn", "commit", "duration_ms",
+            "file_count", "byte_count",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",

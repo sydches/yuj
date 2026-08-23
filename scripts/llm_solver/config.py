@@ -345,6 +345,17 @@ class Config:
     # list_definitions tool — Python-AST source outline. Disabled by
     # default. Enable it through config.local.toml or another overlay.
     tools_list_definitions_enabled: bool = False
+    # Independent shadow-Git checkpoints after every potentially mutating
+    # model tool call. The store is outside the task cwd and restore remains
+    # a harness/operator function, never a model-facing tool.
+    tools_file_checkpoints_enabled: bool = False
+    tools_file_checkpoints_exclude: tuple[str, ...] = (
+        ".solver/**",
+        ".tool_output/**",
+        "prompt.txt",
+        "checkpoint.json",
+        "metrics.json",
+    )
     # apply_patch tool — Codex-style multi-file DSL. Disabled by default.
     # Enable it when the selected settings allow multi-file patches.
     tools_apply_patch_enabled: bool = False

@@ -133,6 +133,22 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
     )
 
 
+def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> None:
+    """Capture one host-side workspace checkpoint after an executed call."""
+    store = getattr(state.session, "_checkpoint_store", None)
+    if store is None:
+        return
+    from ..workspace_checkpoints import tool_call_needs_checkpoint
+    if not tool_call_needs_checkpoint(tc.name, executed=executed):
+        return
+    checkpoint = store.capture(state.turn)
+    state.session._emit(
+        "checkpoint",
+        session_number=state.session._session_number,
+        **checkpoint.trace_fields(),
+    )
+
+
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
@@ -360,6 +376,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                     completion_tokens=completion_tokens,
                     **({"cmd_pre_rewrite": _truncate_for_trace(rewrite_log[0]["original"], cfg.trace_args_summary_chars)} if rewrite_log else {}),
                 )
+                _capture_workspace_checkpoint(tc, state, executed=True)
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
@@ -495,6 +512,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         turn_total_ms=round(_turn_total_ms, 2),
         **({"cmd_pre_rewrite": _truncate_for_trace(_pre, cfg.trace_args_summary_chars)} if _pre else {}),
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
+    )
+    _capture_workspace_checkpoint(
+        tc, state, executed=not gate_blocked_flag,
     )
 
     # Gate-blocked calls were never executed — don't store a

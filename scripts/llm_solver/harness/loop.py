@@ -197,6 +197,7 @@ class Session:
         pretest_parsed: dict | None = None,
         guardrail_registry: GuardrailRegistry | None = None,
         tool_registry: ToolRegistry | None = None,
+        checkpoint_store=None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
     ):
         self.cfg = cfg
@@ -237,6 +238,7 @@ class Session:
             get_tool_schemas(cfg.tool_desc), cfg, client,
         )
         self._tool_registry = tool_registry or build_tool_registry()
+        self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
         validate_tool_handlers(schema_names, registry=self._tool_registry)
         if context_manager is not None:

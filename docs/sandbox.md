@@ -98,6 +98,12 @@ Yuj itself writes the trace, checkpoints, metrics, and session data. These
 writes do not pass through the model shell. In normal CLI use, Yuj saves them
 under `.llm_assist/` in the Yuj installation.
 
+When `[tools].file_checkpoints_enabled` is on, Yuj also writes an independent
+shadow-Git repository outside the task directory after each potentially
+mutating tool call. Its absolute path is added to the sandbox masks. The model
+cannot use file tools or shell commands to inspect it, and restore is not a
+model-callable operation.
+
 After most run segments, Yuj also tries to run `git add -A` and make a
 checkpoint commit when the target repository has uncommitted changes. That
 Git operation does not pass through the model approval check. Start with a

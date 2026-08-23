@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -73,6 +74,29 @@ def solve_task(
     log = _loop_mod.log  # so test patches on loop.log intercept these emits
 
     work_dir, artifact_dir, trace_path = resolve_run_paths(repo_dir, artifacts_dir)
+    checkpoint_store = None
+    if getattr(cfg, "tools_file_checkpoints_enabled", False):
+        from ..workspace_checkpoints import (
+            WorkspaceCheckpointStore,
+            default_shadow_dir,
+        )
+        candidate = artifact_dir / ".shadow_git"
+        try:
+            candidate.resolve().relative_to(work_dir.resolve())
+        except ValueError:
+            shadow_dir = candidate
+        else:
+            shadow_dir = default_shadow_dir(work_dir)
+        checkpoint_store = WorkspaceCheckpointStore(
+            work_dir,
+            shadow_dir=shadow_dir,
+            excludes=getattr(cfg, "tools_file_checkpoints_exclude", ()),
+        )
+        cfg = replace(
+            cfg,
+            unreadable_paths=tuple(cfg.unreadable_paths)
+            + checkpoint_store.sandbox_unreadable_paths,
+        )
     prompt_file = artifact_dir / "prompt.txt"
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
@@ -327,6 +351,7 @@ def solve_task(
                 redactions=redactions,
                 output_parser=output_parser,
                 pretest_parsed=pretest_parsed_verdict,
+                checkpoint_store=checkpoint_store,
                 adaptive_control_baseline_config_paths=tuple(
                     (run_metadata or {}).get("config_paths", ())
                     or getattr(cfg, "adaptive_control_baseline_config_paths", ())
@@ -494,6 +519,16 @@ def solve_task(
     metrics.update(cache_usage.metrics_fields())
     metrics.update(role_usage.metrics_fields())
     metrics.update(model_role_runtime.model_fallback_metrics(client))
+    metrics["file_checkpoints"] = (
+        checkpoint_store.metrics_payload()
+        if checkpoint_store is not None
+        else {
+            "enabled": False,
+            "count": 0,
+            "total_duration_ms": 0.0,
+            "per_call": [],
+        }
+    )
     write_run_metrics(artifact_dir, metrics, provenance)
     close_ledger()
     close_system_log()
