@@ -141,6 +141,30 @@ def test_unreadable_glob_masks_matching_files(tmp_path):
     assert "FALLBACK" in result.content
 
 
+def test_read_diagnostic_does_not_retain_absolute_host_path(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    source = root / "AGENTS.md"
+    source.write_text("RULE")
+    original_read_bytes = Path.read_bytes
+
+    def failed_read(path: Path) -> bytes:
+        if path.resolve() == source.resolve():
+            raise PermissionError(13, "permission denied", str(path))
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", failed_read)
+    result = discover_project_instructions(root)
+
+    assert result.documents == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].path == "AGENTS.md"
+    assert result.diagnostics[0].message == (
+        "could not read instruction file (PermissionError errno=13)"
+    )
+    assert str(tmp_path) not in str(result.diagnostics)
+
+
 def test_symlink_outside_scope_is_not_loaded(tmp_path):
     root = tmp_path / "repo"
     outside = tmp_path / "outside.md"

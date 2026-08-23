@@ -208,7 +208,7 @@ def _read_first_nonempty(
             last_diagnostic = InstructionDiagnostic(
                 display,
                 "read_error",
-                f"could not read instruction file: {exc}",
+                _safe_os_error("could not read instruction file", exc),
             )
             continue
         text = raw.decode("utf-8-sig", errors="replace")
@@ -334,6 +334,14 @@ def _xml_attr(value: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def _safe_os_error(action: str, error: OSError) -> str:
+    """Describe an OS failure without retaining its absolute filename."""
+    details = type(error).__name__
+    if error.errno is not None:
+        details += f" errno={error.errno}"
+    return f"{action} ({details})"
 
 
 __all__ = [
