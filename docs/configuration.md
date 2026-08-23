@@ -99,6 +99,8 @@ order in the
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
 | `[model].thinking_level` | Select the requested per-run reasoning effort. |
+| `[context].repo_map_tokens` | Append a ranked repository file/symbol map within this hard token budget. `0` (the default) disables it. |
+| `[context].repo_map_refresh` | Choose run-private symbol-cache reuse: `auto`, `always`, `files`, or `manual`. |
 | `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
 | `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
@@ -662,6 +664,66 @@ purpose.
 
 A context mode changes what the model can see. Record the mode when you compare
 sessions.
+
+### Add a ranked repository map to the task
+
+Set a positive `[context].repo_map_tokens` value to append one compact
+`<repo-map>` block after the task text in the session's first user message:
+
+```toml
+[context]
+repo_map_tokens = 1024
+repo_map_refresh = "auto"
+```
+
+This setting works through the normal installed and measurement command
+surfaces, so a small overlay can be passed to `yuj code --config FILE.toml` or
+`python -m scripts.llm_solver ... --config FILE.toml`. The checked-in default
+is `0`: existing runs keep their task message unchanged until the feature is
+enabled explicitly.
+
+Yuj reuses the tree-sitter tag extractor behind repository-wide
+`list_definitions`. It collects definitions, references, and signatures for
+the locally installed Python, JavaScript/TypeScript, Go, Rust, and Java
+grammars. Files are graph nodes; a reference to a definition forms an edge.
+A deterministic personalized PageRank-style pass starts from repository paths
+named in the task, then places symbols referenced by those files before
+unreferenced definitions. Ties use stable path, location, and signature order.
+No model call authors or ranks the map.
+
+The budget is a hard incremental count for adding the block to the task user
+message. When `[model].tokenizer_id` is set, Yuj uses that local tokenizer and
+attempts to synchronize its chat template from the active server before
+counting. Otherwise it uses the active profile estimator, then the documented
+one-token-per-four-characters fallback. If the wrapper and highest-ranked
+definition cannot fit, Yuj omits the map rather than exceed the budget.
+
+The rendered block is immutable for one solver session. It stays in the
+stable task prefix on every turn and survives deterministic or checkpoint
+compaction as part of that unchanged task message. A later solver session may
+build a new map from its then-current tree. `repo_map_refresh` controls the
+mechanical symbol-row cache used at that boundary:
+
+| Value | Cache behavior at session start |
+| --- | --- |
+| `auto` | Reuse while supported source paths, byte sizes, and nanosecond mtimes match. |
+| `always` | Parse the readable source tree again and replace the cache. |
+| `files` | Content-hash every supported source file before deciding whether to reuse. |
+| `manual` | Reuse any valid cache for the same repository; parse only when no valid cache exists. |
+
+For measurement commands the per-task cache is beneath
+`<run_dir>/.repo_map_cache/`; installed sessions keep it beneath their private
+session artifact directory. An unusual caller that places an artifact
+directory inside the task tree is redirected to the harness telemetry sibling.
+The cache is always outside the model's file-tool root and is also added to
+shell unreadable masks.
+
+Both configured `[sandbox].unreadable_paths` and the immutable task-root
+`.yujignore` policy are applied before files are fingerprinted or parsed.
+`session_start` records the actual incremental token count, content hash,
+refresh policy, scanned-file count, emitted-symbol count, and cache-hit flag;
+it never records the map body or cache path. These fields are raw run-start
+provenance and are not projected into `.solver/state.json`.
 
 ### Compact a nearly full context
 

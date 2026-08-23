@@ -478,6 +478,12 @@ class Config:
     digest_compaction_safety_margin: float = 0.05
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
+    # Ranked repository symbol map appended to the stable task message.
+    # Zero preserves the existing prompt exactly.  The refresh policy owns
+    # only the run-private structural cache; one rendered map stays immutable
+    # for the lifetime of a solver session so prompt-prefix reuse is stable.
+    repo_map_tokens: int = 0
+    repo_map_refresh: str = "auto"
     compaction_method: str = "digest"
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
