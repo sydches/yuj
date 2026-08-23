@@ -1,4 +1,5 @@
 """Focused tests for per-request reasoning and cache policy helpers."""
+import json
 import logging
 from types import SimpleNamespace
 
@@ -325,3 +326,51 @@ def test_invalid_cache_warning_ratios_fail_closed(value):
 
 def test_cache_retention_modes_are_explicit_and_llama_scoped():
     assert CACHE_RETENTION_LEVELS == ("off", "session")
+
+
+def test_default_halflife_model_prefix_is_byte_identical_across_turns():
+    from scripts.llm_solver.harness.context_strategies.halflife_context import (
+        HalfLifeContext,
+    )
+
+    context = HalfLifeContext(context_size=40960)
+    context.add_system("stable system")
+    context.add_user("stable task")
+    context.add_assistant(
+        {
+            "role": "assistant",
+            "content": "inspect",
+            "tool_calls": [
+                {
+                    "id": "call_0_0",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": '{"path":"a.py"}'},
+                }
+            ],
+        }
+    )
+    context.add_tool_result("call_0_0", "first result")
+    prefix_message_count = 4
+    first_prefix = json.dumps(
+        context.get_messages()[:prefix_message_count],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    context.add_assistant(
+        {
+            "role": "assistant",
+            "content": "edit next",
+            "tool_calls": [],
+        }
+    )
+    context.add_tool_result("call_1_0", "second result")
+    second_prefix = json.dumps(
+        context.get_messages()[:prefix_message_count],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    assert second_prefix == first_prefix
