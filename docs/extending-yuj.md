@@ -267,6 +267,7 @@ inherits = "_base"
 [model]
 supports_tool_calls = true
 supports_system_role = true
+supports_prefill = false
 
 [capacity]
 max_tools = 8
@@ -291,6 +292,7 @@ Use these profile fields for these active jobs:
 | `[profile].inherits` | Load a parent profile first. |
 | `[model].supports_tool_calls` | Send or omit the tool schema list. |
 | `[model].supports_system_role` | Keep or fold the system message. |
+| `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
 | `[capacity].preamble` | Add text before the system prompt. |
 | `[capacity].max_tools` | Limit the number of enabled tools sent to the model. |
 | `[capacity].simplify_schemas` | Remove descriptions from tool schemas. |

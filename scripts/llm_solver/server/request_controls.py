@@ -549,12 +549,12 @@ def usage_from_response(response: object):
     """Return canonical Usage with additive cache telemetry."""
     from .types import Usage
 
-    usage = getattr(response, "usage", None)
-    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    usage = _field(response, "usage")
+    completion_tokens = int(_field(usage, "completion_tokens") or 0)
     observation = extract_cache_observation(response)
     if observation is None:
         return Usage(
-            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            prompt_tokens=int(_field(usage, "prompt_tokens") or 0),
             completion_tokens=completion_tokens,
         )
     return Usage(

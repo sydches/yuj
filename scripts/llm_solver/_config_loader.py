@@ -361,6 +361,9 @@ def _extract_config_fields(d: dict) -> dict:
         "interrupted_turn_mode": d.get("loop", {}).get(
             "interrupted_turn_mode", "mechanical"
         ),
+        "length_continue_max": d.get("loop", {}).get(
+            "length_continue_max", 0
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -513,6 +516,15 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: loop.interrupted_turn_mode must be 'off' or "
             f"'mechanical', got {cfg.interrupted_turn_mode!r}."
+        )
+    if (
+        isinstance(cfg.length_continue_max, bool)
+        or not isinstance(cfg.length_continue_max, int)
+        or cfg.length_continue_max < 0
+    ):
+        raise ValueError(
+            "config error: loop.length_continue_max must be a non-negative "
+            "integer."
         )
     from .harness.sandbox.container_backend import (
         CONTAINER_RUNTIMES,

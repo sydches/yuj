@@ -475,6 +475,9 @@ class Session:
         # dispatch uses this recorder to make starts durable before execution
         # and to retain unresolved calls for signal/fatal recovery.
         self._exit_diagnostics = None
+        # Number of same-turn follow-up requests, aggregated by the driver
+        # into post-run metrics. The initial response is not a continuation.
+        self._length_continuation_count = 0
         # Adaptive phase state (config-driven runtime switch).
         self._adaptive_phase = "base"
         self._adaptive_switched = False

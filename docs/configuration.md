@@ -105,6 +105,7 @@ order in the
 | `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
 | `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
+| `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
@@ -523,6 +524,33 @@ handler, so the already-durable start row remains the recovery evidence.
 Set the mode to `"off"` to disable mechanical repair. In that mode resume does
 not truncate a malformed suffix and does not append `turn_aborted`; ordinary
 trace loading may therefore reject or stop at the damaged tail.
+
+### Continue a length-limited response
+
+`[loop].length_continue_max = 0` keeps the normal one-request behavior. Set a
+positive limit to let a capability-approved profile continue a response in
+the same turn when the server returns `finish_reason = "length"`. Each
+follow-up starts from the original prepared request and adds one assistant
+message containing the complete joined partial response. Yuj removes only an
+exact suffix/prefix overlap between pieces; it does not normalize whitespace
+or guess at near matches.
+
+Continuation requires the active profile's `[model].supports_prefill = true`.
+The follow-up request adds `continue_final_message = true` and
+`add_generation_prompt = false` under the OpenAI SDK `extra_body`. These
+llama-server template controls are never sent by the default-off path, a
+profile without the capability, a legacy client, or a replay client. Every
+raw piece, including streamed pieces, is joined before the profile normalize
+pipeline runs once. Only the final canonical assistant message enters model
+context.
+
+If the bounded attempts still do not yield a complete normalized tool call,
+the logical response remains `length`; the existing fresh-session rollover
+and `[prompts].resume_length` message apply. Raw trace rows named
+`length_continue` record the attempt number and completion-token count but no
+response or request text. Post-run `metrics.length_continuations` counts the
+follow-up requests, while the normal prompt/completion totals include every
+initial and follow-up call.
 
 ## Apply a small TOML file
 

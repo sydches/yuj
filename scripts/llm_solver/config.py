@@ -235,6 +235,7 @@ class Config:
     resume_last_n_actions: int
     tool_desc: str = "minimal"
     interrupted_turn_mode: str = "mechanical"
+    length_continue_max: int = 0
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"

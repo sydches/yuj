@@ -123,6 +123,12 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "length_continue",
+        frozenset({
+            "session_number", "turn_number", "attempt", "tokens",
+        }),
+    ),
+    TraceEventSpec(
         "lsp_diagnostics",
         frozenset({
             "session_number", "file", "errors", "warnings", "ms",

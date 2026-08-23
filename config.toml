@@ -86,6 +86,7 @@ thinking_level = "off"        # off | minimal | low | medium | high | xhigh | ma
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
+length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
 duplicate_abort = 3         # abort session after N identical consecutive tool calls
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)

@@ -11,6 +11,9 @@ context_size = 262144
 chat_template = "chatml"
 supports_tool_calls = true
 supports_system_role = true
+# This profile is served by llama-server and its ChatML template preserves a
+# final assistant message when continuation template controls are enabled.
+supports_prefill = true
 
 [tokens]
 method = "chars_div_4"

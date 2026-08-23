@@ -131,6 +131,7 @@ def solve_task(
     agg_verify_repeat = 0
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
+    agg_length_continuations = 0
     cache_usage = CacheUsageAccumulator()
     role_usage = model_role_runtime.role_token_ledger(client)
     done_loop_aborted = False
@@ -454,6 +455,9 @@ def solve_task(
             agg_prompt += result.total_prompt_tokens
             agg_completion += result.total_completion_tokens
             agg_turns += result.turns
+            agg_length_continuations += int(
+                getattr(session, "_length_continuation_count", 0) or 0
+            )
             _guards = getattr(session, "_guards", None)
             if _guards is not None:
                 agg_done_blocked += getattr(_guards, "done_blocked_count", 0)
@@ -565,6 +569,7 @@ def solve_task(
         "mutation_repeat_total": agg_mutation_repeat,
         "verify_repeat_total": agg_verify_repeat,
         "trace_corrupt_count": agg_trace_corrupt,
+        "length_continuations": agg_length_continuations,
         "done_loop_aborted": done_loop_aborted,
     }
     if sessions_used > 0:
