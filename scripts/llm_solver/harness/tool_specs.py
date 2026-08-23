@@ -55,9 +55,14 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=5,
     ),
     ToolSpec(
+        "lsp",
+        profile_gate_attr="lsp_tool_enabled",
+        schema_order=9,
+    ),
+    ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=9,
+        schema_order=10,
     ),
     ToolSpec(
         "run_tests",

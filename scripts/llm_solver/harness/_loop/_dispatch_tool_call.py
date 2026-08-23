@@ -149,6 +149,23 @@ def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> 
     )
 
 
+def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
+    """Run automatic diagnostics after a successful edit or write."""
+    if tc.name not in {"edit", "write"} or is_error_result(result):
+        return result
+    manager = getattr(state.session, "_lsp_manager", None)
+    if manager is None:
+        return result
+    report = manager.after_edit(str(tc.arguments.get("path", "")))
+    from ..lsp_support import append_diagnostics_to_tool_result
+    return append_diagnostics_to_tool_result(
+        result,
+        report,
+        max_output_chars=state.cfg.max_output_chars,
+        tool_name=tc.name,
+    )
+
+
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
@@ -308,6 +325,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+            result = _append_lsp_diagnostics(tc, state, result)
             result += "\n\n" + gate_decision.text
             gate_intercepted = True
         else:
@@ -330,6 +348,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+            result = _append_lsp_diagnostics(tc, state, result)
             if tc.name == "bash":
                 session._observe_test_signal(tc.arguments.get("cmd", ""), result)
             # 6e. error_ladder (WARN / END tiers). Log every error

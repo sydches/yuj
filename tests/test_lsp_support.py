@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from io import StringIO
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from _config_helpers import make_config
+from scripts.llm_solver.config import load_config
+from scripts.llm_solver.harness.loop import Session
 from scripts.llm_solver.harness.lsp_support import (
     DiagnosticsReport,
     LspDiagnostic,
@@ -17,6 +22,7 @@ from scripts.llm_solver.harness.lsp_support import (
     build_lsp_sandbox_argv,
     parse_server_specs,
 )
+from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
 
 
 _FAKE_SERVER = r'''
@@ -322,3 +328,144 @@ def test_lsp_sandbox_argv_uses_no_network_bwrap(tmp_path, monkeypatch):
     assert "--unshare-net" in argv
     assert "--die-with-parent" in argv
     assert argv[-2:] == ["fake-lsp", "--stdio"]
+
+
+def _turn(*, tool_calls=(), content="", reason="tool_calls") -> TurnResult:
+    return TurnResult(
+        content=content,
+        tool_calls=list(tool_calls),
+        finish_reason=reason,
+        usage=Usage(prompt_tokens=10, completion_tokens=3),
+    )
+
+
+def _client(*turns: TurnResult):
+    client = MagicMock()
+    client.chat.side_effect = turns
+    client.build_assistant_message.side_effect = lambda content, tool_calls: {
+        "role": "assistant", "content": content,
+    }
+    return client
+
+
+def test_session_appends_diagnostics_inside_edit_envelope_and_traces(tmp_path):
+    target = tmp_path / "app.py"
+    target.write_text("old\n")
+    manager, _popen, _events, _warnings = make_manager(tmp_path)
+    trace = StringIO()
+    client = _client(
+        _turn(tool_calls=[ToolCall(
+            id="edit-1", name="edit",
+            arguments={"path": "app.py", "old_str": "old", "new_str": "bad"},
+        )]),
+        _turn(content="done", reason="stop"),
+    )
+    cfg = make_config(
+        max_turns=2,
+        lsp_enabled=True,
+        tools_unified_envelope_enabled=True,
+    )
+    session = Session(
+        cfg, client, "system", "task", str(tmp_path),
+        trace_file=trace, lsp_manager=manager,
+    )
+    captured: list[str] = []
+    original_add = session.context.add_tool_result
+
+    def capture(tool_call_id, result, **kwargs):
+        captured.append(result)
+        return original_add(tool_call_id, result, **kwargs)
+
+    session.context.add_tool_result = capture
+    manager.event_sink = lambda payload: session._emit(
+        str(payload.get("event", "lsp_diagnostics")),
+        session_number=session._session_number,
+        turn_number=session._current_turn,
+        **{key: value for key, value in payload.items() if key != "event"},
+    )
+
+    with patch.object(session, "_get_server_ctx", return_value=cfg.context_size):
+        result = session.run()
+
+    assert result.finish_reason == "stop"
+    assert target.read_text() == "bad\n"
+    edit_result = captured[0]
+    assert edit_result.startswith('<tool_result tool_name="edit" status="ok"')
+    assert edit_result.endswith("</tool_result>")
+    assert edit_result.index("<lsp_diagnostics") < edit_result.rindex("</tool_result>")
+    assert "broken &lt;syntax&gt;" in edit_result
+    assert len(edit_result) <= cfg.max_output_chars
+    diagnostics = [event for event in session._trace_events
+                   if event.get("event") == "lsp_diagnostics"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["turn_number"] == 0
+    assert diagnostics[0]["file"] == "app.py"
+    assert diagnostics[0]["errors"] == diagnostics[0]["warnings"] == 1
+    assert diagnostics[0]["trace_schema_version"] == 2
+
+
+def test_session_lsp_navigation_tool_uses_manager(tmp_path):
+    (tmp_path / "app.py").write_text("bad\n")
+    manager, popen, _events, _warnings = make_manager(tmp_path, tool_enabled=True)
+    client = _client(
+        _turn(tool_calls=[ToolCall(
+            id="lsp-1", name="lsp",
+            arguments={
+                "kind": "definition", "path": "app.py",
+                "line": 1, "character": 2,
+            },
+        )]),
+        _turn(content="done", reason="stop"),
+    )
+    cfg = make_config(max_turns=2, lsp_tool_enabled=True)
+    session = Session(cfg, client, "system", "task", str(tmp_path), lsp_manager=manager)
+    captured: list[str] = []
+    original_add = session.context.add_tool_result
+    session.context.add_tool_result = lambda tool_call_id, result, **kwargs: (
+        captured.append(result), original_add(tool_call_id, result, **kwargs)
+    )[1]
+
+    with patch.object(session, "_get_server_ctx", return_value=cfg.context_size):
+        result = session.run()
+
+    assert result.finish_reason == "stop"
+    assert 'LSP definition app.py status=ok' in captured[0]
+    assert '"line":4' in captured[0]
+    assert len(popen.processes) == 1
+    assert popen.processes[0].poll() is not None
+
+
+def test_lsp_config_defaults_overlay_and_validation(tmp_path):
+    defaults = load_config()
+    assert defaults.lsp_enabled is False
+    assert defaults.lsp_servers == {}
+    assert defaults.lsp_diagnostics_timeout_s == 2.0
+    assert defaults.lsp_min_severity == "error"
+    assert defaults.lsp_tool_enabled is False
+
+    overlay = tmp_path / "lsp.toml"
+    overlay.write_text(
+        "[lsp]\n"
+        "enabled = true\n"
+        "diagnostics_timeout_s = 0.25\n"
+        'min_severity = "warning"\n'
+        "tool_enabled = true\n"
+        "[lsp.servers.python]\n"
+        'command = ["fake-lsp", "--stdio"]\n'
+        'extensions = [".py"]\n'
+        'root_markers = ["pyproject.toml"]\n'
+    )
+    configured = load_config(user_config=overlay)
+    assert configured.lsp_enabled is True
+    assert configured.lsp_tool_enabled is True
+    assert configured.lsp_diagnostics_timeout_s == 0.25
+    assert configured.lsp_min_severity == "warning"
+    assert configured.lsp_servers["python"]["command"] == ["fake-lsp", "--stdio"]
+
+    overlay.write_text("[lsp]\ndiagnostics_timeout_s = -1\n")
+    with pytest.raises(ValueError, match="lsp.diagnostics_timeout_s"):
+        load_config(user_config=overlay)
+
+    overlay.write_text('[lsp]\nmin_severity = "notice"\n')
+    with pytest.raises(ValueError, match="invalid LSP severity"):
+        load_config(user_config=overlay)

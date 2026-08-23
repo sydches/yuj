@@ -97,6 +97,13 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "file_count", "byte_count",
         }),
     ),
+    TraceEventSpec(
+        "lsp_diagnostics",
+        frozenset({
+            "session_number", "file", "errors", "warnings", "ms",
+            "server", "status",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",

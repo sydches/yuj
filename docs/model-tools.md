@@ -22,6 +22,7 @@ person types into a terminal.
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
+| `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | None | List top-level imports, `__all__`, all-capital names, and annotated names. List all classes and functions. Do not run the file. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
@@ -37,7 +38,7 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `list_definitions`, `apply_patch`, `run_tests` | Off |
+| `list_definitions`, `apply_patch`, `run_tests`, `lsp` | Off |
 
 Turn on the optional tools in a small settings file:
 
@@ -50,6 +51,9 @@ enabled = true
 
 [tools.run_tests]
 enabled = true
+
+[lsp]
+tool_enabled = true
 ```
 
 Apply the file to a coding session:
@@ -64,6 +68,12 @@ structured result.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
 The `done` tool is not removed by that limit.
+
+When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
+successful `edit` or `write`; this does not require the navigation tool to be
+enabled. The configured severity threshold controls which messages enter the
+model-facing `<tool_result>`. See [Configuration](configuration.html) for the
+server table and timeout settings.
 
 ## File and shell limits
 

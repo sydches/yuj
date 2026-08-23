@@ -378,6 +378,22 @@ timeout = 10                 # seconds; runs per edit/write
 checks = []                  # no shipped defaults — user declares policy
 
 # ---------------------------------------------------------------------------
+# Language Server Protocol diagnostics and navigation
+# ---------------------------------------------------------------------------
+[lsp]
+enabled = false
+diagnostics_timeout_s = 2.0
+min_severity = "error"       # error | warning | information | hint
+tool_enabled = false
+
+[lsp.servers]
+# Example:
+# [lsp.servers.python]
+# command = ["pyright-langserver", "--stdio"]
+# extensions = [".py"]
+# root_markers = ["pyproject.toml", ".git"]
+
+# ---------------------------------------------------------------------------
 # Injection subsystem (harness/injections.py)
 # ---------------------------------------------------------------------------
 # When enabled, the harness loads every *.md in `dir` at session

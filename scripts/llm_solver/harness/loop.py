@@ -43,7 +43,10 @@ from .._shared.classification import is_error_result
 from .schemas import get_tool_schemas
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
-from .tools import ToolRegistry, build_tool_registry, dispatch, validate_tool_handlers
+from .tools import (
+    ToolRegistry, _bash_unreadable_paths, build_tool_registry, dispatch,
+    validate_tool_handlers,
+)
 
 log = logging.getLogger(__name__)
 
@@ -198,11 +201,14 @@ class Session:
         guardrail_registry: GuardrailRegistry | None = None,
         tool_registry: ToolRegistry | None = None,
         checkpoint_store=None,
+        lsp_manager=None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
     ):
         self.cfg = cfg
         self.client = client
         self.cwd = cwd
+        self._session_number = session_number
+        self._current_turn = 0
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
@@ -237,7 +243,60 @@ class Session:
         self._tool_schemas = apply_profile_to_schemas(
             get_tool_schemas(cfg.tool_desc), cfg, client,
         )
-        self._tool_registry = tool_registry or build_tool_registry()
+        self._lsp_manager = lsp_manager
+        if self._lsp_manager is None and (
+            getattr(cfg, "lsp_enabled", False)
+            or getattr(cfg, "lsp_tool_enabled", False)
+        ):
+            from .lsp_support import LspManager, parse_server_specs
+
+            def _lsp_event_sink(payload: dict[str, object]) -> None:
+                fields = dict(payload)
+                event_type = str(fields.pop("event", "lsp_diagnostics"))
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    turn_number=self._current_turn,
+                    **fields,
+                )
+
+            self._lsp_manager = LspManager.sandboxed(
+                cwd=cwd,
+                servers=parse_server_specs(getattr(cfg, "lsp_servers", {})),
+                bwrap_bin=cfg.bwrap_bin,
+                unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+                sandbox_required=getattr(cfg, "sandbox_required", False),
+                diagnostics_timeout_s=float(
+                    getattr(cfg, "lsp_diagnostics_timeout_s", 2.0)
+                ),
+                min_severity=getattr(cfg, "lsp_min_severity", "error"),
+                enabled=bool(getattr(cfg, "lsp_enabled", False)),
+                tool_enabled=bool(getattr(cfg, "lsp_tool_enabled", False)),
+                event_sink=_lsp_event_sink,
+            )
+
+        base_registry = tool_registry or build_tool_registry()
+        handlers = dict(base_registry.handlers)
+
+        def _lsp_handler(args, _cwd, _cfg):
+            if self._lsp_manager is None:
+                return "ERROR: lsp manager is not configured"
+            try:
+                query = self._lsp_manager.query(
+                    str(args["kind"]),
+                    path=str(args["path"]),
+                    line=int(args.get("line", 0)),
+                    character=int(args.get("character", 0)),
+                )
+            except Exception as exc:
+                return f"ERROR: lsp query failed: {exc}"
+            body = query.result or "[]"
+            return (
+                f"LSP {query.kind} {query.file} status={query.status}\n{body}"
+            )
+
+        handlers["lsp"] = _lsp_handler
+        self._tool_registry = ToolRegistry(handlers=handlers)
         self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
         validate_tool_handlers(schema_names, registry=self._tool_registry)
@@ -365,7 +424,6 @@ class Session:
         # trace_file is set, so tests that poke at internal state
         # without running the loop don't spawn writer threads.
         self._async_trace_writer = None
-        self._session_number = session_number
         # Adaptive phase state (config-driven runtime switch).
         self._adaptive_phase = "base"
         self._adaptive_switched = False
@@ -483,6 +541,8 @@ class Session:
             return run_session_loop(self)
         finally:
             teardown_persistent_bash(runner)
+            if self._lsp_manager is not None:
+                self._lsp_manager.close()
             if self._async_trace_writer is not None:
                 self._async_trace_writer.stop(timeout=5.0)
                 self._async_trace_writer = None

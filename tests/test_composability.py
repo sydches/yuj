@@ -173,6 +173,7 @@ def test_tool_specs_drive_surface_metadata():
         "run_tests": "tools_run_tests_enabled",
         "list_definitions": "tools_list_definitions_enabled",
         "apply_patch": "tools_apply_patch_enabled",
+        "lsp": "lsp_tool_enabled",
     }
     assert NATIVE_ENVELOPE_PREFIXES == (
         "<test_results",

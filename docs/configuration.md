@@ -111,6 +111,11 @@ order in the
 | `[tools].sandbox_required` | Stop if Yuj cannot start the requested `bwrap` sandbox. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
+| `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
+| `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
+| `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
+| `[lsp].min_severity` | Choose the least-severe diagnostic shown to the model: `error`, `warning`, `information`, or `hint`. |
+| `[lsp].tool_enabled` | Add the optional `lsp` navigation tool. Off by default. |
 
 The checked-in [`config.toml`](https://github.com/sydches/yuj/blob/main/config.toml)
 defines and comments the full public settings shape. Use a small settings file
@@ -143,6 +148,28 @@ mode, and symlink targets; they do not preserve owners, ACLs, or extended
 attributes. Each raw `checkpoint` trace row identifies the commit and cost,
 and `metrics.json.file_checkpoints.per_call` reports duration, file count, and
 byte count for every capture.
+
+### Return language-server diagnostics after edits
+
+Language-server support is off until `[lsp].enabled` is true and at least one
+entry exists under `[lsp.servers]`. Each server entry needs `command` and
+`extensions`; `root_markers` and `initialization` are optional. Yuj starts a
+matching server only after an `edit` or `write` touches one of its extensions.
+The server runs as a session child inside the shell sandbox with networking
+disabled, and Yuj stops it when the run segment ends.
+
+The default `min_severity = "error"` still counts warnings in the raw
+`lsp_diagnostics` trace row but does not put warning text in the model-facing
+result. Diagnostics are inserted inside the same `<tool_result>` envelope as
+the successful edit and are clipped with the rest of that result to
+`[output].max_output_chars`. A timeout is a traced no-op. A missing or failing
+server is also a no-op and produces one harness warning per configured server;
+it never fails the task run.
+
+Set `[lsp].tool_enabled = true` to add the `lsp` tool with `definition`,
+`references`, and `symbols` queries. Navigation uses the same lazy server pool.
+Language-server binaries must already exist in the sealed runtime; Yuj never
+downloads them.
 
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during

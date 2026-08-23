@@ -356,6 +356,12 @@ class Config:
         "checkpoint.json",
         "metrics.json",
     )
+    # Lazy language-server diagnostics and optional navigation tool.
+    lsp_enabled: bool = False
+    lsp_servers: dict[str, object] = field(default_factory=dict)
+    lsp_diagnostics_timeout_s: float = 2.0
+    lsp_min_severity: str = "error"
+    lsp_tool_enabled: bool = False
     # apply_patch tool — Codex-style multi-file DSL. Disabled by default.
     # Enable it when the selected settings allow multi-file patches.
     tools_apply_patch_enabled: bool = False

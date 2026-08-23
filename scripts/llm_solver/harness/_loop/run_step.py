@@ -182,6 +182,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
     turn_start = int(getattr(session, "_turn_start_offset", 0) or 0)
     for local_turn in range(session.cfg.max_turns):
         turn = turn_start + local_turn
+        # Session-owned services (for example the lazy LSP manager) emit
+        # trace records outside this loop module.  Stamp their events with
+        # the turn whose tool call triggered the service.
+        session._current_turn = turn
         cfg = session.cfg
         # stop_resume delivery: the controller decided to intervene last
         # turn and requested a graceful hand-off. End before the next API

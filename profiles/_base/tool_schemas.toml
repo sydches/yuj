@@ -54,6 +54,11 @@ required = ["patch"]
 properties = { patch = { type = "string" } }
 
 [[tools]]
+name = "lsp"
+required = ["kind", "path"]
+properties = { kind = { type = "string", enum = ["definition", "references", "symbols"] }, path = { type = "string" }, line = { type = "integer", minimum = 0 }, character = { type = "integer", minimum = 0 } }
+
+[[tools]]
 name = "done"
 required = []
 [tools.properties]

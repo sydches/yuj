@@ -94,6 +94,9 @@ _DISPATCH = {
         cwd=cwd, timeout=cfg.grep_timeout,
         page=int(args.get("page", 1)), cfg=cfg,
     ),
+    "lsp": lambda args, cwd, cfg: (
+        "ERROR: lsp manager is unavailable for this dispatch context"
+    ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),

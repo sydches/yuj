@@ -104,6 +104,12 @@ mutating tool call. Its absolute path is added to the sandbox masks. The model
 cannot use file tools or shell commands to inspect it, and restore is not a
 model-callable operation.
 
+Configured language servers are harness-owned session children, but they run
+under the same filesystem masks and no-network boundary as model shell calls.
+They start lazily, are never downloaded at runtime, and are stopped at session
+teardown. If a configured binary is absent, Yuj warns once and continues
+without diagnostics.
+
 After most run segments, Yuj also tries to run `git add -A` and make a
 checkpoint commit when the target repository has uncommitted changes. That
 Git operation does not pass through the model approval check. Start with a

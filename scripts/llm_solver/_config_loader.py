@@ -134,6 +134,13 @@ def _extract_config_fields(d: dict) -> dict:
             ),
             path="tools.file_checkpoints_exclude",
         ),
+        "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
+        "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
+        "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
+            "diagnostics_timeout_s", 2.0
+        ),
+        "lsp_min_severity": d.get("lsp", {}).get("min_severity", "error"),
+        "lsp_tool_enabled": bool(d.get("lsp", {}).get("tool_enabled", False)),
         "tools_apply_patch_enabled": bool(d.get("tools", {}).get("apply_patch", {}).get("enabled", False)),
         "tools_unified_envelope_enabled": bool(d.get("tools", {}).get("unified_envelope", {}).get("enabled", False)),
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
@@ -462,6 +469,25 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
+    import math
+    if isinstance(cfg.lsp_diagnostics_timeout_s, bool) or not isinstance(
+        cfg.lsp_diagnostics_timeout_s, (int, float)
+    ) or not math.isfinite(float(cfg.lsp_diagnostics_timeout_s)) or float(
+        cfg.lsp_diagnostics_timeout_s
+    ) < 0:
+        raise ValueError(
+            "config error: lsp.diagnostics_timeout_s must be a finite "
+            "non-negative number."
+        )
+    from .harness.lsp_support import LspManager, parse_server_specs
+    parse_server_specs(cfg.lsp_servers)
+    # Constructing a disabled manager validates the public severity value
+    # without starting a process or touching the task filesystem.
+    LspManager(
+        cwd=Path.cwd(), servers=(), argv_builder=lambda _spec, _root: (),
+        diagnostics_timeout_s=float(cfg.lsp_diagnostics_timeout_s),
+        min_severity=cfg.lsp_min_severity, enabled=False,
+    )
     from .harness._loop.model_roles import (
         normalize_fallback_revert,
         validate_fallback_chains,
