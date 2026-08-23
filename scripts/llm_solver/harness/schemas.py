@@ -101,6 +101,7 @@ def get_tool_schemas(mode: str = "minimal") -> list[dict]:
                     "type": "object",
                     "properties": spec["properties"],
                     "required": spec["required"],
+                    "additionalProperties": False,
                 },
             },
         })

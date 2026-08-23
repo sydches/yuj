@@ -528,6 +528,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # read/glob/grep calls. Mutating tools (write/edit/bash)
         # always run sequentially — they never enter this path.
         preexecuted: dict[str, str] = {}
+        schema_validations = {}
+        if getattr(cfg, "tools_schema_validation", "off") == "reject":
+            schema_validations = {
+                tc.id: session._tool_schema_set.validate(
+                    tc.name, tc.arguments
+                )
+                for tc in tool_calls
+            }
         state = TurnState(
             session=session,
             turn=turn,
@@ -540,6 +548,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             phase_token_ms=_phase_token_ms,
             turn_t0=_turn_t0,
             preexecuted=preexecuted,
+            schema_validations=schema_validations,
             dispatch=dispatch,
             log=log,
             tool_pre=tool_pre,
@@ -551,6 +560,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
             cfg.parallel_readonly_enabled
             and len(tool_calls) > 1
             and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
+            and all(
+                validation.valid
+                for validation in schema_validations.values()
+            )
         ):
             effective_output_control = (
                 session.output_control if cfg.bash_transforms_task_format_enabled else None

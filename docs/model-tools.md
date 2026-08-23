@@ -116,6 +116,23 @@ dependencies provide Python, JavaScript/TypeScript, Go, Rust, and Java
 grammars locally; a missing backend returns a setup error instead of
 downloading during the tool call.
 
+## Argument schema rejection
+
+When `[tools].schema_validation = "reject"`, Yuj checks a call against the
+same effective schema sent to the model before any handler or guard runs.
+Parameter objects are closed: fields not declared by the tool are invalid as
+well as missing required fields and values of the wrong JSON type. A rejected
+call does not execute and returns a normal model-visible error beginning:
+
+```text
+ERROR: {"error":{"errors":[...],"message":"Tool arguments do not match the declared schema.","tool":"read","type":"tool_schema_reject","version":1}}
+```
+
+Each error names a JSON field path, failed schema keyword, expected shape, and
+actual JSON type. Argument values are excluded from the validation error and
+its `schema_reject` trace metadata so the model can repair the shape without
+duplicating potentially sensitive values.
+
 ## Test runners
 
 `run_tests` detects one of these runners from files in the task repository:

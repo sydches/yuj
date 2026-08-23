@@ -279,6 +279,11 @@ bash_redirect_read_side = false
 # Repository-wide tree-sitter symbol lookup through list_definitions.
 ast_search_enabled = false
 ast_search_max_rows = 1000
+# Validate native tool arguments against the effective profile-filtered schema
+# before any handler runs. Constrained modes additionally require a verified
+# profile capability and otherwise fall back to runtime validation.
+schema_validation = "off"       # off | reject
+constrained_decoding = "off"    # off | json_schema | grammar
 # Paginated search envelopes. When enabled, grep and glob wrap their
 # output in <search_result .../> with total/shown/page/next_page
 # attributes so the agent can check discovery scope and request

@@ -42,6 +42,7 @@ from .guardrails import (
 from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
 from .schemas import get_tool_schemas
+from .tool_validation import ToolSchemaSet
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
@@ -327,6 +328,9 @@ class Session:
         self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
         validate_tool_handlers(schema_names, registry=self._tool_registry)
+        self._tool_schema_set = ToolSchemaSet.from_openai_tools(
+            self._tool_schemas
+        )
         if context_manager is not None:
             self.context: ContextManager = context_manager
         else:

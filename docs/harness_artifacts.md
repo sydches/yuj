@@ -161,6 +161,11 @@ provenance `system_prompt_sha256` and `system_prompt_chars` describe the final
 resolved prompt after the arm file and project blocks are assembled; the
 prompt body is not stored in provenance.
 
+A `schema_reject` row is raw validation metadata: it records the tool and
+value-free field errors before any handler runs. It is not projected into
+`.solver/state.json`; the associated gate-blocked `tool_call` row remains the
+mechanical attempted-action record and is counted by the normal error ladder.
+
 The row also records `model_target`, `model`, `profile_name`,
 `base_url`, and `context_size` for the effective main target. API keys are
 excluded. `model_fallback` events and the post-run fallback metrics are raw

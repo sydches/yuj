@@ -389,7 +389,35 @@ class LlamaClient:
             request["tool_choice"] = "auto"
         elif tools:
             log.info("Profile %s reports supports_tool_calls=false; omitting tool schema payload", profile.name)
+        request = self._attach_constrained_tool_decoding(request)
         return self._attach_request_controls(request, side_request=False)
+
+    def _attach_constrained_tool_decoding(self, request: dict) -> dict:
+        """Attach a profile-approved constraint to a normal tool-call request."""
+        tools = request.get("tools")
+        mode = getattr(self.cfg, "tools_constrained_decoding", "off")
+        if mode == "off" or not isinstance(tools, list) or not tools:
+            return request
+        from ..harness.tool_validation import (
+            ToolSchemaSet,
+            attach_constrained_decoding,
+            resolve_constrained_decoding,
+        )
+
+        resolution = resolve_constrained_decoding(
+            mode=mode,
+            schemas=ToolSchemaSet.from_openai_tools(tools),
+            supports_constrained_tools=getattr(
+                self.profile, "supports_constrained_tools", False
+            ),
+        )
+        if resolution.fallback_reason:
+            log.warning(
+                "constrained decoding disabled for profile %s: %s",
+                getattr(self.profile, "name", ""),
+                resolution.fallback_reason,
+            )
+        return attach_constrained_decoding(request, resolution)
 
     def _call_raw_profile_request(self, request: dict) -> dict:
         """Make one profile request and return its pre-normalize response."""

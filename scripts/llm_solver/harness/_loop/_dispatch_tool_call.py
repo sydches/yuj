@@ -166,6 +166,81 @@ def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
     )
 
 
+def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
+    """Record one non-executed, repairable schema rejection."""
+    session = state.session
+    cfg = state.cfg
+    result = validation.error_envelope()
+    session._emit(
+        "schema_reject",
+        session_number=session._session_number,
+        turn_number=state.turn,
+        **validation.trace_fields(),
+    )
+    error_decision = state.tool_post["error_ladder"](
+        session._guards,
+        cfg,
+        tc_name=tc.name,
+        result=result,
+    )
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = action_metadata(tc.name, tc.arguments)
+    session.context.add_tool_result(
+        tc.id,
+        result,
+        tool_name=tc.name,
+        gate_blocked=True,
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="schema_reject",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(
+            end=True,
+            reason=error_decision.reason,
+            done=False,
+        )
+    return TCOutcome(end=False)
+
+
 def record_tool_start(tc, state: "TurnState") -> None:
     """Make one bounded ``tool_start`` row durable before dispatch."""
     diagnostics = getattr(state.session, "_exit_diagnostics", None)
@@ -206,15 +281,16 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
     Sub-phases (in fixed order):
-      6a. done_guard           — accept→END(done), BLOCK→next tc, END→END
-      6b. mutation_repeat      — END / BLOCK / WARN
-      6c. contract_gate        — END / BLOCK / WARN
-      6c.5 pre_mutation_gate   — BLOCK only (continue to next tc)
-      6d. rumination_gate      — END / BLOCK / WARN-grace dispatch
-      6d. dispatch (when no gate intercepted)
-      6e. error_ladder         — WARN / END
+      6a. schema validation    — reject before every handler and guard
+      6b. done_guard           — accept→END(done), BLOCK→next tc, END→END
+      6c. mutation_repeat      — END / BLOCK / WARN
+      6d. contract_gate        — END / BLOCK / WARN
+      6d.5 pre_mutation_gate   — BLOCK only (continue to next tc)
+      6e. rumination_gate      — END / BLOCK / WARN-grace dispatch
+      6e. dispatch (when no gate intercepted)
+      6f. error_ladder         — WARN / END
       Post-dispatch projection (bash only, non-error)
-      6f. test_read_ladder + rumination_ladder + observers
+      6g. test_read_ladder + rumination_ladder + observers
       Output dedup + mutation-cache reset
       add_tool_result + trace emit
     """
@@ -248,6 +324,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # error_ladder END). Empty list = no rewrite happened.
     rewrite_log: list = []
     dispatch_started = tc.id in state.preexecuted
+
+    if getattr(cfg, "tools_schema_validation", "off") == "reject":
+        validation = state.schema_validations.get(tc.id)
+        if validation is None:
+            validation = session._tool_schema_set.validate(
+                tc.name, tc.arguments
+            )
+        if not validation.valid:
+            return _handle_schema_reject(tc, state, validation)
 
     # 6a. done_guard — accept path ends session; otherwise BLOCK
     # (or END once cfg.done_loop_abort_after rejected calls accumulate).

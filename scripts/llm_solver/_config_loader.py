@@ -146,6 +146,12 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_bash_redirect_read_side": d.get("tools", {}).get(
             "bash_redirect_read_side", False
         ),
+        "tools_schema_validation": d.get("tools", {}).get(
+            "schema_validation", "off"
+        ),
+        "tools_constrained_decoding": d.get("tools", {}).get(
+            "constrained_decoding", "off"
+        ),
         "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
         "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
         "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
@@ -528,6 +534,12 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.bash_redirect_read_side must be a boolean."
         )
+    from .harness.tool_validation import (
+        normalize_constrained_decoding_mode,
+        normalize_schema_validation_mode,
+    )
+    normalize_schema_validation_mode(cfg.tools_schema_validation)
+    normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
     if cfg.sandbox_backend not in {"bwrap", "container"}:
         raise ValueError(
             "config error: sandbox.backend must be 'bwrap' or 'container', "

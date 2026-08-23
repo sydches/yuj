@@ -12,6 +12,7 @@ chat_template = "chatml"
 supports_tool_calls = true
 supports_system_role = true
 supports_prefill = false
+supports_constrained_tools = false
 
 [tokens]
 method = "chars_div_4"

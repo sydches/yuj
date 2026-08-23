@@ -8,6 +8,7 @@ from typing import Any
 
 from ..context import chars_div_4
 from ..schemas import get_tool_schemas
+from ..tool_validation import ToolSchemaSet
 from .model_role_runtime import resolution_with_client_context
 from .model_roles import (
     MAIN_MODEL_ROLE,
@@ -132,6 +133,9 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             routed.client.cfg,
             routed.client,
         )
+        candidate_schema_set = ToolSchemaSet.from_openai_tools(
+            candidate_schemas
+        )
         prompt_tokens, estimator = _candidate_prompt_tokens(
             session, routed, candidate_schemas,
         )
@@ -158,6 +162,7 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
         session._active_model_resolution = effective_resolution
         session._active_model_role = effective_resolution.effective_role
         session._tool_schemas = candidate_schemas
+        session._tool_schema_set = candidate_schema_set
         session.context.set_token_estimator(estimator)
         session._tokenizer = None
         session._server_ctx_cache = live_context

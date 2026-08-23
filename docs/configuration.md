@@ -272,6 +272,34 @@ cache are projected into `.solver/state.json`. Calling `list_definitions` with
 only a file `path` preserves the existing standard-library Python outline and
 does not require tree-sitter.
 
+### Validate and constrain tool-call arguments
+
+The default tool-call path remains unchanged:
+
+```toml
+[tools]
+schema_validation = "off"       # off | reject
+constrained_decoding = "off"    # off | json_schema | grammar
+```
+
+Set `schema_validation = "reject"` to validate every native tool call against
+the effective profile-filtered schema before `done`, approvals, guardrails, or
+the handler. Missing required fields, wrong JSON types, and undeclared fields
+return a repairable `ERROR:` envelope and never execute the tool. The ordinary
+error ladder counts the result. A raw `schema_reject` trace row stores the tool
+name and value-free field errors; the associated non-executed `tool_call` row
+is the only part visible to normal state projection.
+
+`constrained_decoding` can ask llama-server to constrain the tool-call span
+with the active tools' strict JSON schema or generated GBNF grammar. This is
+independently gated by `[model].supports_constrained_tools = true` in the
+selected profile. Every shipped profile defaults the capability to false
+until its exact server, chat template, reasoning mode, and tool wrapper have
+been verified; an unsupported profile sends no constraint and runtime reject
+validation remains available. Constraints apply only to normal requests that
+carry tools, never harness-owned side requests. Cache request policy is still
+applied last.
+
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during
 normal use.
