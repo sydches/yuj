@@ -1,14 +1,22 @@
 """Focused tests for per-request reasoning and cache policy helpers."""
 import logging
+from types import SimpleNamespace
 
 import pytest
 
 from scripts.llm_solver.server.request_controls import (
+    CACHE_RETENTION_LEVELS,
+    CacheUsageAccumulator,
     THINKING_LEVELS,
     RequestControlError,
     attach_request_extra,
+    derive_cache_slot,
+    extract_cache_observation,
+    resolve_cache_request,
     resolve_thinking_level,
+    validate_cache_miss_warn_ratio,
     validate_reasoning_levels,
+    warn_on_cache_miss,
 )
 
 
@@ -118,3 +126,202 @@ def test_reasoning_level_profile_validation_rejects_invalid_maps(levels, match):
 def test_user_cannot_request_profile_only_on_alias():
     with pytest.raises(RequestControlError, match="must be one of"):
         resolve_thinking_level("on", {"on": {"enable_thinking": True}})
+
+
+def test_cache_request_pins_session_to_slot_and_enables_retention():
+    resolution = resolve_cache_request(
+        session_id="session-018f",
+        cache_affinity=8,
+        cache_retention="session",
+    )
+
+    assert 0 <= resolution.slot_id < 8
+    assert resolution.slot_id == derive_cache_slot("session-018f", 8)
+    assert resolution.request_extra == {
+        "cache_prompt": True,
+        "id_slot": resolution.slot_id,
+    }
+    assert resolution.trace_fields() == {
+        "cache_retention": "session",
+        "cache_prompt": True,
+        "cache_slot": resolution.slot_id,
+    }
+
+
+def test_cache_affinity_hash_is_stable_and_uses_configured_slot_range():
+    first = [derive_cache_slot(f"session-{index}", 16) for index in range(64)]
+    second = [derive_cache_slot(f"session-{index}", 16) for index in range(64)]
+
+    assert first == second
+    assert all(slot is not None and 0 <= slot < 16 for slot in first)
+    assert len(set(first)) > 1
+    assert derive_cache_slot("single-slot", True) == 0
+    assert derive_cache_slot("disabled", False) is None
+
+
+def test_side_request_disables_cache_and_does_not_claim_main_session_slot():
+    resolution = resolve_cache_request(
+        session_id="session-main",
+        cache_affinity=4,
+        cache_retention="session",
+        side_request=True,
+    )
+
+    assert resolution.slot_id is None
+    assert resolution.request_extra == {"cache_prompt": False}
+    assert resolution.trace_fields() == {
+        "cache_retention": "session",
+        "cache_prompt": False,
+        "cache_side_request": True,
+    }
+
+
+def test_fake_openai_client_receives_llama_cache_fields_in_request_body():
+    calls = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+
+    cache = resolve_cache_request(
+        session_id="session-wire",
+        cache_affinity=2,
+        cache_retention="session",
+    )
+    payload = attach_request_extra(
+        {"model": "served", "messages": [], "max_tokens": 32},
+        cache.request_extra,
+    )
+
+    FakeCompletions().create(**payload)
+
+    assert calls[0]["extra_body"] == {
+        "cache_prompt": True,
+        "id_slot": derive_cache_slot("session-wire", 2),
+    }
+
+
+def test_extract_cache_observation_from_openai_usage_details():
+    response = SimpleNamespace(
+        usage=SimpleNamespace(
+            prompt_tokens=1000,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=750),
+        )
+    )
+
+    observation = extract_cache_observation(response)
+
+    assert observation is not None
+    assert observation.prompt_tokens == 1000
+    assert observation.cached_tokens == 750
+    assert observation.hit_ratio == 0.75
+    assert observation.source == "usage"
+    assert observation.trace_fields() == {
+        "prompt_tokens": 1000,
+        "cached_tokens": 750,
+        "cache_hit_ratio": 0.75,
+    }
+
+
+def test_extract_cache_observation_from_llama_timings_processed_suffix():
+    observation = extract_cache_observation(
+        {"timings": {"prompt_n": 250, "cache_n": 750}}
+    )
+
+    assert observation is not None
+    assert observation.prompt_tokens == 1000
+    assert observation.cached_tokens == 750
+    assert observation.hit_ratio == 0.75
+    assert observation.source == "timings"
+
+
+def test_missing_cache_telemetry_stays_unknown_not_a_false_miss():
+    observation = extract_cache_observation(
+        {"usage": {"prompt_tokens": 1000, "completion_tokens": 10}}
+    )
+
+    assert observation is not None
+    assert observation.cached_tokens is None
+    assert observation.hit_ratio is None
+    assert observation.trace_fields()["cached_tokens"] is None
+    assert warn_on_cache_miss(observation, warn_ratio=0.8, prior_turns=2) is False
+
+
+def test_low_cache_ratio_warns_only_after_first_turn(caplog):
+    observation = extract_cache_observation(
+        {"usage": {"prompt_tokens": 1000, "prompt_tokens_details": {"cached_tokens": 100}}}
+    )
+    assert observation is not None
+
+    with caplog.at_level(logging.WARNING):
+        assert warn_on_cache_miss(
+            observation,
+            warn_ratio=0.5,
+            prior_turns=0,
+        ) is False
+        assert warn_on_cache_miss(
+            observation,
+            warn_ratio=0.5,
+            prior_turns=1,
+        ) is True
+
+    assert caplog.text.count("prompt cache hit ratio") == 1
+
+
+def test_session_cache_ratio_is_weighted_by_prompt_tokens():
+    accumulator = CacheUsageAccumulator()
+    accumulator.record(
+        extract_cache_observation(
+            {"timings": {"prompt_n": 100, "cache_n": 900}}
+        )
+    )
+    accumulator.record(
+        extract_cache_observation(
+            {"timings": {"prompt_n": 100, "cache_n": 0}}
+        )
+    )
+    accumulator.record(
+        extract_cache_observation({"usage": {"prompt_tokens": 50}})
+    )
+
+    assert accumulator.metrics_fields() == {
+        "prompt_cache": {
+            "prompt_tokens": 1100,
+            "cached_tokens": 900,
+            "cache_hit_ratio": 0.818182,
+            "requests_observed": 2,
+            "requests_unobserved": 1,
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        (
+            {"session_id": "s", "cache_affinity": -1, "cache_retention": "session"},
+            "cache_affinity",
+        ),
+        (
+            {"session_id": "", "cache_affinity": 2, "cache_retention": "session"},
+            "session_id",
+        ),
+        (
+            {"session_id": "s", "cache_affinity": 1, "cache_retention": "forever"},
+            "cache_retention",
+        ),
+    ],
+)
+def test_invalid_cache_request_settings_fail_closed(kwargs, match):
+    with pytest.raises(RequestControlError, match=match):
+        resolve_cache_request(**kwargs)
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01, float("inf"), True, "0.5"])
+def test_invalid_cache_warning_ratios_fail_closed(value):
+    with pytest.raises(RequestControlError, match="between 0 and 1"):
+        validate_cache_miss_warn_ratio(value)
+
+
+def test_cache_retention_modes_are_explicit_and_llama_scoped():
+    assert CACHE_RETENTION_LEVELS == ("off", "session")

@@ -8,6 +8,7 @@ live model server.
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 import math
 from collections.abc import Mapping, Sequence
@@ -32,6 +33,9 @@ THINKING_LEVELS: tuple[str, ...] = (
 # that only supports a boolean switch participate in the effort policy: every
 # requested non-off effort maps to the profile's generic ``on`` body.
 PROFILE_THINKING_LEVELS: frozenset[str] = frozenset((*THINKING_LEVELS, "on"))
+
+CACHE_RETENTION_LEVELS: tuple[str, ...] = ("off", "session")
+"""llama-server cache-retention modes supported by the request layer."""
 
 # Request extras are merged into the SDK's ``extra_body``.  They must not be
 # able to replace the transport-owned request envelope.
@@ -76,6 +80,47 @@ class ThinkingLevelResolution:
             "thinking_level_requested": self.requested_level,
             "thinking_level_effective": self.effective_level,
             "thinking_level_clamped": self.clamped,
+        }
+
+
+@dataclass(frozen=True)
+class CacheRequestResolution:
+    """Explicit llama-server prompt-cache fields for one request."""
+
+    cache_retention: str
+    slot_id: int | None
+    cache_prompt: bool
+    side_request: bool
+    request_extra: Mapping[str, Any]
+
+    def trace_fields(self) -> dict[str, object]:
+        fields: dict[str, object] = {
+            "cache_retention": self.cache_retention,
+            "cache_prompt": self.cache_prompt,
+        }
+        if self.slot_id is not None:
+            fields["cache_slot"] = self.slot_id
+        if self.side_request:
+            fields["cache_side_request"] = True
+        return fields
+
+
+@dataclass(frozen=True)
+class CacheObservation:
+    """Cache telemetry extracted from one model-server response."""
+
+    prompt_tokens: int
+    cached_tokens: int | None
+    hit_ratio: float | None
+    source: str
+
+    def trace_fields(self) -> dict[str, object]:
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_hit_ratio": (
+                round(self.hit_ratio, 6) if self.hit_ratio is not None else None
+            ),
         }
 
 
@@ -285,3 +330,241 @@ def attach_request_extra(
         raise RequestControlError("request payload extra_body must be a mapping")
     result["extra_body"] = merge_request_extra(existing, request_extra)
     return result
+
+
+def normalize_cache_affinity(value: object) -> int:
+    """Return the configured number of affinity slots (zero disables it).
+
+    ``true`` is accepted as the common single-slot shorthand.  A positive
+    integer enables deterministic session-to-slot hashing across that many
+    server slots.
+    """
+    if value is None or value is False:
+        return 0
+    if value is True:
+        return 1
+    if not isinstance(value, int) or value < 0:
+        raise RequestControlError(
+            "server.cache_affinity must be false, true, zero, or a positive slot count"
+        )
+    return value
+
+
+def normalize_cache_retention(value: str) -> str:
+    """Validate llama-server prompt-cache retention policy."""
+    if not isinstance(value, str) or not value.strip():
+        raise RequestControlError("server.cache_retention must be a non-empty string")
+    normalized = value.strip().lower()
+    if normalized not in CACHE_RETENTION_LEVELS:
+        raise RequestControlError(
+            "server.cache_retention must be one of: "
+            + ", ".join(CACHE_RETENTION_LEVELS)
+        )
+    return normalized
+
+
+def derive_cache_slot(session_id: str, cache_affinity: object) -> int | None:
+    """Map a stable session identifier to a valid llama-server slot ID."""
+    slot_count = normalize_cache_affinity(cache_affinity)
+    if slot_count == 0:
+        return None
+    if not isinstance(session_id, str) or not session_id:
+        raise RequestControlError(
+            "session_id must be a non-empty string when cache affinity is enabled"
+        )
+    digest = hashlib.sha256(session_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big") % slot_count
+
+
+def resolve_cache_request(
+    *,
+    session_id: str,
+    cache_affinity: object,
+    cache_retention: str,
+    side_request: bool = False,
+) -> CacheRequestResolution:
+    """Build explicit llama-server cache fields for one model request.
+
+    Side requests never select the main session's slot and force
+    ``cache_prompt=false`` so compaction, handoff, and classifier prompts do
+    not replace or extend the task conversation's reusable prefix.
+    """
+    retention = normalize_cache_retention(cache_retention)
+    affinity_slots = normalize_cache_affinity(cache_affinity)
+    slot_id = None
+    if not side_request:
+        slot_id = derive_cache_slot(session_id, affinity_slots)
+
+    cache_prompt = retention == "session" and not side_request
+    request_extra: dict[str, object] = {"cache_prompt": cache_prompt}
+    if slot_id is not None:
+        request_extra["id_slot"] = slot_id
+    return CacheRequestResolution(
+        cache_retention=retention,
+        slot_id=slot_id,
+        cache_prompt=cache_prompt,
+        side_request=side_request,
+        request_extra=validate_request_extra(request_extra),
+    )
+
+
+def validate_cache_miss_warn_ratio(value: object) -> float:
+    """Validate a cache-hit ratio threshold in the closed interval [0, 1]."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RequestControlError(
+            "server.cache_miss_warn_ratio must be a number between 0 and 1"
+        )
+    ratio = float(value)
+    if not math.isfinite(ratio) or not 0.0 <= ratio <= 1.0:
+        raise RequestControlError(
+            "server.cache_miss_warn_ratio must be a number between 0 and 1"
+        )
+    return ratio
+
+
+def _field(value: object, name: str) -> object:
+    """Read a normal, mapping, or Pydantic-extra response field."""
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return value.get(name)
+    direct = getattr(value, name, None)
+    if direct is not None:
+        return direct
+    model_extra = getattr(value, "model_extra", None)
+    if isinstance(model_extra, Mapping):
+        return model_extra.get(name)
+    return None
+
+
+def _token_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def extract_cache_observation(response: object) -> CacheObservation | None:
+    """Extract total/cached prompt tokens from OpenAI usage or llama timings.
+
+    Current llama-server chat responses expose cached tokens through OpenAI
+    usage details and may also expose ``timings.cache_n`` with
+    ``timings.prompt_n`` (the processed suffix).  Missing cache telemetry stays
+    explicit as ``None`` rather than being misreported as a cache miss.
+    """
+    usage = _field(response, "usage")
+    usage_prompt = _token_count(_field(usage, "prompt_tokens"))
+    if usage_prompt is None:
+        usage_prompt = _token_count(_field(usage, "input_tokens"))
+
+    details = _field(usage, "prompt_tokens_details")
+    if details is None:
+        details = _field(usage, "input_tokens_details")
+    usage_cached = _token_count(_field(details, "cached_tokens"))
+
+    timings = _field(response, "timings")
+    timing_cached = _token_count(_field(timings, "cache_n"))
+    timing_processed = _token_count(_field(timings, "prompt_n"))
+    timing_total = None
+    if timing_processed is not None and timing_cached is not None:
+        timing_total = timing_processed + timing_cached
+
+    cached = usage_cached if usage_cached is not None else timing_cached
+    prompt = usage_prompt if usage_prompt is not None else timing_total
+    source_parts: list[str] = []
+    if usage_prompt is not None or usage_cached is not None:
+        source_parts.append("usage")
+    if timing_processed is not None or timing_cached is not None:
+        source_parts.append("timings")
+
+    if prompt is None:
+        return None
+    if cached is not None and cached > prompt:
+        # Some non-OpenAI-compatible surfaces report only the processed suffix
+        # as prompt_n.  Prefer the unambiguous timings total when available;
+        # otherwise keep token telemetry unknown rather than fabricate a ratio.
+        if timing_total is not None and timing_total >= cached:
+            prompt = timing_total
+        else:
+            log.warning(
+                "ignoring inconsistent prompt-cache telemetry: cached=%d prompt=%d",
+                cached,
+                prompt,
+            )
+            cached = None
+
+    hit_ratio = None
+    if cached is not None and prompt > 0:
+        hit_ratio = cached / prompt
+    return CacheObservation(
+        prompt_tokens=prompt,
+        cached_tokens=cached,
+        hit_ratio=hit_ratio,
+        source="+".join(source_parts) or "unknown",
+    )
+
+
+def warn_on_cache_miss(
+    observation: CacheObservation | None,
+    *,
+    warn_ratio: object,
+    prior_turns: int,
+    logger: logging.Logger | None = None,
+) -> bool:
+    """Log a low cache-hit warning after the first turn and return whether sent."""
+    threshold = validate_cache_miss_warn_ratio(warn_ratio)
+    if isinstance(prior_turns, bool) or not isinstance(prior_turns, int) or prior_turns < 0:
+        raise RequestControlError("prior_turns must be a non-negative integer")
+    if (
+        threshold <= 0
+        or prior_turns == 0
+        or observation is None
+        or observation.hit_ratio is None
+        or observation.hit_ratio >= threshold
+    ):
+        return False
+    (logger or log).warning(
+        "prompt cache hit ratio %.3f is below %.3f "
+        "(cached_tokens=%d prompt_tokens=%d)",
+        observation.hit_ratio,
+        threshold,
+        observation.cached_tokens,
+        observation.prompt_tokens,
+    )
+    return True
+
+
+class CacheUsageAccumulator:
+    """Aggregate an observed session cache-hit ratio without averaging ratios."""
+
+    def __init__(self) -> None:
+        self.prompt_tokens = 0
+        self.cached_tokens = 0
+        self.requests_observed = 0
+        self.requests_unobserved = 0
+
+    def record(self, observation: CacheObservation | None) -> None:
+        if observation is None or observation.cached_tokens is None:
+            self.requests_unobserved += 1
+            return
+        self.requests_observed += 1
+        self.prompt_tokens += observation.prompt_tokens
+        self.cached_tokens += observation.cached_tokens
+
+    @property
+    def hit_ratio(self) -> float | None:
+        if self.prompt_tokens <= 0:
+            return None
+        return self.cached_tokens / self.prompt_tokens
+
+    def snapshot(self) -> dict[str, object]:
+        ratio = self.hit_ratio
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_hit_ratio": round(ratio, 6) if ratio is not None else None,
+            "requests_observed": self.requests_observed,
+            "requests_unobserved": self.requests_unobserved,
+        }
+
+    def metrics_fields(self) -> dict[str, object]:
+        return {"prompt_cache": self.snapshot()}
