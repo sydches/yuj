@@ -218,6 +218,13 @@ class Session:
         allow_login_shell: bool | None = None,
     ):
         self.cfg = cfg
+        from .compaction_hooks import resolve_compaction_hook
+        self._compaction_hook_reference = str(
+            getattr(cfg, "compaction_hook", "") or ""
+        ).strip()
+        self._compaction_hook = resolve_compaction_hook(
+            self._compaction_hook_reference
+        )
         self._permission_policy = PermissionPolicy.from_rule_tables(
             getattr(cfg, "permissions_rules", {})
         )

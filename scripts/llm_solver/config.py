@@ -479,6 +479,7 @@ class Config:
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
     compaction_method: str = "digest"
+    compaction_hook: str = ""
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
     # Optional model-written fresh-session handoff. The existing mechanical
