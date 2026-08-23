@@ -104,6 +104,8 @@ order in the
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
 | `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
 | `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
+| `[loop].plan_mode` | Start with an engine-enforced planning phase. Use `off` or `required`. |
+| `[loop].plan_mode_max_turns` | Limit planning turns before only the plan-file write and explicit exit remain available. |
 | `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
@@ -148,6 +150,48 @@ Read [Model tools](model-tools.html) for optional tool settings. Read
 [Run a local model](serving_overlay.html) for runtime files and profiles.
 Read [Extend Yuj with TOML files](extending-yuj.html) before you add or change
 a model, language, or tool descriptor.
+
+### Require a plan before implementation
+
+The shipped setting leaves plan mode off. Enable it for one installed coding
+session with `yuj code --plan-mode required`, use the same option on the
+measurement command, or put the settings in an overlay:
+
+```toml
+[loop]
+plan_mode = "required"       # off | required
+plan_mode_max_turns = 15     # integer >= 1
+```
+
+`required` starts a task-level planning phase. The model-facing tool surface is
+limited to enabled `read`, `glob`, `grep`, `list_definitions`, `bash`, `write`,
+and `exit_plan_mode`. The engine admits `bash` only when every shell fragment
+matches its conservative read-only command allowlist, and admits `write` only
+for the exact task path `.solver/plan.md`. It rejects `edit`, `apply_patch`,
+other writes, mutating or unclassified shell commands, tests, background
+process controls, language-server calls, and `done`. A rejected call does not
+execute and returns the normal unified `<tool_result status="error"
+error_kind="plan_mode">` result.
+
+The model exits by calling `exit_plan_mode` with no arguments. Yuj checks that
+`.solver/plan.md` exists and contains non-whitespace text before it records
+`plan_mode_exit` and restores the normal profile-filtered tool surface. A
+missing or empty plan returns the same unified plan-mode error and leaves the
+phase active. Natural model stop is not task success while the phase remains
+active. For a required-plan task, this explicit phase transition supersedes
+the legacy prompt-only `require_intent` gate.
+
+`plan_mode_max_turns` counts model turns across session restarts from the most
+recent `plan_mode_enter`. After the limit, inspection calls are rejected, but
+the exact plan write and `exit_plan_mode` remain available so the model can
+finish the transition. Resume reconstructs the phase from the raw trace; it
+does not infer phase from the presence of the plan file.
+
+The raw trace owns `plan_mode_enter` and `plan_mode_exit` transitions. The exit
+row records `turn` and `plan_chars`; `.solver/state.json` mechanically projects
+the current phase as `plan` or `implementation`. The plan file is a control
+artifact, not an implementation mutation: it does not satisfy a mutation-
+requiring done guard or the projection's mutation classification.
 
 ### Select a shell sandbox backend
 

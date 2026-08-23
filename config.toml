@@ -85,6 +85,8 @@ thinking_level = "off"        # off | minimal | low | medium | high | xhigh | ma
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
+plan_mode = "off"           # off | required; required enforces a read-only planning phase before implementation
+plan_mode_max_turns = 15     # model turns allowed for inspection before only the plan write and explicit exit remain available
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
 length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries

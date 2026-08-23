@@ -166,6 +166,12 @@ _DISPATCH = {
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
     ),
+    "exit_plan_mode": lambda args, cwd, cfg: (
+        '<tool_result tool_name="exit_plan_mode" status="error" '
+        'error_kind="plan_mode" v="1">\n'
+        "Plan mode is unavailable outside a running session.\n"
+        "</tool_result>"
+    ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),

@@ -98,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             help="per-request reasoning effort",
         )
         p.add_argument(
+            "--plan-mode", choices=("off", "required"),
+            help="require an explicit .solver/plan.md before implementation",
+        )
+        p.add_argument(
             "--provider",
             choices=sorted(_PROVIDER_PRESETS),
             help="model service: local, openai, anthropic, zai, openrouter, or custom",
@@ -177,6 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     smoke_parser.add_argument(
         "--thinking", choices=THINKING_LEVELS,
         help="per-request reasoning effort",
+    )
+    smoke_parser.add_argument(
+        "--plan-mode", choices=("off", "required"),
+        help="require an explicit .solver/plan.md before implementation",
     )
     smoke_parser.add_argument(
         "--provider",
@@ -948,7 +956,11 @@ def _transport_overrides_from_args(args) -> dict:
     base_url = getattr(args, "base_url", None)
     api_key_env = getattr(args, "api_key_env", None)
     thinking_level = getattr(args, "thinking", None)
-    if not provider and not base_url and not api_key_env and not thinking_level:
+    plan_mode = getattr(args, "plan_mode", None)
+    if (
+        not provider and not base_url and not api_key_env
+        and not thinking_level and not plan_mode
+    ):
         return {}
     if provider == "custom" and not base_url:
         raise SystemExit("--provider custom requires --base-url")
@@ -970,6 +982,8 @@ def _transport_overrides_from_args(args) -> dict:
             )
     if thinking_level:
         overrides["thinking_level"] = thinking_level
+    if plan_mode:
+        overrides["plan_mode"] = plan_mode
     return overrides
 
 
@@ -1004,6 +1018,11 @@ def _render_provider_overlay(overrides: dict) -> str:
             lines.append("")
         value = str(overrides["thinking_level"])
         lines.extend(["[model]", f'thinking_level = "{value}"'])
+    if overrides.get("plan_mode") is not None:
+        if lines:
+            lines.append("")
+        value = str(overrides["plan_mode"])
+        lines.extend(["[loop]", f'plan_mode = "{value}"'])
     return "\n".join(lines) + "\n"
 
 

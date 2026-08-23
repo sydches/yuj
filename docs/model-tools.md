@@ -26,6 +26,7 @@ person types into a terminal.
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `exit_plan_mode` | None | None | Validate `.solver/plan.md` and unlock implementation tools during a required planning phase. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -38,6 +39,7 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
+| `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 
 Turn on the optional tools in a small settings file:
@@ -70,7 +72,26 @@ When `bash` is on, the model can run a test command through `bash` even when
 structured result.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
-The `done` tool is not removed by that limit.
+The `done` tool is not removed by that limit. Neither `exit_plan_mode` nor the
+required plan `write` is removed while plan mode is required, so a tight limit
+cannot make the phase impossible to finish.
+
+## Required planning phase
+
+When `[loop].plan_mode = "required"`, Yuj starts with only the enabled
+inspection tools, `bash`, `write`, and `exit_plan_mode` in the model-facing
+surface. The engine still checks every received call. `bash` must match a
+conservative read-only command classification, and `write` must target exactly
+`.solver/plan.md`; `edit`, `apply_patch`, other writes, unclassified or
+mutating shell commands, and `done` are rejected without execution.
+
+`exit_plan_mode` has no inputs. It succeeds only when `.solver/plan.md` exists
+and contains non-whitespace text. A missing or empty file returns a unified
+plan-mode error and keeps the phase active. A successful exit records the plan
+length in the raw trace and restores the normal profile-filtered tool surface.
+The plan file does not count as an implementation mutation for the done guard.
+See [Configuration](configuration.html#require-a-plan-before-implementation)
+for the turn limit, CLI flag, trace events, resume rule, and state projection.
 
 When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
 successful `edit` or `write`; this does not require the navigation tool to be

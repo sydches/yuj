@@ -392,7 +392,11 @@ class Session:
                 f"LSP {query.kind} {query.file} status={query.status}\n{body}"
             )
 
+        def _exit_plan_mode_handler(_args, _cwd, _cfg):
+            return self._plan_mode.exit(turn=self._current_turn)
+
         handlers["lsp"] = _lsp_handler
+        handlers["exit_plan_mode"] = _exit_plan_mode_handler
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
@@ -493,6 +497,24 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        from .plan_mode import PlanModeController
+
+        def _plan_mode_event_sink(payload: dict[str, object]) -> None:
+            fields = dict(payload)
+            event_type = str(fields.pop("event"))
+            with self._service_event_lock:
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    **fields,
+                )
+
+        self._plan_mode = PlanModeController(
+            cwd=self.cwd,
+            cfg=cfg,
+            events=self._trace_events,
+            event_sink=_plan_mode_event_sink,
+        )
         if self._process_manager is None and getattr(
             cfg, "tools_background_enabled", False
         ):
@@ -657,7 +679,15 @@ class Session:
     def active_tool_names(self) -> frozenset[str]:
         """Names in the current profile-filtered model-facing tool surface."""
         return frozenset(
-            schema["function"]["name"] for schema in self._tool_schemas
+            schema["function"]["name"] for schema in self.model_tool_schemas
+        )
+
+    @property
+    def model_tool_schemas(self) -> list[dict]:
+        """Effective schemas for the current task phase."""
+        from .plan_mode import filter_plan_mode_schemas
+        return filter_plan_mode_schemas(
+            self._tool_schemas, active=self._plan_mode.active,
         )
 
     @property

@@ -41,6 +41,11 @@ from .interrupted_turn import RecoveryPlan, recover_interrupted_trace
 from . import model_role_runtime
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
+from ..plan_mode import (
+    has_plan_mode_transition,
+    plan_mode_active_from_trace,
+    plan_mode_required,
+)
 
 if TYPE_CHECKING:
     from ..loop import SessionResult, TaskSpec
@@ -234,6 +239,7 @@ def solve_task(
         )
     start_session_num = _next_session_number(trace_path) if resume_from_artifacts else 1
     end_session_num = start_session_num + cfg.max_sessions - 1
+    plan_transition_seen = has_plan_mode_transition(_load_trace_events(trace_path))
 
     # Resolve the selected backend before pretests or model tool calls. A
     # successful container preflight pins execution to the inspected image ID;
@@ -360,7 +366,15 @@ def solve_task(
                         log.info("Pretest not structurally parseable — done_guard falls back to heuristic")
                 except Exception as e:
                     log.debug("Pretest parse failed: %s", e)
-            if session_num > start_session_num and _pretest_is_green(pretest_block):
+            plan_still_active = (
+                plan_mode_required(cfg)
+                and plan_mode_active_from_trace(_load_trace_events(trace_path))
+            )
+            if (
+                session_num > start_session_num
+                and _pretest_is_green(pretest_block)
+                and not plan_still_active
+            ):
                 log.info("Pretest exited green at session start — short-circuiting.")
                 write_checkpoint(artifact_dir, cfg.model, "completed")
                 success = True
@@ -425,6 +439,15 @@ def solve_task(
                     if worktree_info is not None else {}
                 ),
             )
+            if plan_mode_required(session_cfg) and not plan_transition_seen:
+                _emit_trace_event(
+                    trace_file,
+                    "plan_mode_enter",
+                    session_number=session_num,
+                    turn=0,
+                    turn_number=0,
+                )
+                plan_transition_seen = True
             if state_path is not None:
                 write_state_from_trace(trace_path, state_path,
                                        max_result_chars=session_cfg.max_output_chars)

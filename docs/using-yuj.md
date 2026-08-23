@@ -74,6 +74,7 @@ Yuj offers these tools to the model:
 | Run shell commands | `bash` | On |
 | Run tests | `run_tests` | Off |
 | Finish the task | `done` | On |
+| Leave a required planning phase | `exit_plan_mode` | On only when plan mode is required. |
 
 `run_tests` is a separate test tool. When `bash` is on, the model can still run
 test commands through `bash`.
@@ -134,6 +135,7 @@ Yuj calls the starting group of settings a base.
 | `--prompt-file PATH` | Read the task from this file. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
+| `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |
 | `--provider NAME` | Use `local`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
@@ -146,8 +148,9 @@ Yuj calls the starting group of settings a base.
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
 
-`--provider`, `--base-url`, `--api-key-env`, and `--thinking` change only the
-new session. Yuj saves these settings in the session's `provider.toml`.
+`--provider`, `--base-url`, `--api-key-env`, `--thinking`, and `--plan-mode`
+change only the new session. Yuj saves these settings in the session's
+`provider.toml`.
 
 When you use `--api-key-env`, `provider.toml` stores the variable name. It
 does not store the key.

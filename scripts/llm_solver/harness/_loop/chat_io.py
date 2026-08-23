@@ -63,9 +63,11 @@ def _chat_with_length_continuation(
     session, outgoing, turn: int, *, max_attempts: int,
 ):
     """Execute one logical response through raw profile phases."""
+    from ..plan_mode import effective_model_tool_schemas
+
     client = session.client
     base_request = client._prepare_profile_chat_request(
-        outgoing, session._tool_schemas
+        outgoing, effective_model_tool_schemas(session)
     )
     initial_raw = client._call_raw_profile_request(base_request)
     usages = [initial_raw.get("usage")]
@@ -182,8 +184,9 @@ def chat_with_retry(session: "Session", turn: int):
                         max_attempts=length_continue_max,
                     )
                 else:
+                    from ..plan_mode import effective_model_tool_schemas
                     result = session.client.chat(
-                        outgoing, session._tool_schemas, turn=turn,
+                        outgoing, effective_model_tool_schemas(session), turn=turn,
                     )
                 if result is not None and getattr(
                     result, "finish_reason", ""
@@ -191,7 +194,7 @@ def chat_with_retry(session: "Session", turn: int):
                     from .replay_handover import maybe_handover
                     if maybe_handover(session, turn):
                         result = session.client.chat(
-                            outgoing, session._tool_schemas, turn=turn,
+                            outgoing, effective_model_tool_schemas(session), turn=turn,
                         )
                 return result
             except CompactionOverflowError as exc:

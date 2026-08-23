@@ -24,17 +24,21 @@ def _resolve_profile(client):
 
 
 # Tools that must always be present in the schema list regardless of
-# profile.max_tools.
+# profile.max_tools. A caller can add phase-specific essentials.
 _CAP_IMMUNE_TOOLS: frozenset[str] = CAP_IMMUNE_TOOL_NAMES
 
 
-def _apply_profile_tool_cap(tool_schemas: list[dict], client) -> list[dict]:
+def _apply_profile_tool_cap(
+    tool_schemas: list[dict],
+    client,
+    *,
+    extra_immune: frozenset[str] = frozenset(),
+) -> list[dict]:
     """Apply profile max_tools cap to the declared tool surface.
 
-    Cap-immune tools (currently just `done`) are partitioned to the
-    head of the result so they always survive the truncation. Without
-    this guard, a tight max_tools cap that happened to land before
-    `done` would silently strip the session terminator.
+    Cap-immune tools are partitioned to the head of the result so they always
+    survive truncation. The required plan-file writer is an additional immune
+    tool during plan mode; otherwise a tight cap could make exit impossible.
     """
     profile = _resolve_profile(client)
     if profile is None:
@@ -43,11 +47,12 @@ def _apply_profile_tool_cap(tool_schemas: list[dict], client) -> list[dict]:
     if max_tools <= 0 or len(tool_schemas) <= max_tools:
         return tool_schemas
 
+    immune_names = _CAP_IMMUNE_TOOLS | extra_immune
     immune: list[dict] = []
     rest: list[dict] = []
     for schema in tool_schemas:
         name = schema.get("function", {}).get("name", "")
-        (immune if name in _CAP_IMMUNE_TOOLS else rest).append(schema)
+        (immune if name in immune_names else rest).append(schema)
 
     keep_rest = max(0, max_tools - len(immune))
     capped = immune + rest[:keep_rest]
@@ -130,6 +135,11 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
             client,
         ),
         client,
+        extra_immune=(
+            frozenset({"write"})
+            if bool(getattr(cfg, "plan_mode_enabled", False))
+            else frozenset()
+        ),
     )
 
 

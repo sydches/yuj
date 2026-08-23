@@ -69,6 +69,11 @@ required = ["kind", "path"]
 properties = { kind = { type = "string", enum = ["definition", "references", "symbols"] }, path = { type = "string" }, line = { type = "integer" }, character = { type = "integer" } }
 
 [[tools]]
+name = "exit_plan_mode"
+required = []
+properties = {}
+
+[[tools]]
 name = "done"
 required = []
 [tools.properties]

@@ -97,9 +97,10 @@ def _preflight_estimate(session) -> int:
     tok = getattr(session, "_tokenizer", None)
     if tok is not None:
         try:
+            from ..plan_mode import effective_model_tool_schemas
             return int(tok.count(
                 list(session.context.get_messages()),
-                tools=getattr(session, "_tool_schemas", None)))
+                tools=effective_model_tool_schemas(session)))
         except Exception as e:
             log.warning("preflight exact count failed (%s); using strategy estimate", e)
     return int(session.context.estimate_tokens())
@@ -380,6 +381,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
         session.context.add_assistant(
             session.client.build_assistant_message(content, tool_calls)
         )
+        plan_task_required = bool(session._plan_mode.required)
+        plan_turn_active = bool(session._plan_mode.active)
 
         # ─── 2. GUARDRAIL: context fill (END tier) ───────────────────
         # Server-reported pt — accurate, no chars/4 underrun.
@@ -395,10 +398,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # guardrails_arm_after_turn turns (earliest observed hurdle onset
         # is turn 11; the opening naturally contains probes and rereads).
         guards_armed = turn > getattr(cfg, "guardrails_arm_after_turn", 0)
-        intent_decision = turn_pre["intent_gate"](
-            session._guards, cfg,
-            turn=turn, content=content, tool_calls=tool_calls,
-        ) if guards_armed else PASS
+        intent_decision = (
+            turn_pre["intent_gate"](
+                session._guards, cfg,
+                turn=turn, content=content, tool_calls=tool_calls,
+            )
+            if guards_armed and not plan_task_required
+            else PASS
+        )
         if intent_decision.action in (Action.BLOCK, Action.END):
             session._record_pressure_event(True)
             log.info("Intent gate: rejecting silent tool call at turn %d "
@@ -463,6 +470,17 @@ def run_session_loop(session: "Session") -> "SessionResult":
             # tools (run_summary, paired-delta, failure-classifier) can
             # distinguish "model said done explicitly" from "model
             # silently fell off the conversation".
+            if session._plan_mode.active:
+                log.warning(
+                    "Model stopped at turn %d while plan mode remained active; "
+                    "session ended without success",
+                    turn,
+                )
+                return SessionResult(
+                    turn, "no_tool_call", done=False,
+                    total_prompt_tokens=total_prompt,
+                    total_completion_tokens=total_completion,
+                )
             allow_implicit = bool(getattr(cfg, "allow_implicit_done", True))
             if allow_implicit:
                 log.info("Model stopped at turn %d (reason=%s) — implicit done", turn, reason)
@@ -476,9 +494,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
 
         # ─── 5. GUARDRAIL: duplicate_guard (WARN / END tiers) ────────
         sig = tuple(_dedup_signature(tc) for tc in tool_calls)
-        dup_decision = turn_pre["duplicate_guard"](
-            session._guards, cfg, tool_calls_sig=sig
-        ) if guards_armed else PASS
+        dup_decision = (
+            turn_pre["duplicate_guard"](
+                session._guards, cfg, tool_calls_sig=sig
+            )
+            if guards_armed and not plan_turn_active
+            else PASS
+        )
         if dup_decision.action == Action.END:
             if not _defer_guard_end_during_active_watch(
                 session,
@@ -498,9 +520,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Tighter than duplicate_guard: fires at N consecutive identical
         # signatures (default 5) with a single recovery-inject before
         # hard abort. See guardrails.loop_detect for the contract.
-        loop_decision = turn_pre["loop_detect"](
-            session._guards, cfg, tool_calls_sig=sig
-        ) if guards_armed else PASS
+        loop_decision = (
+            turn_pre["loop_detect"](
+                session._guards, cfg, tool_calls_sig=sig
+            )
+            if guards_armed and not plan_turn_active
+            else PASS
+        )
         if loop_decision.action == Action.END:
             if not _defer_guard_end_during_active_watch(
                 session,
@@ -576,10 +602,12 @@ def run_session_loop(session: "Session") -> "SessionResult":
             tool_pre=tool_pre,
             tool_post=tool_post,
             observers=observers,
+            plan_mode_active=plan_turn_active,
             turn_had_pressure=turn_had_pressure,
         )
         if (
             cfg.parallel_readonly_enabled
+            and not plan_turn_active
             and len(tool_calls) > 1
             and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
             and all(

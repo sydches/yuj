@@ -323,7 +323,8 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     # tokenizer is unset, fall back to chars_div_4 (the historical
     # behavior).
     tokenizer = getattr(session, "_tokenizer", None)
-    tool_schemas = getattr(session, "_tool_schemas", None)
+    from ..plan_mode import effective_model_tool_schemas
+    tool_schemas = effective_model_tool_schemas(session)
     if tokenizer is not None:
         try:
             est_pt = int(tokenizer.count(messages, tools=tool_schemas))

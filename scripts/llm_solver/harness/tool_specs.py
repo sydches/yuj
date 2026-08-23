@@ -70,9 +70,15 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=11,
     ),
     ToolSpec(
-        "done",
+        "exit_plan_mode",
+        profile_gate_attr="plan_mode_enabled",
         cap_immune=True,
         schema_order=12,
+    ),
+    ToolSpec(
+        "done",
+        cap_immune=True,
+        schema_order=13,
     ),
     ToolSpec(
         "run_tests",

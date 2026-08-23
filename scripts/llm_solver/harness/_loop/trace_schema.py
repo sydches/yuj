@@ -56,6 +56,15 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
     TraceEventSpec(
+        "plan_mode_enter", frozenset({"session_number", "turn"}),
+        frozenset({"turn_number"}),
+    ),
+    TraceEventSpec(
+        "plan_mode_exit",
+        frozenset({"session_number", "turn", "plan_chars"}),
+        frozenset({"turn_number"}),
+    ),
+    TraceEventSpec(
         "compaction",
         frozenset({
             "session_number",

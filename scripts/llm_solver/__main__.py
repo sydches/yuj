@@ -92,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
         "--thinking", choices=THINKING_LEVELS,
         help="per-request reasoning effort",
     )
+    parser.add_argument(
+        "--plan-mode", choices=("off", "required"),
+        help="require an explicit .solver/plan.md before implementation",
+    )
     parser.add_argument("--port", "-p", type=int, help="use this model-server port")
     parser.add_argument("--config", "-c", type=Path, action="append", default=[],
                         help="TOML settings file; repeat to apply more files; later values win")
@@ -189,9 +193,13 @@ def main(argv: list[str] | None = None) -> int:
     _replay_prov = None
     if args.replay_from is not None:
         from .server.replay_client import load_replay_provenance
-        if args.config or args.model or args.thinking is not None:
+        if (
+            args.config or args.model or args.thinking is not None
+            or args.plan_mode is not None
+        ):
             parser.error("--replay-from adopts the recording's config; "
-                         "--config/--model/--thinking are not allowed in replay mode")
+                         "--config/--model/--thinking/--plan-mode are not "
+                         "allowed in replay mode")
         try:
             _replay_prov = load_replay_provenance(args.replay_from)
         except (OSError, ValueError) as e:
@@ -217,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
         overrides["model"] = resolve_model(args.model)
     if args.thinking is not None:
         overrides["thinking_level"] = args.thinking
+    if args.plan_mode is not None:
+        overrides["plan_mode"] = args.plan_mode
     if args.port:
         # Reuse scheme+host from [server] base_url; only the port changes.
         from urllib.parse import urlparse, urlunparse

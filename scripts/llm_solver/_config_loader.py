@@ -357,6 +357,8 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_glob_refuse_unscoped_recursive": d.get("tools", {}).get("glob_refuse_unscoped_recursive", True),
         "bash_quirks_forbidden_enabled": d.get("loop", {}).get("bash_quirks_forbidden_enabled", True),
         "pre_mutation_turn_cap": d.get("loop", {}).get("pre_mutation_turn_cap", 0),
+        "plan_mode": d.get("loop", {}).get("plan_mode", "off"),
+        "plan_mode_max_turns": d.get("loop", {}).get("plan_mode_max_turns", 15),
         "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
@@ -574,6 +576,19 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
+    if cfg.plan_mode not in {"off", "required"}:
+        raise ValueError(
+            "config error: loop.plan_mode must be 'off' or 'required', "
+            f"got {cfg.plan_mode!r}."
+        )
+    if (
+        isinstance(cfg.plan_mode_max_turns, bool)
+        or not isinstance(cfg.plan_mode_max_turns, int)
+        or cfg.plan_mode_max_turns < 1
+    ):
+        raise ValueError(
+            "config error: loop.plan_mode_max_turns must be an integer >= 1."
+        )
     if cfg.tools_stale_guard_mode not in {"off", "warn", "block"}:
         raise ValueError(
             "config error: tools.stale_guard_mode must be 'off', 'warn', "

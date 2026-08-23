@@ -469,6 +469,10 @@ class Config:
     # Orientation gate — block non-write tool calls past N orientation
     # turns when no mutation has happened yet.
     pre_mutation_turn_cap: int = 0  # 0 = disabled
+    # Optional task-level phase that admits inspection, a single plan artifact,
+    # and an explicit exit before implementation tools are unlocked.
+    plan_mode: str = "off"
+    plan_mode_max_turns: int = 15
     # Digest compaction trigger — fires when the exact pre-flight token
     # count (via the local tokenizer) crosses the derived threshold:
     #     threshold = (1 - max_tokens_fraction) - digest_compaction_safety_margin
@@ -683,6 +687,11 @@ class Config:
     halflife_cap_31_chars: int = 1024  # Tool-result cap for halflife tool age <= 31.
     halflife_cap_63_chars: int = 512  # Tool-result cap for halflife tool age <= 63.
     halflife_cap_older_chars: int = 256  # Tool-result cap for older halflife tool results.
+
+    @property
+    def plan_mode_enabled(self) -> bool:
+        """Profile-gate surface for the model-facing exit tool."""
+        return self.plan_mode == "required"
 
 
 # Every key must exist in config.toml — no silent defaults at read time.

@@ -41,6 +41,7 @@ class TurnState:
     tool_pre: dict
     tool_post: dict
     observers: dict
+    plan_mode_active: bool
     turn_had_pressure: bool = False
 
 

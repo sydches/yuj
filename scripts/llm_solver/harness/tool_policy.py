@@ -39,6 +39,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "bash_poll": ("proc_id", ""),
         "done": ("message", ""),
         "edit": ("path", ""),
+        "exit_plan_mode": ("message", ""),
         "glob": ("path", "."),
         "grep": ("path", "."),
         "list_definitions": ("path", ""),
