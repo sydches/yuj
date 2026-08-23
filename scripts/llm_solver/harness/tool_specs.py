@@ -70,9 +70,14 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=11,
     ),
     ToolSpec(
+        "think",
+        profile_gate_attr="tools_think_enabled",
+        schema_order=12,
+    ),
+    ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=12,
+        schema_order=13,
     ),
     ToolSpec(
         "run_tests",

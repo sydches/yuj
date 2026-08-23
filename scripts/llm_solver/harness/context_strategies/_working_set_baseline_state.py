@@ -86,6 +86,13 @@ def phase_text(ctx: "WorkingSetBaselineContext") -> str:
 def slot_state_text(ctx: "WorkingSetBaselineContext", max_chars: int) -> str:
     recovery = ctx._recovery_state()
     lines: list[str] = [f"repo_root: .", f"phase: {phase_text(ctx)}"]
+    retained_thoughts = [
+        entry.args_summary
+        for entry in ctx._turn_entries
+        if entry.tool_name == "think" and entry.args_summary
+    ]
+    if retained_thoughts:
+        lines.append("scratchpad: " + " | ".join(retained_thoughts))
 
     candidate_source = ctx._format_path_list(ctx._candidate_source_paths(), limit=ctx._slot_max_candidates)
     candidate_test = ctx._format_path_list(ctx._candidate_test_paths(), limit=ctx._slot_max_candidates)

@@ -229,21 +229,29 @@ class CompactTranscript(ContextManager):
             self._recent_results_meta.append({
                 "tool_name": extracted_name,
                 "path": _extract_path_from_args(extracted_name, args_summary),
+                "turn": self._turn_count,
             })
         else:
             # Assistant message unavailable — keep alignment with a
             # blank metadata entry so _recent_results_meta and
             # _recent_results stay 1:1 indexable.
-            self._recent_results_meta.append({"tool_name": tool_name, "path": None})
+            self._recent_results_meta.append({
+                "tool_name": tool_name,
+                "path": None,
+                "turn": self._turn_count,
+            })
 
     def get_messages(self) -> list[dict]:
+        self._prune_expired_thought_projection()
         if self._msg_cache is not None:
             return self._msg_cache
         if self._turn_count < self._min_turns:
             # Fallback path returns the raw-log reference; cache holds the
             # same reference so a subsequent estimate_tokens sees identical
             # data. Mutation goes through add_* which invalidates.
-            self._msg_cache = self._all_messages
+            self._msg_cache = self._filter_expired_thought_messages(
+                self._all_messages
+            )
         else:
             self._msg_cache = self._build_compact()
             # Token accounting: the projection replaces the full append log
@@ -293,6 +301,39 @@ class CompactTranscript(ContextManager):
         return True
 
     # ── Internal ──────────────────────────────────────────
+
+    def _prune_expired_thought_projection(self) -> None:
+        """Forget old scratchpad text from derived, model-facing stores."""
+        if self._think_keep_turns is None:
+            return
+        entries = [
+            entry
+            for entry in self._turn_entries
+            if not (
+                entry.tool_name == "think"
+                and self._thought_turn_expired(entry.turn)
+            )
+        ]
+        paired = [
+            (result, meta)
+            for result, meta in zip(
+                self._recent_results, self._recent_results_meta, strict=True
+            )
+            if not (
+                meta.get("tool_name") == "think"
+                and self._thought_turn_expired(meta.get("turn"))
+            )
+        ]
+        if (
+            len(entries) == len(self._turn_entries)
+            and len(paired) == len(self._recent_results)
+        ):
+            return
+        self._turn_entries = entries
+        self._recent_results = deque(result for result, _ in paired)
+        self._recent_results_meta = deque(meta for _, meta in paired)
+        self._msg_cache = None
+        self._tok_cache = None
 
     def _extract_tool_info(self, assistant_msg: dict, tool_call_id: str) -> tuple[str, str]:
         """Extract tool name and args summary from an assistant message by tool_call_id."""

@@ -426,8 +426,12 @@ def solve_task(
                 ),
             )
             if state_path is not None:
-                write_state_from_trace(trace_path, state_path,
-                                       max_result_chars=session_cfg.max_output_chars)
+                write_state_from_trace(
+                    trace_path,
+                    state_path,
+                    max_result_chars=session_cfg.max_output_chars,
+                    think_keep_turns=session_cfg.tools_think_keep_turns,
+                )
 
             ctx = build_context_manager(
                 context_class, session_cfg, work_dir, initial, session_num,
@@ -533,8 +537,12 @@ def solve_task(
                 total_prompt_tokens=result.total_prompt_tokens,
             )
             if state_path is not None:
-                write_state_from_trace(trace_path, state_path,
-                                       max_result_chars=cfg.max_output_chars)
+                write_state_from_trace(
+                    trace_path,
+                    state_path,
+                    max_result_chars=cfg.max_output_chars,
+                    think_keep_turns=session.cfg.tools_think_keep_turns,
+                )
 
             if result.done:
                 _auto_commit(work_dir, session_num, result.finish_reason)

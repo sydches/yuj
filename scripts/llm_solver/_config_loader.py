@@ -94,6 +94,9 @@ def _extract_config_fields(d: dict) -> dict:
         "duplicate_abort": _require(d, "loop", "duplicate_abort"),
         "error_nudge_threshold": _require(d, "loop", "error_nudge_threshold"),
         "rumination_nudge_threshold": _require(d, "loop", "rumination_nudge_threshold"),
+        "think_streak_nudge_after": d.get("loop", {}).get(
+            "think_streak_nudge_after", 3
+        ),
         "rumination_gate_max_blocks": d.get("loop", {}).get("rumination_gate_max_blocks", 0),
         "rumination_gate_arm_threshold": d.get("loop", {}).get("rumination_gate_arm_threshold", 0),
         "rumination_gate_arm_threshold_abs": d.get("loop", {}).get("rumination_gate_arm_threshold_abs", 0),
@@ -130,6 +133,12 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_run_tests_structured_output": bool(d.get("tools", {}).get("run_tests", {}).get("structured_output", True)),
         "tools_run_tests_assertion_context_lines": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5)),
         "tools_run_tests_assertion_context_max": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3)),
+        "tools_think_enabled": d.get("tools", {}).get(
+            "think_enabled", False
+        ),
+        "tools_think_keep_turns": d.get("tools", {}).get(
+            "think_keep_turns", 4
+        ),
         "tools_list_definitions_enabled": bool(d.get("tools", {}).get("list_definitions", {}).get("enabled", False)),
         "tools_ast_search_enabled": bool(
             d.get("tools", {}).get("ast_search_enabled", False)
@@ -589,6 +598,28 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    if not isinstance(cfg.tools_think_enabled, bool):
+        raise ValueError(
+            "config error: tools.think_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_think_keep_turns, bool)
+        or not isinstance(cfg.tools_think_keep_turns, int)
+        or cfg.tools_think_keep_turns < 0
+    ):
+        raise ValueError(
+            "config error: tools.think_keep_turns must be a non-negative "
+            "integer."
+        )
+    if (
+        isinstance(cfg.think_streak_nudge_after, bool)
+        or not isinstance(cfg.think_streak_nudge_after, int)
+        or cfg.think_streak_nudge_after < 0
+    ):
+        raise ValueError(
+            "config error: loop.think_streak_nudge_after must be a "
+            "non-negative integer."
+        )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,

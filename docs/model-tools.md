@@ -23,6 +23,7 @@ person types into a terminal.
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
 | `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
+| `think` | `thought` | None | Record free-form scratchpad reasoning without running a process or touching the filesystem. Return an empty success envelope. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
@@ -38,7 +39,7 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `think`, `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 
 Turn on the optional tools in a small settings file:
 
@@ -53,6 +54,8 @@ enabled = true
 enabled = true
 
 [tools]
+think_enabled = true
+think_keep_turns = 4
 background_enabled = true
 
 [lsp]
@@ -68,6 +71,14 @@ yuj code --config more-tools.toml "Fix the issue and run the tests."
 When `bash` is on, the model can run a test command through `bash` even when
 `run_tests` is off. The `run_tests` tool gives Yuj a fixed test command and a
 structured result.
+
+`think` is a bounded model scratchpad, not model-provider hidden reasoning.
+Its `thought` argument remains in the append-only raw trace, while every
+context strategy removes the call and paired empty result after
+`think_keep_turns` turns. It is a non-mutating, non-progress action for the
+done and rumination guards. Set `[loop].think_streak_nudge_after` to choose
+when a consecutive streak reuses the existing rumination nudge; `0` disables
+that dedicated streak nudge.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
 The `done` tool is not removed by that limit.

@@ -130,7 +130,10 @@ def maybe_prepare_boundary_handoff(
     )
     if state_path is not None:
         write_state_from_trace(
-            trace_path, state_path, max_result_chars=cfg.max_output_chars
+            trace_path,
+            state_path,
+            max_result_chars=cfg.max_output_chars,
+            think_keep_turns=cfg.tools_think_keep_turns,
         )
     return attempt.result
 

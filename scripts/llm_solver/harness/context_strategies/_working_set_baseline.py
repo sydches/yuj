@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -258,10 +259,13 @@ class WorkingSetBaselineContext(ContextManager):
     # -- projection -----------------------------------------------
 
     def get_messages(self) -> list[dict]:
+        self._prune_expired_thought_projection()
         if self._msg_cache is not None:
             return self._msg_cache
         if self._turn_count < self._min_turns:
-            self._msg_cache = self._all_messages
+            self._msg_cache = self._filter_expired_thought_messages(
+                self._all_messages
+            )
             return self._msg_cache
         self._msg_cache = self._build()
         from ..savings import get_ledger
@@ -307,6 +311,36 @@ class WorkingSetBaselineContext(ContextManager):
         self._tok_cache = None
         self._raw_state_cache = None
 
+    def _prune_expired_thought_projection(self) -> None:
+        """Forget old think arguments from working-set projections."""
+        if self._think_keep_turns is None:
+            return
+        entries = [
+            entry
+            for entry in self._turn_entries
+            if not (
+                entry.tool_name == "think"
+                and self._thought_turn_expired(entry.turn)
+            )
+        ]
+        artifacts = deque(
+            artifact
+            for artifact in self._ws.artifacts
+            if not (
+                artifact.tool_name == "think"
+                and self._thought_turn_expired(artifact.turn)
+            )
+        )
+        if (
+            len(entries) == len(self._turn_entries)
+            and len(artifacts) == len(self._ws.artifacts)
+        ):
+            return
+        self._turn_entries = entries
+        self._ws.artifacts = artifacts
+        self._msg_cache = None
+        self._tok_cache = None
+
     def _extract_tool_info(
         self,
         assistant_msg: dict,
@@ -340,7 +374,8 @@ class WorkingSetBaselineContext(ContextManager):
             self._raw_state_cache = {}
             return self._raw_state_cache
         try:
-            self._raw_state_cache = json.loads(state_path.read_text())
+            data = json.loads(state_path.read_text())
+            self._raw_state_cache = self._redact_expired_thought_state(data)
         except (json.JSONDecodeError, OSError):
             self._raw_state_cache = {}
         return self._raw_state_cache

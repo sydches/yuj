@@ -117,13 +117,13 @@ class HalfLifeContext(ContextManager):
         self._msg_cache = None
         self._tok_cache = None
 
-    def _decay_active(self) -> tuple[bool, int, int]:
+    def _decay_active(self, messages: list[dict]) -> tuple[bool, int, int]:
         if self._context_limit_tokens <= 0:
             return False, 0, 0
         threshold = int(self._context_limit_tokens * self._activation_ratio)
         if threshold <= 0:
-            return True, self._token_estimator(self._messages), threshold
-        full_tokens = self._token_estimator(self._messages)
+            return True, self._token_estimator(messages), threshold
+        full_tokens = self._token_estimator(messages)
         return full_tokens >= threshold, full_tokens, threshold
 
     def _cap_for_age(self, age: int) -> tuple[str, int | None]:
@@ -173,16 +173,17 @@ class HalfLifeContext(ContextManager):
         return decayed, max(0, len(content) - len(decayed))
 
     def _build_messages(self) -> list[dict]:
-        active, full_tokens, threshold = self._decay_active()
+        visible_messages = self._filter_expired_thought_messages(self._messages)
+        active, full_tokens, threshold = self._decay_active(visible_messages)
         if not active:
-            return self._messages
+            return visible_messages
 
         if self._first_decay_turn is None:
             self._first_decay_turn = self._turn_count
         self._decay_render_count += 1
 
         tool_indices = [
-            index for index, message in enumerate(self._messages)
+            index for index, message in enumerate(visible_messages)
             if message.get("role") == "tool"
         ]
         tool_age_by_index = {
@@ -194,7 +195,7 @@ class HalfLifeContext(ContextManager):
         saved_chars = 0
         decayed_messages: list[dict] = []
 
-        for index, message in enumerate(self._messages):
+        for index, message in enumerate(visible_messages):
             if message.get("role") != "tool":
                 decayed_messages.append(message)
                 continue
@@ -223,7 +224,7 @@ class HalfLifeContext(ContextManager):
                 bucket="context_projection",
                 layer="context_strategy",
                 mechanism="halflife_decay",
-                input_chars=_message_chars(self._messages),
+                input_chars=_message_chars(visible_messages),
                 output_chars=_message_chars(decayed_messages),
                 measure_type="exact",
                 ctx={

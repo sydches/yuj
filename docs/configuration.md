@@ -107,8 +107,11 @@ order in the
 | `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
+| `[loop].think_streak_nudge_after` | Reuse the rumination nudge after this many consecutive successful `think` calls. `0` disables the dedicated streak nudge. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
+| `[tools].think_enabled` | Add the side-effect-free `think(thought)` scratchpad tool. Off by default. |
+| `[tools].think_keep_turns` | Keep each scratchpad argument in model-facing context for this many turns. `0` hides it immediately. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
 | `[sandbox].backend` | Select the first-class `bwrap` or `container` command backend. |
@@ -377,6 +380,33 @@ cache are projected into `.solver/state.json`. Calling `list_definitions` with
 only a file `path` preserves the existing standard-library Python outline and
 does not require tree-sitter.
 
+### Give the model a bounded scratchpad
+
+The optional `think` tool gives a non-thinking model, or a run with model
+thinking disabled, one explicit place to plan without executing anything:
+
+```toml
+[tools]
+think_enabled = true
+think_keep_turns = 4
+
+[loop]
+think_streak_nudge_after = 3
+```
+
+`think(thought)` has no filesystem or process effect and returns an empty
+successful `<tool_result>` envelope. Its ordinary raw `tool_call` trace row
+keeps the bounded `thought` argument for audit and replay. Every context mode
+removes that call and its empty result after `think_keep_turns` subsequent
+turns; state-backed modes also replace expired projected actions with the
+content-free `think()` breadcrumb. The append-only trace is never rewritten.
+
+`think` is a non-mutation and counts toward the general non-write rumination
+budget. A consecutive successful streak of `think_streak_nudge_after` calls
+reuses the existing rumination nudge; a different tool resets that narrow
+streak. Set either numeric setting to `0` to retain no thought turns or disable
+the dedicated streak nudge, respectively.
+
 ### Validate and constrain tool-call arguments
 
 The default tool-call path remains unchanged:
@@ -436,8 +466,8 @@ entry can set a baseline which a later exact-tool entry overrides.
 Each tool has one canonical match value. `bash` uses `cmd`; `read`, `write`,
 `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, and `lsp` use `path`
 (`glob` and `grep` default it to `.`); `apply_patch` uses `patch`; `done` uses
-`message`; and `bash_poll`/`bash_kill` use `proc_id`. Calls without a dedicated
-field use a canonical sorted JSON argument object.
+`message`; `think` uses `thought`; and `bash_poll`/`bash_kill` use `proc_id`.
+Calls without a dedicated field use a canonical sorted JSON argument object.
 
 In assistant mode, `ask` writes `approval_request.json`, pauses, and can be
 continued with `yuj approve` or refused with `yuj reject`. `--always` stores a
@@ -647,6 +677,11 @@ Yuj registers these modes:
 | Saved state | `stateful`, `compound`, `focused_compound`, `compound_selective`, `salience` | `.solver/state.json` and a small in-memory window of recent tool results. On resume, Yuj also loads the current contents of files named by the saved run. |
 
 Normal context modes do not read `.trace.jsonl` directly.
+
+All modes apply `[tools].think_keep_turns` to the optional scratchpad tool.
+Expired thought arguments leave model-facing messages, compact progress rows,
+working-set artifacts, recent-result windows, and state-derived sections even
+though their raw `tool_call` rows remain in the append-only trace.
 
 Transcript files record model request and response data. Normal context modes
 do not read them.

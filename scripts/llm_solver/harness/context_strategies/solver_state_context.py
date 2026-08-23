@@ -175,7 +175,15 @@ class SolverStateContext(ContextManager):
         # against them — the tool was never executed, the content is a
         # gate message, not real output.
         entry_epoch = -1 if gate_blocked else self._dedup_epoch
-        msg = {"role": "tool", "tool_call_id": tool_call_id, "content": content, "_cmd_sig": cmd_signature, "_epoch": entry_epoch}
+        msg = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+            "_cmd_sig": cmd_signature,
+            "_epoch": entry_epoch,
+            "_tool_name": tool_name,
+            "_turn": self._turn_count,
+        }
         self._all_messages.append(msg)
         self._recent_tool_results.append(msg)
         self._file_cache = None  # tool execution may have written to .solver/state.json
@@ -185,6 +193,7 @@ class SolverStateContext(ContextManager):
 
     def get_messages(self) -> list[dict]:
         """Build messages from .solver/state.json if available, else fall back to full list."""
+        self._prune_expired_thought_results()
         if self._msg_cache is not None:
             return self._msg_cache
         solver_dir = self._cwd / ".solver"
@@ -193,7 +202,9 @@ class SolverStateContext(ContextManager):
             or not (solver_dir / "state.json").is_file()
             or self._turn_count < self._min_turns
         ):
-            self._msg_cache = self._all_messages
+            self._msg_cache = self._filter_expired_thought_messages(
+                self._all_messages
+            )
         else:
             self._msg_cache = self._build_from_solver(solver_dir)
             # Token accounting: solver-state projection vs. full append log.
@@ -239,6 +250,24 @@ class SolverStateContext(ContextManager):
         "evidence": "",
     }
 
+    def _prune_expired_thought_results(self) -> None:
+        """Remove old empty think results from the rolling prompt window."""
+        if self._think_keep_turns is None:
+            return
+        kept = deque(
+            result
+            for result in self._recent_tool_results
+            if not (
+                result.get("_tool_name") == "think"
+                and self._thought_turn_expired(result.get("_turn"))
+            )
+        )
+        if len(kept) == len(self._recent_tool_results):
+            return
+        self._recent_tool_results = kept
+        self._msg_cache = None
+        self._tok_cache = None
+
     def _get_solver_files(self, solver_dir: Path) -> dict[str, str]:
         """Read .solver/state.json and format each section as text.
 
@@ -256,15 +285,18 @@ class SolverStateContext(ContextManager):
 
         state_path = solver_dir / "state.json"
         if not state_path.is_file():
+            self._raw_state_cache = {}
             self._file_cache = dict(self._EMPTY_SECTIONS)
             return self._file_cache
 
         raw = state_path.read_text().strip()
         if not raw:
+            self._raw_state_cache = {}
             self._file_cache = dict(self._EMPTY_SECTIONS)
             return self._file_cache
 
-        data = json.loads(raw)
+        data = self._redact_expired_thought_state(json.loads(raw))
+        self._raw_state_cache = data
         self._file_cache = {
             "state": format_state(data.get("state")),
             "trace": format_trace(data.get("trace", []), self._trace_lines, self._trace_stub_chars),
@@ -298,6 +330,7 @@ class SolverStateContext(ContextManager):
         in this turn's window is evicted permanently so the memory
         footprint stays bounded across long runs.
         """
+        self._prune_expired_thought_results()
         if not self._recent_tool_results:
             return ""
         # Walk newest to oldest, keep within char budget.

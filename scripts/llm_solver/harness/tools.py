@@ -26,6 +26,7 @@ from ._tools.grep import grep_files
 from ._tools.list_definitions import list_definitions
 from ._tools.read import read
 from ._tools.run_tests import run_tests
+from ._tools.think import think
 from ._tools.write import write
 # Cross-tool helpers (imported by tests as `from harness.tools import _resolve`)
 from ._tools._common import _resolve, _xml_attr
@@ -165,6 +166,10 @@ _DISPATCH = {
     ),
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
+    ),
+    "think": lambda args, cwd, cfg: think(
+        args["thought"],
+        enabled=bool(getattr(cfg, "tools_think_enabled", False)),
     ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(

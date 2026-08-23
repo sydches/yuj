@@ -103,6 +103,7 @@ _CONTEXT_ATTR_REFRESH = {
     "state_context_suffix": ("_suffix",),
     "trace_reasoning_chars": ("_trace_reasoning_chars",),
     "trace_stub_chars": ("_trace_stub_chars",),
+    "tools_think_keep_turns": ("_think_keep_turns",),
 }
 
 _CONTEXT_CACHE_ATTRS = (
@@ -226,6 +227,7 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
         "tools_run_tests_enabled",
         "tools_list_definitions_enabled",
         "tools_apply_patch_enabled",
+        "tools_think_enabled",
     }
     if not (changed & tool_fields):
         return None
