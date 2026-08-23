@@ -489,7 +489,14 @@ class Config:
     digest_compaction_safety_margin: float = 0.05
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
+    # Ranked repository symbol map appended to the stable task message.
+    # Zero preserves the existing prompt exactly.  The refresh policy owns
+    # only the run-private structural cache; one rendered map stays immutable
+    # for the lifetime of a solver session so prompt-prefix reuse is stable.
+    repo_map_tokens: int = 0
+    repo_map_refresh: str = "auto"
     compaction_method: str = "digest"
+    compaction_hook: str = ""
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
     # Optional model-written fresh-session handoff. The existing mechanical
@@ -538,10 +545,12 @@ class Config:
     # state still updates sequentially per-tc after concurrent I/O.
     parallel_readonly_enabled: bool = False
     parallel_max_workers: int = 4
-    # Injection subsystem (keyword-triggered markdown fragments).
+    # Injection subsystem (keyword/path-triggered markdown fragments).
     # Off by default; data-directory convention .harness/injections/.
     injections_enabled: bool = False
     injections_dir: str = ".harness/injections"
+    injections_path_rules_enabled: bool = False
+    injections_path_rule_repeat: bool = False
     loop_detect_recovery: str = (
         "<system-reminder>Loop detected: the last {streak} tool calls all "
         "have identical name and arguments. Stop repeating. Re-read the "

@@ -99,6 +99,8 @@ order in the
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
 | `[model].thinking_level` | Select the requested per-run reasoning effort. |
+| `[context].repo_map_tokens` | Append a ranked repository file/symbol map within this hard token budget. `0` (the default) disables it. |
+| `[context].repo_map_refresh` | Choose run-private symbol-cache reuse: `auto`, `always`, `files`, or `manual`. |
 | `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
 | `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
@@ -111,6 +113,7 @@ order in the
 | `[prompts].skills_enabled` | Discover validated Agent Skills and add their metadata catalog to the system prompt. Off by default. |
 | `[prompts].skills_dirs` | Search these skill collection directories in order. Relative entries are searched from the task cwd to its project root. |
 | `[prompts].skill_paths` | Load these exact `SKILL.md` files or skill directories before directory discovery. |
+| `[context].compaction_hook` | Import one trusted synchronous `module:function` that can delegate, cancel, or replace a threshold-triggered compaction. Empty uses only the built-in path. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
@@ -135,6 +138,10 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[injections].enabled` | Load Markdown injection rules from `[injections].dir`. Off by default. |
+| `[injections].dir` | Select the task-relative rule directory. Defaults to `.harness/injections`. |
+| `[injections].path_rules_enabled` | Match rule `paths` globs against executed file-tool targets. Off by default and requires `[injections].enabled = true`. |
+| `[injections].path_rule_repeat` | Let path rules without a per-rule `repeat` value fire on every matching tool result. False means once per session. |
 | `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
 | `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
@@ -666,6 +673,66 @@ purpose.
 A context mode changes what the model can see. Record the mode when you compare
 sessions.
 
+### Add a ranked repository map to the task
+
+Set a positive `[context].repo_map_tokens` value to append one compact
+`<repo-map>` block after the task text in the session's first user message:
+
+```toml
+[context]
+repo_map_tokens = 1024
+repo_map_refresh = "auto"
+```
+
+This setting works through the normal installed and measurement command
+surfaces, so a small overlay can be passed to `yuj code --config FILE.toml` or
+`python -m scripts.llm_solver ... --config FILE.toml`. The checked-in default
+is `0`: existing runs keep their task message unchanged until the feature is
+enabled explicitly.
+
+Yuj reuses the tree-sitter tag extractor behind repository-wide
+`list_definitions`. It collects definitions, references, and signatures for
+the locally installed Python, JavaScript/TypeScript, Go, Rust, and Java
+grammars. Files are graph nodes; a reference to a definition forms an edge.
+A deterministic personalized PageRank-style pass starts from repository paths
+named in the task, then places symbols referenced by those files before
+unreferenced definitions. Ties use stable path, location, and signature order.
+No model call authors or ranks the map.
+
+The budget is a hard incremental count for adding the block to the task user
+message. When `[model].tokenizer_id` is set, Yuj uses that local tokenizer and
+attempts to synchronize its chat template from the active server before
+counting. Otherwise it uses the active profile estimator, then the documented
+one-token-per-four-characters fallback. If the wrapper and highest-ranked
+definition cannot fit, Yuj omits the map rather than exceed the budget.
+
+The rendered block is immutable for one solver session. It stays in the
+stable task prefix on every turn and survives deterministic or checkpoint
+compaction as part of that unchanged task message. A later solver session may
+build a new map from its then-current tree. `repo_map_refresh` controls the
+mechanical symbol-row cache used at that boundary:
+
+| Value | Cache behavior at session start |
+| --- | --- |
+| `auto` | Reuse while supported source paths, byte sizes, and nanosecond mtimes match. |
+| `always` | Parse the readable source tree again and replace the cache. |
+| `files` | Content-hash every supported source file before deciding whether to reuse. |
+| `manual` | Reuse any valid cache for the same repository; parse only when no valid cache exists. |
+
+For measurement commands the per-task cache is beneath
+`<run_dir>/.repo_map_cache/`; installed sessions keep it beneath their private
+session artifact directory. An unusual caller that places an artifact
+directory inside the task tree is redirected to the harness telemetry sibling.
+The cache is always outside the model's file-tool root and is also added to
+shell unreadable masks.
+
+Both configured `[sandbox].unreadable_paths` and the immutable task-root
+`.yujignore` policy are applied before files are fingerprinted or parsed.
+`session_start` records the actual incremental token count, content hash,
+refresh policy, scanned-file count, emitted-symbol count, and cache-hit flag;
+it never records the map body or cache path. These fields are raw run-start
+provenance and are not projected into `.solver/state.json`.
+
 ### Compact a nearly full context
 
 Compaction runs only after the existing context threshold and mutation gate
@@ -674,6 +741,7 @@ allow it. These settings live under `[context]`:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `compaction_method` | `"digest"` | Use the deterministic trace digest, or opt into a model-written `"checkpoint"`. |
+| `compaction_hook` | `""` | Trusted synchronous `module:function` called after the normal threshold and mutation gate. Empty disables the hook. |
 | `checkpoint_keep_recent_tokens` | `0` | Verbatim recent-tail target. Zero means 20% of the live context window, with a 4,096-token minimum. |
 | `checkpoint_max_summary_tokens` | `4000` | Maximum checkpoint response; the runtime also applies a 4,000-token hard cap and the available-reserve limit. |
 | `digest_compaction_safety_margin` | `0.05` | Margin used by the derived compaction threshold. |
@@ -687,6 +755,14 @@ beginning at an assistant-turn boundary. The checkpoint must contain every
 required section and every mechanically observed modified path, fit the
 budget, and reduce the prompt token count. Any request, response, validation,
 or size failure uses the deterministic digest instead.
+
+When `compaction_hook` is non-empty, Yuj resolves it while configuration is
+loaded, before model work starts. The hook may return `None` for the built-in
+method, `Cancel()` to keep the current conversation, or a validated
+`Compaction(summary, first_kept_turn)`. Hook failures and invalid replacements
+use the digest. Read [Compaction hooks](compaction.html) for the exact Python
+types, preparation fields, validation rules, and trace outcomes. The hook runs
+inside the harness process, not inside the model-command sandbox.
 
 Yuj records only compaction metadata in the trace and state projection; it
 does not copy model-written checkpoint text into `.solver/state.json`. If two
@@ -753,6 +829,74 @@ and `[prompts].resume_length` message apply. Raw trace rows named
 response or request text. Post-run `metrics.length_continuations` counts the
 follow-up requests, while the normal prompt/completion totals include every
 initial and follow-up call.
+
+### Load conditional injection rules
+
+Injection rules are off by default. Enable the rule loader and path matching
+with a small overlay:
+
+```toml
+[injections]
+enabled = true
+dir = ".harness/injections"
+path_rules_enabled = true
+path_rule_repeat = false
+```
+
+Yuj loads each `*.md` file in alphabetical filename order before the model
+starts. A malformed enabled file stops startup. Each file uses strict TOML
+frontmatter between `+++` fences:
+
+```markdown
++++
+name = "python-tests"
+paths = ["src/**/*.py", "tests/**/*.py"]
+keywords = ["pytest"]
+repeat = false
++++
+
+Follow this repository's Python and test conventions.
+```
+
+`name` is required and must be a non-empty string. `paths` and `keywords`,
+when present, must be arrays of non-empty strings. `repeat` must be `true` or
+`false`. A rule with neither `paths` nor `keywords` is unscoped and is added
+once at the start of a session. The older explicit `trigger` and `fire_once`
+fields remain readable; do not combine `repeat` and `fire_once` in one file.
+
+Path globs are project-relative POSIX patterns. They support `*`, `?`,
+character classes, and slash-aware `**`. Absolute paths, parent traversal,
+directory-only patterns, empty entries, and non-string entries are rejected.
+Matching checks both the model's contained path spelling and its
+symlink-resolved target. The visible and traced path is always the canonical
+task-relative target.
+
+A path rule can fire after an executed `read`, `edit`, or `write`, after an
+`apply_patch` operation was applied, or after a shell command is proven to
+read one explicit file. The shell classifier accepts bounded forms of `cat`,
+`head`, `tail`, `sed -n`, `grep`, and `rg`. Compounds, pipelines,
+redirections, recursive or multi-file reads, and rewritten shell commands do
+not qualify. A non-matching target adds nothing.
+
+By default, the first path or keyword match consumes the rule for that
+session. `repeat = true` on the rule makes both trigger kinds repeat.
+`path_rule_repeat = true` changes only the default for path matches when the
+rule omits `repeat`; a per-rule value wins.
+
+A path fire appends this shape to the same model-visible tool result:
+
+```xml
+<injected-fragment rule="python-tests" trigger="path" path="src/app.py" source="python-tests">
+Follow this repository's Python and test conventions.
+</injected-fragment>
+```
+
+Each conditional fire also writes a raw `injection` trace row with `rule`,
+`trigger`, and `path`; keyword rows use an empty path. That metadata row is
+not copied into `.solver/state.json`. The visible fragment remains part of
+the ordinary tool result and therefore follows the normal `tool_call`
+projection. Startup logs name each armed rule, its trigger kinds, and its safe
+source label without copying the rule body.
 
 ### Load project instruction files
 

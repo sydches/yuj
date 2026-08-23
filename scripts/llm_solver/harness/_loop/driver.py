@@ -9,6 +9,7 @@ visible at one read-site. Names patched by tests are late-bound through the
 public ``loop`` module rather than imported directly.
 """
 from __future__ import annotations
+import hashlib
 import logging
 import os
 import time
@@ -17,6 +18,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from ..._shared.telemetry_paths import telemetry_dir
 from ...config import Config
 from ...server.request_controls import CacheUsageAccumulator
 from ..context import ContextManager
@@ -78,6 +80,41 @@ def solve_task(
     log = _loop_mod.log  # so test patches on loop.log intercept these emits
 
     work_dir, artifact_dir, trace_path = resolve_run_paths(repo_dir, artifacts_dir)
+    # The cache is a run artifact, never repository content.  Measurement
+    # traces already live in the masked telemetry sibling; assistant traces
+    # use their session artifact directory.  Add the exact cache directory to
+    # command masks as a second, explicit boundary in both layouts.
+    recorded_run_dir = str((run_metadata or {}).get("run_dir") or "")
+    if artifacts_dir is not None:
+        repo_map_cache_root = artifact_dir / ".repo_map_cache"
+        repo_map_cache_dir = repo_map_cache_root
+    elif recorded_run_dir:
+        repo_map_cache_root = Path(recorded_run_dir) / ".repo_map_cache"
+        task_cache_key = hashlib.sha256(
+            str(work_dir.resolve()).encode("utf-8", errors="surrogateescape")
+        ).hexdigest()[:16]
+        repo_map_cache_dir = repo_map_cache_root / task_cache_key
+    else:
+        repo_map_cache_root = telemetry_dir(work_dir) / ".repo_map_cache"
+        repo_map_cache_dir = repo_map_cache_root
+    try:
+        repo_map_cache_root.resolve().relative_to(work_dir.resolve())
+    except ValueError:
+        pass
+    else:
+        # File tools are cwd-confined but do not consume host unreadable-path
+        # masks.  Never place the cache under cwd, even when a caller supplied
+        # an unusual in-repository run/artifact directory.
+        repo_map_cache_root = telemetry_dir(work_dir) / ".repo_map_cache"
+        repo_map_cache_dir = repo_map_cache_root
+    if int(getattr(cfg, "repo_map_tokens", 0) or 0) > 0:
+        cfg = replace(
+            cfg,
+            unreadable_paths=tuple(dict.fromkeys((
+                *tuple(cfg.unreadable_paths),
+                f"optional:{repo_map_cache_root}",
+            ))),
+        )
     checkpoint_store = None
     if getattr(cfg, "tools_file_checkpoints_enabled", False):
         from ..workspace_checkpoints import (
@@ -428,6 +465,39 @@ def solve_task(
                 skills_readable_dirs=cfg.skills_readable_dirs,
             )
             thinking_fields = thinking_trace_fields(session_cfg, session_client)
+            local_tokenizer = None
+            if int(getattr(session_cfg, "repo_map_tokens", 0) or 0) > 0:
+                from ..local_tokenizer import load as load_local_tokenizer
+
+                local_tokenizer = load_local_tokenizer(
+                    getattr(session_cfg, "tokenizer_id", "") or ""
+                )
+                if local_tokenizer is not None:
+                    synced = local_tokenizer.sync_chat_template(
+                        getattr(session_cfg, "base_url", "") or ""
+                    )
+                    log.info(
+                        "local tokenizer loaded for repo map: %s "
+                        "(server template %s)",
+                        local_tokenizer.id,
+                        "synced" if synced else "NOT synced — counts approximate",
+                    )
+            from ..repo_map import append_repo_map, build_repo_map
+
+            repo_map = build_repo_map(
+                work_dir,
+                task_message=initial,
+                ranking_text=task_prompt,
+                token_budget=int(getattr(session_cfg, "repo_map_tokens", 0) or 0),
+                refresh=str(getattr(session_cfg, "repo_map_refresh", "auto")),
+                cache_dir=repo_map_cache_dir,
+                unreadable_paths=prompt_unreadable_paths,
+                tokenizer=local_tokenizer,
+                token_estimator=(
+                    model_binding.token_estimator or token_estimator
+                ),
+            )
+            session_initial = append_repo_map(initial, repo_map)
             # Trace: session start
             _emit_trace_event(
                 trace_file, "session_start",
@@ -437,6 +507,7 @@ def solve_task(
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
                 sandbox_env_names=list(effective_env),
+                **repo_map.trace_fields(),
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
@@ -451,14 +522,14 @@ def solve_task(
                                        max_result_chars=session_cfg.max_output_chars)
 
             ctx = build_context_manager(
-                context_class, session_cfg, work_dir, initial, session_num,
+                context_class, session_cfg, work_dir, session_initial, session_num,
                 model_binding.token_estimator or token_estimator,
             )
             if getattr(cfg, "turn_snapshots_enabled", False):
                 from ..turn_snapshots import ensure_snapshot_setup
                 ensure_snapshot_setup(work_dir)
             session = Session(
-                session_cfg, session_client, system_prompt, initial, str(work_dir),
+                session_cfg, session_client, system_prompt, session_initial, str(work_dir),
                 context_manager=ctx, trace_file=trace_file, session_number=session_num,
                 trace_path=trace_path, state_path=state_path,
                 output_control=output_control,
@@ -478,6 +549,7 @@ def solve_task(
                 ignore_policy=ignore_policy,
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,
+                local_tokenizer=local_tokenizer,
             )
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(
@@ -487,7 +559,7 @@ def solve_task(
                 inject_resume_messages(
                     session,
                     resume_path,
-                    initial,
+                    session_initial,
                     recovery=recovery_plan,
                 )
             # Emit resolved thresholds so trace replay across config changes

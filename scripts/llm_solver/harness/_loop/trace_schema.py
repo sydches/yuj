@@ -45,6 +45,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "session_number", "thinking_level", "sandbox_backend",
             "container_runtime", "container_image_digest",
             "ignore_file_hash", "sandbox_env_names",
+            "repo_map_tokens",
         }), frozenset({
             "worktree_path", "worktree_branch", "worktree_base_commit",
             "project_instruction_files", "project_instruction_bytes",
@@ -52,6 +53,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instruction_resolved_bytes",
             "project_instructions_truncated", "prompt_import_tree",
             "ignore_file_names", "loaded_skills",
+            "repo_map_refresh", "repo_map_files", "repo_map_symbols",
+            "repo_map_cache_hit", "repo_map_sha256",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
@@ -66,6 +69,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "method",
             "fallback",
             "role",
+            "hook",
+            "hook_outcome",
         }),
     ),
     TraceEventSpec(
@@ -165,6 +170,12 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
         "schema_reject",
         frozenset({"session_number", "turn_number", "tool", "errors"}),
+    ),
+    TraceEventSpec(
+        "injection",
+        frozenset({
+            "session_number", "turn_number", "rule", "trigger", "path",
+        }),
     ),
     TraceEventSpec(
         "proc_start",
