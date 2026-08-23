@@ -46,7 +46,7 @@ properties = { path = { type = "string" }, k = { type = "string" }, last_failed 
 [[tools]]
 name = "list_definitions"
 required = ["path"]
-properties = { path = { type = "string" } }
+properties = { path = { type = "string" }, symbol = { type = "string" }, kind = { type = "string", enum = ["def", "ref"] }, repo_wide = { type = "boolean" }, page = { type = "integer" } }
 
 [[tools]]
 name = "apply_patch"

@@ -345,6 +345,9 @@ class Config:
     # list_definitions tool — Python-AST source outline. Disabled by
     # default. Enable it through config.local.toml or another overlay.
     tools_list_definitions_enabled: bool = False
+    # Optional repository-wide tree-sitter symbol definition/reference mode.
+    tools_ast_search_enabled: bool = False
+    tools_ast_search_max_rows: int = 1000
     # Independent shadow-Git checkpoints after every potentially mutating
     # model tool call. The store is outside the task cwd and restore remains
     # a harness/operator function, never a model-facing tool.

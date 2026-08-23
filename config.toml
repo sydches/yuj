@@ -271,6 +271,9 @@ file_checkpoints_exclude = [
 # Refuse or warn on edit calls whose target was not observed at its current
 # content hash in this session. The trace reconstructs the ledger on resume.
 stale_guard_mode = "warn"  # off | warn | block
+# Repository-wide tree-sitter symbol lookup through list_definitions.
+ast_search_enabled = false
+ast_search_max_rows = 1000
 # Paginated search envelopes. When enabled, grep and glob wrap their
 # output in <search_result .../> with total/shown/page/next_page
 # attributes so the agent can check discovery scope and request

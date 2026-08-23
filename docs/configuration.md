@@ -112,6 +112,8 @@ order in the
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 | `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
+| `[tools].ast_search_enabled` | Add repository-wide definition/reference lookup to `list_definitions`. Off by default. |
+| `[tools].ast_search_max_rows` | Cap the rows available to one repository structural query before pagination. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
 | `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
 | `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
@@ -194,6 +196,32 @@ not earn credit.
 The ledger is harness state, not model-side state. Raw
 `stale_guard_observe` trace rows are its only resume source;
 `.solver/state.json` does not copy the ledger.
+
+### Search definitions and references across a repository
+
+Repository structural search is an optional mode of `list_definitions`. Turn
+on both `[tools.list_definitions].enabled` and
+`[tools].ast_search_enabled`. A repository call uses `repo_wide = true`, treats
+`path` as the search root, and accepts an exact `symbol` plus
+`kind = "def" | "ref"`. Results are deterministic
+`path:line kind name signature` rows. `page` follows the same page size as
+`grep` when search pagination is enabled. `[tools].ast_search_max_rows` caps
+the available result set before pages are selected, and
+`[output].max_output_chars` can reduce a page to complete rows without cutting
+one in the middle.
+
+The installed package includes tree-sitter itself, the tag-query package, and
+prebuilt Python, JavaScript/TypeScript, Go, Rust, and Java grammar wheels.
+Those supported parsers are loaded locally; a model tool call never downloads
+a grammar. If the dependencies are absent, the tool returns a typed
+`backend_unavailable` error with reinstall guidance. Files matched by
+`[sandbox].unreadable_paths` are rejected before they are read.
+
+Repeated calls reuse a bounded in-process content-hash cache. Repository
+queries remain ordinary `tool_call` trace rows; neither search results nor the
+cache are projected into `.solver/state.json`. Calling `list_definitions` with
+only a file `path` preserves the existing standard-library Python outline and
+does not require tree-sitter.
 
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during

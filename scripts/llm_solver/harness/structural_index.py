@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 import glob
 import hashlib
+import importlib
 import os
 from pathlib import Path
 from typing import Callable, Iterable, Literal, Protocol, Sequence
@@ -40,6 +41,15 @@ _DEFAULT_TAG_QUERY_PARENTS = {
 }
 _GLOB_META = frozenset("*?[")
 _MAX_SIGNATURE_CHARS = 240
+_PREINSTALLED_GRAMMARS = {
+    "python": ("tree_sitter_python", "language"),
+    "javascript": ("tree_sitter_javascript", "language"),
+    "typescript": ("tree_sitter_typescript", "language_typescript"),
+    "tsx": ("tree_sitter_typescript", "language_tsx"),
+    "go": ("tree_sitter_go", "language"),
+    "rust": ("tree_sitter_rust", "language"),
+    "java": ("tree_sitter_java", "language"),
+}
 
 
 class StructuralIndexError(RuntimeError):
@@ -205,11 +215,25 @@ class TreeSitterTagExtractor:
                 "install a release with bundled tags query support"
             )
         if self._language_loader is None:
-            self._language_loader = language_pack.get_language
+            # The public runtime preinstalls grammar wheels for the supported
+            # acceptance languages. Do not call language-pack's on-demand
+            # grammar downloader from a sealed model tool call.
+            def load_preinstalled_language(name: str):
+                try:
+                    module_name, function_name = _PREINSTALLED_GRAMMARS[name]
+                    module = importlib.import_module(module_name)
+                    capsule = getattr(module, function_name)()
+                    from tree_sitter import Language
+                    return Language(capsule)
+                except (KeyError, ImportError, AttributeError) as exc:
+                    raise StructuralBackendUnavailable(
+                        f"preinstalled tree-sitter grammar unavailable for {name!r}; "
+                        "reinstall Yuj with its structural-search dependencies"
+                    ) from exc
+
+            self._language_loader = load_preinstalled_language
         if self._tags_query_loader is None:
             self._tags_query_loader = get_tags_query
-        if self._language_detector is None:
-            self._language_detector = getattr(language_pack, "detect_language", None)
 
     def detect_language(self, path: Path) -> str | None:
         core = _CORE_LANGUAGE_BY_SUFFIX.get(path.suffix.lower())

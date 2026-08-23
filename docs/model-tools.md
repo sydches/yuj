@@ -24,7 +24,7 @@ person types into a terminal.
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
 | `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
-| `list_definitions` | `path` | None | List top-level imports, `__all__`, all-capital names, and annotated names. List all classes and functions. Do not run the file. |
+| `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
@@ -95,6 +95,16 @@ change makes that observation stale. In `warn` mode Yuj applies the edit and
 adds a warning inside its result envelope; in `block` mode it returns
 `ERROR: stale_file: read PATH first` without changing the file. Successful
 `write`, `edit`, and `apply_patch` calls refresh their affected paths.
+
+Repository-wide `list_definitions` rows use
+`path:line kind name signature`. `symbol` is an exact name, and `kind` is
+`def` or `ref`; omit either to keep both. Use `page` when the result envelope
+names a nonzero `next_page`. This mode requires the separately disabled
+`[tools].ast_search_enabled` setting as well as the normal
+`[tools.list_definitions].enabled` gate. The installed structural-search
+dependencies provide Python, JavaScript/TypeScript, Go, Rust, and Java
+grammars locally; a missing backend returns a setup error instead of
+downloading during the tool call.
 
 ## Test runners
 

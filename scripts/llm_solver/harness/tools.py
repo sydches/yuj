@@ -109,6 +109,9 @@ _DISPATCH = {
     ),
     "list_definitions": lambda args, cwd, cfg: list_definitions(
         args["path"], cwd=cwd, cfg=cfg,
+        symbol=args.get("symbol"), kind=args.get("kind"),
+        repo_wide=bool(args.get("repo_wide", False)),
+        page=int(args.get("page", 1)),
     ),
     "apply_patch": lambda args, cwd, cfg: apply_patch_tool(
         args["patch"], cwd=cwd, cfg=cfg,

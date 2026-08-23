@@ -118,6 +118,12 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_run_tests_assertion_context_lines": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5)),
         "tools_run_tests_assertion_context_max": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3)),
         "tools_list_definitions_enabled": bool(d.get("tools", {}).get("list_definitions", {}).get("enabled", False)),
+        "tools_ast_search_enabled": bool(
+            d.get("tools", {}).get("ast_search_enabled", False)
+        ),
+        "tools_ast_search_max_rows": d.get("tools", {}).get(
+            "ast_search_max_rows", 1000
+        ),
         "tools_file_checkpoints_enabled": bool(
             d.get("tools", {}).get("file_checkpoints_enabled", False)
         ),
@@ -476,6 +482,14 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.stale_guard_mode must be 'off', 'warn', "
             f"or 'block', got {cfg.tools_stale_guard_mode!r}."
+        )
+    if (
+        isinstance(cfg.tools_ast_search_max_rows, bool)
+        or not isinstance(cfg.tools_ast_search_max_rows, int)
+        or cfg.tools_ast_search_max_rows < 1
+    ):
+        raise ValueError(
+            "config error: tools.ast_search_max_rows must be an integer >= 1."
         )
     import math
     if isinstance(cfg.lsp_diagnostics_timeout_s, bool) or not isinstance(
