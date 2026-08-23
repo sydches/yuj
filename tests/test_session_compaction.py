@@ -48,6 +48,10 @@ def _make_session(
         "max_tokens_fraction": 0.25,
         "digest_compaction_safety_margin": 0.05,
         "digest_compaction_gate_min_mutations": 0,
+        "digest_keep_recent_turns": 8,
+        "compaction_method": "digest",
+        "checkpoint_keep_recent_tokens": 0,
+        "checkpoint_max_summary_tokens": 4000,
     }
     cfg_kwargs.update(cfg_extra or {})
     sess.cfg = SimpleNamespace(**cfg_kwargs)
@@ -57,6 +61,13 @@ def _make_session(
     sess._compacted = False
     sess._compaction_turn = 0
     sess._server_ctx_cache = server_ctx_value
+    sess._session_number = 1
+    sess._tokenizer = None
+    sess._tool_schemas = []
+    sess.emitted = []
+    sess._emit = lambda event, **fields: sess.emitted.append(
+        {"event": event, **fields}
+    )
     return sess
 
 

@@ -414,6 +414,9 @@ class Config:
     digest_compaction_safety_margin: float = 0.05
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
+    compaction_method: str = "digest"
+    checkpoint_keep_recent_tokens: int = 0
+    checkpoint_max_summary_tokens: int = 4000
     # edit() match policy. Strict is the default (database-of-
     # primitives principle: no silent relaxation). Cascade restores
     # the optional auto-apply behavior.

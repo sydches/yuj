@@ -271,6 +271,9 @@ def _extract_config_fields(d: dict) -> dict:
         "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
+        "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
+        "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
+        "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
         "edit_strict_match": d.get("tools", {}).get("edit_strict_match", True),
         "edit_fuzzy_cascade_enabled": d.get("tools", {}).get("edit_fuzzy_cascade_enabled", False),
         "edit_candidate_count": d.get("tools", {}).get("edit_candidate_count", 3),
@@ -407,6 +410,20 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         falls back to the heuristic otherwise; a warning makes the
         silent downgrade visible.
     """
+    if cfg.compaction_method not in {"digest", "checkpoint"}:
+        raise ValueError(
+            "config error: context.compaction_method must be 'digest' or "
+            f"'checkpoint', got {cfg.compaction_method!r}."
+        )
+    if cfg.checkpoint_keep_recent_tokens < 0:
+        raise ValueError(
+            "config error: context.checkpoint_keep_recent_tokens must be "
+            "zero (auto) or a positive integer."
+        )
+    if cfg.checkpoint_max_summary_tokens <= 0:
+        raise ValueError(
+            "config error: context.checkpoint_max_summary_tokens must be positive."
+        )
     if (cfg.bash_transforms_structured_output_enabled
             and not cfg.bash_transforms_task_format_enabled):
         raise ValueError(

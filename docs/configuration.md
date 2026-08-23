@@ -159,6 +159,33 @@ purpose.
 A context mode changes what the model can see. Record the mode when you compare
 sessions.
 
+### Compact a nearly full context
+
+Compaction runs only after the existing context threshold and mutation gate
+allow it. These settings live under `[context]`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `compaction_method` | `"digest"` | Use the deterministic trace digest, or opt into a model-written `"checkpoint"`. |
+| `checkpoint_keep_recent_tokens` | `0` | Verbatim recent-tail target. Zero means 20% of the live context window, with a 4,096-token minimum. |
+| `checkpoint_max_summary_tokens` | `4000` | Maximum checkpoint response; the runtime also applies a 4,000-token hard cap and the available-reserve limit. |
+| `digest_compaction_safety_margin` | `0.05` | Margin used by the derived compaction threshold. |
+| `digest_keep_recent_turns` | `8` | Digest tail size and the close-compaction guard window. |
+| `digest_compaction_gate_min_mutations` | `0` | Minimum successful mutations before compaction may run. |
+
+Checkpoint mode makes one no-tool call to the active model. Thinking is off
+for that call. Yuj keeps the system prompt and task message unchanged, places
+the validated checkpoint after the task, and keeps a verbatim recent tail
+beginning at an assistant-turn boundary. The checkpoint must contain every
+required section and every mechanically observed modified path, fit the
+budget, and reduce the prompt token count. Any request, response, validation,
+or size failure uses the deterministic digest instead.
+
+Yuj records only compaction metadata in the trace and state projection; it
+does not copy model-written checkpoint text into `.solver/state.json`. If two
+compactions occur within `digest_keep_recent_turns`, later compactions in that
+run segment use digest to avoid a compaction loop.
+
 ## Apply a small TOML file
 
 Change only the values that you need:

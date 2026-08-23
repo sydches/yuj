@@ -1,4 +1,4 @@
-"""Server context size lookup + digest compaction at the OOM-safe threshold."""
+"""Server context size lookup + validated compaction at the OOM-safe threshold."""
 from __future__ import annotations
 
 import json
@@ -17,6 +17,33 @@ class CompactionOverflowError(Exception):
     pair. Caller (chat_io) treats this as terminal — better to end the
     session with a debuggable reason than send and take a server 400.
     """
+
+
+def _sync_checkpoint_archive(session: "Session", messages: list[dict]) -> None:
+    """Keep raw canonical messages outside the compacted visible context.
+
+    The archive is process-local harness memory. It is never projected into
+    state.json or rebuilt from transcript/model summaries. After a compaction,
+    the visible list begins with the synthetic checkpoint; subsequent calls
+    append only messages added beyond that remembered visible length.
+    """
+    archive = getattr(session, "_checkpoint_raw_messages", None)
+    if archive is None:
+        session._checkpoint_raw_messages = [dict(message) for message in messages]
+    else:
+        visible_count = int(
+            getattr(session, "_checkpoint_visible_message_count", len(messages))
+        )
+        if len(messages) > visible_count:
+            archive.extend(dict(message) for message in messages[visible_count:])
+    session._checkpoint_visible_message_count = len(messages)
+
+
+def _latest_assistant_turn(messages: list[dict], current_turn: int) -> int:
+    """Return the logical turn retained by digest's latest assistant pair."""
+    if any(message.get("role") == "assistant" for message in messages):
+        return max(0, int(current_turn) - 1)
+    return 0
 
 
 def _head_tail_truncate(text: str, char_budget: int, head_ratio: float = 0.4,
@@ -230,7 +257,7 @@ def get_server_ctx(session: "Session") -> int:
 
 
 def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dict]:
-    """Digest compaction at the derived OOM-safe threshold.
+    """Digest or validated-checkpoint compaction at the OOM-safe threshold.
 
     Threshold = (1 - max_tokens_fraction) - digest_compaction_safety_margin.
     This guarantees that any turn that does NOT fire compaction
@@ -246,12 +273,17 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     Preserves the leading system message and the initial user
     task message verbatim.
 
-    Re-fires on every subsequent threshold crossing. Long sessions
-    will compact, grow, compact again. The .trace.jsonl is the
-    source of truth for the digest; the projected base after each
-    compaction starts from the full trace replay every time.
+    Checkpoint mode retains raw canonical messages in process, asks the same
+    model for a structured checkpoint, and validates structure/path coverage/
+    shrinkage before use. Every failure takes the unchanged digest path.
     """
     cfg = session.cfg
+    configured_method = str(getattr(cfg, "compaction_method", "digest"))
+    requested_method = str(
+        getattr(session, "_compaction_method_override", "") or configured_method
+    )
+    if requested_method == "checkpoint":
+        _sync_checkpoint_archive(session, messages)
     # Route through the bound method so test mocks patching
     # `Session._get_server_ctx` continue to intercept this call site.
     ctx_size = session._get_server_ctx() or int(getattr(cfg, "context_size", 0) or 0)
@@ -330,45 +362,90 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     if not digest_text.strip():
         return messages
 
-    system_msgs = [m for m in messages if m.get("role") == "system"]
-    # First non-system user message = the original task prompt; keep it.
-    initial_user = None
-    for m in messages:
-        if m.get("role") == "user":
-            initial_user = m
-            break
-    # Preserve the most recent assistant + tool message pair verbatim so
-    # the model gets a full-fidelity turn on the just-arrived tool
-    # result before it is folded into the digest on the next crossing.
-    # Without this, pre-flight compaction strips content the model
-    # never had a turn to use — observed as F2P regressions where the
-    # model only sees the truncated digest result_summary instead of
-    # the full file/output content.
-    latest_pair = []
-    last_assistant_idx = None
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "assistant":
-            last_assistant_idx = i
-            break
-    if last_assistant_idx is not None:
-        latest_pair.append(messages[last_assistant_idx])
-        for m in messages[last_assistant_idx + 1:]:
-            if m.get("role") == "tool":
-                latest_pair.append(m)
-    compacted_block = (
-        f"[HARNESS: prompt crossed {threshold:.2f} of the server context window "
-        f"(est_pt={est_pt}, ctx={ctx_size}). The prior assistant + tool "
-        "history has been replaced by the per-turn digest below; the "
-        "most recent assistant + tool exchange is preserved verbatim "
-        "after the digest. Continue from the most recent state.]\n\n"
-        "=== Compacted history (one line per turn) ===\n"
-        + digest_text
+    compaction_fallback = ""
+    first_kept_turn = _latest_assistant_turn(
+        messages, getattr(session, "_compaction_turn", 0)
     )
-    new_messages = list(system_msgs)
-    if initial_user is not None:
-        new_messages.append(initial_user)
-    new_messages.append({"role": "user", "content": compacted_block})
-    new_messages.extend(latest_pair)
+    latest_pair: list[dict] = []
+    new_messages: list[dict] | None = None
+
+    if requested_method == "checkpoint":
+        from .checkpoint_summary import generate_checkpoint
+
+        keep_recent_tokens = int(
+            getattr(cfg, "checkpoint_keep_recent_tokens", 0) or 0
+        ) or max(4096, int(0.20 * ctx_size))
+
+        def _call_checkpoint(payload: dict) -> str:
+            side_result = session.client.complete_side_request(payload)
+            return side_result.content
+
+        checkpoint = generate_checkpoint(
+            model=cfg.model,
+            messages=getattr(session, "_checkpoint_raw_messages", messages),
+            trace_events=session._trace_events,
+            tokenizer=tokenizer,
+            keep_recent_tokens=keep_recent_tokens,
+            max_summary_tokens=int(cfg.checkpoint_max_summary_tokens),
+            budget=budget,
+            call_model=_call_checkpoint,
+            tools=tool_schemas,
+            previous_summary=str(
+                getattr(session, "_checkpoint_previous_summary", "") or ""
+            ),
+            previous_first_kept_turn=int(
+                getattr(session, "_checkpoint_first_kept_turn", 0) or 0
+            ),
+            tokens_before=est_pt,
+        )
+        if checkpoint.valid and checkpoint.compacted_messages is not None:
+            new_messages = [dict(message) for message in checkpoint.compacted_messages]
+            first_kept_turn = int(checkpoint.first_kept_turn or 0)
+            session._checkpoint_previous_summary = checkpoint.model_summary
+            session._checkpoint_first_kept_turn = first_kept_turn
+        else:
+            compaction_fallback = "digest"
+            if checkpoint.first_kept_turn is not None:
+                first_kept_turn = int(checkpoint.first_kept_turn)
+            log.warning(
+                "checkpoint validation failed; using digest fallback: %s",
+                checkpoint.reason,
+            )
+
+    if new_messages is None:
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        # First non-system user message = the original task prompt; keep it.
+        initial_user = None
+        for m in messages:
+            if m.get("role") == "user":
+                initial_user = m
+                break
+        # Preserve the most recent assistant + tool message pair verbatim so
+        # the model gets a full-fidelity turn on the just-arrived tool result.
+        last_assistant_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "assistant":
+                last_assistant_idx = i
+                break
+        if last_assistant_idx is not None:
+            latest_pair.append(messages[last_assistant_idx])
+            for m in messages[last_assistant_idx + 1:]:
+                if m.get("role") == "tool":
+                    latest_pair.append(m)
+        compacted_block = (
+            f"[HARNESS: prompt crossed {threshold:.2f} of the server context window "
+            f"(est_pt={est_pt}, ctx={ctx_size}). The prior assistant + tool "
+            "history has been replaced by the per-turn digest below; the "
+            "most recent assistant + tool exchange is preserved verbatim "
+            "after the digest. Continue from the most recent state.]\n\n"
+            "=== Compacted history (one line per turn) ===\n"
+            + digest_text
+        )
+        new_messages = list(system_msgs)
+        if initial_user is not None:
+            new_messages.append(initial_user)
+        new_messages.append({"role": "user", "content": compacted_block})
+        new_messages.extend(latest_pair)
 
     # ── Overflow guard ─────────────────────────────────────────────
     # latest_pair was appended verbatim. When it carries 3-5 parallel
@@ -446,6 +523,8 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     ctx = getattr(session, "context", None)
     if ctx is not None:
         ctx.replace_all_messages(new_messages)
+    if requested_method == "checkpoint":
+        session._checkpoint_visible_message_count = len(new_messages)
     # Invalidate the output-dedup cache: its entries reference prior
     # turn numbers whose tool-result content has just been folded into
     # the digest. Leaving the cache intact would cause subsequent
@@ -456,4 +535,34 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     # cannot refer to stale file contents.
     if hasattr(session, "_output_dedup_cache"):
         session._output_dedup_cache.clear()
+    compaction_turn = int(getattr(session, "_compaction_turn", 0) or 0)
+    compaction_turns = getattr(session, "_compaction_turns", None)
+    if compaction_turns is None:
+        compaction_turns = []
+        session._compaction_turns = compaction_turns
+    compaction_turns.append(compaction_turn)
+    session._emit(
+        "compaction",
+        session_number=getattr(session, "_session_number", 0),
+        turn_number=compaction_turn,
+        tokens_before=est_pt,
+        tokens_after=final_count,
+        first_kept_turn=first_kept_turn,
+        method=requested_method,
+        fallback=compaction_fallback,
+        role="main",
+    )
+    if configured_method == "checkpoint":
+        from .checkpoint_summary import loop_guard_forces_digest
+
+        if loop_guard_forces_digest(
+            compaction_turns,
+            keep_recent_turns=int(cfg.digest_keep_recent_turns),
+        ):
+            session._compaction_method_override = "digest"
+            log.warning(
+                "checkpoint loop guard activated after compactions at turns %s; "
+                "using digest for the rest of this session",
+                compaction_turns[-2:],
+            )
     return new_messages

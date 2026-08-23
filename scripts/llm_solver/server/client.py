@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .profile_loader import Profile
 
 from ._streaming import assemble_stream
-from .types import ToolCall
+from .types import SideRequestResult, ToolCall, Usage
 
 
 def _streaming_enabled() -> bool:
@@ -117,7 +117,7 @@ class LlamaClient:
             self._transcript_file.write("\n")
         self._transcript_file.flush()
 
-    def _call_api(self, payload: dict):
+    def _call_api(self, payload: dict, *, record_transcript: bool = True):
         """Send one HTTP request and save its payload and response.
 
         Routes to streaming when YUJ_STREAMING is on. The
@@ -128,12 +128,14 @@ class LlamaClient:
         and are classified by chat_with_retry's _TRANSIENT_ERRORS
         tuple. See server/_streaming.py for the assembly contract.
         """
-        self._transcript_call_n += 1
-        n = self._transcript_call_n
-        self._write_transcript(
-            f"turn {n:03d} input",
-            json.dumps(payload, default=str),
-        )
+        n = 0
+        if record_transcript:
+            self._transcript_call_n += 1
+            n = self._transcript_call_n
+            self._write_transcript(
+                f"turn {n:03d} input",
+                json.dumps(payload, default=str),
+            )
         if _streaming_enabled():
             stream_payload = dict(payload)
             stream_payload["stream"] = True
@@ -146,26 +148,63 @@ class LlamaClient:
                 stream = self.client.chat.completions.create(**stream_payload)
                 resp = assemble_stream(stream)
             except Exception as e:
-                self._write_transcript(
-                    f"turn {n:03d} output (stream error)",
-                    f"{type(e).__name__}: {e}",
-                )
+                if record_transcript:
+                    self._write_transcript(
+                        f"turn {n:03d} output (stream error)",
+                        f"{type(e).__name__}: {e}",
+                    )
                 raise
-            self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
+            if record_transcript:
+                self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
             return resp
         try:
             resp = self.client.chat.completions.create(**payload)
         except Exception as e:
-            self._write_transcript(
-                f"turn {n:03d} output", f"{type(e).__name__}: {e}"
-            )
+            if record_transcript:
+                self._write_transcript(
+                    f"turn {n:03d} output", f"{type(e).__name__}: {e}"
+                )
             raise
         try:
             body = resp.model_dump_json()
         except AttributeError:
             body = json.dumps(resp, default=str)
-        self._write_transcript(f"turn {n:03d} output", body)
+        if record_transcript:
+            self._write_transcript(f"turn {n:03d} output", body)
         return resp
+
+    def complete_side_request(self, payload: dict) -> SideRequestResult:
+        """Send one harness-owned no-tool completion without a solver turn.
+
+        Side requests share this client's endpoint, model profile, and HTTP
+        transport, but they never add ``tools``/``tool_choice`` and never
+        write ``=== turn N ===`` transcript blocks. This keeps transcript
+        resume parsing scoped to the actual solver conversation.
+        """
+        if "tools" in payload or "tool_choice" in payload:
+            raise ValueError("side requests must omit tools and tool_choice")
+        request = dict(payload)
+        messages = request.get("messages")
+        if not isinstance(messages, list):
+            raise ValueError("side request messages must be a list")
+        if self.profile is not None:
+            request["messages"] = self.profile.denormalize_messages(messages)
+        request["model"] = self.cfg.model
+        response = self._call_api(request, record_transcript=False)
+        message = response.choices[0].message
+        if getattr(message, "tool_calls", None):
+            raise ValueError("side request returned tool calls")
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            raise ValueError("side request returned no text content")
+        usage = getattr(response, "usage", None)
+        return SideRequestResult(
+            content=content,
+            usage=Usage(
+                prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            ),
+        )
 
     def health_check(self) -> list[str]:
         """Verify server is reachable via /v1/models. Raises on connection failure."""
@@ -269,7 +308,7 @@ class LlamaClient:
         self, messages: list[dict], tools: list[dict], turn: int
     ):
         """Profile-driven chat: denormalize → HTTP → normalize → TurnResult."""
-        from .types import TurnResult, Usage
+        from .types import TurnResult
 
         profile = self.profile
 
@@ -360,7 +399,7 @@ class LlamaClient:
         self, messages: list[dict], tools: list[dict], turn: int
     ):
         """Legacy chat without profile — ad-hoc quirk handling."""
-        from .types import TurnResult, Usage
+        from .types import TurnResult
 
         resp = self._call_api({
             "model": self.cfg.model,
