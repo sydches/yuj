@@ -122,6 +122,7 @@ order in the
 | `[sandbox.env].allow_login_shell` | Let command shells load login profiles. False keeps profile and rc loading disabled. |
 | `[state].ignore_file_enabled` | Apply task-root Gitignore-style model-view files. On by default. |
 | `[state].ignore_file_names` | List ignore files in precedence order. Defaults to `.yujignore`. |
+| `[state].todos_char_budget` | Bound the todo block added to state-backed per-turn context. Defaults to 2,000 characters. |
 | `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
@@ -129,6 +130,8 @@ order in the
 | `[tools].bash_redirect_read_side` | Redirect eligible `cat`/search/path-discovery shell reads to bounded dedicated tools. Off by default. |
 | `[tools].ast_search_enabled` | Add repository-wide definition/reference lookup to `list_definitions`. Off by default. |
 | `[tools].ast_search_max_rows` | Cap the rows available to one repository structural query before pagination. |
+| `[tools].todos_enabled` | Add the session-scoped `write_todos` tool. Off by default. |
+| `[tools].todos_max_items` | Limit the number of entries in one todo-list replacement. Defaults to 20. |
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
@@ -405,6 +408,34 @@ validation remains available. Constraints apply only to normal requests that
 carry tools, never harness-owned side requests. Cache request policy is still
 applied last.
 
+### Maintain a model todo list
+
+The model-callable todo list is disabled by default. Enable it with a small
+overlay:
+
+```toml
+[tools]
+todos_enabled = true
+todos_max_items = 20
+
+[state]
+todos_char_budget = 2000
+```
+
+`write_todos` accepts `todos = [{description, status}, ...]`. A status must be
+`pending`, `in_progress`, `completed`, `cancelled`, or `blocked`, and a list
+may contain at most one `in_progress` item. Every successful call replaces the
+whole session list, including an empty list used to clear it. The item count
+cannot exceed `tools.todos_max_items`.
+
+The model does not write `.solver/state.json`. A successful call first creates
+a raw `todos` trace event, and the harness projects only the latest such event
+into the top-level `todos` section of `.solver/state.json`. State-backed
+context modes render that projection beside the normal continuation suffix on
+subsequent projected turns. `state.todos_char_budget` caps the complete
+`=== Todos ===` block; truncation affects only model context, never the trace
+event or state projection.
+
 ### Apply per-tool permission rules
 
 The default permission table is empty and therefore allows every call to
@@ -436,8 +467,9 @@ entry can set a baseline which a later exact-tool entry overrides.
 Each tool has one canonical match value. `bash` uses `cmd`; `read`, `write`,
 `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, and `lsp` use `path`
 (`glob` and `grep` default it to `.`); `apply_patch` uses `patch`; `done` uses
-`message`; and `bash_poll`/`bash_kill` use `proc_id`. Calls without a dedicated
-field use a canonical sorted JSON argument object.
+`message`; `bash_poll`/`bash_kill` use `proc_id`; and `write_todos` uses its
+canonical todo array. Calls without a dedicated field use a canonical sorted
+JSON argument object.
 
 In assistant mode, `ask` writes `approval_request.json`, pauses, and can be
 continued with `yuj approve` or refused with `yuj reject`. `--always` stores a

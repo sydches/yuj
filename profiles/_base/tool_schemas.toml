@@ -49,6 +49,11 @@ required = ["pattern"]
 properties = { pattern = { type = "string" }, path = { type = "string" }, glob = { type = "string" }, page = { type = "integer" } }
 
 [[tools]]
+name = "write_todos"
+required = ["todos"]
+properties = { todos = { type = "array", items = { type = "object", required = ["description", "status"], additionalProperties = false, properties = { description = { type = "string" }, status = { type = "string", enum = ["pending", "in_progress", "completed", "cancelled", "blocked"] } } } } }
+
+[[tools]]
 name = "run_tests"
 required = []
 properties = { path = { type = "string" }, k = { type = "string" }, last_failed = { type = "boolean" } }

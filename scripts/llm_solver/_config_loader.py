@@ -165,6 +165,12 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_constrained_decoding": d.get("tools", {}).get(
             "constrained_decoding", "off"
         ),
+        "tools_todos_enabled": d.get("tools", {}).get(
+            "todos_enabled", False
+        ),
+        "tools_todos_max_items": d.get("tools", {}).get(
+            "todos_max_items", 20
+        ),
         "tools_background_enabled": d.get("tools", {}).get(
             "background_enabled", False
         ),
@@ -186,6 +192,9 @@ def _extract_config_fields(d: dict) -> dict:
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
         "context_ignore_state": d.get("state", {}).get("context_ignore", False),
         "state_imperative_projection_enabled": d.get("state", {}).get("imperative_projection_enabled", False),
+        "state_todos_char_budget": d.get("state", {}).get(
+            "todos_char_budget", 2000
+        ),
         "state_ignore_file_enabled": d.get("state", {}).get(
             "ignore_file_enabled", True
         ),
@@ -589,6 +598,26 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    if not isinstance(cfg.tools_todos_enabled, bool):
+        raise ValueError(
+            "config error: tools.todos_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_todos_max_items, bool)
+        or not isinstance(cfg.tools_todos_max_items, int)
+        or cfg.tools_todos_max_items < 1
+    ):
+        raise ValueError(
+            "config error: tools.todos_max_items must be an integer >= 1."
+        )
+    if (
+        isinstance(cfg.state_todos_char_budget, bool)
+        or not isinstance(cfg.state_todos_char_budget, int)
+        or cfg.state_todos_char_budget < 1
+    ):
+        raise ValueError(
+            "config error: state.todos_char_budget must be an integer >= 1."
+        )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,

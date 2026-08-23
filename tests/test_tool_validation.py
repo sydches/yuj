@@ -34,6 +34,9 @@ VALID_ARGUMENTS = {
     },
     "glob": {"pattern": "**/*.py", "path": "src", "page": 1},
     "grep": {"pattern": "value", "path": "src", "glob": "*.py", "page": 2},
+    "write_todos": {
+        "todos": [{"description": "Run focused tests", "status": "in_progress"}],
+    },
     "lsp": {
         "kind": "definition", "path": "src/app.py",
         "line": 4, "character": 2,
@@ -69,6 +72,12 @@ INVALID_ARGUMENTS = (
     ("glob", {"pattern": "*.py", "page": "one"}, "$.page", "type"),
     ("grep", {}, "$.pattern", "required"),
     ("grep", {"pattern": "x", "path": 3}, "$.path", "type"),
+    (
+        "write_todos",
+        {"todos": [{"description": "x", "status": "unknown"}]},
+        "$.todos[0].status",
+        "enum",
+    ),
     ("run_tests", {"last_failed": "false"}, "$.last_failed", "type"),
     ("list_definitions", {}, "$.path", "required"),
     ("list_definitions", {"path": None}, "$.path", "type"),

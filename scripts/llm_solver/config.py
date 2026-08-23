@@ -377,6 +377,10 @@ class Config:
     tools_bash_redirect_read_side: bool = False
     tools_schema_validation: str = "off"
     tools_constrained_decoding: str = "off"
+    # Session-scoped model-authored todo list. The handler validates and the
+    # trace/state pipeline owns persistence; this is not a source mutation.
+    tools_todos_enabled: bool = False
+    tools_todos_max_items: int = 20
     tools_background_enabled: bool = False
     tools_background_max_procs: int = 4
     tools_background_poll_timeout: float = 300.0
@@ -453,6 +457,7 @@ class Config:
     state_writer_enabled: bool = True
     context_ignore_state: bool = False
     state_imperative_projection_enabled: bool = False
+    state_todos_char_budget: int = 2000
     state_ignore_file_enabled: bool = True
     state_ignore_file_names: tuple[str, ...] = (".yujignore",)
     # Paginated search envelopes for grep/glob. Defaults ship on.

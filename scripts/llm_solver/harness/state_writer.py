@@ -12,6 +12,7 @@ Schema (target of the projection, consumed by SolverStateContext):
 
     {
       "state":     {"current_attempt": str, "last_verify": str, "next_action": str},
+      "todos":     [{"description": str, "status": str}, ...],
       "trace":     [{"step": int, "session": int, "turn": int, "reasoning": str,
                      "action": str, "result": str, "next": str,
                      "gate_blocked": bool, "write_like": bool,
@@ -70,6 +71,7 @@ because the model is its reader:
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections import Counter
@@ -407,6 +409,7 @@ def project(events: list[dict], *, max_result_chars: int,
     snapshots came from the same trace prefix.
     """
     state: dict = {}
+    todos: list[dict] = []
     trace: list[dict] = []
     evidence: list[dict] = []
 
@@ -487,6 +490,12 @@ def project(events: list[dict], *, max_result_chars: int,
                 "method": ev.get("method"),
                 "fallback": ev.get("fallback"),
             }
+        elif et == "todos":
+            # Model-authored planning content enters state only through this
+            # explicit trace event. Each event replaces the whole list; no
+            # tool-call summary or prior state.json value is merged into it.
+            latest = ev.get("todos")
+            todos = copy.deepcopy(latest) if isinstance(latest, list) else []
         # session_start: no state mutation.
 
     state.setdefault("current_attempt", "")
@@ -510,6 +519,7 @@ def project(events: list[dict], *, max_result_chars: int,
             "last_turn": _last_turn(events),
         },
         "state": state,
+        "todos": todos,
         "trace": trace,
         "gates": [],
         "evidence": evidence,
@@ -525,8 +535,18 @@ def project_from_trace(trace_path: Path, *, max_result_chars: int,
     """Load `.trace.jsonl` and project it. Missing file → empty schema."""
     trace_path = Path(trace_path)
     if not trace_path.is_file():
-        return {"state": {"current_attempt": "", "last_verify": "", "next_action": ""},
-                "trace": [], "gates": [], "evidence": [], "inference": []}
+        return {
+            "state": {
+                "current_attempt": "",
+                "last_verify": "",
+                "next_action": "",
+            },
+            "todos": [],
+            "trace": [],
+            "gates": [],
+            "evidence": [],
+            "inference": [],
+        }
     events = []
     with open(trace_path) as f:
         for line in f:

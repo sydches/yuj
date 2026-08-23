@@ -45,6 +45,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "lsp": ("path", ""),
         "read": ("path", ""),
         "run_tests": ("path", ""),
+        "write_todos": ("todos", ()),
         "write": ("path", ""),
     }
 )

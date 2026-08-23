@@ -100,6 +100,7 @@ _CONTEXT_ATTR_REFRESH = {
     "solver_evidence_lines": ("_evidence_lines",),
     "solver_inference_lines": ("_inference_lines",),
     "solver_trace_lines": ("_trace_lines",),
+    "state_todos_char_budget": ("_todos_char_budget",),
     "state_context_suffix": ("_suffix",),
     "trace_reasoning_chars": ("_trace_reasoning_chars",),
     "trace_stub_chars": ("_trace_stub_chars",),
@@ -224,6 +225,7 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
     tool_fields = {
         "tool_desc",
         "tools_run_tests_enabled",
+        "tools_todos_enabled",
         "tools_list_definitions_enabled",
         "tools_apply_patch_enabled",
     }
