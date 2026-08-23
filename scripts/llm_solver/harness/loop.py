@@ -46,8 +46,8 @@ from .tool_validation import ToolSchemaSet
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
-    ToolRegistry, _bash_unreadable_paths, build_tool_registry, dispatch,
-    validate_tool_handlers,
+    ToolRegistry, _bash_unreadable_paths, admit_tool_output,
+    build_tool_registry, dispatch, validate_tool_handlers,
 )
 
 log = logging.getLogger(__name__)
@@ -205,6 +205,8 @@ class Session:
         tool_registry: ToolRegistry | None = None,
         checkpoint_store=None,
         lsp_manager=None,
+        process_manager=None,
+        artifact_dir: Path | None = None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
     ):
         self.cfg = cfg
@@ -213,6 +215,9 @@ class Session:
         self._session_number = session_number
         self._current_turn = 0
         self._service_event_lock = threading.RLock()
+        self._trace_file = trace_file
+        self._trace_path = trace_path
+        self._state_path = state_path
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
@@ -305,6 +310,30 @@ class Session:
 
         base_registry = tool_registry or build_tool_registry()
         handlers = dict(base_registry.handlers)
+        self._process_manager = process_manager
+
+        base_bash_handler = handlers["bash"]
+
+        def _bash_handler(args, dispatch_cwd, dispatch_cfg):
+            if not bool(args.get("background", False)):
+                return base_bash_handler(args, dispatch_cwd, dispatch_cfg)
+            if self._process_manager is None:
+                return "ERROR: background processes are not enabled"
+            return self._process_manager.start(str(args["cmd"])).result
+
+        def _bash_poll_handler(args, _cwd, _cfg):
+            if self._process_manager is None:
+                return "ERROR: background processes are not enabled"
+            timeout = args.get("timeout_s")
+            return self._process_manager.poll(
+                str(args["proc_id"]),
+                timeout_s=None if timeout is None else float(timeout),
+            ).result
+
+        def _bash_kill_handler(args, _cwd, _cfg):
+            if self._process_manager is None:
+                return "ERROR: background processes are not enabled"
+            return self._process_manager.kill(str(args["proc_id"])).result
 
         def _lsp_handler(args, _cwd, _cfg):
             if self._lsp_manager is None:
@@ -324,6 +353,9 @@ class Session:
             )
 
         handlers["lsp"] = _lsp_handler
+        handlers["bash"] = _bash_handler
+        handlers["bash_poll"] = _bash_poll_handler
+        handlers["bash_kill"] = _bash_kill_handler
         self._tool_registry = ToolRegistry(handlers=handlers)
         self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
@@ -421,6 +453,65 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        if self._process_manager is None and getattr(
+            cfg, "tools_background_enabled", False
+        ):
+            from .process_manager import ProcessManager, ReplayProcessManager
+
+            replay_events = getattr(client, "process_events", None)
+            if bool(getattr(client, "is_replay", False)):
+                self._process_manager = ReplayProcessManager(
+                    event for event in (replay_events or ())
+                    if int(event.get("session_number", -1)) == session_number
+                )
+            else:
+                def _process_event_sink(payload: dict[str, object]) -> None:
+                    fields = dict(payload)
+                    event_type = str(fields.pop("event"))
+                    with self._service_event_lock:
+                        self._emit(
+                            event_type,
+                            session_number=self._session_number,
+                            turn_number=self._current_turn,
+                            **fields,
+                        )
+
+                def _admit_poll_output(value: str) -> str:
+                    return admit_tool_output(
+                        "bash_poll",
+                        value,
+                        arguments={},
+                        cfg=self.cfg,
+                        output_control=self.output_control,
+                        redactions=self.redactions,
+                    )
+
+                manager_run_dir = Path(
+                    artifact_dir
+                    or (trace_path.parent if trace_path is not None else cwd)
+                )
+                self._process_manager = ProcessManager.sandboxed(
+                    run_dir=manager_run_dir,
+                    cwd=cwd,
+                    bwrap_bin=cfg.bwrap_bin,
+                    unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+                    sandbox_required=getattr(cfg, "sandbox_required", False),
+                    sandbox=bool(getattr(cfg, "sandbox_bash", True)),
+                    sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
+                    container_runtime=getattr(
+                        cfg, "sandbox_container_runtime", "docker"
+                    ),
+                    container_image=getattr(
+                        cfg, "sandbox_container_image", ""
+                    ),
+                    container_flags=tuple(
+                        getattr(cfg, "sandbox_container_flags", ()) or ()
+                    ),
+                    max_procs=int(cfg.tools_background_max_procs),
+                    poll_timeout_s=float(cfg.tools_background_poll_timeout),
+                    admit_output=_admit_poll_output,
+                    event_sink=_process_event_sink,
+                )
         from .stale_guard import StaleFileGuard
 
         def _stale_guard_event_sink(payload: dict[str, object]) -> None:
@@ -470,7 +561,6 @@ class Session:
         # uses the live server window instead of a stale config knob.
         self._server_ctx_synced = False
         self._tool_log: list[tuple[str, str]] = []  # (name, args_summary)
-        self._trace_file = trace_file
         # Async trace writer — lazy-instantiated by Session.run() when
         # trace_file is set, so tests that poke at internal state
         # without running the loop don't spawn writer threads.
@@ -496,8 +586,6 @@ class Session:
         # Mechanical state.json writer — harness side, not model side.
         # Gated on state_path being non-None (arm=with_yuj only; wo_yuj runs
         # never seed .solver/state.json and therefore get no state writes).
-        self._trace_path = trace_path
-        self._state_path = state_path
         # Injection subsystem (harness/injections.py). Off-by-default;
         # when enabled, loads markdown fragments from
         # <cwd>/<cfg.injections_dir> at session start. Fire state is
@@ -633,6 +721,8 @@ class Session:
             teardown_persistent_bash(runner)
             if self._lsp_manager is not None:
                 self._lsp_manager.close()
+            if self._process_manager is not None:
+                self._process_manager.close()
             if self._async_trace_writer is not None:
                 self._async_trace_writer.stop(timeout=5.0)
                 self._async_trace_writer = None

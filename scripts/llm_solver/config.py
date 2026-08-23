@@ -373,6 +373,9 @@ class Config:
     tools_bash_redirect_read_side: bool = False
     tools_schema_validation: str = "off"
     tools_constrained_decoding: str = "off"
+    tools_background_enabled: bool = False
+    tools_background_max_procs: int = 4
+    tools_background_poll_timeout: float = 300.0
     # First-class shell sandbox backend. Container mode creates one ephemeral
     # Docker/Podman container per command and preserves the absolute cwd.
     sandbox_backend: str = "bwrap"

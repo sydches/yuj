@@ -11,7 +11,17 @@
 [[tools]]
 name = "bash"
 required = ["cmd"]
-properties = { cmd = { type = "string" } }
+properties = { cmd = { type = "string" }, background = { type = "boolean" } }
+
+[[tools]]
+name = "bash_poll"
+required = ["proc_id"]
+properties = { proc_id = { type = "string" }, timeout_s = { type = "number" } }
+
+[[tools]]
+name = "bash_kill"
+required = ["proc_id"]
+properties = { proc_id = { type = "string" } }
 
 [[tools]]
 name = "read"

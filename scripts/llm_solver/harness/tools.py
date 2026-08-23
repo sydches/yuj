@@ -44,6 +44,7 @@ from ._tool_filters import (
     _filter_bash_output, _line_skeleton, truncate_output,
 )
 from .tool_specs import ACTIVE_TOOL_NAMES, is_native_envelope
+from .process_manager import AdmittedProcessOutput, ProcessManagerError
 
 log = logging.getLogger(__name__)
 
@@ -71,8 +72,10 @@ def _bash_unreadable_paths(cwd, cfg) -> tuple[str, ...]:
     return configured + (f"optional:{telemetry_dir(Path(cwd))}",)
 
 
-_DISPATCH = {
-    "bash": lambda args, cwd, cfg: bash(
+def _dispatch_bash(args, cwd, cfg):
+    if bool(args.get("background", False)):
+        return "ERROR: background process manager is unavailable"
+    return bash(
         args["cmd"], cwd=cwd, timeout=cfg.bash_timeout, sandbox=cfg.sandbox_bash,
         bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
@@ -85,6 +88,16 @@ _DISPATCH = {
         container_flags=tuple(
             getattr(cfg, "sandbox_container_flags", ()) or ()
         ),
+    )
+
+
+_DISPATCH = {
+    "bash": _dispatch_bash,
+    "bash_poll": lambda args, cwd, cfg: (
+        "ERROR: background process manager is unavailable"
+    ),
+    "bash_kill": lambda args, cwd, cfg: (
+        "ERROR: background process manager is unavailable"
     ),
     "read": lambda args, cwd, cfg: read(
         args["path"], cwd=cwd, offset=args.get("offset", 0),
@@ -166,6 +179,61 @@ def validate_tool_handlers(schema_names: list[str], *,
             f"missing handlers={sorted(missing_handlers)}, "
             f"undeclared handlers={sorted(undeclared_handlers)}"
         )
+
+
+def admit_tool_output(
+    name: str,
+    result: object,
+    *,
+    arguments: dict,
+    cfg: Config,
+    output_control=None,
+    redactions=None,
+    filter_shell_output: bool = True,
+) -> str:
+    """Apply the single model-facing output-admission pipeline.
+
+    Background polls call this before emitting ``proc_poll``. Their marked
+    result then passes through :func:`dispatch` without a second transform.
+    """
+    result = str(result)
+    if name in {"bash", "bash_poll"} and filter_shell_output:
+        cmd = str(arguments.get("cmd", ""))
+        result = _filter_bash_output(result, cmd, cfg)
+        if output_control is not None and name == "bash":
+            from ..bash_quirks import condense_output
+            result = condense_output(result, cmd, output_control)
+    elif name == "run_tests":
+        argv: list[str] = ["pytest"]
+        if arguments.get("last_failed"):
+            argv.append("--lf")
+        if arguments.get("k"):
+            argv.extend(["-k", str(arguments["k"])])
+        if arguments.get("path"):
+            argv.append(str(arguments["path"]))
+        synthesized_cmd = " ".join(argv)
+        result = _filter_bash_output(result, synthesized_cmd, cfg)
+        if output_control is not None:
+            from ..bash_quirks import condense_output
+            result = condense_output(result, synthesized_cmd, output_control)
+
+    if redactions and not is_native_envelope(result):
+        from ..bash_quirks import apply_redactions
+        result = apply_redactions(result, redactions)
+
+    if (
+        getattr(cfg, "tools_unified_envelope_enabled", False)
+        and not is_native_envelope(result)
+    ):
+        from .._shared.classification import derive_envelope_status
+        status, error_kind = derive_envelope_status(result)
+        attrs = f' tool_name="{_xml_attr(name)}" status="{status}"'
+        if error_kind:
+            attrs += f' error_kind="{_xml_attr(error_kind)}"'
+        attrs += f' v="{_UNIFIED_ENVELOPE_VERSION}"'
+        result = f'<tool_result{attrs}>\n{result}\n</tool_result>'
+
+    return truncate_output(result, cfg)
 
 
 def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
@@ -282,6 +350,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         try:
             executed = True
             result = handler(arguments, cwd, cfg)
+        except ProcessManagerError as e:
+            result = f"ERROR: {e}"
         except (KeyError, TypeError) as e:
             return f"ERROR: bad arguments for {name}: {e}"
 
@@ -327,90 +397,25 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     if stale_decision is not None and stale_decision.message and not stale_decision.blocked:
         result = str(result) + "\n\n" + stale_decision.message
 
+    already_admitted = isinstance(result, AdmittedProcessOutput)
     if execution_metadata is not None:
         execution_metadata["executed"] = executed
         if hasattr(result, "exit_status"):
             execution_metadata["exit_status_known"] = True
             execution_metadata["exit_status"] = getattr(result, "exit_status")
             execution_metadata["timed_out"] = bool(getattr(result, "timed_out", False))
+    if already_admitted:
         result = str(result)
-
-    if name == "bash" and not redirected:
-        cmd = arguments.get("cmd", "")
-        result = _filter_bash_output(result, cmd, cfg)
-        # Post-execution: condense passing-test lines.
-        if output_control is not None:
-            from ..bash_quirks import condense_output
-            result = condense_output(result, cmd, output_control)
-    elif name == "run_tests":
-        # Same content-blind hygiene as bash. The pytest invocation is
-        # synthesized from arguments — pass it explicitly so the runner
-        # rewrites/condense paths can match a real command line.
-        argv: list[str] = ["pytest"]
-        if arguments.get("last_failed"):
-            argv.append("--lf")
-        if arguments.get("k"):
-            argv.extend(["-k", str(arguments["k"])])
-        if arguments.get("path"):
-            argv.append(str(arguments["path"]))
-        synthesized_cmd = " ".join(argv)
-        result = _filter_bash_output(result, synthesized_cmd, cfg)
-        if output_control is not None:
-            from ..bash_quirks import condense_output
-            result = condense_output(result, synthesized_cmd, output_control)
-
-    # Secret redaction — applied to every tool result regardless of which
-    # handler produced it (bash, run_tests, read, write, edit). Runs
-    # AFTER content-blind filters but BEFORE truncate_output so that a
-    # secret near the tail of a large blob still gets masked even when
-    # the head/tail truncator would have kept the bytes. Idempotent:
-    # patterns can't re-fire on their own [REDACTED:*] replacements.
-    # Redaction is for raw tool output (bash stdout, read content) where
-    # a model could exfiltrate a real secret. The structured tools
-    # (run_tests / list_definitions / apply_patch) produce their own
-    # envelope content: pytest output, AST signatures, file-op summaries
-    # respectively. Test fixtures that embed mock keys ("sk-test-…")
-    # legitimately match secret-shape patterns and trigger false-positive
-    # redaction inside those envelopes — confusing the model when its
-    # test output suddenly says [REDACTED:*]. Skip redaction when the
-    # result is already a known structured envelope; the typed tool's
-    # surface is bounded and the threat model (raw shell exfil) does
-    # not apply because native envelopes already contain structured text.
-    already_enveloped_for_redaction = is_native_envelope(result)
-    if redactions and not already_enveloped_for_redaction:
-        from ..bash_quirks import apply_redactions
-        result = apply_redactions(result, redactions)
-
-    # Optional unified <tool_result> envelope. Default OFF (preserves arm
-    # symmetry — every existing test/asserter expects the legacy raw
-    # string). When enabled, every dispatcher result is wrapped in
-    # `<tool_result tool_name="..." status="..." [error_kind="..."]>…</tool_result>`
-    # so downstream readers (model + analysis) can branch on a single
-    # discriminator instead of re-deriving status from the in-band
-    # marker zoo (ERROR: / [exit code: N] / [harness gate]).
-    #
-    # Skip-already-enveloped: tools that produce their own structured
-    # envelope (run_tests → <test_results>, list_definitions →
-    # <list_definitions>, apply_patch → <apply_patch ok="true">) do not
-    # need an outer wrap — wrapping them creates a double-envelope the
-    # model has to parse twice. We detect via the leading "<" + known
-    # tag prefix of the inner result and skip the wrap; the inner
-    # envelope's own status attribute IS the discriminator. For raw
-    # tools (bash / read / write / edit / glob / grep) the wrap still
-    # adds value: they have no native envelope and benefit from the
-    # uniform status discriminator.
-    if getattr(cfg, "tools_unified_envelope_enabled", False):
-        already_enveloped = is_native_envelope(result)
-        if not already_enveloped:
-            from .._shared.classification import derive_envelope_status
-            status, error_kind = derive_envelope_status(result)
-            attrs = f' tool_name="{_xml_attr(name)}" status="{status}"'
-            if error_kind:
-                attrs += f' error_kind="{_xml_attr(error_kind)}"'
-            attrs += f' v="{_UNIFIED_ENVELOPE_VERSION}"'
-            result = f'<tool_result{attrs}>\n{result}\n</tool_result>'
-
-    result = truncate_output(result, cfg)
+    else:
+        result = admit_tool_output(
+            name,
+            result,
+            arguments=arguments,
+            cfg=cfg,
+            output_control=output_control,
+            redactions=redactions,
+            filter_shell_output=not redirected,
+        )
     if execution_metadata is not None:
         execution_metadata["output_sha256"] = hashlib.sha256(
             result.encode("utf-8", errors="replace")

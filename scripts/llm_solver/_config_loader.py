@@ -3,6 +3,7 @@
 Internal to scripts.llm_solver; load_config() in config.py is the public entry.
 """
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,6 +152,15 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "tools_constrained_decoding": d.get("tools", {}).get(
             "constrained_decoding", "off"
+        ),
+        "tools_background_enabled": d.get("tools", {}).get(
+            "background_enabled", False
+        ),
+        "tools_background_max_procs": d.get("tools", {}).get(
+            "background_max_procs", 4
+        ),
+        "tools_background_poll_timeout": d.get("tools", {}).get(
+            "background_poll_timeout", 300.0
         ),
         "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
         "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
@@ -540,6 +550,28 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    if not isinstance(cfg.tools_background_enabled, bool):
+        raise ValueError(
+            "config error: tools.background_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_background_max_procs, bool)
+        or not isinstance(cfg.tools_background_max_procs, int)
+        or cfg.tools_background_max_procs < 1
+    ):
+        raise ValueError(
+            "config error: tools.background_max_procs must be an integer >= 1."
+        )
+    if (
+        isinstance(cfg.tools_background_poll_timeout, bool)
+        or not isinstance(cfg.tools_background_poll_timeout, (int, float))
+        or not math.isfinite(float(cfg.tools_background_poll_timeout))
+        or float(cfg.tools_background_poll_timeout) < 0
+    ):
+        raise ValueError(
+            "config error: tools.background_poll_timeout must be a finite "
+            "number >= 0."
+        )
     if cfg.sandbox_backend not in {"bwrap", "container"}:
         raise ValueError(
             "config error: sandbox.backend must be 'bwrap' or 'container', "
@@ -603,7 +635,6 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.ast_search_max_rows must be an integer >= 1."
         )
-    import math
     if isinstance(cfg.lsp_diagnostics_timeout_s, bool) or not isinstance(
         cfg.lsp_diagnostics_timeout_s, (int, float)
     ) or not math.isfinite(float(cfg.lsp_diagnostics_timeout_s)) or float(

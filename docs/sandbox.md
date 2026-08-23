@@ -162,6 +162,12 @@ They start lazily, are never downloaded at runtime, and are stopped at session
 teardown. If a configured binary is absent, Yuj warns once and continues
 without diagnostics.
 
+Background commands use the same selected sandbox backend, writable task
+directory, unreadable masks, and no-network policy as synchronous `bash`.
+Each command has its own process group. The harness captures combined output
+outside the model's control, exposes bytes only through explicit traced polls,
+and terminates all remaining groups before the session trace writer closes.
+
 After most run segments, Yuj also tries to run `git add -A` and make a
 checkpoint commit when the target repository has uncommitted changes. That
 Git operation does not pass through the model approval check. Start with a

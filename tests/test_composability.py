@@ -174,6 +174,8 @@ def test_tool_specs_drive_surface_metadata():
         "list_definitions": "tools_list_definitions_enabled",
         "apply_patch": "tools_apply_patch_enabled",
         "lsp": "lsp_tool_enabled",
+        "bash_poll": "tools_background_enabled",
+        "bash_kill": "tools_background_enabled",
     }
     assert NATIVE_ENVELOPE_PREFIXES == (
         "<test_results",

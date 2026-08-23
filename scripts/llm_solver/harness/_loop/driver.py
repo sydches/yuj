@@ -407,6 +407,7 @@ def solve_task(
                 output_parser=output_parser,
                 pretest_parsed=pretest_parsed_verdict,
                 checkpoint_store=checkpoint_store,
+                artifact_dir=artifact_dir,
                 adaptive_control_baseline_config_paths=tuple(
                     (run_metadata or {}).get("config_paths", ())
                     or getattr(cfg, "adaptive_control_baseline_config_paths", ())

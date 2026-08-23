@@ -38,7 +38,7 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `list_definitions`, `apply_patch`, `run_tests`, `lsp` | Off |
+| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 
 Turn on the optional tools in a small settings file:
 
@@ -51,6 +51,9 @@ enabled = true
 
 [tools.run_tests]
 enabled = true
+
+[tools]
+background_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -83,6 +86,14 @@ the model a general path into the host system.
 The `bash` tool follows the active sandbox and approval settings. Read
 [Sandbox](sandbox.html) before you let the model work on private files or use a
 Docker socket.
+
+With `[tools].background_enabled = true`, pass `background = true` to `bash`
+to receive a `proc_id` without waiting for the command. `bash_poll` returns
+only output added since the preceding poll and waits no longer than
+`[tools].background_poll_timeout`; `bash_kill` terminates the process group.
+The live-process limit is `[tools].background_max_procs`. Poll output uses the
+same filters, redaction, result envelope, and output limit as other tools. Yuj
+kills every remaining child at session end.
 
 Yuj can reject a shell fragment when an active dedicated tool owns the same
 operation. The result says `Blocked:` and names the tool to use. Write-side

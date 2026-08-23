@@ -28,53 +28,63 @@ class ToolSpec:
 TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("bash", schema_order=0),
     ToolSpec(
+        "bash_poll",
+        profile_gate_attr="tools_background_enabled",
+        schema_order=1,
+    ),
+    ToolSpec(
+        "bash_kill",
+        profile_gate_attr="tools_background_enabled",
+        schema_order=2,
+    ),
+    ToolSpec(
         "read",
         parallel_read_safe=True,
-        schema_order=1,
+        schema_order=3,
     ),
     ToolSpec(
         "write",
         guardrail_mutation=True,
         action_write_like=True,
-        schema_order=2,
+        schema_order=4,
     ),
     ToolSpec(
         "edit",
         guardrail_mutation=True,
         action_write_like=True,
-        schema_order=3,
+        schema_order=5,
     ),
     ToolSpec(
         "glob",
         parallel_read_safe=True,
-        schema_order=4,
+        schema_order=6,
     ),
     ToolSpec(
         "grep",
         parallel_read_safe=True,
-        schema_order=5,
+        schema_order=7,
     ),
     ToolSpec(
         "lsp",
         profile_gate_attr="lsp_tool_enabled",
-        schema_order=9,
+        schema_order=11,
     ),
     ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=10,
+        schema_order=12,
     ),
     ToolSpec(
         "run_tests",
         profile_gate_attr="tools_run_tests_enabled",
         native_envelope_prefix="<test_results",
-        schema_order=6,
+        schema_order=8,
     ),
     ToolSpec(
         "list_definitions",
         profile_gate_attr="tools_list_definitions_enabled",
         native_envelope_prefix="<list_definitions",
-        schema_order=7,
+        schema_order=9,
     ),
     ToolSpec(
         "apply_patch",
@@ -82,7 +92,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         action_write_like=True,
         profile_gate_attr="tools_apply_patch_enabled",
         native_envelope_prefix="<apply_patch",
-        schema_order=8,
+        schema_order=10,
     ),
     # Compatibility names can appear in older traces or model profiles even
     # though the active public schema no longer declares handlers for them.

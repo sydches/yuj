@@ -70,6 +70,13 @@ Replay joins the parts and gives their turns one continuous order.
 Replay does not restore a saved working tree. It runs the saved actions again
 on the fresh task copy.
 
+Background process lifecycle is the exception to command re-execution:
+`proc_start`, `proc_poll`, and `proc_kill` rows form an ordered auxiliary
+stream. Replay validates the recorded start command hash, returns each saved
+poll result byte-for-byte, and consumes recorded kills without starting an
+operating-system process. The ordinary replay fidelity check still compares
+the associated `tool_call` result seen by the model.
+
 The replay run writes a new transcript. For each replayed turn, the input block
 holds `messages` and `tools` from before model-profile conversion. The output
 block copies the recorded model reply. Yuj flushes the file after each turn.

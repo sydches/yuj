@@ -275,7 +275,10 @@ class TestSessionRun:
         # Non-immune tools are taken from the head of the original
         # ordering, in original order.
         all_tools = [s["function"]["name"] for s in get_tool_schemas("minimal")]
-        non_immune = [n for n in all_tools if n != "done"]
+        non_immune = [
+            n for n in all_tools
+            if n not in {"done", "bash_poll", "bash_kill"}
+        ]
         assert [n for n in actual if n != "done"] == non_immune[:2]
 
     def test_session_applies_profile_simplify_schemas(self):

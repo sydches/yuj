@@ -284,6 +284,11 @@ ast_search_max_rows = 1000
 # profile capability and otherwise fall back to runtime validation.
 schema_validation = "off"       # off | reject
 constrained_decoding = "off"    # off | json_schema | grammar
+# Session-scoped asynchronous shell commands. Polls are the only model-facing
+# output channel; every live child is terminated when the session ends.
+background_enabled = false
+background_max_procs = 4
+background_poll_timeout = 300  # seconds; caps each bash_poll wait
 # Paginated search envelopes. When enabled, grep and glob wrap their
 # output in <search_result .../> with total/shown/page/next_page
 # attributes so the agent can check discovery scope and request

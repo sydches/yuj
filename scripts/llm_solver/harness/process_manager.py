@@ -40,6 +40,10 @@ ArgvBuilder = Callable[[str], Sequence[str]]
 OutputAdmission = Callable[[str], str]
 
 
+class AdmittedProcessOutput(str):
+    """A poll result that already passed the model-output admission path."""
+
+
 @dataclass(frozen=True)
 class ProcessStart:
     proc_id: str
@@ -91,6 +95,11 @@ def build_background_sandbox_argv(
     bwrap_bin: str,
     unreadable_paths: tuple[str, ...] = (),
     sandbox_required: bool = True,
+    sandbox: bool = True,
+    sandbox_backend: str = "bwrap",
+    container_runtime: str = "docker",
+    container_image: str = "",
+    container_flags: tuple[str, ...] = (),
 ) -> list[str]:
     """Build a long-lived command argv under the active sandbox policy.
 
@@ -100,6 +109,33 @@ def build_background_sandbox_argv(
     """
     from .sandbox import AMBIENT_CONTAINER, _build_bwrap_argv, container_mode
 
+    if not sandbox:
+        return ["bash", "-o", "pipefail", "-c", command]
+    if sandbox_backend == "container":
+        if container_mode() is not None:
+            raise ProcessManagerError(
+                "sandbox.backend='container' cannot be combined with "
+                "legacy YUJ_CONTAINER"
+            )
+        from .sandbox.container_backend import ContainerBackend
+
+        backend = ContainerBackend(
+            runtime=container_runtime,
+            image=container_image,
+            flags=container_flags,
+        )
+        runtime_bin = backend.resolve_runtime(sandbox_required=sandbox_required)
+        if runtime_bin is None:
+            return ["bash", "-o", "pipefail", "-c", command]
+        return backend.build_argv(
+            command,
+            cwd,
+            runtime_bin=runtime_bin,
+            unreadable_paths=unreadable_paths,
+            sandbox_required=sandbox_required,
+        )
+    if sandbox_backend != "bwrap":
+        raise ProcessManagerError(f"unknown sandbox backend {sandbox_backend!r}")
     if container_mode() == AMBIENT_CONTAINER:
         from ._tools._run_in_sandbox import _probe_ambient_unshare_net
 
@@ -169,6 +205,11 @@ class ProcessManager:
         bwrap_bin: str,
         unreadable_paths: tuple[str, ...] = (),
         sandbox_required: bool = True,
+        sandbox: bool = True,
+        sandbox_backend: str = "bwrap",
+        container_runtime: str = "docker",
+        container_image: str = "",
+        container_flags: tuple[str, ...] = (),
         **kwargs,
     ) -> "ProcessManager":
         """Construct a manager whose children use the normal bash sandbox."""
@@ -181,6 +222,11 @@ class ProcessManager:
                 bwrap_bin=bwrap_bin,
                 unreadable_paths=unreadable_paths,
                 sandbox_required=sandbox_required,
+                sandbox=sandbox,
+                sandbox_backend=sandbox_backend,
+                container_runtime=container_runtime,
+                container_image=container_image,
+                container_flags=container_flags,
             )
 
         return cls(
@@ -312,7 +358,7 @@ class ProcessManager:
         rendered = self._render_poll(proc_id, decoded, exit_code)
         # Advance only after admission succeeds; a failing admission callback
         # may be retried without silently losing process bytes.
-        result = self.admit_output(rendered)
+        result = AdmittedProcessOutput(self.admit_output(rendered))
         record.cursor = end
         poll_result = ProcessPoll(
             proc_id=proc_id,
@@ -449,7 +495,7 @@ class ReplayProcessManager:
     def poll(self, proc_id: str, *, timeout_s: float | None = None) -> ProcessPoll:
         del timeout_s  # recorded result is authoritative
         event = self._take("proc_poll", proc_id)
-        result = str(event["result"])
+        result = AdmittedProcessOutput(str(event["result"]))
         if event.get("output_sha256") != _result_digest(result):
             raise ProcessManagerError("replay poll output digest mismatch")
         return ProcessPoll(
@@ -494,6 +540,7 @@ class ReplayProcessManager:
 
 
 __all__ = [
-    "ProcessKill", "ProcessManager", "ProcessManagerError", "ProcessPoll",
-    "ProcessStart", "ReplayProcessManager", "build_background_sandbox_argv",
+    "AdmittedProcessOutput", "ProcessKill", "ProcessManager",
+    "ProcessManagerError", "ProcessPoll", "ProcessStart",
+    "ReplayProcessManager", "build_background_sandbox_argv",
 ]

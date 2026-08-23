@@ -81,6 +81,14 @@ def _filter_disabled_tools(tool_schemas: list[dict], cfg) -> list[dict]:
         attr = gated.get(name)
         if attr is not None and not bool(getattr(cfg, attr, False)):
             continue
+        if name == "bash" and not bool(
+            getattr(cfg, "tools_background_enabled", False)
+        ):
+            import copy
+            schema = copy.deepcopy(schema)
+            schema["function"]["parameters"]["properties"].pop(
+                "background", None
+            )
         out.append(schema)
     return out
 

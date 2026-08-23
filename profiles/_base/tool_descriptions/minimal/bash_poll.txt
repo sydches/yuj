@@ -1,0 +1,1 @@
+Poll a background bash process for new output. Returns only bytes not returned by an earlier poll and waits no longer than the configured cap.

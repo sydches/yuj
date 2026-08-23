@@ -1,0 +1,1 @@
+Terminate a background bash process by proc_id. Use this when its work is no longer needed.

@@ -121,6 +121,9 @@ order in the
 | `[tools].bash_redirect_read_side` | Redirect eligible `cat`/search/path-discovery shell reads to bounded dedicated tools. Off by default. |
 | `[tools].ast_search_enabled` | Add repository-wide definition/reference lookup to `list_definitions`. Off by default. |
 | `[tools].ast_search_max_rows` | Cap the rows available to one repository structural query before pagination. |
+| `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
+| `[tools].background_max_procs` | Limit live background children in one session. |
+| `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
 | `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
 | `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
@@ -299,6 +302,24 @@ been verified; an unsupported profile sends no constraint and runtime reject
 validation remains available. Constraints apply only to normal requests that
 carry tools, never harness-owned side requests. Cache request policy is still
 applied last.
+
+### Run background commands
+
+Set `[tools].background_enabled = true` to let `bash` accept
+`background = true` and to expose `bash_poll` and `bash_kill`. A background
+call returns a session-local `proc_id` immediately. At most
+`background_max_procs` children may be live, and each poll wait is capped by
+`background_poll_timeout` even when the model asks for longer.
+
+The process runs under the selected shell sandbox with the task directory as
+its only writable project mount and no network. Output is combined into a
+harness-owned `.procs/<proc_id>.log`; only new bytes explicitly returned by a
+`bash_poll` enter model context. Those bytes pass through the ordinary output
+filters, redaction, envelope, and `[output].max_output_chars` cap before the
+raw `proc_poll` trace row is written. Yuj terminates every live process group
+when the session ends. Raw `proc_*` lifecycle rows are not copied to
+`.solver/state.json`; its ordinary `tool_call` row carries the admitted poll
+result.
 
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during

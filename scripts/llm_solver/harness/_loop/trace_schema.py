@@ -157,6 +157,28 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "schema_reject",
         frozenset({"session_number", "turn_number", "tool", "errors"}),
     ),
+    TraceEventSpec(
+        "proc_start",
+        frozenset({
+            "session_number", "proc_id", "command_sha256", "log_path",
+            "result",
+        }),
+    ),
+    TraceEventSpec(
+        "proc_poll",
+        frozenset({
+            "session_number", "proc_id", "result", "output_sha256",
+            "running", "exit_code", "timed_out", "cursor_start",
+            "cursor_end",
+        }),
+    ),
+    TraceEventSpec(
+        "proc_kill",
+        frozenset({
+            "session_number", "proc_id", "result", "was_running",
+            "exit_code", "reason",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",
