@@ -251,6 +251,22 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                 "source_bytes": int(
                     getattr(prompt_metadata, "project_instruction_bytes", 0) or 0
                 ),
+                "imported_bytes": int(
+                    getattr(
+                        prompt_metadata,
+                        "project_instruction_imported_bytes",
+                        0,
+                    )
+                    or 0
+                ),
+                "resolved_bytes": int(
+                    getattr(
+                        prompt_metadata,
+                        "project_instruction_resolved_bytes",
+                        0,
+                    )
+                    or 0
+                ),
                 "truncated": bool(
                     getattr(
                         prompt_metadata, "project_instructions_truncated", False

@@ -46,6 +46,10 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "container_runtime", "container_image_digest",
         }), frozenset({
             "worktree_path", "worktree_branch", "worktree_base_commit",
+            "project_instruction_files", "project_instruction_bytes",
+            "project_instruction_imported_bytes",
+            "project_instruction_resolved_bytes",
+            "project_instructions_truncated", "prompt_import_tree",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),

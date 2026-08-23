@@ -206,6 +206,7 @@ class Session:
         checkpoint_store=None,
         lsp_manager=None,
         process_manager=None,
+        injections=None,
         artifact_dir: Path | None = None,
         adaptive_control_baseline_config_paths: tuple[str, ...] | list[str] | None = None,
     ):
@@ -590,11 +591,22 @@ class Session:
         # when enabled, loads markdown fragments from
         # <cwd>/<cfg.injections_dir> at session start. Fire state is
         # per-session so fire_once fragments inject at most once.
-        self._injections = []
+        self._injections = list(injections) if injections is not None else []
         self._injection_state = InjectionState()
-        if cfg.injections_enabled:
+        if cfg.injections_enabled and injections is None:
+            from .project_instructions import find_project_root
+
             inj_dir = Path(self.cwd) / cfg.injections_dir
-            self._injections = load_injections(inj_dir)
+            project_root = find_project_root(
+                Path(self.cwd), getattr(cfg, "project_root_markers", ())
+            )
+            self._injections = load_injections(
+                inj_dir,
+                imports_enabled=getattr(cfg, "imports_enabled", True),
+                imports_max_depth=getattr(cfg, "imports_max_depth", 5),
+                allowed_dirs=(project_root,),
+                unreadable_paths=getattr(cfg, "unreadable_paths", ()),
+            )
 
     @property
     def active_tool_names(self) -> frozenset[str]:

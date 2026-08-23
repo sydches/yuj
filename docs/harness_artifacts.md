@@ -160,14 +160,24 @@ and operator cleanup. The working tree lives at
 `<repository>/.yuj_worktrees/<run-id>` and is intentionally preserved on
 exit; it is task state, not a harness artifact or model-side projection.
 
-When project instruction discovery is enabled, every `session_start` row also
-records `project_instruction_files` (ordered safe labels plus source bytes,
-scope, and truncation), `project_instruction_bytes`, and
-`project_instructions_truncated`. Instruction bodies and absolute source paths
-do not enter the trace or `.solver/state.json`. The matching `metrics.json`
-provenance `system_prompt_sha256` and `system_prompt_chars` describe the final
-resolved prompt after the arm file and project blocks are assembled; the
-prompt body is not stored in provenance.
+Every `session_start` row records `prompt_import_tree`, an ordered set of safe
+source envelopes for the arm file, selected project instructions, and enabled
+injection files. Its nested records contain only import request/status/depth and
+byte metadata; they contain no imported body or absolute host path. An
+injection envelope records resolution, not a claim that the fragment fired.
+This raw provenance is not projected into `.solver/state.json`.
+
+When project instruction discovery is enabled, the same row records
+`project_instruction_files` (ordered safe labels plus source bytes, scope, and
+truncation), `project_instruction_bytes`,
+`project_instruction_imported_bytes`,
+`project_instruction_resolved_bytes`, and
+`project_instructions_truncated`. The resolved-byte cap is applied after import
+expansion. Instruction bodies and absolute source paths do not enter the trace
+or `.solver/state.json`. The matching `metrics.json` provenance
+`system_prompt_sha256` and `system_prompt_chars` describe the exact resolved
+prompt after the arm file and project blocks are assembled; the prompt body is
+not stored in provenance.
 
 A `schema_reject` row is raw validation metadata: it records the tool and
 value-free field errors before any handler runs. It is not projected into

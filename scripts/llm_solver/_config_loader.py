@@ -402,6 +402,12 @@ def _extract_config_fields(d: dict) -> dict:
         "project_doc_global_dir": d.get("prompts", {}).get(
             "project_doc_global_dir", "~/.config/yuj"
         ),
+        "imports_enabled": d.get("prompts", {}).get(
+            "imports_enabled", True
+        ),
+        "imports_max_depth": d.get("prompts", {}).get(
+            "imports_max_depth", 5
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -604,6 +610,19 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     if not isinstance(cfg.project_doc_global_dir, str):
         raise ValueError(
             "config error: prompts.project_doc_global_dir must be a string."
+        )
+    if not isinstance(cfg.imports_enabled, bool):
+        raise ValueError(
+            "config error: prompts.imports_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.imports_max_depth, bool)
+        or not isinstance(cfg.imports_max_depth, int)
+        or cfg.imports_max_depth < 0
+    ):
+        raise ValueError(
+            "config error: prompts.imports_max_depth must be a non-negative "
+            "integer."
         )
     from .harness.project_instructions import (
         validate_project_instruction_settings,

@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from .prompt_imports import process_imports
+
 
 DEFAULT_PROJECT_DOC_NAMES = ("AGENTS.md", "CLAUDE.md")
 DEFAULT_PROJECT_ROOT_MARKERS = (".git", ".hg", ".sl")
@@ -69,6 +71,10 @@ class ProjectInstructions:
     truncated: bool
     project_root: Path
     diagnostics: tuple[InstructionDiagnostic, ...] = ()
+    developer_instructions: str = ""
+    imported_bytes: int = 0
+    resolved_bytes: int = 0
+    prompt_import_tree: tuple[dict[str, object], ...] = ()
 
     @property
     def files(self) -> tuple[str, ...]:
@@ -253,13 +259,16 @@ def discover_project_instructions(
     override_name: str = DEFAULT_OVERRIDE_NAME,
     unreadable_paths: Sequence[str] = (),
     developer_instructions: str = "",
+    defer_byte_cap: bool = False,
 ) -> ProjectInstructions:
     """Discover and concatenate global and root-to-cwd instruction files.
 
     One first-nonempty file is selected per directory.  Global guidance is
     considered first, followed by project directories from root to ``cwd``.
     The source-content budget is measured in UTF-8 bytes and may truncate the
-    final selected document at a valid character boundary.
+    final selected document at a valid character boundary. Session assembly
+    uses ``defer_byte_cap`` so imports can be expanded before this same budget
+    is applied to the resolved content.
     """
     if max_bytes < 0:
         raise ValueError("project_doc_max_bytes must be non-negative")
@@ -282,7 +291,7 @@ def discover_project_instructions(
     used = 0
     chain_truncated = False
     for directory, scope, allowed_root in locations:
-        if used >= max_bytes:
+        if not defer_byte_cap and used >= max_bytes:
             chain_truncated = True
             break
         if not directory.is_dir() or unreadable.blocks(directory):
@@ -302,7 +311,7 @@ def discover_project_instructions(
         if selected is None:
             continue
         source_path, _text, encoded = selected
-        remaining = max_bytes - used
+        remaining = len(encoded) if defer_byte_cap else max_bytes - used
         content, byte_count, truncated = _truncate_utf8(encoded, remaining)
         if not content:
             chain_truncated = True
@@ -340,6 +349,112 @@ def discover_project_instructions(
         truncated=chain_truncated,
         project_root=project_root,
         diagnostics=tuple(diagnostics),
+        developer_instructions=developer_instructions,
+        resolved_bytes=used,
+    )
+
+
+def resolve_project_instruction_imports(
+    project: ProjectInstructions,
+    *,
+    enabled: bool,
+    max_depth: int,
+    unreadable_paths: Sequence[str] = (),
+) -> ProjectInstructions:
+    """Resolve selected documents once, then cap the final UTF-8 content.
+
+    Project documents may import anywhere below the discovered project root.
+    A global document is intentionally narrower: it may import only below its
+    chosen global directory. The returned trace envelopes contain safe labels
+    and byte counts, never prompt bodies or host paths.
+    """
+    documents: list[InstructionDocument] = []
+    import_tree: list[dict[str, object]] = []
+    source_bytes = 0
+    imported_bytes = 0
+    resolved_bytes = 0
+    chain_truncated = False
+
+    for index, document in enumerate(project.documents):
+        remaining = project.max_bytes - resolved_bytes
+        if remaining <= 0:
+            chain_truncated = True
+            break
+        allowed_root = (
+            project.project_root
+            if document.scope == "project"
+            else document.source_path.parent
+        )
+        resolved_content = document.content
+        tree: list[dict[str, object]] = []
+        document_imported_bytes = 0
+        if enabled:
+            processed = process_imports(
+                document.content,
+                document.source_path.parent,
+                (allowed_root,),
+                max_depth=max_depth,
+                source_path=document.source_path,
+                unreadable_paths=unreadable_paths,
+            )
+            resolved_content = processed.content
+            tree = processed.trace_tree()
+            document_imported_bytes = processed.imported_bytes
+
+        content, admitted_bytes, truncated = _truncate_utf8(
+            resolved_content.encode("utf-8"), remaining
+        )
+        import_tree.append(
+            {
+                "owner": "project_instruction",
+                "source": document.display_path,
+                "source_bytes": document.byte_count,
+                "imported_bytes": document_imported_bytes,
+                "imports": tree,
+            }
+        )
+        if not content:
+            chain_truncated = True
+            break
+        documents.append(
+            InstructionDocument(
+                source_path=document.source_path,
+                display_path=document.display_path,
+                content=content,
+                byte_count=document.byte_count,
+                scope=document.scope,
+                truncated=truncated,
+            )
+        )
+        source_bytes += document.byte_count
+        imported_bytes += document_imported_bytes
+        resolved_bytes += admitted_bytes
+        if truncated:
+            chain_truncated = True
+            break
+        if (
+            resolved_bytes >= project.max_bytes
+            and index + 1 < len(project.documents)
+        ):
+            chain_truncated = True
+            break
+
+    parts: list[str] = []
+    if project.developer_instructions.strip():
+        parts.append(project.developer_instructions.rstrip())
+    parts.extend(document.format_block() for document in documents)
+    return ProjectInstructions(
+        content="\n\n".join(parts),
+        documents=tuple(documents),
+        document_bytes=source_bytes,
+        max_bytes=project.max_bytes,
+        truncated=chain_truncated,
+        project_root=project.project_root,
+        diagnostics=project.diagnostics,
+        developer_instructions=project.developer_instructions,
+        imported_bytes=imported_bytes,
+        resolved_bytes=resolved_bytes,
+        prompt_import_tree=tuple(import_tree),
     )
 
 
@@ -370,4 +485,5 @@ __all__ = [
     "ProjectInstructions",
     "discover_project_instructions",
     "find_project_root",
+    "resolve_project_instruction_imports",
 ]

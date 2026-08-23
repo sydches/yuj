@@ -241,6 +241,8 @@ class Config:
     project_doc_max_bytes: int = 32768
     project_root_markers: tuple[str, ...] = (".git", ".hg", ".sl")
     project_doc_global_dir: str = "~/.config/yuj"
+    imports_enabled: bool = True
+    imports_max_depth: int = 5
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"

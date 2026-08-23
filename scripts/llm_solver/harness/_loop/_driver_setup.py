@@ -26,11 +26,16 @@ from ..._shared.paths import expand_user_path
 from ..._shared.telemetry_paths import ensure_telemetry_dir, trace_path
 from ..context_contract import build_context_contract
 from ..guardrails import build_guardrail_registry
-from ..project_instructions import discover_project_instructions
+from ..injections import Injection, load_injections_with_metadata
+from ..project_instructions import (
+    discover_project_instructions,
+    find_project_root,
+    resolve_project_instruction_imports,
+)
 from ..solver import (
     assemble_system_prompt,
     collect_provenance,
-    resolve_system_prompt_file,
+    resolve_system_prompt_source,
 )
 from . import (
     _apply_profile_preamble,
@@ -50,8 +55,11 @@ class PromptAssemblyMetadata:
     arm_chars: int = 0
     project_instruction_files: tuple[dict[str, object], ...] = ()
     project_instruction_bytes: int = 0
+    project_instruction_imported_bytes: int = 0
+    project_instruction_resolved_bytes: int = 0
     project_instruction_chars: int = 0
     project_instructions_truncated: bool = False
+    prompt_import_tree: tuple[dict[str, object], ...] = ()
 
     def trace_fields(self) -> dict[str, object]:
         return {
@@ -59,9 +67,18 @@ class PromptAssemblyMetadata:
                 dict(record) for record in self.project_instruction_files
             ],
             "project_instruction_bytes": self.project_instruction_bytes,
+            "project_instruction_imported_bytes": (
+                self.project_instruction_imported_bytes
+            ),
+            "project_instruction_resolved_bytes": (
+                self.project_instruction_resolved_bytes
+            ),
             "project_instructions_truncated": (
                 self.project_instructions_truncated
             ),
+            "prompt_import_tree": [
+                dict(record) for record in self.prompt_import_tree
+            ],
         }
 
 
@@ -126,10 +143,28 @@ def load_system_prompt_and_provenance(
     component metadata. The provenance dict is mutated in place with
     variant_name + prompt_addendum if the config sets them.
     """
-    resolved_arm = resolve_system_prompt_file(system_prompt_file)
+    project_root = find_project_root(work_dir, cfg.project_root_markers)
+    arm_roots: list[Path] = [project_root]
+    if system_prompt_file is not None:
+        arm_parent = system_prompt_file.resolve().parent
+        if arm_parent not in arm_roots:
+            arm_roots.append(arm_parent)
+    arm = resolve_system_prompt_source(
+        system_prompt_file,
+        imports_enabled=cfg.imports_enabled,
+        allowed_dirs=tuple(arm_roots),
+        max_depth=cfg.imports_max_depth,
+        unreadable_paths=cfg.unreadable_paths,
+    )
+    resolved_arm = arm.content if arm is not None else None
+    prompt_import_tree: list[dict[str, object]] = []
+    if arm is not None:
+        prompt_import_tree.append(arm.trace_record())
     project_content = ""
     project_records: tuple[dict[str, object], ...] = ()
     project_bytes = 0
+    project_imported_bytes = 0
+    project_resolved_bytes = 0
     project_truncated = False
     if cfg.project_docs_enabled:
         global_dir = (
@@ -144,11 +179,21 @@ def load_system_prompt_and_provenance(
             max_bytes=cfg.project_doc_max_bytes,
             root_markers=cfg.project_root_markers,
             unreadable_paths=cfg.unreadable_paths,
+            defer_byte_cap=True,
+        )
+        project = resolve_project_instruction_imports(
+            project,
+            enabled=cfg.imports_enabled,
+            max_depth=cfg.imports_max_depth,
+            unreadable_paths=cfg.unreadable_paths,
         )
         project_content = project.content
         project_records = tuple(project.trace_records())
         project_bytes = project.document_bytes
+        project_imported_bytes = project.imported_bytes
+        project_resolved_bytes = project.resolved_bytes
         project_truncated = project.truncated
+        prompt_import_tree.extend(project.prompt_import_tree)
         for diagnostic in project.diagnostics:
             log.warning(
                 "project_instruction_read: path=%s kind=%s message=%s",
@@ -158,13 +203,16 @@ def load_system_prompt_and_provenance(
             )
     prompt_metadata = PromptAssemblyMetadata(
         arm_label=(
-            system_prompt_file.name if system_prompt_file is not None else None
+            arm.source if arm is not None else None
         ),
         arm_chars=len(resolved_arm.rstrip()) if resolved_arm is not None else 0,
         project_instruction_files=project_records,
         project_instruction_bytes=project_bytes,
+        project_instruction_imported_bytes=project_imported_bytes,
+        project_instruction_resolved_bytes=project_resolved_bytes,
         project_instruction_chars=len(project_content),
         project_instructions_truncated=project_truncated,
+        prompt_import_tree=tuple(prompt_import_tree),
     )
     system_prompt = _apply_profile_preamble(
         assemble_system_prompt(
@@ -190,6 +238,24 @@ def load_system_prompt_and_provenance(
         provenance["variant_name"] = cfg.variant_name
         provenance["prompt_addendum"] = cfg.prompt_addendum
     return system_prompt, provenance, context_contract, prompt_metadata
+
+
+def load_session_injections(
+    cfg: Config,
+    work_dir: Path,
+) -> tuple[tuple[Injection, ...], tuple[dict[str, object], ...]]:
+    """Resolve injection files before ``session_start`` is emitted."""
+    if not cfg.injections_enabled:
+        return (), ()
+    project_root = find_project_root(work_dir, cfg.project_root_markers)
+    loaded = load_injections_with_metadata(
+        work_dir / cfg.injections_dir,
+        imports_enabled=cfg.imports_enabled,
+        imports_max_depth=cfg.imports_max_depth,
+        allowed_dirs=(project_root,),
+        unreadable_paths=cfg.unreadable_paths,
+    )
+    return loaded.injections, loaded.prompt_import_tree
 
 
 def thinking_trace_fields(cfg: Config, client) -> dict[str, object]:

@@ -26,6 +26,8 @@ def test_canonical_project_doc_defaults_load() -> None:
     assert cfg.project_doc_max_bytes == 32768
     assert cfg.project_root_markers == (".git", ".hg", ".sl")
     assert cfg.project_doc_global_dir == "~/.config/yuj"
+    assert cfg.imports_enabled is True
+    assert cfg.imports_max_depth == 5
 
 
 @pytest.mark.parametrize(
@@ -36,6 +38,9 @@ def test_canonical_project_doc_defaults_load() -> None:
         ("project_doc_max_bytes = -1", "project_doc_max_bytes"),
         ('project_root_markers = ["nested/.git"]', "project_root_markers entries"),
         ("project_doc_global_dir = 4", "project_doc_global_dir must be a string"),
+        ('imports_enabled = "yes"', "imports_enabled must be a boolean"),
+        ("imports_max_depth = -1", "imports_max_depth must be a non-negative"),
+        ("imports_max_depth = true", "imports_max_depth must be a non-negative"),
     ],
 )
 def test_project_doc_config_rejects_invalid_values(
@@ -72,7 +77,16 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
     assert metadata.trace_fields() == {
         "project_instruction_files": [],
         "project_instruction_bytes": 0,
+        "project_instruction_imported_bytes": 0,
+        "project_instruction_resolved_bytes": 0,
         "project_instructions_truncated": False,
+        "prompt_import_tree": [{
+            "owner": "system_prompt",
+            "source": "arm.md",
+            "source_bytes": len("ARM\n"),
+            "imported_bytes": 0,
+            "imports": [],
+        }],
     }
 
     enabled = make_config(
@@ -102,6 +116,9 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
     assert [
         item["path"] for item in metadata.project_instruction_files
     ] == ["global/AGENTS.md", "AGENTS.md"]
+    assert [
+        item["owner"] for item in metadata.prompt_import_tree
+    ] == ["system_prompt", "project_instruction", "project_instruction"]
     assert str(tmp_path) not in json.dumps(metadata.trace_fields())
 
 
@@ -152,6 +169,8 @@ def test_solve_task_traces_project_docs_and_costs_resolved_blocks(
         }
     ]
     assert start["project_instruction_bytes"] == len("TASK RULE")
+    assert start["project_instruction_imported_bytes"] == 0
+    assert start["project_instruction_resolved_bytes"] == len("TASK RULE")
     assert start["project_instructions_truncated"] is False
     assert str(tmp_path) not in json.dumps(start)
 

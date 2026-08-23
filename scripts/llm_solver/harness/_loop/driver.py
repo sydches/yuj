@@ -29,7 +29,8 @@ from . import (
 )
 from ._driver_setup import (
     compute_runtime_envelope_fields,
-    load_system_prompt_and_provenance, load_transforms_and_estimator,
+    load_session_injections, load_system_prompt_and_provenance,
+    load_transforms_and_estimator,
     resolve_task_format, resolve_run_paths,
     setup_run_outputs, thinking_trace_fields,
 )
@@ -116,6 +117,17 @@ def solve_task(
         cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
         context_class,
     )
+    resolved_injections, injection_import_tree = load_session_injections(
+        cfg, work_dir
+    )
+    if injection_import_tree:
+        prompt_metadata = replace(
+            prompt_metadata,
+            prompt_import_tree=(
+                *prompt_metadata.prompt_import_tree,
+                *injection_import_tree,
+            ),
+        )
     prev_session: "Session | None" = None
     prev_result: "SessionResult | None" = None
     pending_handoff = None
@@ -412,6 +424,7 @@ def solve_task(
                 output_parser=output_parser,
                 pretest_parsed=pretest_parsed_verdict,
                 checkpoint_store=checkpoint_store,
+                injections=resolved_injections,
                 artifact_dir=artifact_dir,
                 adaptive_control_baseline_config_paths=tuple(
                     (run_metadata or {}).get("config_paths", ())

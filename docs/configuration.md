@@ -636,6 +636,8 @@ project_doc_names = ["AGENTS.md", "CLAUDE.md"]
 project_doc_max_bytes = 32768
 project_root_markers = [".git", ".hg", ".sl"]
 project_doc_global_dir = "~/.config/yuj"
+imports_enabled = true
+imports_max_depth = 5
 ```
 
 When enabled, Yuj first considers the global directory, then walks from the
@@ -645,20 +647,44 @@ precedence; configured `project_doc_names` are fallbacks in their listed
 order. Empty files are skipped so the next candidate can apply. A blank
 `project_doc_global_dir` disables only the global location.
 
-The final selected chain is capped by `project_doc_max_bytes` measured as
-UTF-8 source bytes; a final document can be clipped only at a valid character
-boundary. Files and directories matched by `[sandbox].unreadable_paths` are
-rejected before any content read, including absolute masks for the global
-directory. Symlinks cannot escape the project or global scope. Each selected
-document is wrapped as `<project-instructions path="...">` using a safe
-project-relative or `global/<name>` label.
+`imports_enabled` applies to `--system-prompt` arm files, selected project
+instructions, and enabled `.harness/injections/*.md` fragments. It defaults to
+`true` because arm-file `@path` expansion predates the switch; setting it to
+`false` is an explicit prompt-treatment change and leaves standalone import
+lines literal. A directive is a standalone `@relative/file.md` or
+`@/absolute/file.md` line. Nested relative paths resolve from the file that
+contains them. Direct imports have depth 1, and a target deeper than
+`imports_max_depth` is not read. Directives inside fenced or indented code and
+inside inline backtick spans remain literal.
+
+Imports accept Markdown files only and cannot escape their source policy even
+through a symlink: an arm may read below the project root or its own parent, a
+project instruction only below its project root, a global instruction only
+below its global directory, and an injection only below the project root.
+`[sandbox].unreadable_paths` is checked before import reads. Missing, cyclic,
+over-depth, unreadable, non-Markdown, and outside-policy targets become bounded
+`yuj-import-error` HTML comments; host exception text is not placed in the
+prompt.
+
+The final selected project-instruction chain is capped by
+`project_doc_max_bytes` after imports expand, measured in UTF-8 bytes; a final
+document can be clipped only at a valid character boundary. A short import
+directive therefore cannot evade the cap. Files and directories matched by
+`[sandbox].unreadable_paths` are rejected before any content read, including
+absolute masks for the global directory. Symlinks cannot escape the project or
+global scope. Each selected document is wrapped as
+`<project-instructions path="...">` using a safe project-relative or
+`global/<name>` label.
 
 Prompt order is the resolved `--system-prompt` arm file, project-instruction
 blocks, then `prompts.system_header`; a model-profile preamble remains
-outermost. The trace records only safe file labels, source byte counts, and
-truncation state. `metrics.json` provenance hashes and counts the complete
-resolved prompt, never its body. Enabling this feature changes model input and
-must be treated as an experimental condition.
+outermost. `session_start.prompt_import_tree` records ordered source envelopes
+and nested status/depth/byte metadata with safe labels. It stores no prompt
+body or absolute host path, and injection entries mean a fragment was resolved,
+not that it fired. Project source, imported, and admitted resolved bytes are
+reported separately. `metrics.json` provenance hashes and counts the exact
+fully resolved prompt, never its body. Enabling project instruction discovery
+changes model input and must be treated as an experimental condition.
 
 ## Apply a small TOML file
 

@@ -1,86 +1,111 @@
 """Pipeline integration — system prompt, checkpoint, task enumeration, provenance."""
 import hashlib
 import json
-import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Sequence
 
 from .._shared.checkpoints import collect_pending as _collect_pending
 from .._shared.paths import expand_user_path
 from ..config import Config, dump_config
+from .prompt_imports import DEFAULT_IMPORT_MAX_DEPTH, process_imports
 
 # Re-export for back-compat with ``from llm_solver.harness.solver import collect_pending``.
 collect_pending = _collect_pending
 
 
-# `@path/relative-or-absolute` import directive at start of a line.
-# This lets one prompt use several smaller files. Pure load-time concatenation —
-# no precedence/conflict-resolution magic, no globbing, no
-# variable substitution. Just `@path` → contents of file at path.
-_IMPORT_RE = re.compile(r"^@(\S+)\s*$", re.MULTILINE)
-_MAX_IMPORT_DEPTH = 5
+@dataclass(frozen=True, slots=True)
+class ResolvedPromptSource:
+    """One arm file after policy-bounded import processing."""
+
+    content: str
+    source: str
+    source_bytes: int
+    imported_bytes: int
+    imports: tuple[dict[str, object], ...]
+
+    def trace_record(self) -> dict[str, object]:
+        return {
+            "owner": "system_prompt",
+            "source": self.source,
+            "source_bytes": self.source_bytes,
+            "imported_bytes": self.imported_bytes,
+            "imports": [dict(node) for node in self.imports],
+        }
 
 
-def _resolve_imports(
-    text: str, *, base_dir: Path, depth: int = 0,
-    seen: set[Path] | None = None,
-) -> str:
-    """Recursively expand `@path/file` lines in *text*.
-
-    Each line of the form `@<path>` (where `<path>` has no whitespace)
-    is replaced with the contents of `base_dir / <path>` (absolute paths
-    honoured as-is). The included file is itself processed for further
-    `@path` directives — depth-bounded to _MAX_IMPORT_DEPTH and
-    cycle-broken via the `seen` set.
-
-    Best-effort: a missing file leaves the directive in place with a
-    `[HARNESS: import failed: <path> — <reason>]` marker on the next
-    line so the operator notices but the prompt still loads.
-    """
-    if depth >= _MAX_IMPORT_DEPTH:
-        # Name the ceiling so an operator hitting the depth limit sees the marker
-        # instead of a silently-passed-through `@`-text. Cycle
-        # recursion is still caught by `seen` first.
-        return text + f"\n[HARNESS: import depth ceiling at depth={_MAX_IMPORT_DEPTH}]\n"
-    seen = seen if seen is not None else set()
-
-    def _sub(m: re.Match) -> str:
-        rel = m.group(1)
-        # Treat `@/abs/path` as absolute; otherwise resolve relative to
-        # base_dir (the directory of the importing file).
-        target = Path(rel) if Path(rel).is_absolute() else base_dir / rel
+def _safe_source_label(path: Path, roots: Sequence[Path]) -> str:
+    resolved = path.resolve(strict=False)
+    for root in roots:
+        resolved_root = root.resolve(strict=False)
         try:
-            target = target.resolve()
-        except OSError as e:
-            return f"@{rel}\n[HARNESS: import failed: {rel} — {e}]"
-        if target in seen:
-            return f"@{rel}\n[HARNESS: import cycle: {rel} already imported]"
-        if not target.is_file():
-            return f"@{rel}\n[HARNESS: import failed: {rel} — file not found]"
-        try:
-            body = target.read_text()
-        except OSError as e:
-            return f"@{rel}\n[HARNESS: import failed: {rel} — {e}]"
-        # Recurse with the imported file as the new base_dir so its
-        # @-references are relative to where the import lives.
-        return _resolve_imports(
-            body, base_dir=target.parent,
-            depth=depth + 1, seen=seen | {target},
-        )
-
-    return _IMPORT_RE.sub(_sub, text)
+            return resolved.relative_to(resolved_root).as_posix() or "."
+        except ValueError:
+            continue
+    return path.name or "<prompt>"
 
 
-def resolve_system_prompt_file(system_prompt_file: Path | None) -> str | None:
-    """Load and resolve one arm file, preserving the legacy import behavior."""
+def resolve_system_prompt_source(
+    system_prompt_file: Path | None,
+    *,
+    imports_enabled: bool = True,
+    allowed_dirs: Sequence[Path] | None = None,
+    max_depth: int = DEFAULT_IMPORT_MAX_DEPTH,
+    unreadable_paths: Sequence[str] = (),
+) -> ResolvedPromptSource | None:
+    """Load one arm file and resolve imports under an explicit path policy."""
     if system_prompt_file is None:
         return None
     if not system_prompt_file.is_file():
         raise FileNotFoundError(f"System prompt file not found: {system_prompt_file}")
     raw = system_prompt_file.read_text()
-    return _resolve_imports(raw, base_dir=system_prompt_file.parent)
+    roots = tuple(allowed_dirs or (system_prompt_file.parent,))
+    source = _safe_source_label(system_prompt_file, roots)
+    if not imports_enabled:
+        return ResolvedPromptSource(
+            content=raw,
+            source=source,
+            source_bytes=len(raw.encode("utf-8")),
+            imported_bytes=0,
+            imports=(),
+        )
+    processed = process_imports(
+        raw,
+        system_prompt_file.parent,
+        roots,
+        max_depth=max_depth,
+        source_path=system_prompt_file,
+        unreadable_paths=unreadable_paths,
+    )
+    return ResolvedPromptSource(
+        content=processed.content,
+        source=source,
+        source_bytes=len(raw.encode("utf-8")),
+        imported_bytes=processed.imported_bytes,
+        imports=tuple(processed.trace_tree()),
+    )
+
+
+def resolve_system_prompt_file(
+    system_prompt_file: Path | None,
+    *,
+    imports_enabled: bool = True,
+    allowed_dirs: Sequence[Path] | None = None,
+    max_depth: int = DEFAULT_IMPORT_MAX_DEPTH,
+    unreadable_paths: Sequence[str] = (),
+) -> str | None:
+    """Return the resolved arm text; retained as the public string helper."""
+    resolved = resolve_system_prompt_source(
+        system_prompt_file,
+        imports_enabled=imports_enabled,
+        allowed_dirs=allowed_dirs,
+        max_depth=max_depth,
+        unreadable_paths=unreadable_paths,
+    )
+    return resolved.content if resolved is not None else None
 
 
 def assemble_system_prompt(
@@ -109,8 +134,9 @@ def build_system_prompt(
 
     header: the harness header text (wired from cfg.system_header).
     system_prompt_file: if provided, its content is prepended to the
-    header. The file is processed for `@path/file` import directives
-    with bounded depth and cycle detection. The harness still does not
+    header. By default the file is processed for `@path/file` import
+    directives under its parent directory, with bounded depth and cycle
+    detection. The harness still does not
     INTERPRET the content — it could be any protocol — it only resolves
     imports as a load-time concatenation. Project instructions are already
     resolved and bounded by the context
@@ -154,7 +180,7 @@ def collect_provenance(
     When the caller supplies the resolved system prompt, capture its
     sha256[:16] in `provenance.system_prompt_sha256` so a later edit to
     cfg.system_header / --system-prompt content is detectable in the
-    ledger without re-resolving _resolve_imports against a possibly-
+    ledger without re-resolving prompt imports against a possibly-
     moved file.
     """
     prov: dict = {

@@ -39,9 +39,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from .._shared.toml_compat import tomllib
+from .prompt_imports import DEFAULT_IMPORT_MAX_DEPTH, process_imports
 
 
 _FRONTMATTER_FENCE = "+++"
@@ -138,7 +139,77 @@ def _assert_task_agnostic(
             )
 
 
-def load_injections(dir_path: Path) -> list[Injection]:
+@dataclass(frozen=True, slots=True)
+class LoadedInjections:
+    """Resolved fragments plus safe session-start import provenance."""
+
+    injections: tuple[Injection, ...]
+    prompt_import_tree: tuple[dict[str, object], ...]
+
+
+def _safe_source(path: Path, roots: Sequence[Path]) -> str:
+    resolved = path.resolve(strict=False)
+    for root in roots:
+        try:
+            return resolved.relative_to(root.resolve(strict=False)).as_posix()
+        except ValueError:
+            continue
+    return f"<outside-allowed-dirs>/{path.name}"
+
+
+def load_injections_with_metadata(
+    dir_path: Path,
+    *,
+    imports_enabled: bool = False,
+    imports_max_depth: int = DEFAULT_IMPORT_MAX_DEPTH,
+    allowed_dirs: Sequence[Path] | None = None,
+    unreadable_paths: Sequence[str] = (),
+) -> LoadedInjections:
+    """Load fragments once and retain safe import metadata for the trace."""
+    if not dir_path.is_dir():
+        return LoadedInjections((), ())
+    roots = tuple(allowed_dirs or (dir_path,))
+    injections: list[Injection] = []
+    import_tree: list[dict[str, object]] = []
+    for path in sorted(dir_path.glob("*.md")):
+        raw = path.read_bytes()
+        text = raw.decode("utf-8-sig", errors="replace")
+        source = _safe_source(path, roots)
+        tree: list[dict[str, object]] = []
+        imported_bytes = 0
+        if imports_enabled:
+            processed = process_imports(
+                text,
+                path.parent,
+                roots,
+                max_depth=imports_max_depth,
+                source_path=path,
+                unreadable_paths=unreadable_paths,
+            )
+            text = processed.content
+            tree = processed.trace_tree()
+            imported_bytes = processed.imported_bytes
+        injections.append(parse_injection(text, source_path=source))
+        import_tree.append(
+            {
+                "owner": "injection",
+                "source": source,
+                "source_bytes": len(raw),
+                "imported_bytes": imported_bytes,
+                "imports": tree,
+            }
+        )
+    return LoadedInjections(tuple(injections), tuple(import_tree))
+
+
+def load_injections(
+    dir_path: Path,
+    *,
+    imports_enabled: bool = False,
+    imports_max_depth: int = DEFAULT_IMPORT_MAX_DEPTH,
+    allowed_dirs: Sequence[Path] | None = None,
+    unreadable_paths: Sequence[str] = (),
+) -> list[Injection]:
     """Load every ``*.md`` in ``dir_path`` as an Injection list.
 
     Missing directory returns an empty list — running without any
@@ -149,13 +220,14 @@ def load_injections(dir_path: Path) -> list[Injection]:
     Multiple injections firing on the same turn append to the user
     message log in that order; rename files to control sequencing.
     """
-    if not dir_path.is_dir():
-        return []
-    injections: list[Injection] = []
-    for path in sorted(dir_path.glob("*.md")):
-        text = path.read_text()
-        injections.append(parse_injection(text, source_path=str(path)))
-    return injections
+    loaded = load_injections_with_metadata(
+        dir_path,
+        imports_enabled=imports_enabled,
+        imports_max_depth=imports_max_depth,
+        allowed_dirs=allowed_dirs,
+        unreadable_paths=unreadable_paths,
+    )
+    return list(loaded.injections)
 
 
 @dataclass
