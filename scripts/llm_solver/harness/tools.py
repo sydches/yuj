@@ -465,6 +465,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     already_admitted = isinstance(result, AdmittedProcessOutput)
     if execution_metadata is not None:
         execution_metadata["executed"] = executed
+        if applied_operations:
+            execution_metadata["applied_operations"] = applied_operations
         if hasattr(result, "exit_status"):
             execution_metadata["exit_status_known"] = True
             execution_metadata["exit_status"] = getattr(result, "exit_status")

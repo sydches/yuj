@@ -29,6 +29,7 @@ _READONLY_TOOLS = PARALLEL_READ_SAFE_TOOL_NAMES
 from .injections import (
     InjectionState,
     fire_candidates,
+    fire_path_candidates,
     load_injections,
     record_fire,
 )
@@ -683,7 +684,27 @@ class Session:
         """Last known context fill ratio (0.0–1.0)."""
         return self._last_fill
 
-    def _apply_injections(self) -> None:
+    def _emit_injection_event(
+        self, *, rule: str, trigger: str, path: str, turn_number: int | None,
+    ) -> None:
+        """Write raw conditional-fire metadata without projecting it."""
+        emitter = getattr(self, "_emit", None)
+        if not callable(emitter):
+            return
+        emitter(
+            "injection",
+            session_number=getattr(self, "_session_number", 0),
+            turn_number=(
+                int(turn_number)
+                if turn_number is not None
+                else int(getattr(self, "_current_turn", 0))
+            ),
+            rule=rule,
+            trigger=trigger,
+            path=path,
+        )
+
+    def _apply_injections(self, *, turn_number: int | None = None) -> None:
         """Fire matching injections against the latest user/tool text.
 
         No-op when the subsystem is disabled or no fragments loaded.
@@ -709,8 +730,71 @@ class Session:
             block = inj.format_block()
             self.context.add_user(block)
             record_fire(
-                inj.name, body_chars=len(block), match_mode=inj.trigger,
+                inj.name,
+                body_chars=len(block),
+                match_mode="keyword" if inj.keywords else "always",
             )
+            if inj.keywords:
+                emit_injection = getattr(self, "_emit_injection_event", None)
+                if callable(emit_injection):
+                    emit_injection(
+                        rule=inj.name,
+                        trigger="keyword",
+                        path="",
+                        turn_number=turn_number,
+                    )
+
+    def _apply_path_injections(
+        self,
+        result: str,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        turn_number: int,
+        executed: bool,
+        execution_metadata: Mapping[str, object] | None = None,
+        bash_rewritten: bool = False,
+    ) -> tuple[str, bool]:
+        """Append matching path fragments to one executed tool result."""
+        if (
+            not executed
+            or not getattr(self.cfg, "injections_path_rules_enabled", False)
+            or not self._injections
+        ):
+            return result, False
+        metadata = execution_metadata or {}
+        operations = metadata.get("applied_operations", ())
+        if not isinstance(operations, (list, tuple)):
+            operations = ()
+        fired = fire_path_candidates(
+            self._injections,
+            tool_name=tool_name,
+            arguments=arguments,
+            cwd=self.cwd,
+            state=self._injection_state,
+            path_rule_repeat=bool(getattr(
+                self.cfg, "injections_path_rule_repeat", False,
+            )),
+            applied_operations=operations,
+            bash_rewritten=bash_rewritten,
+        )
+        for fire in fired:
+            block = fire.injection.format_block(
+                trigger="path", path=fire.path,
+            )
+            result += ("\n\n" if result else "") + block
+            record_fire(
+                fire.injection.name,
+                body_chars=len(block),
+                match_mode="path",
+            )
+            self._emit_injection_event(
+                rule=fire.injection.name,
+                trigger="path",
+                path=fire.path,
+                turn_number=turn_number,
+            )
+        return result, bool(fired)
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx

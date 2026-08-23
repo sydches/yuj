@@ -135,6 +135,10 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[injections].enabled` | Load Markdown injection rules from `[injections].dir`. Off by default. |
+| `[injections].dir` | Select the task-relative rule directory. Defaults to `.harness/injections`. |
+| `[injections].path_rules_enabled` | Match rule `paths` globs against executed file-tool targets. Off by default and requires `[injections].enabled = true`. |
+| `[injections].path_rule_repeat` | Let path rules without a per-rule `repeat` value fire on every matching tool result. False means once per session. |
 | `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
 | `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
@@ -822,6 +826,74 @@ and `[prompts].resume_length` message apply. Raw trace rows named
 response or request text. Post-run `metrics.length_continuations` counts the
 follow-up requests, while the normal prompt/completion totals include every
 initial and follow-up call.
+
+### Load conditional injection rules
+
+Injection rules are off by default. Enable the rule loader and path matching
+with a small overlay:
+
+```toml
+[injections]
+enabled = true
+dir = ".harness/injections"
+path_rules_enabled = true
+path_rule_repeat = false
+```
+
+Yuj loads each `*.md` file in alphabetical filename order before the model
+starts. A malformed enabled file stops startup. Each file uses strict TOML
+frontmatter between `+++` fences:
+
+```markdown
++++
+name = "python-tests"
+paths = ["src/**/*.py", "tests/**/*.py"]
+keywords = ["pytest"]
+repeat = false
++++
+
+Follow this repository's Python and test conventions.
+```
+
+`name` is required and must be a non-empty string. `paths` and `keywords`,
+when present, must be arrays of non-empty strings. `repeat` must be `true` or
+`false`. A rule with neither `paths` nor `keywords` is unscoped and is added
+once at the start of a session. The older explicit `trigger` and `fire_once`
+fields remain readable; do not combine `repeat` and `fire_once` in one file.
+
+Path globs are project-relative POSIX patterns. They support `*`, `?`,
+character classes, and slash-aware `**`. Absolute paths, parent traversal,
+directory-only patterns, empty entries, and non-string entries are rejected.
+Matching checks both the model's contained path spelling and its
+symlink-resolved target. The visible and traced path is always the canonical
+task-relative target.
+
+A path rule can fire after an executed `read`, `edit`, or `write`, after an
+`apply_patch` operation was applied, or after a shell command is proven to
+read one explicit file. The shell classifier accepts bounded forms of `cat`,
+`head`, `tail`, `sed -n`, `grep`, and `rg`. Compounds, pipelines,
+redirections, recursive or multi-file reads, and rewritten shell commands do
+not qualify. A non-matching target adds nothing.
+
+By default, the first path or keyword match consumes the rule for that
+session. `repeat = true` on the rule makes both trigger kinds repeat.
+`path_rule_repeat = true` changes only the default for path matches when the
+rule omits `repeat`; a per-rule value wins.
+
+A path fire appends this shape to the same model-visible tool result:
+
+```xml
+<injected-fragment rule="python-tests" trigger="path" path="src/app.py" source="python-tests">
+Follow this repository's Python and test conventions.
+</injected-fragment>
+```
+
+Each conditional fire also writes a raw `injection` trace row with `rule`,
+`trigger`, and `path`; keyword rows use an empty path. That metadata row is
+not copied into `.solver/state.json`. The visible fragment remains part of
+the ordinary tool result and therefore follows the normal `tool_call`
+projection. Startup logs name each armed rule, its trigger kinds, and its safe
+source label without copying the rule body.
 
 ### Load project instruction files
 

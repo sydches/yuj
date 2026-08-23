@@ -228,7 +228,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Inject keyword-triggered fragments (harness/injections.py)
         # against the latest user/tool content before the API call.
         # No-op when the subsystem is disabled or no fragments load.
-        session._apply_injections()
+        session._apply_injections(turn_number=turn)
         # ─── 0. GUARDRAIL: context fill (PRE-FLIGHT) ──────────────────
         # The post-flight check at the end of step 2 catches overflow
         # that develops during the response, but a tool result added
