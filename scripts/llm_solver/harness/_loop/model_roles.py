@@ -8,14 +8,17 @@ reusable by compaction, handoff, advisor, and classifier consumers.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+import math
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
 
 MAIN_MODEL_ROLE = "main"
+FALLBACK_REVERT_POLICIES: tuple[str, ...] = ("never", "next_session")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
+_REASON_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 _TARGET_KEYS = frozenset(
     {
         "api_key",
@@ -92,6 +95,52 @@ class ResolvedRoleClient:
 
     def trace_fields(self) -> dict[str, object]:
         return self.resolution.trace_fields()
+
+
+@dataclass(frozen=True)
+class ContextWindowCheck:
+    """Result of checking a prompt against one resolved target window."""
+
+    prompt_tokens: int
+    context_size: int
+    context_fill_ratio: float
+    prompt_token_limit: int
+    fits: bool
+
+
+@dataclass(frozen=True)
+class ModelFallbackTransition:
+    """One role-local switch after the active client's retries are exhausted."""
+
+    role: str
+    from_resolution: ResolvedModelRole
+    to_resolution: ResolvedModelRole
+    reason: str
+    from_index: int
+    to_index: int
+
+    def trace_fields(self) -> dict[str, object]:
+        """Return the payload for a ``model_fallback`` trace event."""
+        return {
+            "role": self.role,
+            "from": self.from_resolution.target.label(),
+            "to": self.to_resolution.target.label(),
+            "reason": self.reason,
+            "from_profile": self.from_resolution.target.profile_name,
+            "to_profile": self.to_resolution.target.profile_name,
+            "from_model": self.from_resolution.target.model,
+            "to_model": self.to_resolution.target.model,
+            "from_context_size": self.from_resolution.target.context_size,
+            "to_context_size": self.to_resolution.target.context_size,
+        }
+
+
+@dataclass(frozen=True)
+class RoutedModelFallback:
+    """A fallback transition plus the ready client for its new target."""
+
+    transition: ModelFallbackTransition
+    routed_client: ResolvedRoleClient
 
 
 def _normalize_name(value: object, *, field: str) -> str:
@@ -205,6 +254,102 @@ def validate_role_specs(role_specs: Mapping[str, object] | None) -> dict[str, Mo
     return validated
 
 
+def parse_fallback_target(value: object, *, field: str) -> ModelTarget:
+    """Parse one ``<profile>@<endpoint>`` fallback entry or inline table."""
+    if isinstance(value, str):
+        raw = value.strip()
+        profile_name, separator, endpoint = raw.partition("@")
+        if not separator or not profile_name or not endpoint:
+            raise ModelRoleError(
+                f"{field} must use '<profile>@<endpoint>' syntax"
+            )
+        return parse_model_target(
+            {"profile": profile_name, "endpoint": endpoint},
+            field=field,
+        )
+    target = parse_model_target(value, field=field)
+    if target.base_url is None:
+        raise ModelRoleError(f"{field}.endpoint is required for a fallback target")
+    return target
+
+
+def validate_fallback_chains(
+    fallback_chain: Mapping[str, object] | Sequence[object] | None,
+) -> dict[str, tuple[ModelTarget, ...]]:
+    """Validate role-keyed fallback chains; a bare list applies to ``main``."""
+    if fallback_chain is None:
+        return {}
+    if isinstance(fallback_chain, Sequence) and not isinstance(
+        fallback_chain, (str, bytes, bytearray)
+    ):
+        raw_chains: Mapping[str, object] = {MAIN_MODEL_ROLE: fallback_chain}
+    elif isinstance(fallback_chain, Mapping):
+        raw_chains = fallback_chain
+    else:
+        raise ModelRoleError(
+            "models.fallback_chain must be a list or a role-to-list table/mapping"
+        )
+
+    validated: dict[str, tuple[ModelTarget, ...]] = {}
+    for raw_role, raw_entries in raw_chains.items():
+        role = normalize_model_role(raw_role)
+        if not isinstance(raw_entries, Sequence) or isinstance(
+            raw_entries, (str, bytes, bytearray)
+        ):
+            raise ModelRoleError(f"models.fallback_chain.{role} must be a list")
+        targets = tuple(
+            parse_fallback_target(
+                entry,
+                field=f"models.fallback_chain.{role}[{index}]",
+            )
+            for index, entry in enumerate(raw_entries)
+        )
+        if targets:
+            validated[role] = targets
+    return validated
+
+
+def normalize_fallback_revert(value: str) -> str:
+    """Validate when a fallback chain returns to its primary target."""
+    if not isinstance(value, str) or not value.strip():
+        raise ModelRoleError("models.fallback_revert must be a non-empty string")
+    normalized = value.strip().lower()
+    if normalized not in FALLBACK_REVERT_POLICIES:
+        raise ModelRoleError(
+            "models.fallback_revert must be one of: "
+            + ", ".join(FALLBACK_REVERT_POLICIES)
+        )
+    return normalized
+
+
+def check_context_window(
+    prompt_tokens: int,
+    resolution: ResolvedModelRole,
+    context_fill_ratio: object,
+) -> ContextWindowCheck:
+    """Recheck an outgoing prompt against a newly resolved model window."""
+    if isinstance(prompt_tokens, bool) or not isinstance(prompt_tokens, int) or prompt_tokens < 0:
+        raise ModelRoleError("prompt_tokens must be a non-negative integer")
+    if isinstance(context_fill_ratio, bool) or not isinstance(
+        context_fill_ratio, (int, float)
+    ):
+        raise ModelRoleError("context_fill_ratio must be a number in (0, 1]")
+    ratio = float(context_fill_ratio)
+    if not math.isfinite(ratio) or not 0.0 < ratio <= 1.0:
+        raise ModelRoleError("context_fill_ratio must be a number in (0, 1]")
+    context_size = resolution.target.context_size
+    if context_size is None or context_size <= 0:
+        raise ModelRoleError("resolved fallback target has no positive context size")
+    limit = math.floor(context_size * ratio)
+    return ContextWindowCheck(
+        prompt_tokens=prompt_tokens,
+        context_size=context_size,
+        context_fill_ratio=ratio,
+        prompt_token_limit=limit,
+        fits=prompt_tokens <= limit,
+    )
+
+
 class ModelRoleResolver:
     """Eagerly validate configured profiles and resolve requested roles."""
 
@@ -312,6 +457,129 @@ class ModelRoleResolver:
             uses_main_fallback=True,
         )
 
+    def resolve_explicit_target(
+        self,
+        role: str,
+        target: ModelTarget,
+    ) -> ResolvedModelRole:
+        """Resolve and validate one explicit target in a role's fallback chain."""
+        requested = normalize_model_role(role)
+        defaults = self.resolve(requested).target
+        return self._resolve_target(
+            requested_role=requested,
+            effective_role=requested,
+            target=target,
+            defaults=defaults,
+        )
+
+
+def _normalize_fallback_reason(reason: str) -> str:
+    """Require a stable reason code rather than raw exception or prompt text."""
+    if not isinstance(reason, str) or not reason.strip():
+        raise ModelRoleError("fallback reason must be a non-empty code")
+    normalized = reason.strip()
+    if not _REASON_RE.fullmatch(normalized):
+        raise ModelRoleError(
+            "fallback reason must contain only letters, digits, '.', '_', ':' or '-'"
+        )
+    return normalized
+
+
+class ModelFallbackController:
+    """Track role-local fallback position and explicit session reversion."""
+
+    def __init__(
+        self,
+        resolver: ModelRoleResolver,
+        *,
+        fallback_chain: Mapping[str, object] | Sequence[object] | None,
+        fallback_revert: str = "never",
+    ) -> None:
+        self.resolver = resolver
+        self.fallback_revert = normalize_fallback_revert(fallback_revert)
+        self._chains: dict[str, tuple[ResolvedModelRole, ...]] = {}
+        self._indices: dict[str, int] = {}
+        self._fallback_count = 0
+        self._fallback_roles: set[str] = set()
+
+        for role, targets in validate_fallback_chains(fallback_chain).items():
+            primary = resolver.resolve(role)
+            resolved = [primary]
+            seen_targets = {primary.target}
+            for target in targets:
+                candidate = resolver.resolve_explicit_target(role, target)
+                if candidate.target in seen_targets:
+                    raise ModelRoleError(
+                        f"models.fallback_chain.{role} repeats target "
+                        f"{candidate.target.label()}"
+                    )
+                seen_targets.add(candidate.target)
+                resolved.append(candidate)
+            self._chains[role] = tuple(resolved)
+            self._indices[role] = 0
+
+    @property
+    def configured_roles(self) -> tuple[str, ...]:
+        return tuple(self._chains)
+
+    def current(self, role: str = MAIN_MODEL_ROLE) -> ResolvedModelRole:
+        requested = normalize_model_role(role)
+        chain = self._chains.get(requested)
+        if chain is None:
+            return self.resolver.resolve(requested)
+        return chain[self._indices[requested]]
+
+    def advance(
+        self,
+        role: str,
+        *,
+        reason: str,
+    ) -> ModelFallbackTransition | None:
+        """Advance once after retry exhaustion, or return ``None`` at chain end."""
+        requested = normalize_model_role(role)
+        reason_code = _normalize_fallback_reason(reason)
+        chain = self._chains.get(requested)
+        if chain is None:
+            return None
+        from_index = self._indices[requested]
+        to_index = from_index + 1
+        if to_index >= len(chain):
+            return None
+        self._indices[requested] = to_index
+        self._fallback_count += 1
+        self._fallback_roles.add(requested)
+        return ModelFallbackTransition(
+            role=requested,
+            from_resolution=chain[from_index],
+            to_resolution=chain[to_index],
+            reason=reason_code,
+            from_index=from_index,
+            to_index=to_index,
+        )
+
+    def begin_session(self) -> bool:
+        """Apply ``next_session`` reversion; return whether any role reverted."""
+        if self.fallback_revert != "next_session":
+            return False
+        reverted = any(index > 0 for index in self._indices.values())
+        for role in self._indices:
+            self._indices[role] = 0
+        return reverted
+
+    def metrics_fields(self) -> dict[str, object]:
+        """Return post-run fields that let studies exclude changed treatments."""
+        active = {
+            role: self.current(role).target.label()
+            for role, index in sorted(self._indices.items())
+            if index > 0
+        }
+        return {
+            "model_fallback_used": self._fallback_count > 0,
+            "model_fallback_count": self._fallback_count,
+            "model_fallback_roles": sorted(self._fallback_roles),
+            "model_fallback_active_targets": active,
+        }
+
 
 class ModelRoleRouter:
     """Return lazily constructed clients for effective model targets."""
@@ -320,18 +588,59 @@ class ModelRoleRouter:
         self,
         resolver: ModelRoleResolver,
         client_factory: Callable[[ResolvedModelRole], Any],
+        fallback_controller: ModelFallbackController | None = None,
     ) -> None:
+        if (
+            fallback_controller is not None
+            and fallback_controller.resolver is not resolver
+        ):
+            raise ModelRoleError(
+                "fallback controller and client router must share one role resolver"
+            )
         self.resolver = resolver
+        self.fallback_controller = fallback_controller
         self._client_factory = client_factory
         self._clients: dict[ModelTarget, Any] = {}
 
-    def client_for(self, role: str = MAIN_MODEL_ROLE) -> ResolvedRoleClient:
-        resolution = self.resolver.resolve(role)
+    def _client_for_resolution(
+        self,
+        resolution: ResolvedModelRole,
+    ) -> ResolvedRoleClient:
         client = self._clients.get(resolution.target)
         if client is None:
             client = self._client_factory(resolution)
             self._clients[resolution.target] = client
         return ResolvedRoleClient(client=client, resolution=resolution)
+
+    def client_for(self, role: str = MAIN_MODEL_ROLE) -> ResolvedRoleClient:
+        resolution = (
+            self.fallback_controller.current(role)
+            if self.fallback_controller is not None
+            else self.resolver.resolve(role)
+        )
+        return self._client_for_resolution(resolution)
+
+    def switch_after_retry_exhaustion(
+        self,
+        role: str,
+        *,
+        reason: str,
+    ) -> RoutedModelFallback | None:
+        """Advance a role chain and return its lazily built replacement client."""
+        if self.fallback_controller is None:
+            return None
+        transition = self.fallback_controller.advance(role, reason=reason)
+        if transition is None:
+            return None
+        return RoutedModelFallback(
+            transition=transition,
+            routed_client=self._client_for_resolution(transition.to_resolution),
+        )
+
+    def begin_session(self) -> bool:
+        if self.fallback_controller is None:
+            return False
+        return self.fallback_controller.begin_session()
 
 
 @dataclass
