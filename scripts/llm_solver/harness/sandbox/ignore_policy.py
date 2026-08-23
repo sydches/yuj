@@ -384,15 +384,17 @@ class IgnorePolicy:
         return tuple(path for path in paths if not self.is_ignored(path))
 
     def existing_ignored_paths(self) -> tuple[str, ...]:
-        """Return sorted absolute existing entries for sandbox mask expansion.
+        """Return minimal absolute existing mask roots for the sandbox.
 
         The walk never follows directory symlinks.  Descendants are still
         visited beneath an ignored directory because a later negation may make
-        one of them visible.
+        one of them visible.  A fully ignored directory collapses to one mask;
+        a directory with any visible descendant is left mounted and only its
+        ignored descendants are returned.  This preserves negation semantics.
         """
         if not self.enabled or not self.sources:
             return ()
-        hidden: list[str] = []
+        entries: list[tuple[Path, bool, bool]] = []
         for directory, dir_names, file_names in os.walk(
             self.root, topdown=True, followlinks=False,
         ):
@@ -401,13 +403,41 @@ class IgnorePolicy:
             base = Path(directory)
             for name in dir_names:
                 entry = base / name
-                if self.is_ignored(entry, is_dir=True):
-                    hidden.append(str(entry))
+                entries.append((entry, True, self.is_ignored(entry, is_dir=True)))
             for name in file_names:
                 entry = base / name
-                if self.is_ignored(entry, is_dir=False):
-                    hidden.append(str(entry))
-        return tuple(sorted(hidden))
+                entries.append((entry, False, self.is_ignored(entry, is_dir=False)))
+
+        # Mark every ancestor that must remain mounted to expose at least one
+        # visible descendant.  Repository depth, rather than entry count,
+        # bounds this loop for each visible entry.
+        has_visible_descendant: set[Path] = set()
+        for entry, _, ignored in entries:
+            if ignored:
+                continue
+            parent = entry.parent
+            while parent != self.root and parent not in has_visible_descendant:
+                has_visible_descendant.add(parent)
+                parent = parent.parent
+
+        opaque_dirs = sorted(
+            (
+                entry for entry, is_dir, ignored in entries
+                if is_dir and ignored and entry not in has_visible_descendant
+            ),
+            key=lambda path: (len(path.parts), str(path)),
+        )
+        kept_dirs: list[Path] = []
+        for directory in opaque_dirs:
+            if not any(directory.is_relative_to(parent) for parent in kept_dirs):
+                kept_dirs.append(directory)
+
+        hidden_files = [
+            entry for entry, is_dir, ignored in entries
+            if ignored and not is_dir
+            and not any(entry.is_relative_to(parent) for parent in kept_dirs)
+        ]
+        return tuple(sorted(str(path) for path in (*kept_dirs, *hidden_files)))
 
 
 def load_ignore_policy(

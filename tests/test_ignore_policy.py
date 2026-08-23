@@ -144,9 +144,22 @@ def test_existing_ignored_paths_feed_sandbox_masks(tmp_path: Path) -> None:
     hidden = policy.existing_ignored_paths()
 
     assert str(tmp_path / "cache") in hidden
-    assert str(tmp_path / "cache" / "data.bin") in hidden
+    assert str(tmp_path / "cache" / "data.bin") not in hidden
     assert str(tmp_path / "private.txt") in hidden
     assert str(tmp_path / "public.txt") not in hidden
+
+
+def test_sandbox_mask_roots_do_not_hide_a_negated_descendant(tmp_path: Path) -> None:
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "drop.txt").write_text("drop")
+    (tmp_path / "build" / "keep.txt").write_text("keep")
+    policy = _policy(tmp_path, "build/\n!build/keep.txt\n")
+
+    hidden = policy.existing_ignored_paths()
+
+    assert str(tmp_path / "build") not in hidden
+    assert str(tmp_path / "build" / "drop.txt") in hidden
+    assert str(tmp_path / "build" / "keep.txt") not in hidden
 
 
 def test_paths_outside_root_and_parent_patterns_fail_closed(tmp_path: Path) -> None:
