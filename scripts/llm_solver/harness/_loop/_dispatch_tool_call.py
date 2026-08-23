@@ -47,6 +47,9 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     )
     if done_decision.action == Action.PASS:
         state.log.info("Model called done() at turn %d", state.turn)
+        session._final_text = str(
+            tc.arguments.get("message") or state.content or ""
+        )
         session.context.add_tool_result(tc.id, "Session ended by model.", tool_name="done")
         _emit_done(tc, state, "Session ended by model.")
         return TCOutcome(end=True, reason="model_done", done=True)

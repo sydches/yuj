@@ -41,6 +41,7 @@ VALID_ARGUMENTS = {
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
+    "task": {"agent": "research", "prompt": "Find the config owner."},
     "done": {"message": "All checks pass."},
 }
 
@@ -74,6 +75,8 @@ INVALID_ARGUMENTS = (
     ("list_definitions", {"path": None}, "$.path", "type"),
     ("apply_patch", {}, "$.patch", "required"),
     ("apply_patch", {"patch": {"text": "patch"}}, "$.patch", "type"),
+    ("task", {"agent": "research"}, "$.prompt", "required"),
+    ("task", {"agent": 7, "prompt": "find it"}, "$.agent", "type"),
     ("done", {"message": 1}, "$.message", "type"),
 )
 

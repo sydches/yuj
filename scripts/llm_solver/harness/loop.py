@@ -216,6 +216,10 @@ class Session:
         ignore_policy: IgnorePolicy | None = None,
         effective_env: Mapping[str, str] | None = None,
         allow_login_shell: bool | None = None,
+        tool_allowlist: frozenset[str] | None = None,
+        subagent_level: int = 0,
+        subagent_runtime=None,
+        subagent_read_only: bool = False,
     ):
         self.cfg = cfg
         self._permission_policy = PermissionPolicy.from_rule_tables(
@@ -250,6 +254,25 @@ class Session:
         self._trace_file = trace_file
         self._trace_path = trace_path
         self._state_path = state_path
+        self._subagent_level = int(subagent_level)
+        self._subagent_read_only = bool(subagent_read_only)
+        self._subagent_prompt_tokens = 0
+        self._subagent_completion_tokens = 0
+        self._subagent_calls = 0
+        self._own_prompt_tokens = 0
+        self._own_completion_tokens = 0
+        self._last_assistant_content = ""
+        self._final_text = ""
+        if subagent_runtime is None and getattr(cfg, "tools_task_enabled", False):
+            from .subagents import SubagentRuntime
+
+            run_root = (
+                trace_path.parent
+                if trace_path is not None
+                else Path(artifact_dir or cwd)
+            )
+            subagent_runtime = SubagentRuntime(run_root)
+        self._subagent_runtime = subagent_runtime
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
@@ -285,6 +308,18 @@ class Session:
         self._tool_schemas = apply_profile_to_schemas(
             get_tool_schemas(cfg.tool_desc), cfg, client,
         )
+        if self._subagent_level >= int(
+            getattr(cfg, "tools_subagent_depth", 1) or 0
+        ):
+            self._tool_schemas = [
+                schema for schema in self._tool_schemas
+                if schema.get("function", {}).get("name") != "task"
+            ]
+        if tool_allowlist is not None:
+            self._tool_schemas = [
+                schema for schema in self._tool_schemas
+                if schema.get("function", {}).get("name") in tool_allowlist
+            ]
 
         def _redirect_event_sink(payload: dict[str, object]) -> None:
             fields = dict(payload)
@@ -351,6 +386,18 @@ class Session:
         base_bash_handler = handlers["bash"]
 
         def _bash_handler(args, dispatch_cwd, dispatch_cfg):
+            if self._subagent_read_only:
+                from .subagents import prepare_readonly_bash
+
+                if bool(args.get("background", False)):
+                    return "ERROR: read-only subagent blocked bash: background execution"
+                prepared, reason = prepare_readonly_bash(
+                    str(args.get("cmd", ""))
+                )
+                if prepared is None:
+                    return f"ERROR: read-only subagent blocked bash: {reason}"
+                args = dict(args)
+                args["cmd"] = prepared
             if not bool(args.get("background", False)):
                 return base_bash_handler(args, dispatch_cwd, dispatch_cfg)
             if self._process_manager is None:
@@ -392,14 +439,36 @@ class Session:
                 f"LSP {query.kind} {query.file} status={query.status}\n{body}"
             )
 
+        def _task_handler(args, _cwd, _cfg):
+            if self._subagent_runtime is None:
+                return "ERROR: task tool has no subagent runtime"
+            return self._subagent_runtime.execute(
+                self,
+                args.get("agent"),
+                args.get("prompt"),
+            )
+
         handlers["lsp"] = _lsp_handler
+        handlers["task"] = _task_handler
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
+        if tool_allowlist is not None:
+            schema_names = {
+                schema["function"]["name"] for schema in self._tool_schemas
+            }
+            handlers = {
+                name: handler for name, handler in handlers.items()
+                if name in schema_names
+            }
         self._tool_registry = ToolRegistry(handlers=handlers)
         self._checkpoint_store = checkpoint_store
         schema_names = [s["function"]["name"] for s in self._tool_schemas]
-        validate_tool_handlers(schema_names, registry=self._tool_registry)
+        validate_tool_handlers(
+            schema_names,
+            allow_extra_handlers=tool_allowlist is None,
+            registry=self._tool_registry,
+        )
         self._tool_schema_set = ToolSchemaSet.from_openai_tools(
             self._tool_schemas
         )
@@ -762,6 +831,20 @@ class Session:
             try:
                 runner = maybe_install_persistent_bash(self)
                 result = run_session_loop(self)
+                self._own_prompt_tokens = result.total_prompt_tokens
+                self._own_completion_tokens = result.total_completion_tokens
+                if self._subagent_prompt_tokens or self._subagent_completion_tokens:
+                    result = replace(
+                        result,
+                        total_prompt_tokens=(
+                            result.total_prompt_tokens
+                            + self._subagent_prompt_tokens
+                        ),
+                        total_completion_tokens=(
+                            result.total_completion_tokens
+                            + self._subagent_completion_tokens
+                        ),
+                    )
             except BaseException as exc:
                 if diagnostics is not None:
                     diagnostics.record_fatal_exception(exc)

@@ -26,6 +26,7 @@ person types into a terminal.
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `task` | `agent`, `prompt` | None | Run one named agent in a separate context and return its final text. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -38,7 +39,7 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `task` | Off |
 
 Turn on the optional tools in a small settings file:
 
@@ -54,6 +55,7 @@ enabled = true
 
 [tools]
 background_enabled = true
+task_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -134,6 +136,22 @@ names a nonzero `next_page`. This mode requires the separately disabled
 dependencies provide Python, JavaScript/TypeScript, Go, Rust, and Java
 grammars locally; a missing backend returns a setup error instead of
 downloading during the tool call.
+
+## Named subagents
+
+With `[tools].task_enabled = true`, `task(agent, prompt)` selects a checked-in
+`agents/<name>.toml` descriptor. The descriptor owns the child's model profile,
+tool allowlist, system prompt, turn limit, and read-only status. Named agents
+are read-only by default. See [Configuration](configuration.html#run-named-subagents)
+and [`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
+for the exact settings and descriptor format.
+
+A child uses the same task directory and sandbox policy but a fresh
+conversation and model client. Calls run sequentially; the tool does not use
+the background-process facility. `tools.subagent_depth` bounds nesting, and
+`tools.subagent_max_turns` caps every descriptor's own limit. The parent sees
+only the final text. Yuj saves a separate child trace for audit and replay and
+adds child usage to post-run metrics.
 
 ## Argument schema rejection
 

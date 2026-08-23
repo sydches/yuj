@@ -166,6 +166,9 @@ _DISPATCH = {
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
     ),
+    "task": lambda args, cwd, cfg: (
+        "ERROR: task tool is unavailable outside a configured Session"
+    ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),

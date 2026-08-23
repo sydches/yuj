@@ -78,6 +78,11 @@ def solve_task(
     log = _loop_mod.log  # so test patches on loop.log intercept these emits
 
     work_dir, artifact_dir, trace_path = resolve_run_paths(repo_dir, artifacts_dir)
+    subagent_runtime = None
+    if getattr(cfg, "tools_task_enabled", False):
+        from ..subagents import SubagentRuntime
+
+        subagent_runtime = SubagentRuntime(trace_path.parent)
     checkpoint_store = None
     if getattr(cfg, "tools_file_checkpoints_enabled", False):
         from ..workspace_checkpoints import (
@@ -457,6 +462,7 @@ def solve_task(
                 ignore_policy=ignore_policy,
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,
+                subagent_runtime=subagent_runtime,
             )
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(
@@ -629,6 +635,16 @@ def solve_task(
     metrics.update(cache_usage.metrics_fields())
     metrics.update(role_usage.metrics_fields())
     metrics.update(model_role_runtime.model_fallback_metrics(client))
+    metrics["subagents"] = (
+        subagent_runtime.metrics_payload()
+        if subagent_runtime is not None
+        else {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+    )
     metrics["file_checkpoints"] = (
         checkpoint_store.metrics_payload()
         if checkpoint_store is not None

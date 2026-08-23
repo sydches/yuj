@@ -380,6 +380,13 @@ class Config:
     tools_background_enabled: bool = False
     tools_background_max_procs: int = 4
     tools_background_poll_timeout: float = 300.0
+    # Sequential nested harness sessions. The task tool is absent from the
+    # model-facing schema until explicitly enabled. Depth counts child edges
+    # from the root session (root=0), and the global turn limit caps each
+    # agent descriptor's own max_turns value.
+    tools_task_enabled: bool = False
+    tools_subagent_depth: int = 1
+    tools_subagent_max_turns: int = 20
     # First-class shell sandbox backend. Container mode creates one ephemeral
     # Docker/Podman container per command and preserves the absolute cwd.
     sandbox_backend: str = "bwrap"
