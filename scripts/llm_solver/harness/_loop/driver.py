@@ -660,7 +660,25 @@ def solve_task(
                     prior_session_mutation_repeat=agg_mutation_repeat,
                     prior_session_verify_repeat=agg_verify_repeat,
                 )
+            start_hook = session._run_hook("session_start")
+            session._add_hook_context(start_hook)
+            if start_hook.blocked:
+                session._lifecycle_hook_block_reason = start_hook.reason
             result = session.run()
+            end_hook = session._run_hook(
+                "session_end",
+                finish_reason=result.finish_reason,
+                done=result.done,
+                turns=result.turns,
+            )
+            if end_hook.blocked:
+                result = SessionResult(
+                    result.turns,
+                    "hook_block",
+                    done=False,
+                    total_prompt_tokens=result.total_prompt_tokens,
+                    total_completion_tokens=result.total_completion_tokens,
+                )
             log.info(
                 "Session ended: %s (turns=%d, prompt_tokens=%d)",
                 result.finish_reason, result.turns, result.total_prompt_tokens,
@@ -732,6 +750,11 @@ def solve_task(
 
             if result.finish_reason == "approval_required":
                 write_checkpoint(artifact_dir, cfg.model, "paused")
+                break
+
+            if result.finish_reason == "hook_block":
+                _auto_commit(work_dir, session_num, result.finish_reason)
+                write_checkpoint(artifact_dir, cfg.model, "blocked")
                 break
 
             # Auto-commit for non-error sessions.

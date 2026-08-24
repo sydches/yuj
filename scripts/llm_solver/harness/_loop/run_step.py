@@ -221,12 +221,12 @@ def run_session_loop(session: "Session") -> "SessionResult":
         4. stop check          (natural exit)
         5. duplicate_guard     (turn-level, pre-dispatch)   WARN / END
         6. per tool call:
-           6a. done_guard        (tc-level, pre-dispatch)    BLOCK (or accept→END)
-           6b. rumination_gate   (tc-level, pre-dispatch)    WARN-grace / BLOCK / END
-           6c. dispatch          (when not blocked)
-           6d. error_ladder      (tc-level, post-dispatch)   WARN / END
-           6e. rumination_ladder (tc-level, post-dispatch)   WARN + ARM
-           6f. append turn-level WARN; trace; record
+           6a. pre_tool hook      (before validation)         BLOCK / REWRITE
+           6b. schema/permission/approval                    BLOCK / PAUSE
+           6c. done and tool guardrails                      BLOCK / END / WARN
+           6d. dispatch          (when not blocked)
+           6e. post_tool hook     (after real dispatch)       BLOCK / ANNOTATE
+           6f. post-tool ladders, trace, and record
         7. max_turns                                         END
     """
     # Late-bind names that tests patch on the public ``loop`` module.
@@ -253,6 +253,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
     # iteration so the adaptive-phase switch (which mutates session.cfg
     # via dataclasses.replace) is visible on the next turn.
     turn_start = int(getattr(session, "_turn_start_offset", 0) or 0)
+    if getattr(session, "_lifecycle_hook_block_reason", ""):
+        return SessionResult(
+            turn_start,
+            "hook_block",
+            done=False,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+        )
     for local_turn in range(session.cfg.max_turns):
         turn = turn_start + local_turn
         # Session-owned services (for example the lazy LSP manager) emit
@@ -302,6 +310,21 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # No-op when the subsystem is disabled or no fragments load.
         session._apply_injections(turn_number=turn)
         session._inject_pending_advisor(turn)
+        pre_model_hook = session._run_hook("pre_model")
+        session._add_hook_context(pre_model_hook)
+        if pre_model_hook.blocked:
+            log.warning(
+                "pre_model hook blocked turn %d: %s",
+                turn,
+                pre_model_hook.reason,
+            )
+            return SessionResult(
+                turn,
+                "hook_block",
+                done=False,
+                total_prompt_tokens=total_prompt,
+                total_completion_tokens=total_completion,
+            )
         # ─── 0. GUARDRAIL: context fill (PRE-FLIGHT) ──────────────────
         # The post-flight check at the end of step 2 catches overflow
         # that develops during the response, but a tool result added
@@ -570,6 +593,23 @@ def run_session_loop(session: "Session") -> "SessionResult":
             # silently fell off the conversation".
             allow_implicit = bool(getattr(cfg, "allow_implicit_done", True))
             if allow_implicit:
+                done_hook = session._run_hook(
+                    "done",
+                    implicit=True,
+                    finish_reason=reason,
+                )
+                if done_hook.blocked:
+                    message = (
+                        "ERROR: done hook blocked completion: "
+                        f"{done_hook.reason}"
+                    )
+                    block = done_hook.context_block()
+                    if block:
+                        message += "\n\n" + block
+                    session.context.add_user(message)
+                    session._record_pressure_event(True)
+                    _run_post_turn_hooks(session, turn)
+                    continue
                 log.info("Model stopped at turn %d (reason=%s) — implicit done", turn, reason)
                 return SessionResult(turn, "stop", done=True, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
             log.warning(
@@ -668,6 +708,18 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 tc.name, active_names=turn_active_tool_names
             )
         )
+        pre_tool_hooks = {}
+        for tc in tool_calls:
+            effect = session._run_hook(
+                "pre_tool",
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                tool_args=dict(tc.arguments),
+            )
+            if effect.updated_input is not None:
+                tc.arguments.clear()
+                tc.arguments.update(effect.updated_input)
+            pre_tool_hooks[tc.id] = effect
         schema_validations = {}
         if getattr(cfg, "tools_schema_validation", "off") == "reject":
             schema_validations = {
@@ -675,13 +727,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     tc.name, tc.arguments
                 )
                 for tc in tool_calls
-                if tc.id not in inactive_tool_call_ids
+                if (
+                    tc.id not in inactive_tool_call_ids
+                    and not pre_tool_hooks[tc.id].blocked
+                )
             }
         permission_resolutions = {}
         approval_available = approval_transport_available(session._trace_path)
         advisor_intervened = False
         for tc in tool_calls:
-            if tc.id in inactive_tool_call_ids:
+            if (
+                tc.id in inactive_tool_call_ids
+                or pre_tool_hooks[tc.id].blocked
+            ):
                 continue
             validation = schema_validations.get(tc.id)
             if validation is not None and not validation.valid:
@@ -712,6 +770,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             phase_token_ms=_phase_token_ms,
             turn_t0=_turn_t0,
             preexecuted=preexecuted,
+            pre_tool_hooks=pre_tool_hooks,
             inactive_tool_call_ids=inactive_tool_call_ids,
             schema_validations=schema_validations,
             permission_resolutions=permission_resolutions,
@@ -735,6 +794,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 resolution.allowed
                 for resolution in permission_resolutions.values()
             )
+            and all(not effect.blocked for effect in pre_tool_hooks.values())
         ):
             effective_output_control = (
                 session.output_control if cfg.bash_transforms_task_format_enabled else None
@@ -806,9 +866,12 @@ def run_session_loop(session: "Session") -> "SessionResult":
                             "`yuj show`, approve it with "
                             "`yuj approve <session_id>`, then resume."
                         )
+                        hook_context = pre_tool_hooks[tc.id].context_block()
                         result = session._decorate_stream_rule_tool_result(
                             tc.id, result, turn=turn
                         )
+                        if hook_context:
+                            result += "\n\n" + hook_context
                         session.context.add_tool_result(
                             tc.id,
                             result,

@@ -443,6 +443,11 @@ class Config:
     sandbox_env_ignore_default_excludes: bool = False
     sandbox_env_allow_login_shell: bool = False
     runtime_worktree: str = "off"
+    # Trusted host-side lifecycle commands. These are not model tools and do
+    # not run inside the model-command sandbox. Empty event lists plus the
+    # default-off gate preserve existing runs exactly.
+    hooks_enabled: bool = False
+    hooks: dict[str, object] = field(default_factory=dict)
     # Lazy language-server diagnostics and optional navigation tool.
     lsp_enabled: bool = False
     lsp_servers: dict[str, object] = field(default_factory=dict)

@@ -109,11 +109,11 @@ per-call; Yuj's persistent bwrap shell is not used.
 
 ## Control the command environment
 
-`[sandbox.env]` applies one resolved environment to every command surface,
-including foreground and background shell calls, `run_tests`, post-edit
-checks, and language servers. It applies under bwrap, the first-class
-container backend, both legacy container modes, and an explicitly unsandboxed
-command path.
+`[sandbox.env]` applies one resolved environment to every model-command
+surface, including foreground and background shell calls, `run_tests`,
+post-edit checks, and language servers. It applies under bwrap, the
+first-class container backend, both legacy container modes, and an explicitly
+unsandboxed command path. It does not apply to trusted lifecycle hooks.
 
 The default `inherit = "core"` inherits only `PATH`, `HOME`, `LANG`, and
 `TERM` when present. Inherited names containing `KEY`, `SECRET`, or `TOKEN`
@@ -156,6 +156,33 @@ Simple captured `ls`, `cat`, and `head` calls are filtered before execution so
 an individually masked file is not exposed merely as a directory entry. See
 [Configuration](configuration.html#hide-repository-paths-from-the-model-view)
 for syntax, precedence, and trace provenance.
+
+## Keep lifecycle hooks outside the task
+
+Configured `[hooks]` commands are trusted harness extensions. They do not run
+inside `bwrap`, the first-class container backend, or a legacy task container.
+They also do not use the restricted `[sandbox.env]` command environment. They
+run with the Yuj process's host permissions and environment, so they may have
+host filesystem and network access that model commands do not have.
+
+The model cannot choose a hook command, but model and tool data can reach its
+JSON standard input. Review the executable, use an absolute operator-owned
+path, avoid secrets in command arguments, and validate all payload fields.
+Do not store the executable or an imported script in the task directory.
+
+When `[tools].sandbox_required = true`, Yuj checks every enabled handler before
+its first invocation. It refuses to start if the configured executable or a
+path argument resolves inside the task directory, including an
+interpreter command such as `python /task/hook.py`. This prevents a task from
+editing code that Yuj would later execute outside the sandbox. Yuj repeats the
+check immediately before each launch so a path created or retargeted during
+the session is still refused. This does not sandbox an external hook or prove
+that the external program is safe.
+
+When `sandbox_required` is false, task-owned hook paths are allowed and run
+with host permissions. Make that choice only for a repository you trust. See
+[Configuration](configuration.html#run-trusted-lifecycle-hooks) for the full
+handler contract.
 
 ## Turn the sandbox off
 

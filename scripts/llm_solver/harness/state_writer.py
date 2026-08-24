@@ -738,6 +738,11 @@ def project(
             # Control metadata and the private note transcript are deliberately
             # outside the mechanical model-state projection.
             continue
+        elif et == "hook":
+            # Hook effects are raw execution/replay evidence. Only their
+            # admitted downstream conversation or tool result may enter an
+            # ordinary projected row.
+            continue
         # Other session_start rows do not mutate projected task state.
 
     state.setdefault("current_attempt", "")

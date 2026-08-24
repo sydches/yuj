@@ -685,6 +685,22 @@ allow_login_shell = false         # profiles/rc files stay disabled by default
 worktree = "off"  # off | auto | <branch-name>
 
 # ---------------------------------------------------------------------------
+# Trusted host-side lifecycle hooks
+# ---------------------------------------------------------------------------
+# Each event accepts an ordered array of {matcher, command, timeout_s} tables.
+# A command string is one executable path; use an argv array when arguments
+# are needed. Hooks receive JSON on stdin and run outside the model sandbox.
+# Empty arrays plus enabled=false preserve the ordinary runtime exactly.
+[hooks]
+enabled = false
+pre_tool = []
+post_tool = []
+pre_model = []
+session_start = []
+session_end = []
+done = []
+
+# ---------------------------------------------------------------------------
 # File path conventions (not overridable — documented here for reference).
 # These are implicit contracts consumed by analysis tools downstream.
 # ---------------------------------------------------------------------------

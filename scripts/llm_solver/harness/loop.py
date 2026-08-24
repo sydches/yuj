@@ -163,6 +163,7 @@ _KNOWN_FINISH_REASONS: frozenset[str] = frozenset({
     "error",
     "task_wall_clock",
     "approval_required",
+    "hook_block",
     # stop_resume delivery (restart experiment): the adaptive controller
     # requested a graceful stop so an orchestrator can resume with (C) or
     # without (B) the chosen rung. See adaptive_control/executors.py
@@ -858,6 +859,35 @@ class Session:
 
             self._advisor = AdvisorRuntime(self, self._artifact_dir)
 
+        from .hooks import HookRunner
+
+        hook_run_dir = Path(
+            artifact_dir
+            or (trace_path.parent if trace_path is not None else self.cwd)
+        )
+
+        def _hook_event_sink(fields: dict[str, object]) -> None:
+            with self._service_event_lock:
+                self._emit(
+                    "hook",
+                    session_number=self._session_number,
+                    turn_number=self._current_turn,
+                    **fields,
+                )
+
+        self._hook_runner = HookRunner(
+            enabled=getattr(cfg, "hooks_enabled", False),
+            handlers=getattr(cfg, "hooks", {}),
+            task_cwd=self.cwd,
+            run_dir=hook_run_dir,
+            run_id=hook_run_dir.name,
+            session_number=self._session_number,
+            sandbox_required=bool(getattr(cfg, "sandbox_required", False)),
+            event_sink=_hook_event_sink,
+            replay=getattr(client, "is_replay", False) is True,
+            recorded_events=getattr(client, "hook_events", ()),
+        )
+
     @property
     def active_tool_names(self) -> frozenset[str]:
         """Names in the current profile-filtered model-facing tool surface."""
@@ -1132,6 +1162,22 @@ class Session:
                 records, turn=turn, delivery="tool_result"
             )
         return decorated
+
+    def _run_hook(self, event: str, **fields: object):
+        """Invoke one lifecycle event with the common run/session envelope."""
+        return self._hook_runner.run(
+            event,
+            turn=self._current_turn,
+            model=self.cfg.model,
+            profile_name=self.cfg.profile_name or self.cfg.model,
+            **fields,
+        )
+
+    def _add_hook_context(self, effect) -> None:
+        """Add a normalized hook annotation to the next model request."""
+        block = effect.context_block()
+        if block:
+            self.context.add_user(block)
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx
