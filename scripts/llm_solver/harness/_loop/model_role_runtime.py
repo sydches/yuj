@@ -104,6 +104,40 @@ def _target_config(cfg: Config, resolution: ResolvedModelRole) -> Config:
     )
 
 
+def _effective_role_specs(cfg: Config) -> dict[str, object]:
+    """Return configured roles plus the canonical ``advisor.*`` target.
+
+    ``advisor.model`` and ``advisor.endpoint`` are the public owners for this
+    role.  Keeping the derived role out of ``cfg.model_roles`` preserves the
+    resolved public configuration while letting the existing validated router
+    construct a distinct endpoint client lazily when needed.
+    """
+    specs = dict(cfg.model_roles)
+    if not getattr(cfg, "advisor_enabled", False):
+        return specs
+    specs.pop("advisor", None)
+    specs["advisor"] = {
+        "profile": cfg.profile_name or cfg.model,
+        "model": getattr(cfg, "advisor_model", "") or cfg.model,
+        "endpoint": getattr(cfg, "advisor_endpoint", "") or cfg.base_url,
+        "context_size": cfg.context_size,
+    }
+    return specs
+
+
+def _validate_advisor_profile(cfg: Config, resolver: ModelRoleResolver) -> None:
+    """Require the tool-call channel used for read-only review and advise."""
+    if not getattr(cfg, "advisor_enabled", False):
+        return
+    profile = resolver.resolve("advisor").profile
+    if profile is not None and not bool(
+        getattr(profile, "supports_tool_calls", False)
+    ):
+        raise ValueError(
+            "advisor requires a model profile with supports_tool_calls=true"
+        )
+
+
 def build_model_role_runtime(
     *,
     cfg: Config,
@@ -132,9 +166,10 @@ def build_model_role_runtime(
             api_key=cfg.api_key,
             context_size=cfg.context_size,
         ),
-        role_specs=cfg.model_roles,
+        role_specs=_effective_role_specs(cfg),
         profile_loader=profile_loader,
     )
+    _validate_advisor_profile(cfg, resolver)
     token_ledger = RoleTokenLedger()
     fallback_controller = ModelFallbackController(
         resolver,
@@ -158,6 +193,43 @@ def build_model_role_runtime(
         return role_client
 
     router = ModelRoleRouter(resolver, make_client, fallback_controller)
+
+    def make_subagent_client(parent: Any, spec: Any, task_id: str):
+        """Build a fresh client so child transcripts cannot replace parent IO."""
+        from ..subagents import SubagentModelBinding
+
+        parent_client = _stored_attr(parent, "client", parent)
+        active_cfg = _stored_attr(parent_client, "cfg", cfg)
+        current = _stored_attr(parent_client, "_model_role_resolution")
+        base_target = current.target if current is not None else resolver.main.target
+        resolution = resolver.resolve_explicit_target(
+            f"subagent.{spec.name}",
+            ModelTarget(
+                profile_name=spec.model_profile,
+                model=base_target.model,
+                base_url=base_target.base_url,
+                api_key=base_target.api_key,
+                context_size=base_target.context_size,
+            ),
+        )
+        child_cfg = _target_config(active_cfg, resolution)
+        child_client = client_factory(child_cfg, resolution.profile)
+        parent_session_id = str(
+            _stored_attr(parent_client, "_session_id", "") or ""
+        )
+        if parent_session_id and hasattr(child_client, "set_session_id"):
+            child_client.set_session_id(
+                f"{parent_session_id}:subagent:{task_id}"
+            )
+        _attach_runtime(child_client, router, token_ledger, resolution)
+        return SubagentModelBinding(
+            client=child_client,
+            config=child_cfg,
+            resolution=resolution,
+            dedicated=True,
+        )
+
+    router.subagent_client_factory = make_subagent_client
     _attach_runtime(main_client, router, token_ledger, resolver.main)
     return ModelRoleRuntime(resolver, router, token_ledger, fallback_controller)
 
@@ -186,9 +258,10 @@ def validate_model_role_profiles(
             api_key=cfg.api_key,
             context_size=cfg.context_size,
         ),
-        role_specs=cfg.model_roles,
+        role_specs=_effective_role_specs(cfg),
         profile_loader=profile_loader,
     )
+    _validate_advisor_profile(cfg, resolver)
     ModelFallbackController(
         resolver,
         fallback_chain=cfg.model_fallback_chain,
@@ -205,6 +278,9 @@ def _attach_runtime(
     client._model_role_router = router
     client._role_token_ledger = ledger
     client._model_role_resolution = resolution
+    subagent_factory = getattr(router, "subagent_client_factory", None)
+    if subagent_factory is not None:
+        client._subagent_client_factory = subagent_factory
 
 
 def consumer_role_client(owner: Any, role: str = "weak") -> ConsumerRoleClient:

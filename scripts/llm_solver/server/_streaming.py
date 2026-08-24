@@ -11,13 +11,13 @@ Why streaming saves wall-clock latency on the harness side:
     qwen36-A3B at ~80-token completions: 100–300 ms/turn.
 
 What streaming does NOT change:
-  - Tool-call parsing semantics — we BUFFER the whole response into
-    a synthesized non-stream-shaped object, then downstream parses
-    it exactly as today. The harness loop never sees an incomplete
-    tool call. (Early-fire on tool_call finish_reason is explicitly
-    OUT OF SCOPE — too invasive for too little marginal gain.)
-  - Retry semantics — exceptions raised mid-stream propagate up to
-    chat_with_retry which classifies them via _TRANSIENT_ERRORS.
+  - Normal tool-call parsing semantics — we BUFFER the whole response into
+    a synthesized non-stream-shaped object, then downstream parses it exactly
+    as today. An optional harness observer may inspect accumulated argument
+    snapshots and abort, but incomplete calls never reach ordinary dispatch.
+  - Transport retry semantics — exceptions raised mid-stream propagate up to
+    chat_with_retry which classifies them via _TRANSIENT_ERRORS. A validated
+    stream-rule match uses its own typed same-turn retry signal.
 
 Failure modes handled here:
   - Mid-stream APIConnectionError / APITimeoutError / InternalServerError:
@@ -35,7 +35,7 @@ Failure modes handled here:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Callable, Iterable, Mapping
 
 import openai
 
@@ -150,6 +150,118 @@ class _StreamedResponse:
         return json.dumps(body)
 
 
+@dataclass(frozen=True, slots=True)
+class StreamDelta:
+    """One model-stream surface exposed to a harness-owned observer."""
+
+    source: str  # text | thinking | tool
+    delta: str
+    tool_index: int = -1
+    tool_name: str = ""
+    tool_arguments: str = ""
+
+
+class StreamRuleInterrupt(RuntimeError):
+    """Control signal raised after a rule match closes the live stream.
+
+    ``matches`` is transcript-serializable and includes the rule body because
+    replay must reproduce the exact hidden retry injection without consulting
+    future trace rows or mutable rule files.  The ordinary trace event omits
+    that body.
+    """
+
+    def __init__(
+        self,
+        matches: Iterable[Mapping[str, object]],
+        partial_response: _StreamedResponse | None = None,
+    ) -> None:
+        self.matches = tuple(dict(match) for match in matches)
+        self.partial_response = partial_response
+        names = ", ".join(str(match.get("rule") or "?") for match in self.matches)
+        super().__init__(f"stream rule interrupted response: {names}")
+
+    def attach_partial(self, response: _StreamedResponse) -> None:
+        self.partial_response = response
+
+    def model_dump_json(self) -> str:
+        """Return a valid transcript response that ReplayClient can re-raise."""
+        import json
+
+        if self.partial_response is None:
+            partial = _StreamedResponse(
+                choices=[_StreamedChoice(
+                    message=_StreamedMessage(content=None),
+                    finish_reason="stream_rule_interrupted",
+                )]
+            )
+        else:
+            partial = self.partial_response
+        body = json.loads(partial.model_dump_json())
+        body["_stream_rule_interrupt"] = {"matches": list(self.matches)}
+        return json.dumps(body)
+
+    @classmethod
+    def from_transcript(cls, body: Mapping[str, object]) -> "StreamRuleInterrupt":
+        """Reconstruct the control signal from one saved JSON response."""
+        marker = body.get("_stream_rule_interrupt")
+        if not isinstance(marker, Mapping):
+            raise ValueError("response is not a stream-rule interrupt record")
+        matches = marker.get("matches")
+        if not isinstance(matches, list) or any(
+            not isinstance(item, Mapping) for item in matches
+        ):
+            raise ValueError("stream-rule interrupt record has invalid matches")
+        choices = body.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        choice = choice if isinstance(choice, Mapping) else {}
+        message = choice.get("message")
+        message = message if isinstance(message, Mapping) else {}
+        tool_calls: list[_StreamedToolCall] = []
+        raw_tool_calls = message.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            for raw_tool in raw_tool_calls:
+                if not isinstance(raw_tool, Mapping):
+                    continue
+                function = raw_tool.get("function")
+                function = function if isinstance(function, Mapping) else {}
+                tool_calls.append(_StreamedToolCall(
+                    id=str(raw_tool.get("id") or ""),
+                    type=str(raw_tool.get("type") or "function"),
+                    function=_StreamedFunction(
+                        name=str(function.get("name") or ""),
+                        arguments=str(function.get("arguments") or ""),
+                    ),
+                ))
+        usage = body.get("usage")
+        usage = usage if isinstance(usage, Mapping) else {}
+        details = usage.get("prompt_tokens_details")
+        details = details if isinstance(details, Mapping) else {}
+        cached = details.get("cached_tokens")
+        partial = _StreamedResponse(
+            choices=[_StreamedChoice(
+                message=_StreamedMessage(
+                    content=(
+                        str(message.get("content"))
+                        if message.get("content") is not None else None
+                    ),
+                    tool_calls=tool_calls or None,
+                ),
+                finish_reason=str(
+                    choice.get("finish_reason") or "stream_rule_interrupted"
+                ),
+            )],
+            usage=_StreamedUsage(
+                prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                completion_tokens=int(usage.get("completion_tokens") or 0),
+                prompt_tokens_details=(
+                    _StreamedPromptTokenDetails(cached_tokens=int(cached))
+                    if isinstance(cached, int) and cached >= 0 else None
+                ),
+            ),
+        )
+        return cls(matches, partial)
+
+
 def _field(value, name: str):
     if value is None:
         return None
@@ -165,7 +277,63 @@ def _field(value, name: str):
 # ── Stream assembly ──────────────────────────────────────────────────
 
 
-def assemble_stream(chunks: Iterable) -> _StreamedResponse:
+def _build_response(
+    *,
+    content_parts: list[str],
+    tool_calls_by_index: dict[int, dict],
+    finish_reason: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int | None,
+    timing_prompt_n: int | None,
+    timing_cache_n: int | None,
+) -> _StreamedResponse:
+    """Build the SDK-shaped response used for complete and aborted streams."""
+    tool_calls_list = None
+    if tool_calls_by_index:
+        tool_calls_list = []
+        for idx in sorted(tool_calls_by_index):
+            slot = tool_calls_by_index[idx]
+            tool_calls_list.append(_StreamedToolCall(
+                id=slot["id"],
+                type=slot["type"] or "function",
+                function=_StreamedFunction(
+                    name=slot["function"]["name"],
+                    arguments=slot["function"]["arguments"],
+                ),
+            ))
+    content = "".join(content_parts) if content_parts else None
+    return _StreamedResponse(
+        choices=[_StreamedChoice(
+            message=_StreamedMessage(
+                content=content, tool_calls=tool_calls_list,
+            ),
+            finish_reason=finish_reason,
+        )],
+        usage=_StreamedUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            prompt_tokens_details=(
+                _StreamedPromptTokenDetails(cached_tokens=cached_tokens)
+                if cached_tokens is not None
+                else None
+            ),
+        ),
+        timings=(
+            _StreamedTimings(
+                prompt_n=timing_prompt_n,
+                cache_n=timing_cache_n,
+            )
+            if timing_prompt_n is not None or timing_cache_n is not None
+            else None
+        ),
+    )
+
+
+def assemble_stream(
+    chunks: Iterable,
+    observer: Callable[[StreamDelta], None] | None = None,
+) -> _StreamedResponse:
     """Consume a Stream[ChatCompletionChunk] and build a _StreamedResponse.
 
     Raises openai.APIConnectionError if the stream ends without a
@@ -190,6 +358,34 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
     timing_prompt_n: int | None = None
     timing_cache_n: int | None = None
     received_any_chunk = False
+
+    def notify(delta: StreamDelta) -> None:
+        if observer is None:
+            return
+        try:
+            observer(delta)
+        except Exception as exc:
+            if isinstance(exc, StreamRuleInterrupt):
+                exc.attach_partial(_build_response(
+                    content_parts=content_parts,
+                    tool_calls_by_index=tool_calls_by_index,
+                    finish_reason="stream_rule_interrupted",
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
+                    timing_prompt_n=timing_prompt_n,
+                    timing_cache_n=timing_cache_n,
+                ))
+            close = getattr(chunks, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    # The semantic cancellation signal is the original
+                    # exception. A close failure must not turn an intentional
+                    # interruption into an unrelated transport error.
+                    pass
+            raise
 
     for chunk in chunks:
         received_any_chunk = True
@@ -222,6 +418,14 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
         delta_content = getattr(delta, "content", None)
         if delta_content:
             content_parts.append(delta_content)
+            notify(StreamDelta(source="text", delta=str(delta_content)))
+        delta_thinking = (
+            _field(delta, "reasoning_content")
+            or _field(delta, "thinking")
+            or _field(delta, "reasoning")
+        )
+        if isinstance(delta_thinking, str) and delta_thinking:
+            notify(StreamDelta(source="thinking", delta=delta_thinking))
         delta_tool_calls = getattr(delta, "tool_calls", None) or []
         for tc_chunk in delta_tool_calls:
             idx = getattr(tc_chunk, "index", 0)
@@ -244,6 +448,16 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
                 fn_args = getattr(tc_func, "arguments", None)
                 if fn_args:
                     slot["function"]["arguments"] += fn_args
+            notify(StreamDelta(
+                source="tool",
+                delta=str(
+                    getattr(tc_func, "arguments", "")
+                    if tc_func is not None else ""
+                ),
+                tool_index=int(idx),
+                tool_name=str(slot["function"]["name"]),
+                tool_arguments=str(slot["function"]["arguments"]),
+            ))
 
     # Incomplete response detection. A complete chat completion stream
     # always emits a finish_reason in the last content choice. Missing
@@ -259,45 +473,13 @@ def assemble_stream(chunks: Iterable) -> _StreamedResponse:
             request=None,  # type: ignore[arg-type]
         )
 
-    # Build the synthesized response. Sort tool_calls by stream-order
-    # index so multi-tool turns retain the model's ordering.
-    tool_calls_list = None
-    if tool_calls_by_index:
-        tool_calls_list = []
-        for idx in sorted(tool_calls_by_index.keys()):
-            slot = tool_calls_by_index[idx]
-            tool_calls_list.append(_StreamedToolCall(
-                id=slot["id"],
-                type=slot["type"] or "function",
-                function=_StreamedFunction(
-                    name=slot["function"]["name"],
-                    arguments=slot["function"]["arguments"],
-                ),
-            ))
-
-    content = "".join(content_parts) if content_parts else None
-    return _StreamedResponse(
-        choices=[_StreamedChoice(
-            message=_StreamedMessage(
-                content=content, tool_calls=tool_calls_list,
-            ),
-            finish_reason=finish_reason,
-        )],
-        usage=_StreamedUsage(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            prompt_tokens_details=(
-                _StreamedPromptTokenDetails(cached_tokens=cached_tokens)
-                if cached_tokens is not None
-                else None
-            ),
-        ),
-        timings=(
-            _StreamedTimings(
-                prompt_n=timing_prompt_n,
-                cache_n=timing_cache_n,
-            )
-            if timing_prompt_n is not None or timing_cache_n is not None
-            else None
-        ),
+    return _build_response(
+        content_parts=content_parts,
+        tool_calls_by_index=tool_calls_by_index,
+        finish_reason=finish_reason,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
+        timing_prompt_n=timing_prompt_n,
+        timing_cache_n=timing_cache_n,
     )

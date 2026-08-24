@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .._shared.edit_formats import validate_edit_format
 from .._shared.toml_compat import tomllib
 from .request_controls import validate_reasoning_levels
 from .rules_engine import (
@@ -33,6 +34,7 @@ class Profile:
     inherits: str
     format_version: int
     canonical_version: str
+    edit_format: str
 
     # Model metadata
     context_size: int
@@ -319,6 +321,7 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
     capacity: dict = {}
     server: dict = {}
     reasoning_levels: dict[str, dict[str, object]] = {}
+    edit_format = "exact"
 
     for current_dir in chain:
         data = _load_profile_data(current_dir)
@@ -326,6 +329,13 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
         if current_prof.get("format_version", 1) != 1:
             raise ValueError(
                 f"Unknown profile format_version: {current_prof.get('format_version')}"
+            )
+
+        declared_edit_format = current_prof.get("edit_format")
+        if declared_edit_format is not None:
+            edit_format = validate_edit_format(
+                declared_edit_format,
+                field=f"profile {current_dir.name!r} edit_format",
             )
 
         prof.update(current_prof)
@@ -382,6 +392,7 @@ def load_profile(name: str, profiles_dir: Path) -> Profile:
         inherits=inherits,
         format_version=prof.get("format_version", 1),
         canonical_version=prof.get("canonical_version", "openai-v1"),
+        edit_format=edit_format,
         context_size=model.get("context_size", 40960),
         chat_template=model.get("chat_template", "chatml"),
         supports_tool_calls=model.get("supports_tool_calls", True),

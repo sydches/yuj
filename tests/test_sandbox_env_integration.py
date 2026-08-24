@@ -89,6 +89,44 @@ def test_dispatch_applies_policy_without_mutating_harness_environment(
     assert os.environ["SERVICE_TOKEN"] == "host-secret"
 
 
+def test_ambient_container_applies_the_same_explicit_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("YUJ_CONTAINER", "ambient")
+    monkeypatch.setenv("VISIBLE_HOST", "host-value")
+    monkeypatch.setenv("SERVICE_TOKEN", "host-secret")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(
+        "scripts.llm_solver.harness._tools._run_in_sandbox."
+        "_probe_ambient_unshare_net",
+        lambda: False,
+    )
+    cfg = make_config(
+        sandbox_bash=True,
+        sandbox_required=True,
+        sandbox_env_inherit="all",
+        sandbox_env_set={
+            "PATH": "/usr/bin:/bin",
+            "VISIBLE_SET": "fixed-value",
+        },
+    )
+
+    result = dispatch(
+        "bash",
+        {
+            "cmd": (
+                "printf '%s|%s|%s' \"$VISIBLE_HOST\" "
+                "\"${SERVICE_TOKEN-unset}\" \"$VISIBLE_SET\""
+            )
+        },
+        cwd=str(tmp_path),
+        cfg=cfg,
+    )
+
+    assert "host-value|unset|fixed-value" in result
+    assert os.environ["SERVICE_TOKEN"] == "host-secret"
+
+
 def test_bwrap_background_and_lsp_builders_share_the_explicit_env(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

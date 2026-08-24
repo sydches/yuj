@@ -34,6 +34,8 @@ class TurnState:
     phase_token_ms: float
     turn_t0: float
     preexecuted: dict[str, str]
+    pre_tool_hooks: dict[str, Any]
+    inactive_tool_call_ids: frozenset[str]
     schema_validations: dict[str, Any]
     permission_resolutions: dict[str, Any]
     dispatch: Callable[..., str]
@@ -57,3 +59,4 @@ class TCOutcome:
     end: bool = False
     reason: str | None = None
     done: bool = False
+    rewind: bool = False

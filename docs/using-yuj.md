@@ -39,6 +39,7 @@ Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj sessions` | List saved sessions. |
 | `yuj resume` | Continue a paused session. |
+| `yuj rewind` | Restore a stopped session to an earlier conversation and tree turn. |
 | `yuj worktree rm` | Remove a retained session worktree and branch. |
 | `yuj approve` | Allow a shell action that needs approval. |
 | `yuj reject` | Refuse a shell action that needs approval. |
@@ -69,8 +70,7 @@ Yuj offers these tools to the model:
 | --- | --- | --- |
 | Read files and find code | `read`, `glob`, `grep` | On |
 | List names in a Python file | `list_definitions` | Off |
-| Change files | `write`, `edit` | On |
-| Apply a patch | `apply_patch` | Off |
+| Change files | One of `edit`, `apply_patch`, `udiff`, or `write` | Profile-selected; `_base` uses `edit`. |
 | Run shell commands | `bash` | On |
 | Run tests | `run_tests` | Off |
 | Finish the task | `done` | On |
@@ -85,11 +85,11 @@ Turn on an optional tool in a TOML file:
 [tools.list_definitions]
 enabled = true
 
-[tools.apply_patch]
-enabled = true
-
 [tools.run_tests]
 enabled = true
+
+[tools]
+edit_format = "apply_patch"
 ```
 
 A model profile can limit the number of enabled tools that Yuj sends to the
@@ -136,6 +136,7 @@ Yuj calls the starting group of settings a base.
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |
+| `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--provider NAME` | Use `local`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
@@ -148,9 +149,9 @@ Yuj calls the starting group of settings a base.
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
 
-`--provider`, `--base-url`, `--api-key-env`, `--thinking`, and `--plan-mode`
-change only the new session. Yuj saves these settings in the session's
-`provider.toml`.
+`--provider`, `--base-url`, `--api-key-env`, `--thinking`, `--plan-mode`, and
+`--edit-format` change only the new session. Yuj saves these settings in the
+session's `provider.toml`.
 
 When you use `--api-key-env`, `provider.toml` stores the variable name. It
 does not store the key.
@@ -292,6 +293,7 @@ The command prints the throwaway path and keeps it after the check.
 | `--root PATH` | Use this throwaway directory instead of a new temporary directory. Yuj writes `calc.py` and `tests/test_calc.py` there. |
 | `--assist-home PATH` | Save the smoke session under this session root. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
+| `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--provider NAME` | Use a model service setting. |
 | `--base-url URL` | Use this API base address. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
@@ -403,6 +405,37 @@ saved sessions.
 
 ## Resume a session
 
+### Rewind before resuming
+
+For a session started with conversation rewind and file checkpoints enabled,
+restore an earlier completed turn with:
+
+```bash
+yuj rewind SESSION TURN
+```
+
+Use `--reason TEXT` to record an operator reason. The session must be unlocked,
+the turn must be earlier than the latest turn in the newest run segment, and
+the saved conversation must match its shadow-Git checkpoint. The command
+restores the files immediately, appends a `rewind` event without truncating the
+trace, rebuilds the state view, and pauses the session. Run the printed
+`yuj resume SESSION` command to continue with the exact messages saved at that
+turn. The configured per-session rewind limit still applies.
+
+Enable this capability in a settings overlay before the session starts:
+
+```toml
+[loop]
+rewind_enabled = true
+rewind_max_per_session = 1
+
+[tools]
+file_checkpoints_enabled = true
+```
+
+Without a rewind, resume continues to use the ordinary mechanical summary
+described below.
+
 Resume the session that Yuj selects:
 
 ```bash
@@ -422,7 +455,7 @@ Yuj keeps the files already changed in the target repository. It starts a new
 model context with the original task and a short summary built from the most
 recent ended run segment in the trace.
 
-Yuj does not restore the full prior conversation. If an interrupt leaves no
+Ordinary resume does not restore the full prior conversation. If an interrupt leaves no
 end event, the summary may be absent. The new context then starts from the
 original task and the current files.
 

@@ -6,6 +6,8 @@ import re
 from collections import deque
 from pathlib import Path
 
+from ..bash_write_classification import STATE_WRITER_MUTATION_PREFIXES
+
 
 def prepopulate_from_trace(
     cwd: Path,
@@ -42,34 +44,41 @@ def prepopulate_from_trace(
     files_to_read: list[tuple[str, str]] = []
     chars_used = 0
     cwd_resolved = cwd.resolve()
+    budget_full = False
     for entry in reversed(trace):
         action = entry.get("action", "")
-        if not (action.startswith("write(") or action.startswith("edit(")):
+        raw_paths = [
+            str(path) for path in entry.get("source_write_paths") or []
+        ]
+        if not raw_paths and action.startswith(STATE_WRITER_MUTATION_PREFIXES):
+            m = re.search(r"path='([^']+)'", action)
+            if m:
+                raw_paths.append(m.group(1))
+        if not raw_paths:
             continue
-        # Extract path from action string: write(path='foo.py', ...) or edit(path='foo.py', ...)
-        m = re.search(r"path='([^']+)'", action)
-        if not m:
-            continue
-        fpath = m.group(1)
-        if fpath in seen or fpath.endswith("state.json"):
-            continue
-        seen.add(fpath)
-        stripped = fpath.lstrip("/").lstrip("./")
-        target = (cwd_resolved / stripped).resolve(strict=False)
-        try:
-            target.relative_to(cwd_resolved)
-        except ValueError:
-            continue
-        if not target.is_file():
-            continue
-        try:
-            content = target.read_text()
-        except OSError:
-            continue
-        if chars_used + len(content) > budget:
+        for fpath in reversed(raw_paths):
+            if fpath in seen or fpath.endswith("state.json"):
+                continue
+            seen.add(fpath)
+            stripped = fpath.lstrip("/").lstrip("./")
+            target = (cwd_resolved / stripped).resolve(strict=False)
+            try:
+                target.relative_to(cwd_resolved)
+            except ValueError:
+                continue
+            if not target.is_file():
+                continue
+            try:
+                content = target.read_text()
+            except OSError:
+                continue
+            if chars_used + len(content) > budget:
+                budget_full = True
+                break
+            files_to_read.append((fpath, content))
+            chars_used += len(content)
+        if budget_full:
             break
-        files_to_read.append((fpath, content))
-        chars_used += len(content)
 
     # Inject in chronological order (oldest first = least recent mutation first).
     injected = 0

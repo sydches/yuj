@@ -29,6 +29,7 @@ def refresh_state(session: "Session") -> None:
         session._trace_events, session._state_path,
         max_result_chars=session.cfg.max_output_chars,
         imperative_projection=session.cfg.state_imperative_projection_enabled,
+        think_keep_turns=session.cfg.tools_think_keep_turns,
     )
 
 

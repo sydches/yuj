@@ -23,6 +23,7 @@ from scripts.llm_solver.harness._guardrails._git_dirty import (
 )
 from scripts.llm_solver.harness._loop.profile_resolution import (
     apply_profile_to_schemas,
+    build_plan_mode_schemas,
 )
 from scripts.llm_solver.harness._loop.trace_schema import (
     TRACE_EVENT_REQUIRED_FIELDS,
@@ -168,15 +169,12 @@ def test_exit_tool_is_profile_gated_and_cap_immune():
 
     required_names = [
         schema["function"]["name"]
-        for schema in apply_profile_to_schemas(schemas, _plan_cfg(), client)
+        for schema in build_plan_mode_schemas(_plan_cfg(), client)
     ]
-    assert required_names == ["write", "exit_plan_mode", "done"]
-    assert [
-        schema["function"]["name"]
-        for schema in filter_plan_mode_schemas(
-            apply_profile_to_schemas(schemas, _plan_cfg(), client), active=True,
-        )
-    ] == ["write", "exit_plan_mode"]
+    assert required_names == ["write", "exit_plan_mode"]
+    assert filter_plan_mode_schemas(
+        build_plan_mode_schemas(_plan_cfg(), client), active=True,
+    ) == build_plan_mode_schemas(_plan_cfg(), client)
 
 
 @pytest.mark.parametrize(
@@ -454,7 +452,16 @@ def test_runtime_writes_plan_exits_phase_then_unlocks_mutation(tmp_path: Path):
         )]),
         _turn(calls=[ToolCall("exit", "exit_plan_mode", {})]),
         _turn(calls=[ToolCall(
-            "source", "write", {"path": "answer.py", "content": "answer = 42\n"},
+            "source",
+            "apply_patch",
+            {
+                "patch": (
+                    "*** Begin Patch\n"
+                    "*** Add File: answer.py\n"
+                    "+answer = 42\n"
+                    "*** End Patch"
+                )
+            },
         )]),
         _turn(calls=[ToolCall("done", "done", {"message": "complete"})]),
     )
@@ -486,11 +493,17 @@ def test_runtime_writes_plan_exits_phase_then_unlocks_mutation(tmp_path: Path):
     implementation_surface = {
         schema["function"]["name"] for schema in client.chat.call_args_list[2].args[1]
     }
-    assert {"bash", "read", "write", "glob", "grep", "exit_plan_mode"} <= first_surface
-    assert "edit" not in first_surface
-    assert "apply_patch" not in first_surface
-    assert "done" not in first_surface
-    assert {"edit", "apply_patch", "done"} <= implementation_surface
+    assert first_surface == {
+        "bash",
+        "read",
+        "write",
+        "glob",
+        "grep",
+        "list_definitions",
+        "exit_plan_mode",
+    }
+    assert {"apply_patch", "done"} <= implementation_surface
+    assert "edit" not in implementation_surface
 
     events = [
         json.loads(line)
@@ -520,6 +533,52 @@ def test_runtime_writes_plan_exits_phase_then_unlocks_mutation(tmp_path: Path):
     )
     assert plan_write["write_like"] is False
     assert plan_write["source_write_like"] is False
+
+
+def test_plan_phase_temporarily_supersedes_code_mode_surface(tmp_path: Path):
+    plan_path = tmp_path / PLAN_FILE
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text("Inspect first, then implement through code mode.\n")
+    client = _client(
+        _turn(calls=[ToolCall("exit", "exit_plan_mode", {})]),
+        _turn(content="stopping", reason="stop"),
+    )
+    session = Session(
+        _plan_cfg(max_turns=2, tools_exec_cell_enabled=True),
+        client,
+        "system",
+        "task",
+        str(tmp_path),
+        context_manager=FullTranscript(),
+    )
+
+    with patch.object(Session, "_get_server_ctx", return_value=8192):
+        result = session.run()
+
+    assert result.done is False
+    plan_surface = {
+        schema["function"]["name"]
+        for schema in client.chat.call_args_list[0].args[1]
+    }
+    code_surface = {
+        schema["function"]["name"]
+        for schema in client.chat.call_args_list[1].args[1]
+    }
+    assert plan_surface == {
+        "bash",
+        "read",
+        "write",
+        "glob",
+        "grep",
+        "list_definitions",
+        "exit_plan_mode",
+    }
+    assert code_surface == {
+        "list_functions",
+        "get_function_details",
+        "exec_cell",
+        "done",
+    }
 
 
 def test_runtime_state_remains_in_plan_phase_without_exit(tmp_path: Path):

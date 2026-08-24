@@ -152,7 +152,7 @@ def pre_mutation_gate(
 
     The model is allowed cfg.pre_mutation_turn_cap read-only turns at the
     start of a session. Once that budget is exhausted AND the model has
-    not yet executed a write/edit/str_replace, every non-write tool call
+    not yet executed a mutation, every non-mutation tool call
     is BLOCKED with a stern harness message until the model commits.
 
     `done` is exempt — the model can still legitimately call it (for
@@ -168,14 +168,16 @@ def pre_mutation_gate(
     if turn_number < cap:
         return PASS
     if (
-        tc_name in ("write", "edit", "str_replace", "create", "apply_patch", "done")
+        tc_name in (
+            "write", "edit", "str_replace", "create", "apply_patch", "udiff", "done"
+        )
         or _is_bash_write_like(tc_name, tc_args)
     ):
         return PASS
     template = getattr(
         cfg,
         "pre_mutation_gate",
-        "[HARNESS: {turn_number} read-only turns elapsed without a write or edit; the next tool call must be write / edit / str_replace / apply_patch, a bash command that mutates a source file, or done(). This call was not executed.]",
+        "[HARNESS: {turn_number} read-only turns elapsed without a file mutation; the next tool call must use the selected file-edit tool, run a bash command that mutates a source file, or call done(). This call was not executed.]",
     )
     try:
         text = template.format(turn_number=turn_number)
@@ -461,7 +463,7 @@ def rumination_gate(state: GuardrailState, cfg: Any, *,
     BLOCK: reject non-writes; count toward gate_max_blocks.
     END: after ``cfg.rumination_gate_max_blocks`` blocks → end session.
 
-    Write/edit passes through (PASS); a successful write clears the
+    Mutation tools pass through (PASS); a successful mutation clears the
     gate via reset_on_successful_write().
     """
     if not cfg.rumination_enabled:

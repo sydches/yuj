@@ -283,10 +283,16 @@ class ToolSchemaSet:
                     ),
                 ),
             )
-        errors = validate_json_instance(
-            arguments, schema, max_errors=max_errors
+        errors = list(
+            validate_json_instance(arguments, schema, max_errors=max_errors)
         )
-        return ToolArgumentValidation(tool=tool_name, errors=errors)
+        if len(errors) < max_errors:
+            errors.extend(
+                _semantic_tool_violations(tool_name, arguments)[
+                    : max_errors - len(errors)
+                ]
+            )
+        return ToolArgumentValidation(tool=tool_name, errors=tuple(errors))
 
     def constrained_json_schema(self) -> dict[str, object]:
         """Build the strict canonical single-tool-call wrapper schema."""
@@ -321,6 +327,38 @@ class ToolSchemaSet:
 def normalize_schema_validation_mode(mode: object) -> str:
     return _normalize_mode(
         mode, SCHEMA_VALIDATION_MODES, "tools.schema_validation"
+    )
+
+
+def _semantic_tool_violations(
+    tool_name: str,
+    arguments: object,
+) -> tuple[SchemaViolation, ...]:
+    """Validate tool invariants that strict JSON shape cannot express in GBNF.
+
+    These checks are part of the same pre-dispatch schema-validation decision.
+    The handler repeats safety-critical checks because public configuration
+    leaves generic schema rejection off by default.
+    """
+    if tool_name != "write_todos" or not isinstance(arguments, Mapping):
+        return ()
+    todos = arguments.get("todos")
+    if not isinstance(todos, list):
+        return ()
+    in_progress_count = sum(
+        isinstance(item, Mapping) and item.get("status") == "in_progress"
+        for item in todos
+    )
+    if in_progress_count <= 1:
+        return ()
+    return (
+        SchemaViolation(
+            path="$.todos",
+            keyword="maxContains",
+            message="array may contain at most one in_progress item",
+            expected="at most one matching item",
+            actual=f"{in_progress_count} matching items",
+        ),
     )
 
 

@@ -17,11 +17,17 @@ mode explicitly.
 from __future__ import annotations
 
 from functools import lru_cache
+import copy
 from pathlib import Path
 
 from .._shared.paths import project_root
 from .._shared.toml_compat import load_toml
-from .tool_specs import SCHEMA_TOOL_NAMES
+from .tool_specs import (
+    CODE_MODE_SCHEMA_TOOL_NAMES,
+    DECLARED_SCHEMA_TOOL_NAMES,
+    EXEC_CELL_API_TOOL_NAMES,
+    SCHEMA_TOOL_NAMES,
+)
 
 
 def _schemas_toml_path() -> Path:
@@ -48,10 +54,10 @@ def _load_tool_specs() -> list[dict]:
                     f"Tool spec in {_schemas_toml_path()} missing '{key}': {spec!r}"
                 )
     declared_names = tuple(spec["name"] for spec in tools)
-    if declared_names != SCHEMA_TOOL_NAMES:
+    if declared_names != DECLARED_SCHEMA_TOOL_NAMES:
         raise ValueError(
             "Tool schema names/order drifted from harness.tool_specs: "
-            f"toml={declared_names}, specs={SCHEMA_TOOL_NAMES}"
+            f"toml={declared_names}, specs={DECLARED_SCHEMA_TOOL_NAMES}"
         )
     return tools
 
@@ -73,8 +79,10 @@ def _load_descriptions(mode: str) -> dict[str, str]:
     }
 
 
-@lru_cache(maxsize=8)
-def get_tool_schemas(mode: str = "minimal") -> list[dict]:
+@lru_cache(maxsize=16)
+def get_tool_schemas(
+    mode: str = "minimal", *, code_mode: bool = False,
+) -> list[dict]:
     """Build the OpenAI-style tool-schema list for the given description mode.
 
     Every tool declared in ``tool_schemas.toml`` must have a matching
@@ -84,9 +92,13 @@ def get_tool_schemas(mode: str = "minimal") -> list[dict]:
     specs = _load_tool_specs()
     descriptions = _load_descriptions(mode)
 
+    by_name = {spec["name"]: spec for spec in specs}
+    selected_names = (
+        CODE_MODE_SCHEMA_TOOL_NAMES if code_mode else SCHEMA_TOOL_NAMES
+    )
     schemas: list[dict] = []
-    for spec in specs:
-        name = spec["name"]
+    for name in selected_names:
+        spec = by_name[name]
         if name not in descriptions:
             raise FileNotFoundError(
                 f"No description file for tool '{name}' in mode '{mode}': "
@@ -108,4 +120,30 @@ def get_tool_schemas(mode: str = "minimal") -> list[dict]:
     return schemas
 
 
-__all__ = ["get_tool_schemas"]
+@lru_cache(maxsize=8)
+def get_exec_cell_function_schemas(mode: str = "minimal") -> list[dict]:
+    """Return the exact function catalog injected into a Python cell.
+
+    The catalog reuses the native tool shapes and descriptions so discovery
+    cannot drift from dispatch.  ``bash(background=...)`` is deliberately not
+    part of a synchronous cell: a cell has one bounded lifetime and returns
+    only after all of its calls finish.
+    """
+    native = {
+        schema["function"]["name"]: schema
+        for schema in get_tool_schemas(mode, code_mode=False)
+    }
+    selected = [
+        copy.deepcopy(native[name]) for name in EXEC_CELL_API_TOOL_NAMES
+    ]
+    bash_schema = next(
+        schema for schema in selected
+        if schema["function"]["name"] == "bash"
+    )
+    bash_schema["function"]["parameters"]["properties"].pop(
+        "background", None
+    )
+    return selected
+
+
+__all__ = ["get_exec_cell_function_schemas", "get_tool_schemas"]

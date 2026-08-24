@@ -167,7 +167,7 @@ def test_terminal_guard_is_not_deferred_after_watch_end():
     ) is False
 
 
-def test_blocked_turn_runs_adaptive_post_turn_hooks():
+def test_blocked_turn_runs_all_post_turn_hooks():
     calls = []
 
     class Session:
@@ -180,10 +180,14 @@ def test_blocked_turn_runs_adaptive_post_turn_hooks():
         def _maybe_switch_adaptive_phase(self, turn):
             calls.append(("phase", turn))
 
+        def _maybe_run_advisor(self, turn):
+            calls.append(("advisor", turn))
+
     _run_post_turn_hooks(Session(), 36)
 
     assert calls == [
         ("observation", 36),
         ("detector", 36),
         ("phase", 36),
+        ("advisor", 36),
     ]

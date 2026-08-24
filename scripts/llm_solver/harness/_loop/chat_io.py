@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 
 import openai
 
+from ...server._streaming import StreamRuleInterrupt
 from ...server.types import Usage
+from ..stream_rules import format_interrupt_fragment
 from .compaction import CompactionOverflowError, maybe_compact_messages
 from .length_continuation import continue_length_response
 from .model_fallback_runtime import activate_next_fallback
@@ -171,6 +173,7 @@ def chat_with_retry(session: "Session", turn: int):
         max_retries = cfg.max_transient_retries
         backoff = cfg.retry_backoff
         restart_with_fallback = False
+        restart_after_stream_rule = False
         for attempt in range(max_retries + 1):
             try:
                 session._compaction_turn = turn
@@ -178,16 +181,37 @@ def chat_with_retry(session: "Session", turn: int):
                     session, session.context.get_messages()
                 )
                 length_continue_max = _length_continue_max(cfg)
-                if length_continue_max > 0 and _can_continue_raw(session.client):
-                    result = _chat_with_length_continuation(
-                        session, outgoing, turn,
-                        max_attempts=length_continue_max,
+                runtime = getattr(session, "_stream_rule_runtime", None)
+                if runtime is not None:
+                    runtime.begin_attempt()
+                client_state = getattr(session.client, "__dict__", {})
+                observer_supported = (
+                    runtime is not None
+                    and isinstance(client_state, dict)
+                    and "_stream_observer" in client_state
+                )
+                prior_observer = (
+                    client_state.get("_stream_observer")
+                    if observer_supported else None
+                )
+                if observer_supported:
+                    session.client._stream_observer = (
+                        lambda delta: runtime.observe(delta, turn=turn)
                     )
-                else:
-                    from ..plan_mode import effective_model_tool_schemas
-                    result = session.client.chat(
-                        outgoing, effective_model_tool_schemas(session), turn=turn,
-                    )
+                try:
+                    if length_continue_max > 0 and _can_continue_raw(session.client):
+                        result = _chat_with_length_continuation(
+                            session, outgoing, turn,
+                            max_attempts=length_continue_max,
+                        )
+                    else:
+                        from ..plan_mode import effective_model_tool_schemas
+                        result = session.client.chat(
+                            outgoing, effective_model_tool_schemas(session), turn=turn,
+                        )
+                finally:
+                    if observer_supported:
+                        session.client._stream_observer = prior_observer
                 if result is not None and getattr(
                     result, "finish_reason", ""
                 ) == "replay_stop_turn":
@@ -196,7 +220,51 @@ def chat_with_retry(session: "Session", turn: int):
                         result = session.client.chat(
                             outgoing, effective_model_tool_schemas(session), turn=turn,
                         )
+                if result is not None and runtime is not None:
+                    records = runtime.accept_response(
+                        result,
+                        turn=turn,
+                        streamed=bool(
+                            getattr(session.client, "_last_call_streamed", False)
+                        ),
+                        replay=bool(getattr(session.client, "is_replay", False)),
+                    )
+                    session._record_stream_rule_matches(records, turn=turn)
                 return result
+            except StreamRuleInterrupt as exc:
+                records = tuple(exc.matches)
+                session._record_stream_rule_matches(records, turn=turn)
+                if getattr(cfg, "stream_rules_context_mode", "discard") == "keep":
+                    partial = exc.partial_response
+                    partial_content = None
+                    if partial is not None and partial.choices:
+                        partial_content = partial.choices[0].message.content
+                    # Incomplete tool calls cannot safely enter an OpenAI
+                    # message history without matching tool results. Keep only
+                    # partial prose; discard mode keeps neither.
+                    if partial_content:
+                        session.context.add_assistant({
+                            "role": "assistant",
+                            "content": partial_content,
+                        })
+                session.context.add_user(
+                    "\n\n".join(
+                        format_interrupt_fragment(record) for record in records
+                    )
+                )
+                runtime = getattr(session, "_stream_rule_runtime", None)
+                if runtime is not None:
+                    runtime.mark_injected(records, turn=turn)
+                session._record_stream_rule_injection(
+                    records, turn=turn, delivery="retry"
+                )
+                log.info(
+                    "Stream rule interrupted turn %d; retrying with rule(s): %s",
+                    turn,
+                    ", ".join(str(record.get("rule") or "") for record in records),
+                )
+                restart_after_stream_rule = True
+                break
             except CompactionOverflowError as exc:
                 log.error("Compaction overflow on turn %d: %s", turn, exc)
                 _emit_api_error(
@@ -247,6 +315,6 @@ def chat_with_retry(session: "Session", turn: int):
                 log.error("Fatal API error on turn %d: %s", turn, exc)
                 _emit_api_error(session, turn, exc, kind="fatal")
                 return None
-        if restart_with_fallback:
+        if restart_with_fallback or restart_after_stream_rule:
             continue
         return None
