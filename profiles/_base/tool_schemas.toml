@@ -49,6 +49,16 @@ required = ["pattern"]
 properties = { pattern = { type = "string" }, path = { type = "string" }, glob = { type = "string" }, page = { type = "integer" } }
 
 [[tools]]
+name = "checkpoint"
+required = ["goal"]
+properties = { goal = { type = "string" } }
+
+[[tools]]
+name = "rewind"
+required = ["report"]
+properties = { report = { type = "string" } }
+
+[[tools]]
 name = "run_tests"
 required = []
 properties = { path = { type = "string" }, k = { type = "string" }, last_failed = { type = "boolean" } }
@@ -67,6 +77,11 @@ properties = { patch = { type = "string" } }
 name = "lsp"
 required = ["kind", "path"]
 properties = { kind = { type = "string", enum = ["definition", "references", "symbols"] }, path = { type = "string" }, line = { type = "integer" }, character = { type = "integer" } }
+
+[[tools]]
+name = "load_tools"
+required = ["names"]
+properties = { names = { type = "array", items = { type = "string" } } }
 
 [[tools]]
 name = "done"

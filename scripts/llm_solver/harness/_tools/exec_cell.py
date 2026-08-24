@@ -241,6 +241,7 @@ def _build_cell_process(
     cwd: str,
     cfg: Config,
     unreadable_paths: tuple[str, ...],
+    readable_paths: tuple[str, ...],
     effective_env: Mapping[str, str],
     allow_login_shell: bool,
 ) -> tuple[list[str], str | None, dict[str, str] | None]:
@@ -273,6 +274,7 @@ def _build_cell_process(
                 runtime_bin=runtime_bin,
                 effective_env=effective_env,
                 unreadable_paths=unreadable_paths,
+                readable_paths=readable_paths,
                 sandbox_required=True,
                 allow_login_shell=allow_login_shell,
             ),
@@ -304,6 +306,7 @@ def _build_cell_process(
         cwd,
         cfg.bwrap_bin,
         unreadable_paths=unreadable_paths,
+        readable_paths=readable_paths,
         sandbox_required=True,
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
@@ -341,6 +344,7 @@ def execute_cell(
     cfg: Config,
     inner_dispatch: InnerDispatch,
     unreadable_paths: tuple[str, ...],
+    readable_paths: tuple[str, ...],
     effective_env: Mapping[str, str],
     allow_login_shell: bool,
 ) -> ExecCellExecution:
@@ -368,6 +372,7 @@ def execute_cell(
             cwd=cwd,
             cfg=cfg,
             unreadable_paths=unreadable_paths,
+            readable_paths=readable_paths,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
         )

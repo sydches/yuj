@@ -136,7 +136,7 @@ def build_session_exec_cell_handler(
             )
             return result, execution_metadata
 
-        from ..tools import _bash_unreadable_paths
+        from ..tools import _bash_readable_paths, _bash_unreadable_paths
 
         return execute_cell(
             args["source"],
@@ -146,6 +146,7 @@ def build_session_exec_cell_handler(
             unreadable_paths=_bash_unreadable_paths(
                 dispatch_cwd, dispatch_cfg, session._ignore_policy
             ),
+            readable_paths=_bash_readable_paths(dispatch_cfg),
             effective_env=session._effective_env,
             allow_login_shell=session._allow_login_shell,
         )

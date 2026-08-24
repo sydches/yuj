@@ -11,7 +11,9 @@ state.json is a *view* over `.trace.jsonl`, nothing more.
 Schema (target of the projection, consumed by SolverStateContext):
 
     {
-      "state":     {"current_attempt": str, "last_verify": str, "next_action": str},
+      "state":     {"current_attempt": str, "last_verify": str,
+                     "next_action": str, "last_rewind": object?,
+                     "rewind_report": object?},
       "trace":     [{"step": int, "session": int, "turn": int, "reasoning": str,
                      "action": str, "result": str, "next": str,
                      "gate_blocked": bool, "write_like": bool,
@@ -20,7 +22,15 @@ Schema (target of the projection, consumed by SolverStateContext):
       "gates":     [],
       "evidence":  [{"step": int, "action": str, "result": str,
                      "verdict": "OK"|"FAIL", "gate_blocked": bool}, ...],
-      "inference": []
+      "inference": [],
+      "tools":     {"lazy_loading_enabled": bool,
+                     "active_limit": int|null,
+                     "registered": [str, ...], "active": [str, ...],
+                     "activations": [{"session": int, "turn": int,
+                                      "requested": [str, ...],
+                                      "activated": [str, ...],
+                                      "already_active": [str, ...],
+                                      "active": [str, ...]}, ...]}
     }
 
 Content-blind by construction: the projection never inspects tool results
@@ -31,6 +41,13 @@ by `tools.py` on exception, the `[exit code: N]` suffix appended by
 `bash()` on non-zero exit, and the `[harness gate]` prefix on gate-blocked
 results. A harness that derived intelligence from task output would be
 cheating the benchmark — moving capability from the model into the loop.
+
+Rewind is a structural exception to the otherwise linear projection. The raw
+event list is never changed. Both the model-tool exploration collapse and the
+operator/guardrail conversation-workspace action emit `rewind`; their distinct
+field sets select the matching `last_rewind` metadata. Either form selects an
+earlier persistent turn prefix in this derived view, and a model-tool row may
+also retain its supplied goal/report.
 
 Evidence population is filtered to bash calls because bash is the
 subprocess execution surface where exit-code verdicts originate. Read,
@@ -179,6 +196,79 @@ def _last_turn(events: list[dict]) -> int | None:
         if isinstance(tn, int) and (best is None or tn > best):
             best = tn
     return best
+
+
+def _event_turn(event: dict) -> int | None:
+    """Return an event's turn across the two public trace field spellings."""
+    value = event.get("turn_number", event.get("turn"))
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def active_events(events: list[dict]) -> list[dict]:
+    """Project the active branch while preserving the append-only raw trace.
+
+    Either public rewind form is an instruction to projections, never a
+    deletion from ``.trace.jsonl``. Each completed turn names a persistent
+    active prefix, so a later rewind can select either the current lineage or
+    a turn from a previously discarded branch. Later chronological events
+    then extend that selected prefix. The linked prefixes keep this
+    reconstruction linear in the number of raw events instead of copying the
+    whole view at every turn.
+    """
+    tail = None
+    turn_views: dict[tuple[object, int], tuple] = {}
+
+    def append(event: dict, previous):
+        return (event, previous)
+
+    def flatten(node) -> list[dict]:
+        projected: list[dict] = []
+        while node is not None:
+            event, node = node
+            projected.append(event)
+        projected.reverse()
+        return projected
+
+    def filtered_prefix(node, session_number: object, to_turn: int):
+        filtered = [
+            event
+            for event in flatten(node)
+            if (
+                event.get("session_number") != session_number
+                or (
+                    (_event_turn(event) is not None)
+                    and int(_event_turn(event)) <= to_turn
+                )
+                or (
+                    _event_turn(event) is None
+                    and event.get("event")
+                    not in {"handoff", "session_end", "session_exit"}
+                )
+            )
+        ]
+        rebuilt = None
+        for event in filtered:
+            rebuilt = append(event, rebuilt)
+        return rebuilt
+
+    for event in events:
+        if event.get("event") != "rewind":
+            tail = append(event, tail)
+            turn = _event_turn(event)
+            if turn is not None:
+                turn_views[(event.get("session_number"), turn)] = tail
+            continue
+        session_number = event.get("session_number")
+        to_turn = int(event.get("to_turn", -1))
+        target = turn_views.get((session_number, to_turn))
+        if target is None:
+            # Older or hand-authored traces may lack a turn-bearing row for
+            # the target. Preserve their prior best-effort filtering rule.
+            target = filtered_prefix(tail, session_number, to_turn)
+        tail = append(event, target)
+    return flatten(tail)
 
 
 def _extract_quoted_arg(action: str, name: str) -> str:
@@ -406,12 +496,21 @@ def project(events: list[dict], *, max_result_chars: int,
     seen) so a downstream reader can detect whether two state.json
     snapshots came from the same trace prefix.
     """
+    raw_events = events
+    logical_events = active_events(raw_events)
     state: dict = {}
     trace: list[dict] = []
     evidence: list[dict] = []
+    tools: dict = {
+        "lazy_loading_enabled": False,
+        "active_limit": None,
+        "registered": [],
+        "active": [],
+        "activations": [],
+    }
 
     step = 0
-    for ev in events:
+    for ev in logical_events:
         et = ev.get("event")
         if et == "tool_call":
             step += 1
@@ -485,7 +584,7 @@ def project(events: list[dict], *, max_result_chars: int,
         elif et == "compaction":
             # Mechanical trace projection only. The model-authored summary
             # stays in the conversation and is never copied into state.json.
-            state["last_compaction"] = {
+            last_compaction = {
                 "session_number": ev.get("session_number"),
                 "turn_number": ev.get("turn_number"),
                 "tokens_before": ev.get("tokens_before"),
@@ -494,11 +593,81 @@ def project(events: list[dict], *, max_result_chars: int,
                 "method": ev.get("method"),
                 "fallback": ev.get("fallback"),
             }
-        # session_start: no state mutation.
+            # Preserve compatibility with trace prefixes written before the
+            # hook fields existed while projecting both fields from new rows.
+            if "hook" in ev:
+                last_compaction["hook"] = ev.get("hook")
+            if "hook_outcome" in ev:
+                last_compaction["hook_outcome"] = ev.get("hook_outcome")
+            state["last_compaction"] = last_compaction
+        elif et == "session_start" and "active_tools" in ev:
+            tools = {
+                "lazy_loading_enabled": bool(
+                    ev.get("tool_lazy_loading_enabled", False)
+                ),
+                "active_limit": ev.get("tool_active_limit"),
+                "registered": list(ev.get("registered_tools") or []),
+                "active": list(ev.get("active_tools") or []),
+                "activations": [],
+            }
+        elif et == "tools_activated":
+            tools["active"] = list(ev.get("active_tools") or [])
+            tools["activations"].append({
+                "session": ev.get("session_number"),
+                "turn": ev.get("turn_number"),
+                "requested": list(ev.get("requested") or []),
+                "activated": list(ev.get("activated") or []),
+                "already_active": list(ev.get("already_active") or []),
+                "active": list(ev.get("active_tools") or []),
+            })
+        elif et == "rewind":
+            if any(
+                field in ev
+                for field in (
+                    "reason", "commit", "rewind_count", "rewind_id",
+                    "delivery",
+                )
+            ):
+                state["last_rewind"] = {
+                    "session_number": ev.get("session_number"),
+                    "from_turn": ev.get("from_turn"),
+                    "to_turn": ev.get("to_turn"),
+                    "reason": ev.get("reason"),
+                    "commit": ev.get("commit"),
+                    "rewind_id": ev.get("rewind_id"),
+                    "delivery": ev.get("delivery"),
+                }
+            else:
+                state["last_rewind"] = {
+                    "session_number": ev.get("session_number"),
+                    "from_turn": ev.get("from_turn"),
+                    "to_turn": ev.get("to_turn"),
+                    "report_chars": ev.get("report_chars"),
+                }
+                if isinstance(ev.get("goal"), str) and isinstance(
+                    ev.get("report"), str
+                ):
+                    state["rewind_report"] = {
+                        "goal": ev["goal"],
+                        "report": ev["report"],
+                    }
 
     state.setdefault("current_attempt", "")
     state.setdefault("last_verify", "")
     state.setdefault("next_action", "")
+
+    meta = {
+        "schema_version": (
+            STATE_SCHEMA_VERSION_IMPERATIVE
+            if imperative_projection else STATE_SCHEMA_VERSION
+        ),
+        "event_count": len(raw_events),
+        "last_session": _last_session(logical_events),
+        "last_turn": _last_turn(logical_events),
+    }
+    if any(event.get("event") == "rewind" for event in raw_events):
+        meta["projected_event_count"] = len(logical_events)
+        meta["active_event_count"] = len(logical_events)
 
     projected = {
         # The meta block lets readers detect the schema version and prefix
@@ -507,16 +676,9 @@ def project(events: list[dict], *, max_result_chars: int,
         # computed once over the input list (cheap; events in-memory).
         # Top-level (sibling to state/trace/gates) so it is discoverable
         # without descending into the existing sections.
-        "meta": {
-            "schema_version": (
-                STATE_SCHEMA_VERSION_IMPERATIVE
-                if imperative_projection else STATE_SCHEMA_VERSION
-            ),
-            "event_count": len(events),
-            "last_session": _last_session(events),
-            "last_turn": _last_turn(events),
-        },
+        "meta": meta,
         "state": state,
+        "tools": tools,
         "trace": trace,
         "gates": [],
         "evidence": evidence,
@@ -533,6 +695,9 @@ def project_from_trace(trace_path: Path, *, max_result_chars: int,
     trace_path = Path(trace_path)
     if not trace_path.is_file():
         return {"state": {"current_attempt": "", "last_verify": "", "next_action": ""},
+                "tools": {"lazy_loading_enabled": False, "active_limit": None,
+                          "registered": [],
+                          "active": [], "activations": []},
                 "trace": [], "gates": [], "evidence": [], "inference": []}
     events = []
     with open(trace_path) as f:
@@ -604,6 +769,7 @@ def _truncate(s: str, n: int) -> str:
 
 
 __all__ = [
+    "active_events",
     "project",
     "project_from_trace",
     "write_state_from_trace",

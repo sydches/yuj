@@ -234,6 +234,10 @@ class Config:
     resume_length: str
     resume_last_n_actions: int
     tool_desc: str = "minimal"
+    # Operator/guardrail rewind of the canonical model-facing conversation
+    # together with its shadow-Git workspace checkpoint. Off by default.
+    rewind_enabled: bool = False
+    rewind_max_per_session: int = 1
     interrupted_turn_mode: str = "mechanical"
     length_continue_max: int = 0
     project_docs_enabled: bool = False
@@ -243,6 +247,17 @@ class Config:
     project_doc_global_dir: str = "~/.config/yuj"
     imports_enabled: bool = True
     imports_max_depth: int = 5
+    skills_enabled: bool = False
+    skills_dirs: tuple[str, ...] = (
+        "~/.pi/agent/skills",
+        "~/.agents/skills",
+        ".pi/skills",
+        ".agents/skills",
+    )
+    skill_paths: tuple[str, ...] = ()
+    # Effective, validated roots fixed by startup discovery. This is not a
+    # user knob: it lets read and shell sandboxes expose only loaded skills.
+    skills_readable_dirs: tuple[str, ...] = ()
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
@@ -342,6 +357,10 @@ class Config:
     # Model-callable run_tests tool (pytest with deterministic flags
     # inside the sandbox). Filtered from the schema list when disabled
     # so the model does not see a tool it cannot use.
+    tools_lazy_loading_enabled: bool = False
+    tools_active_default: tuple[str, ...] = (
+        "bash", "read", "edit", "glob", "grep", "done",
+    )
     tools_run_tests_enabled: bool = False
     # Allow long package setup and collection before a test run times out.
     tools_run_tests_timeout: int = 240
@@ -359,6 +378,9 @@ class Config:
     # Optional repository-wide tree-sitter symbol definition/reference mode.
     tools_ast_search_enabled: bool = False
     tools_ast_search_max_rows: int = 1000
+    # Conversation checkpoint/rewind pair. Both model tools share this one
+    # default-off gate and operate on context only, never workspace files.
+    tools_checkpoint_enabled: bool = False
     # Independent shadow-Git checkpoints after every potentially mutating
     # model tool call. The store is outside the task cwd and restore remains
     # a harness/operator function, never a model-facing tool.
@@ -482,7 +504,14 @@ class Config:
     digest_compaction_safety_margin: float = 0.05
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
+    # Ranked repository symbol map appended to the stable task message.
+    # Zero preserves the existing prompt exactly.  The refresh policy owns
+    # only the run-private structural cache; one rendered map stays immutable
+    # for the lifetime of a solver session so prompt-prefix reuse is stable.
+    repo_map_tokens: int = 0
+    repo_map_refresh: str = "auto"
     compaction_method: str = "digest"
+    compaction_hook: str = ""
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
     # Optional model-written fresh-session handoff. The existing mechanical
@@ -531,10 +560,12 @@ class Config:
     # state still updates sequentially per-tc after concurrent I/O.
     parallel_readonly_enabled: bool = False
     parallel_max_workers: int = 4
-    # Injection subsystem (keyword-triggered markdown fragments).
+    # Injection subsystem (keyword/path-triggered markdown fragments).
     # Off by default; data-directory convention .harness/injections/.
     injections_enabled: bool = False
     injections_dir: str = ".harness/injections"
+    injections_path_rules_enabled: bool = False
+    injections_path_rule_repeat: bool = False
     loop_detect_recovery: str = (
         "<system-reminder>Loop detected: the last {streak} tool calls all "
         "have identical name and arguments. Stop repeating. Re-read the "

@@ -17,11 +17,13 @@ person types into a terminal.
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
 | `bash` | `cmd` | None | Run one shell command and return its output. |
-| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. |
+| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
+| `checkpoint` | `goal` | None | Mark a complete conversation turn before exploration. Becomes active after every call/result pair in that turn completes. |
+| `rewind` | `report` | None | Return conversation context to the active checkpoint and retain the short findings report. Never restores files. |
 | `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
@@ -29,6 +31,7 @@ person types into a terminal.
 | `list_functions` | None | None | In code mode, list the function names injected into `exec_cell`. |
 | `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
 | `exec_cell` | `source` | None | In code mode, run Python inside the shell sandbox and return printed text. |
+| `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Present only when deferred loading is enabled. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -41,7 +44,8 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
+| `checkpoint`, `rewind`, `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
@@ -58,6 +62,7 @@ enabled = true
 
 [tools]
 background_enabled = true
+checkpoint_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -74,7 +79,34 @@ When `bash` is on, the model can run a test command through `bash` even when
 structured result.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
-The `done` tool is not removed by that limit.
+The `done` tool is not removed by that limit. When deferred loading is on,
+`load_tools` is also not removed.
+
+## Deferred tool loading
+
+When `[tools].lazy_loading_enabled = true`, Yuj sends only
+`[tools].active_default` plus `load_tools` and `done` at the start of a harness
+session. Other enabled, profile-shaped tools stay registered but hidden.
+Call `load_tools(names=[...])` to add exact names. Activation never removes a
+tool and takes effect on the next model request. A model profile's `max_tools`
+limits the active count, not the registry; an activation that would exceed the
+limit is rejected atomically.
+
+A hidden tool call returns a typed error naming `load_tools` and does not
+reach schema validation, permission policy, approval, or its handler. The
+ordinary error ladder and turn-level loop guards still count the
+rejection. A disabled tool is not loadable.
+See [Configuration](configuration.html#defer-tools-until-the-model-needs-them)
+for knobs, trace/state behavior, replay fidelity, and token metrics.
+
+`checkpoint` and `rewind` share one setting and survive a profile tool-count
+cap as a pair. A checkpoint is session-scoped. `rewind` consumes it and
+returns a typed error when no checkpoint is active. Rewind is applied only at
+the end of a complete tool-call turn, then the next model request contains the
+checkpoint prefix plus one user-role `<rewind-report goal="...">` message.
+Exploration calls remain in the append-only trace but leave the model-facing
+conversation and mechanical state projection. Files changed during
+exploration remain changed.
 
 ## Code mode
 
@@ -84,6 +116,9 @@ Code mode replaces the ordinary native catalog with three meta-tools plus
 injects `read`, `grep`, `glob`, `list_definitions`, and `bash`; each returns a
 text result from the ordinary dispatcher. A program must print the text that
 should become the cell result.
+
+Code mode and deferred tool loading are alternative compact surfaces. A
+configuration that enables both is rejected.
 
 Cells do not trust model-written Python. They run inside the selected shell
 sandbox, have no background-call option, and stop at the configured whole-cell
@@ -108,7 +143,8 @@ The `bash` tool follows the active sandbox and approval settings. Read
 Docker socket.
 
 `[permissions].rules` can allow, ask for approval, or deny a tool by its
-canonical command/path argument. The last matching `*`/`?` rule wins. Empty
+canonical command/path argument (`load_tools` uses its `names` array). The
+last matching `*`/`?` rule wins. Empty
 rules allow current behavior, and an allow still passes through bash-specific
 forbidden rules. Assistant `ask` decisions use `yuj approve|reject`; measurement
 runs deny them. See

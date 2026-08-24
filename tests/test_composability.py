@@ -188,6 +188,9 @@ def test_tool_specs_drive_surface_metadata():
         "list_functions": "tools_exec_cell_enabled",
         "get_function_details": "tools_exec_cell_enabled",
         "exec_cell": "tools_exec_cell_enabled",
+        "load_tools": "tools_lazy_loading_enabled",
+        "checkpoint": "tools_checkpoint_enabled",
+        "rewind": "tools_checkpoint_enabled",
     }
     assert NATIVE_ENVELOPE_PREFIXES == (
         "<test_results",

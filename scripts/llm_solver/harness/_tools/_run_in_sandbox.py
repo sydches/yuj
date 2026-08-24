@@ -93,6 +93,7 @@ def _run_in_sandbox(
     cmd: str, *, cwd: str, timeout: int, sandbox: bool,
     bwrap_bin: str, sandbox_required: bool = False,
     unreadable_paths: tuple[str, ...] = (),
+    readable_paths: tuple[str, ...] = (),
     sandbox_backend: str = "bwrap",
     container_runtime: str = "docker",
     container_image: str = "",
@@ -180,6 +181,7 @@ def _run_in_sandbox(
                     runtime_bin=runtime_bin,
                     effective_env=effective_env,
                     unreadable_paths=unreadable_paths,
+                    readable_paths=readable_paths,
                     sandbox_required=sandbox_required,
                     allow_login_shell=allow_login_shell,
                 )
@@ -211,6 +213,7 @@ def _run_in_sandbox(
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
+                readable_paths=readable_paths,
                 sandbox_required=sandbox_required,
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,
@@ -248,6 +251,7 @@ def _run_in_sandbox(
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
+                readable_paths=readable_paths,
                 sandbox_required=sandbox_required,
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,

@@ -75,6 +75,14 @@ def test_exec_cell_config_defaults_overlay_and_validation(tmp_path: Path):
     with pytest.raises(ValueError, match="exec_cell_enabled"):
         load_config(user_config=overlay)
 
+    overlay.write_text(
+        "[tools]\n"
+        "exec_cell_enabled = true\n"
+        "lazy_loading_enabled = true\n"
+    )
+    with pytest.raises(ValueError, match="cannot be enabled together"):
+        load_config(user_config=overlay)
+
 
 def test_code_mode_schema_surface_has_measurably_fewer_prompt_tokens():
     native = get_tool_schemas("minimal", code_mode=False)
@@ -135,6 +143,23 @@ def test_code_mode_keeps_complete_meta_surface_under_profile_shaping(
         "description" not in schema["function"]
         for schema in session._tool_schemas
     )
+
+
+def test_code_mode_preserves_the_agent_skill_read_seam(tmp_path: Path):
+    cfg = make_config(
+        tools_exec_cell_enabled=True,
+        skills_enabled=True,
+        skills_readable_dirs=(str(tmp_path / "skills"),),
+    )
+    profile = SimpleNamespace(max_tools=1, simplify_schemas=False)
+    client = MagicMock()
+    client.__dict__["profile"] = profile
+
+    session = Session(cfg, client, "system", "task", str(tmp_path))
+
+    assert tuple(
+        schema["function"]["name"] for schema in session._tool_schemas
+    ) == CODE_MODE_SCHEMA_TOOL_NAMES
 
 
 @pytest.mark.skipif(

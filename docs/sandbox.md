@@ -55,6 +55,12 @@ With the normal strict settings:
 The Docker socket can give a model command access to the Docker service. Do
 not expose the socket when the task must not use Docker.
 
+When Agent Skills are enabled, startup-validated skill directories outside
+the task cwd are part of the explicit read-only set. The `read` tool can open
+their `SKILL.md` files and bundled resources, and bwrap binds those directories
+read-only. File mutation tools remain cwd-only and explicitly reject an
+external skill path.
+
 ## Use the first-class container backend
 
 Create a small overlay that names an image already present on the host:
@@ -85,7 +91,9 @@ docker system df
 
 For each command the backend:
 
-- mounts only the task directory read-write, at the same absolute path;
+- mounts only the task directory read-write, at the same absolute path, plus
+  each startup-validated external Agent Skill directory read-only at its
+  absolute path;
 - uses a read-only image root plus an ephemeral `/tmp`;
 - disables the network and does not mount the Docker socket or host home;
 - drops all capabilities, enables no-new-privileges, and uses private PID and
@@ -175,7 +183,8 @@ form a general security boundary.
 ## Python code mode
 
 An enabled `exec_cell` uses this same selected sandbox, environment, writable
-task directory, network boundary, and unreadable-path masks. Unlike ordinary
+task directory, network boundary, enabled read-only skill roots, and
+unreadable-path masks. Unlike ordinary
 `bash` with `sandbox_required = false`, a Python cell never degrades to host
 execution: it returns an error when the sandbox is off, missing, or unable to
 start. Its injected `read`, `grep`, `glob`, `list_definitions`, and `bash`
@@ -194,6 +203,12 @@ The sandbox controls shell commands that the model asks Yuj to run.
 Yuj itself writes the trace, checkpoints, metrics, and session data. These
 writes do not pass through the model shell. In normal CLI use, Yuj saves them
 under `.llm_assist/` in the Yuj installation.
+
+A configured `context.compaction_hook` is also harness-side Python. Yuj
+imports and calls it in the main process; `bwrap`, the container backend, and
+the shell environment policy do not isolate it. Enable only a reviewed module
+that you trust. Read [Compaction hooks](compaction.html) for its bounded input
+and return contract.
 
 When `[tools].file_checkpoints_enabled` is on, Yuj also writes an independent
 shadow-Git repository outside the task directory after each potentially

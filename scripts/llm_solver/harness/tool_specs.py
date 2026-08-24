@@ -66,27 +66,45 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=7,
     ),
     ToolSpec(
+        "checkpoint",
+        profile_gate_attr="tools_checkpoint_enabled",
+        cap_immune=True,
+        schema_order=8,
+    ),
+    ToolSpec(
+        "rewind",
+        profile_gate_attr="tools_checkpoint_enabled",
+        cap_immune=True,
+        schema_order=9,
+    ),
+    ToolSpec(
         "lsp",
         profile_gate_attr="lsp_tool_enabled",
-        schema_order=11,
+        schema_order=13,
+    ),
+    ToolSpec(
+        "load_tools",
+        profile_gate_attr="tools_lazy_loading_enabled",
+        cap_immune=True,
+        schema_order=14,
     ),
     ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=12,
+        schema_order=15,
         schema_surface="both",
     ),
     ToolSpec(
         "run_tests",
         profile_gate_attr="tools_run_tests_enabled",
         native_envelope_prefix="<test_results",
-        schema_order=8,
+        schema_order=10,
     ),
     ToolSpec(
         "list_definitions",
         profile_gate_attr="tools_list_definitions_enabled",
         native_envelope_prefix="<list_definitions",
-        schema_order=9,
+        schema_order=11,
     ),
     ToolSpec(
         "apply_patch",
@@ -94,7 +112,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         action_write_like=True,
         profile_gate_attr="tools_apply_patch_enabled",
         native_envelope_prefix="<apply_patch",
-        schema_order=10,
+        schema_order=12,
     ),
     ToolSpec(
         "list_functions",
