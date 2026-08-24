@@ -1,6 +1,7 @@
 """Assistant-mode session runner built on the shared harness engine."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tempfile
@@ -18,6 +19,10 @@ from ..llm_solver.config import (
 )
 from ..llm_solver.harness import TaskSpec, solve_task
 from ..llm_solver.harness.context_strategies import resolve_context_class
+from ..llm_solver.harness.clarifications import (
+    clarification_state,
+    supersede_clarification_for_rewind,
+)
 from ..llm_solver.harness._loop.model_role_runtime import build_model_role_runtime
 from ..llm_solver.harness.loop import _load_trace_events
 from ..llm_solver.harness.worktree_runtime import (
@@ -247,6 +252,11 @@ def prepare_smoke_repo(root: Path | None = None) -> Path:
 def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> tuple[bool, str | None]:
     """Run exactly one harness outer session for an assistant record."""
     artifact_dir = record.artifact_path
+    clarification = clarification_state(artifact_dir)
+    if clarification.phase == "input_required":
+        raise RuntimeError(
+            "session has a pending clarification; record its answer before resume"
+        )
     clear_interrupt_marker(artifact_dir)
 
     config_paths = [Path(p) for p in record.config_paths]
@@ -481,6 +491,21 @@ def rewind_session(
     from ..llm_solver.harness._loop.trace_schema import emit_trace_event
     with open(trace_path, "a") as trace_file:
         emit_trace_event(trace_file, "rewind", **event)
+        superseded = supersede_clarification_for_rewind(
+            artifact_dir,
+            rewind_id=rewind_id,
+            to_turn=turn,
+        )
+        if superseded is not None:
+            emit_trace_event(
+                trace_file,
+                "clarification_rewound",
+                session_number=target_session,
+                turn_number=from_turn,
+                request_id=superseded["request_id"],
+                rewind_id=rewind_id,
+                to_turn=turn,
+            )
     from ..llm_solver.harness.state_writer import write_state_from_trace
     write_state_from_trace(
         trace_path,
@@ -626,19 +651,22 @@ class LiveState:
 
 
 def derive_live_state(artifact_dir: Path) -> LiveState:
-    """Infer live status from ``.trace.jsonl`` + ``approval_request.json``.
+    """Infer live status from trace, approval, clarification, and interrupt state.
 
     Precedence:
-      1. Pending approval request → ``approval_pending``.
-      2. Last lifecycle event is ``session_end`` → map finish_reason to
+      1. Pending clarification → ``input_required``.
+      2. Recorded, unconsumed answer → ``input_ready`` unless approval waits.
+      3. Pending approval request → ``approval_pending``.
+      4. Last lifecycle event is ``session_end`` → map finish_reason to
          ``completed`` / ``paused`` / ``error``.
-      3. Last lifecycle event is ``session_start`` → ``running``.
-      4. Nothing observed → empty status; caller uses the SQLite row.
+      5. Last lifecycle event is ``session_start`` → ``running``.
+      6. Nothing observed → empty status; caller uses the SQLite row.
     """
     artifact_dir = Path(artifact_dir)
     events = _load_trace_events(artifact_dir / ".trace.jsonl")
     approval = load_approval_request(artifact_dir)
     interrupt = load_interrupt_marker(artifact_dir)
+    clarification = clarification_state(artifact_dir)
 
     last_lifecycle: dict | None = None
     last_lifecycle_index = -1
@@ -656,6 +684,23 @@ def derive_live_state(artifact_dir: Path) -> LiveState:
         if last_lifecycle is not None
         else 0
     )
+
+    if clarification.phase == "input_required":
+        assert clarification.request is not None
+        return LiveState(
+            status="input_required",
+            finish_reason="input_required",
+            session_number=int(clarification.request["session_number"]),
+        )
+    if clarification.phase == "input_ready" and not (
+        approval is not None and approval.get("status") == "pending"
+    ):
+        assert clarification.request is not None
+        return LiveState(
+            status="input_ready",
+            finish_reason="input_answered",
+            session_number=int(clarification.request["session_number"]),
+        )
 
     if approval is not None and approval.get("status") == "pending":
         return LiveState(
@@ -707,6 +752,8 @@ def _status_from_finish_reason(finish_reason: str) -> str:
         return "completed"
     if finish_reason == "error":
         return "error"
+    if finish_reason == "input_required":
+        return "input_required"
     return "paused"
 
 
@@ -872,6 +919,13 @@ def _seed_session_artifacts(record: SessionRecord) -> None:
 def _write_session_metadata(record: SessionRecord) -> None:
     artifact_dir = record.artifact_path
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    config_path_hashes = {}
+    for raw_path in record.config_paths:
+        path = Path(raw_path)
+        if path.is_file():
+            config_path_hashes[raw_path] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
     meta = {
         "session_id": record.session_id,
         "cwd": record.cwd,
@@ -882,6 +936,7 @@ def _write_session_metadata(record: SessionRecord) -> None:
         "context_mode": record.context_mode,
         "system_prompt_path": record.system_prompt_path,
         "config_paths": record.config_paths,
+        "config_path_hashes": config_path_hashes,
         "worktree_path": record.worktree_path,
         "worktree_branch": record.worktree_branch,
         "worktree_base_commit": record.worktree_base_commit,
@@ -928,6 +983,17 @@ def _format_trace_event(event: dict) -> str:
         reason = event.get("reason") or ""
         args = _truncate_text(str(event.get("args_summary") or ""), 100)
         return f"approval_request turn={turn} {tool}({args}) reason={reason}"
+    if et == "clarification_request":
+        turn = event.get("turn_number")
+        request_id = event.get("request_id") or "?"
+        question = _truncate_text(str(event.get("question") or ""), 160)
+        return (
+            f"clarification_request turn={turn} request={request_id} "
+            f"question={question}"
+        )
+    if et in {"clarification_answer", "clarification_consumed"}:
+        request_id = event.get("request_id") or "?"
+        return f"{et} request={request_id}"
     if et == "regression":
         n_regressed = event.get("n_regressed")
         return f"regression n_regressed={n_regressed}"
@@ -1214,6 +1280,8 @@ def _status_from_result(success: bool, finish_reason: str | None) -> str:
         return "completed"
     if finish_reason == "error":
         return "error"
+    if finish_reason == "input_required":
+        return "input_required"
     return "paused"
 
 

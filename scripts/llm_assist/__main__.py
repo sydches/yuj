@@ -34,6 +34,14 @@ from ..llm_solver.harness.worktree_runtime import (
     inspect_session_worktree,
     remove_session_worktree,
 )
+from ..llm_solver.harness.clarifications import (
+    ClarificationStateError,
+    clarification_answer_path,
+    clarification_state,
+    record_clarification_answer,
+)
+from ..llm_solver.harness._loop.interrupted_turn import append_trace_event_fsync
+from ..llm_solver.harness._loop.trace_schema import TRACE_SCHEMA_VERSION
 from ._auth import (
     AuthBinding,
     CredentialMissingError,
@@ -384,6 +392,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     resume_parser.set_defaults(func=cmd_resume)
 
+    answer_parser = sub.add_parser(
+        "answer", help="record one answer for a pending clarification"
+    )
+    answer_parser.add_argument(
+        "session_id", help="coding-session ID or unique session reference"
+    )
+    answer_parser.add_argument(
+        "request_id", help="exact clarification request ID shown by status"
+    )
+    answer_parser.add_argument(
+        "answer", help="exact operator answer to record"
+    )
+    answer_parser.set_defaults(func=cmd_answer)
+
     rewind_parser = sub.add_parser(
         "rewind",
         help="restore a saved session to an earlier conversation and tree turn",
@@ -716,7 +738,7 @@ def cmd_smoke(args) -> int:
 
 
 def _smoke_acceptance_check(smoke_root: Path, record) -> tuple[bool, list[str]]:
-    """Return (ok, reasons). Checks: fix present, tests pass, no pending approval."""
+    """Return whether the edit, tests, and interactive gates are complete."""
     reasons: list[str] = []
     if record.worktree_path:
         smoke_root = Path(record.worktree_path)
@@ -744,6 +766,15 @@ def _smoke_acceptance_check(smoke_root: Path, record) -> tuple[bool, list[str]]:
     approval = load_approval_request(record.artifact_path)
     if approval is not None and approval.get("status") == "pending":
         reasons.append("session has a pending approval request")
+    try:
+        clarification = clarification_state(record.artifact_path)
+    except ClarificationStateError as exc:
+        reasons.append(f"session has invalid clarification evidence: {exc}")
+    else:
+        if clarification.phase in {"input_required", "input_ready"}:
+            reasons.append(
+                "session has an unresolved clarification exchange"
+            )
 
     return (not reasons, reasons)
 
@@ -751,6 +782,17 @@ def _smoke_acceptance_check(smoke_root: Path, record) -> tuple[bool, list[str]]:
 def cmd_resume(args) -> int:
     store = SessionStore()
     record = _resolve_session_record(store, args.session_id, selector="resumable")
+    try:
+        clarification = clarification_state(record.artifact_path)
+    except ClarificationStateError as exc:
+        raise SystemExit(f"invalid clarification evidence: {exc}") from exc
+    if clarification.phase == "input_required":
+        assert clarification.request is not None
+        raise SystemExit(
+            "session has a pending clarification; run "
+            f"{CLI_NAME} answer {record.short_id} "
+            f"{clarification.request['request_id']} '<answer>' first"
+        )
     approval = load_approval_request(record.artifact_path)
     if approval is not None and approval.get("status") == "pending":
         raise SystemExit(
@@ -770,6 +812,57 @@ def cmd_resume(args) -> int:
     refreshed = store.get_session(record.session_id)
     _print_session_result(refreshed or record, success, finish_reason)
     return 0 if success else 1
+
+
+def cmd_answer(args) -> int:
+    store = SessionStore()
+    record = _resolve_session_record(
+        store, args.session_id, selector="latest"
+    )
+    try:
+        with _session_lock(store, record):
+            request_state = clarification_state(record.artifact_path)
+            if request_state.phase != "input_required":
+                if request_state.phase in {"input_ready", "consumed"}:
+                    raise ClarificationStateError(
+                        "clarification already has an answer"
+                    )
+                raise ClarificationStateError(
+                    "session has no pending clarification"
+                )
+            answer = record_clarification_answer(
+                record.artifact_path,
+                session_id=record.session_id,
+                request_id=args.request_id,
+                answer=args.answer,
+            )
+            assert request_state.request is not None
+            request = request_state.request
+            append_trace_event_fsync(
+                record.artifact_path / ".trace.jsonl",
+                {
+                    "event": "clarification_answer",
+                    "trace_schema_version": TRACE_SCHEMA_VERSION,
+                    "session_number": request["session_number"],
+                    "turn_number": request["turn_number"],
+                    "request_id": request["request_id"],
+                    "answer_sha256": answer["answer_sha256"],
+                    "answer_chars": len(answer["answer"]),
+                },
+            )
+            store.update_session(
+                record.session_id,
+                status="input_ready",
+                last_finish_reason="input_answered",
+            )
+    except ClarificationStateError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"answered: {record.session_id}")
+    print(f"session_ref: {record.short_id}")
+    print(f"request_id: {answer['request_id']}")
+    print(f"answer_file: {clarification_answer_path(record.artifact_path)}")
+    print(f"resume with: {CLI_NAME} resume {record.short_id}")
+    return 0
 
 
 def cmd_rewind(args) -> int:
@@ -1131,6 +1224,7 @@ def cmd_status(args) -> int:
     finish_reason = live.finish_reason if live.status else record.last_finish_reason
     turns = session_turn_count(record.artifact_path)
     approval = load_approval_request(record.artifact_path)
+    clarification = clarification_state(record.artifact_path)
     lock = store.get_session_lock(record.session_id)
     interrupt = load_interrupt_marker(record.artifact_path)
 
@@ -1149,6 +1243,17 @@ def cmd_status(args) -> int:
         print("approval: pending")
     else:
         print("approval: none")
+    if clarification.phase == "none":
+        print("clarification: none")
+    else:
+        clarification_label = {
+            "input_required": "pending",
+            "input_ready": "answered",
+        }.get(clarification.phase, clarification.phase)
+        print(f"clarification: {clarification_label}")
+        assert clarification.request is not None
+        print(f"clarification_request_id: {clarification.request['request_id']}")
+        print(f"question: {clarification.request['question']}")
     if lock is not None:
         print(f"lock: pid={lock.owner_pid} host={lock.owner_host}")
     else:
@@ -1158,9 +1263,15 @@ def cmd_status(args) -> int:
     else:
         print("interrupt: none")
 
-    if approval is not None and approval.get("status") == "pending":
+    if clarification.phase == "input_required":
+        assert clarification.request is not None
+        print(
+            f"next: {CLI_NAME} answer {record.short_id} "
+            f"{clarification.request['request_id']} '<answer>'"
+        )
+    elif approval is not None and approval.get("status") == "pending":
         print(f"next: {CLI_NAME} approve {record.short_id}")
-    elif status in {"paused", "approval_pending"}:
+    elif status in {"paused", "approval_pending", "input_ready"}:
         print(f"next: {CLI_NAME} resume {record.short_id}")
     elif status == "running":
         print(f"next: {CLI_NAME} show {record.short_id}")
@@ -1202,6 +1313,7 @@ def cmd_show(args) -> int:
         print(f"finish_reason: {finish_reason}")
     print(f"turns: {turns}")
     approval = load_approval_request(record.artifact_path)
+    clarification = clarification_state(record.artifact_path)
     lock = store.get_session_lock(record.session_id)
     interrupt = load_interrupt_marker(record.artifact_path)
     if approval is None:
@@ -1210,6 +1322,37 @@ def cmd_show(args) -> int:
         print(f"approval: {approval.get('status')}")
         print(f"approval_reason: {approval.get('reason')}")
         print(f"approval_action: {approval.get('tool_name')}({approval.get('args_summary') or approval.get('cmd') or ''})")
+    if clarification.phase == "none":
+        print("clarification: none")
+    else:
+        clarification_label = {
+            "input_required": "pending",
+            "input_ready": "answered",
+        }.get(clarification.phase, clarification.phase)
+        print(f"clarification: {clarification_label}")
+        assert clarification.request is not None
+        print(
+            "clarification_request_id: "
+            f"{clarification.request['request_id']}"
+        )
+        print(
+            "clarification_question: "
+            f"{clarification.request['question']}"
+        )
+    if clarification.phase == "input_required":
+        assert clarification.request is not None
+        print(
+            f"next: {CLI_NAME} answer {record.short_id} "
+            f"{clarification.request['request_id']} '<answer>'"
+        )
+    elif approval is not None and approval.get("status") == "pending":
+        print(f"next: {CLI_NAME} approve {record.short_id}")
+    elif status in {"paused", "approval_pending", "input_ready"}:
+        print(f"next: {CLI_NAME} resume {record.short_id}")
+    elif status == "running":
+        print(f"next: {CLI_NAME} show {record.short_id}")
+    else:
+        print("next: none")
     if lock is None:
         print("lock: none")
     else:

@@ -606,9 +606,10 @@ active_default = ["bash", "read", "edit", "glob", "grep", "done"]
 ```
 
 Yuj registers every enabled tool, but sends only `active_default`,
-`load_tools`, and `done` on the first request. An optional tool still needs its
-own enable setting. The selected profile's `max_tools` limits the active set,
-and Yuj rejects a load that would exceed it.
+`load_tools`, and `done` on the first request. The top-level assistant session
+also keeps the fixed `ask_user` control. An optional tool still needs its own
+enable setting. The selected profile's `max_tools` limits the active set, and
+Yuj rejects a load that would exceed it.
 
 Deferred loading and code mode are two different ways to reduce tool schemas.
 Yuj rejects a configuration that enables both.
@@ -692,6 +693,13 @@ undeclared fields before approval checks, guardrails, or the tool handler. The
 model receives a repairable error, and the trace stores only the tool name and
 field errors, not the rejected values.
 
+The assistant-only `ask_user` control always validates its single required
+`question` string and rejects every extra field, even when
+`schema_validation = "off"`. It has no enable setting. Top-level assistant
+requests keep it available in native mode, code mode, deferred loading, and
+required plan mode. Child-agent and measurement requests remove it before
+profile shaping and cannot finish with `input_required`.
+
 `constrained_decoding` asks llama-server to constrain the tool-call span with
 JSON Schema or a generated GBNF grammar. The selected model profile must also
 set `[model].supports_constrained_tools = true`. Shipped profiles leave this
@@ -766,7 +774,13 @@ Each tool matches one stable value:
 | `think` | `thought` |
 | `bash_poll`, `bash_kill` | `proc_id` |
 | `write_todos` | The canonical todo array |
-| Any other tool | The sorted JSON argument object |
+| Any other executable tool | The sorted JSON argument object |
+
+`ask_user` is a session-control boundary, not an action permission. It does
+not enter this match table or create `approval_request.json`. Its recorded
+answer also does not change a permission decision. If the model later calls a
+tool that matches `ask`, Yuj still creates the normal approval request and
+waits for a separate `yuj approve` or `yuj reject` command.
 
 In an assistant session, `ask` writes `approval_request.json` and pauses. Use
 `yuj approve` or `yuj reject` to continue. `--always` stores the exact action

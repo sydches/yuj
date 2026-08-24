@@ -1049,12 +1049,10 @@ class _ToolGrammarBuilder:
             "maxContains",
             "maximum",
             "maxItems",
-            "maxLength",
             "maxProperties",
             "minContains",
             "minimum",
             "minItems",
-            "minLength",
             "minProperties",
             "multipleOf",
             "not",
@@ -1106,6 +1104,19 @@ class _ToolGrammarBuilder:
             else:
                 return "json-value"
         if kind == "string":
+            if "minLength" in schema or "maxLength" in schema:
+                minimum = int(schema.get("minLength", 0))
+                maximum = schema.get("maxLength")
+                if maximum is None:
+                    repeat = f"{{{minimum},}}"
+                else:
+                    repeat = f"{{{minimum},{int(maximum)}}}"
+                name = self._unique_rule_name(hint)
+                self.rules[name] = (
+                    f'{_gbnf_literal(chr(34))} json-char{repeat} '
+                    f'{_gbnf_literal(chr(34))}'
+                )
+                return name
             return "json-string"
         if kind == "integer":
             return "json-integer"

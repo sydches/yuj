@@ -138,7 +138,9 @@ def test_code_mode_keeps_complete_meta_surface_under_profile_shaping(
 
     assert tuple(
         schema["function"]["name"] for schema in session._tool_schemas
-    ) == CODE_MODE_SCHEMA_TOOL_NAMES
+    ) == tuple(
+        name for name in CODE_MODE_SCHEMA_TOOL_NAMES if name != "ask_user"
+    )
     assert all(
         "description" not in schema["function"]
         for schema in session._tool_schemas
@@ -159,7 +161,9 @@ def test_code_mode_preserves_the_agent_skill_read_seam(tmp_path: Path):
 
     assert tuple(
         schema["function"]["name"] for schema in session._tool_schemas
-    ) == CODE_MODE_SCHEMA_TOOL_NAMES
+    ) == tuple(
+        name for name in CODE_MODE_SCHEMA_TOOL_NAMES if name != "ask_user"
+    )
 
 
 @pytest.mark.skipif(

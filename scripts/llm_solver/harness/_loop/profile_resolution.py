@@ -142,6 +142,10 @@ def _filter_disabled_tools(tool_schemas: list[dict], cfg) -> list[dict]:
     out: list[dict] = []
     for schema in tool_schemas:
         name = schema.get("function", {}).get("name", "")
+        if name == "ask_user" and getattr(
+            cfg, "runtime_mode", "measurement"
+        ) != "assistant":
+            continue
         attr = gated.get(name)
         if attr is not None and not bool(getattr(cfg, attr, False)):
             continue

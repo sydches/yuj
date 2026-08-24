@@ -1,0 +1,1 @@
+Ask the operator one necessary clarification question. Supply only the exact question. The session pauses until the operator records an answer and resumes it. This does not request or grant permission for an action.

@@ -121,3 +121,24 @@ def test_replay_extra_config_is_accepted(tmp_path, monkeypatch):
         m.main([str(tmp_path / "rd8"), "--replay-from", str(src),
                 "--task", str(tmp_path),
                 "--replay-extra-config", str(capture)])
+
+
+def test_recorded_clarification_refuses_live_handover(tmp_path, monkeypatch):
+    import llm_solver.__main__ as m
+    from llm_solver.server import replay_client as rc
+
+    src = _source_run(tmp_path, mode="compound")
+
+    def _clarification_init(self, *args, **kwargs):
+        self._clarification_exchange = {"validated": True}
+
+    monkeypatch.setattr(rc.ReplayClient, "__init__", _clarification_init)
+    result = m.main([
+        str(tmp_path / "rd9"),
+        "--replay-from", str(src),
+        "--task", str(tmp_path),
+        "--replay-stop-turn", "1",
+        "--replay-continue-live",
+    ])
+
+    assert result == 2

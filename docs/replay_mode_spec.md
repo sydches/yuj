@@ -50,16 +50,20 @@ Each saved file has one role:
 | `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls and results, and recorded lifecycle-hook effects. |
 | `subagents/<id>/.trace.jsonl` | The exact terminal result and accounting for the matching parent `subagent` event. |
 | Transcript | The saved pre-profile request tool array from each input block, when present, and the saved model reply from each `=== turn NNN output ===` block. |
+| `clarification_request.json` | The exact assistant question and request identity. |
+| `clarification_answer.json` | The exact operator answer and its hash. |
+| `clarification_consumption.json` | The answer hash and the one permitted assistant-resume delivery attempt. |
 | `.solver/state.json` | Nothing directly. This file is a view built from `.trace.jsonl`. |
 | `session.json` | The current replay loader reads the model, config paths, and context mode. It ignores the other settings in this file. |
 
 The trace is the source of truth for events. The transcript supplies the full
 model replies that replay returns.
 
-A long run may split its transcript into numbered files. If the main file is
-`repo.log`, replay first reads `repo.pre_seg_1.log`,
-`repo.pre_seg_2.log`, and each later numbered part. It then reads `repo.log`.
-Replay joins the parts and gives their turns one continuous order.
+A long run or an assistant resume may split its transcript into numbered
+files. If the main file is `repo.log`, replay first reads
+`repo.pre_seg_1.log`, `repo.pre_seg_2.log`, and each later numbered part. It
+then reads `repo.log`. Replay joins the parts and gives their turns one
+continuous order.
 
 ## What happens on each turn
 
@@ -86,6 +90,7 @@ Some recorded features need special replay behavior:
 | Lifecycle hook | Match the saved hook position and apply its recorded block, rewrite, note, timeout, or error. Never start the external command. Stop if the configured command differs from the source. |
 | Named subagent | Verify the saved child identity, result hash and size, turns, and tokens. Return the recorded final text instead of running a child model. Copy the child trace when the replay writes to another run directory. |
 | Stream rule | Reproduce the saved interrupt and hidden injection, then consume the next response for the same logical turn. Do not read the current rule file to rebuild the retry. |
+| Assistant clarification | Require one matching request, answer, and consumption record and one of each matching trace event. Return the saved `ask_user` reply, then replace context with the exact recorded `messages` array from the next request. Do not contact an operator or model, enter `input_required`, or create clarification files in the replay run. |
 
 The ordinary tool-call fidelity check still compares every model-visible result
 from these paths. Focused rewind tests compare each model-facing message, but
@@ -117,6 +122,11 @@ implements only one narrow subset:
 The tool-name check proves that a saved `load_tools` call changes the same next
 request. When the transcript has no `tools` array, Yuj skips this check. It does
 not infer the array from `tools_activated` trace rows.
+
+Measurement requests never contain `ask_user`. For a source with one validated
+assistant clarification exchange, the tool-name check removes only that name
+from the recorded assistant surface before comparing it with the measurement
+surface. Every other tool name and its order remain strict.
 
 The current run loop separately calls the tool-call and result check. For each
 tool call that reaches this check, Yuj applies these rules in order:
@@ -175,14 +185,21 @@ keeps one count across all run segments. The current replay client uses the
 transcript count for `--replay-stop-turn`, but it uses only the trace turn
 number for fidelity checks. It does not reject a source with several run
 segments.
-Use a source with one run segment when exact stop and fidelity checks
-matter.
+Use a source with one run segment when exact stop and general tool fidelity
+checks matter. The recorded clarification transition is a narrow exception:
+replay joins its assistant transcript segments and validates the exact
+`messages` array from the next request, but the general multi-segment
+tool-call limits still apply.
 
 Add `--replay-continue-live` to request a live handover. The current handover
 works only when the stop turn is greater than `0`, the source has another
 recorded turn, and the run reaches another model call. It does not occur
 after a full replay, at the final recorded turn, or when the stop turn ends the
 run segment.
+
+Yuj refuses `--replay-continue-live` when the source contains a recorded
+clarification exchange. That replay must remain offline, so no later model or
+operator can replace the recorded answer.
 
 For a source with one run segment, the run loop calls handover on the next
 loop turn.
@@ -232,10 +249,12 @@ result, it does not restore source values set with `--system-prompt`, `--port`,
 `--require-intent`, `--prompt-addendum`, `--variant-name`, or `--tool-desc`.
 Do not claim config parity when the source run used one of these values.
 
-The loader also does not restore the source task prompt or resume inputs. The
+The loader also does not generally restore the source task prompt or resume inputs. The
 new replay command can supply different `--prompt-text`, `--prompt-file`,
 `--resume`, or `--resume-message-file` values. These values can change the
 model input. Supply the same input manually, and record what you supplied.
+The narrow clarification path is an exception: it takes the exact request
+messages after the recorded answer from the next transcript segment.
 
 Use `--replay-extra-config PATH` only for measurement code that does not change
 what the model sees. Repeat the option to add more than one file. A
@@ -375,6 +394,8 @@ repository.
 - Use the same sandbox rules as a live run.
 - Never launch configured lifecycle-hook commands while replaying; consume
   their source `hook` rows.
+- For a recorded clarification, never contact an operator or live model and
+  never create pending-input state in the replay run.
 - Do not add a saved file format only for replay.
 - Do not require a saved snapshot or branch bundle to restore a replay.
 - Treat any cached task copy at turn `N` as disposable.
@@ -389,8 +410,9 @@ Use the project virtual environment or another Python environment that has Yuj
 installed.
 
 Use a source run with one run segment. The current CLI does not reject a
-source with several run segments, but its stop and fidelity turn numbers
-are not safe for that source.
+source with several run segments, but its stop and general tool fidelity turn
+numbers are not safe for that source. A validated assistant clarification can
+cross its one resume boundary as described above.
 
 Make a fresh copy of the task. Start it with the same files as the source run.
 
@@ -405,6 +427,11 @@ Give `--replay-from` the source run directory. That directory must contain
 `<source_run_dir>/harness_run/transcripts/*.log` or
 `<source_run_dir>/transcripts/*.log`. For tool-call fidelity checks, the source
 run must also contain `<source_run_dir>/host_task/.trace.jsonl`.
+
+An installed-command session directory is also a replay source when it
+contains `session.json`, `.trace.jsonl`, and `transcript.log`. Replay reads its
+numbered `transcript.pre_seg_N.log` files first. A clarification source must
+also contain all three clarification JSON files and the matching trace events.
 
 Keep one transcript log in the selected transcript directory. When several
 logs match, the current code silently reads the first path in sorted order.
@@ -480,6 +507,9 @@ Use these checks before you claim that replay meets the full contract:
    handover overlay use, and prefix-only reads.
 5. Replay one saved run for every registered context mode. Require zero
    divergence from start to end.
+6. Replay one assistant clarification through its resumed answer. Require no
+   operator or model contact, no destination clarification files, and exactly
+   one replayed request, answer, and consumption event.
 
 The current limits above mean that a passing replay does not yet prove full
 request, tool-call, handover, or config fidelity.

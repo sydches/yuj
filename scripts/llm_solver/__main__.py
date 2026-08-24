@@ -362,6 +362,12 @@ def main(argv: list[str] | None = None) -> int:
         client = ReplayClient(transcript, stop_turn=args.replay_stop_turn,
                               strict_fidelity=not args.replay_allow_divergence,
                               source_trace_path=source_trace)
+        if args.replay_continue_live and client.has_recorded_clarification:
+            log.error(
+                "--replay-continue-live is unavailable for a source with a "
+                "recorded clarification; replay must remain offline"
+            )
+            return 2
         if args.replay_continue_live:
             from .harness._loop.replay_handover import arm
             arm(client,

@@ -3,7 +3,7 @@
 Handlers and JSON schemas still live in their existing modules. This file owns
 the mechanical cross-cutting facts that consumers need to agree on: active
 tool names, optional profile gates, parallel-read eligibility, mutation
-classification, and native envelope prefixes.
+classification, permission scope, and native envelope prefixes.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ class ToolSpec:
     native_envelope_prefix: str | None = None
     schema_order: int | None = None
     schema_surface: str = "native"
+    permission_scoped: bool = True
 
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
@@ -111,9 +112,16 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=19,
     ),
     ToolSpec(
-        "done",
+        "ask_user",
         cap_immune=True,
         schema_order=20,
+        schema_surface="both",
+        permission_scoped=False,
+    ),
+    ToolSpec(
+        "done",
+        cap_immune=True,
+        schema_order=21,
         schema_surface="both",
     ),
     ToolSpec(
@@ -180,6 +188,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
 _ACTIVE_TOOL_SPECS = tuple(spec for spec in TOOL_SPECS if spec.active)
 
 ACTIVE_TOOL_NAMES = tuple(spec.name for spec in _ACTIVE_TOOL_SPECS)
+PERMISSION_SCOPED_TOOL_NAMES = tuple(
+    spec.name for spec in _ACTIVE_TOOL_SPECS if spec.permission_scoped
+)
 
 
 def _schema_tool_names(surface: str) -> tuple[str, ...]:
@@ -255,6 +266,7 @@ __all__ = [
     "GUARDRAIL_MUTATION_TOOL_NAMES",
     "NATIVE_ENVELOPE_PREFIXES",
     "PARALLEL_READ_SAFE_TOOL_NAMES",
+    "PERMISSION_SCOPED_TOOL_NAMES",
     "PROFILE_GATE_ATTRS",
     "SCHEMA_TOOL_NAMES",
     "TOOL_SPECS",

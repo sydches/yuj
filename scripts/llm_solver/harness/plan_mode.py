@@ -21,7 +21,7 @@ PLAN_FILE = ".solver/plan.md"
 PLAN_MODES = ("off", "required")
 _INSPECTION_TOOLS = frozenset({"read", "glob", "grep", "list_definitions"})
 _PLAN_TOOL_SURFACE = frozenset({
-    *_INSPECTION_TOOLS, "bash", "write", "exit_plan_mode",
+    *_INSPECTION_TOOLS, "bash", "write", "exit_plan_mode", "ask_user",
 })
 _SIMPLE_READ_ONLY_COMMANDS = frozenset({
     "basename", "cat", "cksum", "cmp", "cut", "date", "df", "diff", "dirname",

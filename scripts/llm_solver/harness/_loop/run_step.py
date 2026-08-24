@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,13 @@ from ..guardrails import Action, Decision, PASS
 from ..checkpoint_rewind import finalize_deferred_context_actions
 from ..action_metadata import action_metadata
 from ..approvals import approval_decision, approval_transport_available
+from ..clarifications import (
+    clarification_state,
+    consume_clarification_answer,
+    create_clarification_request,
+)
 from ..plan_mode import effective_model_tool_schemas
+from ..tool_validation import SchemaViolation, ToolArgumentValidation
 from .._tool_filters import resolve_tool_permission
 from ..system_log import get_system_log, provenance_for
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
@@ -42,6 +49,192 @@ if TYPE_CHECKING:
     from ..loop import Session, SessionResult
 
 log = logging.getLogger(__name__)
+
+
+def _clarification_schema_reject(session: "Session", tc, turn: int, validation) -> None:
+    """Balance one rejected question call without entering dispatch policy."""
+    session.context.add_tool_result(
+        tc.id,
+        validation.error_envelope(),
+        tool_name=tc.name,
+        gate_blocked=True,
+    )
+    session._emit(
+        "schema_reject",
+        session_number=session._session_number,
+        turn_number=turn,
+        **validation.trace_fields(),
+    )
+
+
+def _balance_skipped_clarification_siblings(
+    session: "Session", tool_calls: list, *, ask_ids: frozenset[str]
+) -> None:
+    for sibling in tool_calls:
+        if sibling.id in ask_ids:
+            continue
+        session.context.add_tool_result(
+            sibling.id,
+            "NOT RUN: The session stopped before sibling calls because the "
+            "same response contained ask_user.",
+            tool_name=sibling.name,
+            gate_blocked=True,
+        )
+
+
+def _handle_clarification_response(
+    session: "Session", tool_calls: list, *, turn: int
+) -> str | None:
+    """Return ``pause`` or ``continue`` when this is a clarification turn."""
+    asks = [call for call in tool_calls if call.name == "ask_user"]
+    if not asks:
+        return None
+
+    replay_exchange = getattr(session.client, "replay_clarification", None)
+    if callable(replay_exchange):
+        if len(asks) != 1:
+            raise RuntimeError("recorded clarification turn has multiple ask_user calls")
+        exchange = replay_exchange(asks[0])
+        if not session.context.replace_all_messages(exchange["next_messages"]):
+            raise RuntimeError(
+                "replay clarification requires a replaceable context manager"
+            )
+        request = exchange["request"]
+        answer = exchange["answer"]
+        session._emit(
+            "clarification_request",
+            session_number=session._session_number,
+            turn_number=turn,
+            request_id=request["request_id"],
+            tool_call_id=request["tool_call_id"],
+            question=request["question"],
+            replayed=True,
+        )
+        session._emit(
+            "clarification_answer",
+            session_number=session._session_number,
+            turn_number=turn,
+            request_id=request["request_id"],
+            answer_sha256=answer["answer_sha256"],
+            answer_chars=len(answer["answer"]),
+            replayed=True,
+        )
+        session._emit(
+            "clarification_consumed",
+            session_number=session._session_number,
+            turn_number=turn,
+            request_id=request["request_id"],
+            answer_sha256=answer["answer_sha256"],
+            delivery="replay",
+            replayed=True,
+        )
+        return "continue"
+
+    if (
+        getattr(session.cfg, "runtime_mode", "measurement") != "assistant"
+        or getattr(session, "_subagent_level", 0) != 0
+    ):
+        return None
+
+    if len(asks) != 1:
+        validation = ToolArgumentValidation(
+            "ask_user",
+            (SchemaViolation(
+                path="$.tool_calls",
+                keyword="maxItems",
+                message="one model response may contain only one ask_user call",
+                expected="1",
+                actual=str(len(asks)),
+            ),),
+        )
+        for ask in asks:
+            _clarification_schema_reject(session, ask, turn, validation)
+        _balance_skipped_clarification_siblings(
+            session, tool_calls, ask_ids=frozenset(ask.id for ask in asks)
+        )
+        return "continue"
+
+    ask = asks[0]
+    validation = session.tool_schema_set_for_phase(
+        plan_mode_active=bool(session._plan_mode.active)
+    ).validate(ask.name, ask.arguments)
+    if not validation.valid:
+        _clarification_schema_reject(session, ask, turn, validation)
+        _balance_skipped_clarification_siblings(
+            session, tool_calls, ask_ids=frozenset({ask.id})
+        )
+        return "continue"
+
+    prior = clarification_state(session._artifact_dir)
+    if prior.phase != "none":
+        session.context.add_tool_result(
+            ask.id,
+            "ERROR: This session already used its one clarification request.",
+            tool_name=ask.name,
+            gate_blocked=True,
+        )
+        _balance_skipped_clarification_siblings(
+            session, tool_calls, ask_ids=frozenset({ask.id})
+        )
+        session._emit(
+            "clarification_rejected",
+            session_number=session._session_number,
+            turn_number=turn,
+            tool_call_id=ask.id,
+            reason="request_already_exists",
+        )
+        return "continue"
+
+    request = create_clarification_request(
+        session._artifact_dir,
+        request_id=f"clar-{uuid.uuid4().hex[:12]}",
+        session_id=session._artifact_dir.name,
+        session_number=session._session_number,
+        turn_number=turn,
+        tool_call_id=ask.id,
+        question=ask.arguments["question"],
+    )
+    session.context.add_tool_result(
+        ask.id,
+        "INPUT REQUIRED: The session is paused until the operator records "
+        "one answer and resumes it.",
+        tool_name=ask.name,
+        gate_blocked=True,
+    )
+    _balance_skipped_clarification_siblings(
+        session, tool_calls, ask_ids=frozenset({ask.id})
+    )
+    session._emit(
+        "clarification_request",
+        session_number=session._session_number,
+        turn_number=turn,
+        request_id=request["request_id"],
+        tool_call_id=ask.id,
+        question=request["question"],
+    )
+    return "pause"
+
+
+def _consume_pending_clarification(session: "Session", *, turn: int) -> None:
+    pending = getattr(session, "_pending_clarification_delivery", None)
+    if pending is None:
+        return
+    consumption = consume_clarification_answer(
+        session._artifact_dir,
+        request_id=pending["request_id"],
+        session_number=session._session_number,
+        turn_number=turn,
+        delivery="resume",
+    )
+    session._emit(
+        "clarification_consumed",
+        session_number=session._session_number,
+        turn_number=turn,
+        request_id=consumption["request_id"],
+        answer_sha256=consumption["answer_sha256"],
+        delivery=consumption["delivery"],
+    )
+    session._pending_clarification_delivery = None
 
 
 def _defer_guard_end_during_active_watch(
@@ -254,6 +447,18 @@ def run_session_loop(session: "Session") -> "SessionResult":
     # iteration so the adaptive-phase switch (which mutates session.cfg
     # via dataclasses.replace) is visible on the next turn.
     turn_start = int(getattr(session, "_turn_start_offset", 0) or 0)
+    if (
+        getattr(session.cfg, "runtime_mode", "measurement") == "assistant"
+        and getattr(session, "_subagent_level", 0) == 0
+    ):
+        if clarification_state(session._artifact_dir).phase == "input_required":
+            return SessionResult(
+                turn_start,
+                "input_required",
+                done=False,
+                total_prompt_tokens=0,
+                total_completion_tokens=0,
+            )
     if getattr(session, "_lifecycle_hook_block_reason", ""):
         return SessionResult(
             turn_start,
@@ -425,6 +630,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     turn, clip["index"], clip["orig_pt"], clip["new_pt"],
                     estimated_pt,
                 )
+        # Mark the exact operator answer consumed before transport. An
+        # ambiguous transport failure must not deliver it a second time.
+        _consume_pending_clarification(session, turn=turn)
         # ─── 1. API call (with transient-error retry) ────────────────
         _chat_t0 = time.perf_counter()
         chat_result = session._chat_with_retry(turn)
@@ -496,6 +704,21 @@ def run_session_loop(session: "Session") -> "SessionResult":
             if fill > cfg.context_fill_ratio:
                 log.info("Context %.0f%% full at turn %d, ending session", fill * 100, turn)
                 return SessionResult(turn, "context_full", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+
+        clarification_action = _handle_clarification_response(
+            session, tool_calls, turn=turn
+        )
+        if clarification_action == "pause":
+            return SessionResult(
+                turn,
+                "input_required",
+                done=False,
+                total_prompt_tokens=total_prompt,
+                total_completion_tokens=total_completion,
+            )
+        if clarification_action == "continue":
+            _run_post_turn_hooks(session, turn)
+            continue
 
         # ─── 3. GUARDRAIL: intent_gate (BLOCK / END tiers) ───────────
         # Warmup: guardrails stay dormant through the first

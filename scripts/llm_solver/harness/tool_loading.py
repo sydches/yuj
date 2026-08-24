@@ -82,6 +82,8 @@ class ToolSurface:
                 "lazy tool loading requires the load_tools schema and handler"
             )
         mandatory = {"done"}
+        if "ask_user" in self._registered_name_set:
+            mandatory.add("ask_user")
         if self.lazy_loading_enabled:
             mandatory.add(LOADER_TOOL_NAME)
         selected = set(configured) | mandatory

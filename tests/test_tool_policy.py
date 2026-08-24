@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from scripts.llm_solver.harness.tool_specs import ACTIVE_TOOL_NAMES
+from scripts.llm_solver.harness.tool_specs import PERMISSION_SCOPED_TOOL_NAMES
 from scripts.llm_solver.harness.tool_policy import (
     DEFAULT_PERMISSION_RULE,
     PERMISSION_ASK_FALLBACKS,
@@ -330,8 +330,8 @@ def test_unknown_tool_rules_match_a_stable_canonical_arguments_object():
     assert rendered == '{"a":"two","z":1}'
 
 
-def test_match_field_registry_covers_current_shipped_tools():
-    assert set(PERMISSION_MATCH_FIELDS) == set(ACTIVE_TOOL_NAMES)
+def test_match_field_registry_covers_permission_scoped_tools():
+    assert set(PERMISSION_MATCH_FIELDS) == set(PERMISSION_SCOPED_TOOL_NAMES)
 
 
 @pytest.mark.parametrize(

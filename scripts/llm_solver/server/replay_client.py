@@ -13,11 +13,13 @@ the original.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
 from pathlib import Path
 
+from ..harness.clarifications import clarification_state
 from ._streaming import StreamRuleInterrupt
 from .types import ToolCall, TurnResult, Usage
 
@@ -276,6 +278,9 @@ class ReplayClient:
             Path(source_trace_path) if source_trace_path is not None else None
         )
         self._rewind_events: dict[tuple[int, int], list[dict]] = {}
+        self._clarification_events: list[dict] = []
+        self._clarification_exchange: dict | None = None
+        self._clarification_replayed = False
         if self.source_trace_path is not None and self.source_trace_path.is_file():
             for line in self.source_trace_path.read_text().splitlines():
                 line = line.strip()
@@ -302,6 +307,74 @@ class ReplayClient:
                         int(ev.get("from_turn", -1)),
                     )
                     self._rewind_events.setdefault(key, []).append(ev)
+                elif str(ev.get("event") or "").startswith("clarification_"):
+                    self._clarification_events.append(ev)
+        self._load_clarification_exchange()
+
+    def _load_clarification_exchange(self) -> None:
+        """Validate the one durable exchange needed by offline replay."""
+        if self.source_trace_path is None:
+            return
+        artifact_dir = self.source_trace_path.parent
+        request_path = artifact_dir / "clarification_request.json"
+        if not self._clarification_events and not request_path.is_file():
+            return
+        state = clarification_state(artifact_dir)
+        if state.phase != "consumed":
+            raise ReplayDivergence(
+                "offline replay requires a recorded and consumed clarification answer"
+            )
+        assert state.request is not None
+        assert state.answer is not None
+        assert state.consumption is not None
+        by_type = {
+            event_type: [
+                event for event in self._clarification_events
+                if event.get("event") == event_type
+            ]
+            for event_type in (
+                "clarification_request",
+                "clarification_answer",
+                "clarification_consumed",
+            )
+        }
+        if any(len(events) != 1 for events in by_type.values()):
+            raise ReplayDivergence(
+                "offline replay requires exactly one request, answer, and "
+                "consumption trace event"
+            )
+        request_event = by_type["clarification_request"][0]
+        answer_event = by_type["clarification_answer"][0]
+        consumption_event = by_type["clarification_consumed"][0]
+        request = state.request
+        answer = state.answer
+        consumption = state.consumption
+        if (
+            request_event.get("request_id") != request["request_id"]
+            or request_event.get("tool_call_id") != request["tool_call_id"]
+            or request_event.get("question") != request["question"]
+            or request_event.get("session_number") != request["session_number"]
+            or request_event.get("turn_number") != request["turn_number"]
+            or answer_event.get("request_id") != request["request_id"]
+            or answer_event.get("answer_sha256") != answer["answer_sha256"]
+            or answer_event.get("answer_chars") != len(answer["answer"])
+            or answer_event.get("session_number") != request["session_number"]
+            or answer_event.get("turn_number") != request["turn_number"]
+            or consumption_event.get("request_id") != request["request_id"]
+            or consumption_event.get("answer_sha256") != answer["answer_sha256"]
+            or consumption_event.get("session_number")
+            != consumption["session_number"]
+            or consumption_event.get("turn_number") != consumption["turn_number"]
+            or consumption_event.get("delivery") != consumption["delivery"]
+        ):
+            raise ReplayDivergence(
+                "clarification files and trace events do not describe the same exchange"
+            )
+        self._clarification_exchange = {
+            "request": request,
+            "answer": answer,
+            "consumption": consumption,
+        }
 
     # -- helpers -------------------------------------------------------------
 
@@ -349,6 +422,12 @@ class ReplayClient:
         )
         if live == recorded:
             return
+        if self._clarification_exchange is not None:
+            recorded_without_question = tuple(
+                name for name in recorded if name != "ask_user"
+            )
+            if "ask_user" not in live and live == recorded_without_question:
+                return
         self.divergence = {
             "turn": turn_no,
             "field": "tools",
@@ -510,6 +589,65 @@ class ReplayClient:
         self.served_turns += 1
         return result
 
+    def replay_clarification(self, tool_call: ToolCall) -> dict:
+        """Return the exact recorded resume messages for one ask_user turn."""
+        exchange = self._clarification_exchange
+        if exchange is None:
+            raise ReplayDivergence(
+                "recorded ask_user call has no durable clarification exchange"
+            )
+        if self._clarification_replayed:
+            raise ReplayDivergence(
+                "recorded clarification was encountered more than once"
+            )
+        request = exchange["request"]
+        if (
+            tool_call.name != "ask_user"
+            or tool_call.id != request["tool_call_id"]
+            or set(tool_call.arguments) != {"question"}
+            or tool_call.arguments.get("question") != request["question"]
+        ):
+            raise ReplayDivergence(
+                "recorded ask_user call does not match clarification_request.json"
+            )
+        if self._idx >= len(self._turns):
+            raise ReplayDivergence(
+                "recorded clarification has no later resumed model request"
+            )
+        next_turn = self._turns[self._idx]
+        body = self._bodies.get((next_turn, "input"))
+        try:
+            payload = json.loads(body or "")
+        except json.JSONDecodeError as exc:
+            raise ReplayDivergence(
+                "recorded clarification resume input is not valid JSON"
+            ) from exc
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            raise ReplayDivergence(
+                "recorded clarification resume input has no messages list"
+            )
+        answer_text = exchange["answer"]["answer"]
+        if sum(
+            1 for message in messages
+            if isinstance(message, dict)
+            and message.get("role") == "user"
+            and message.get("content") == answer_text
+        ) != 1:
+            raise ReplayDivergence(
+                "recorded clarification answer is not present exactly once in resume input"
+            )
+        self._clarification_replayed = True
+        return {
+            **exchange,
+            "next_messages": copy.deepcopy(messages),
+        }
+
+    @property
+    def has_recorded_clarification(self) -> bool:
+        """Return whether replay owns one validated clarification exchange."""
+        return self._clarification_exchange is not None
+
     def verify_executed_turn(self, live_event: dict) -> None:
         """Trace-level fidelity gate for a just-executed tool_call event.
 
@@ -666,13 +804,19 @@ def resolve_replay_source(path: Path) -> tuple[Path, Path | None, str]:
     transcript = path
     trace = None
     if path.is_dir():
-        candidates = sorted(path.glob("harness_run/transcripts/*.log")) or \
-            sorted(path.glob("transcripts/*.log"))
-        if not candidates:
-            raise FileNotFoundError(f"no transcript under {path}")
-        transcript = candidates[0]
-        t = path / "host_task" / ".trace.jsonl"
-        trace = t if t.is_file() else None
+        assistant_transcript = path / "transcript.log"
+        assistant_trace = path / ".trace.jsonl"
+        if assistant_transcript.is_file() and assistant_trace.is_file():
+            transcript = assistant_transcript
+            trace = assistant_trace
+        else:
+            candidates = sorted(path.glob("harness_run/transcripts/*.log")) or \
+                sorted(path.glob("transcripts/*.log"))
+            if not candidates:
+                raise FileNotFoundError(f"no transcript under {path}")
+            transcript = candidates[0]
+            t = path / "host_task" / ".trace.jsonl"
+            trace = t if t.is_file() else None
     mode = ""
     if trace is not None:
         try:

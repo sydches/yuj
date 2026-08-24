@@ -332,6 +332,40 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         frozenset({"session_number", "turn_number", "tool_name", "reason"}),
     ),
     TraceEventSpec(
+        "clarification_request",
+        frozenset({
+            "session_number", "turn_number", "request_id", "tool_call_id",
+            "question",
+        }),
+    ),
+    TraceEventSpec(
+        "clarification_answer",
+        frozenset({
+            "session_number", "turn_number", "request_id", "answer_sha256",
+            "answer_chars",
+        }),
+    ),
+    TraceEventSpec(
+        "clarification_consumed",
+        frozenset({
+            "session_number", "turn_number", "request_id", "answer_sha256",
+            "delivery",
+        }),
+    ),
+    TraceEventSpec(
+        "clarification_rewound",
+        frozenset({
+            "session_number", "turn_number", "request_id", "rewind_id",
+            "to_turn",
+        }),
+    ),
+    TraceEventSpec(
+        "clarification_rejected",
+        frozenset({
+            "session_number", "turn_number", "tool_call_id", "reason",
+        }),
+    ),
+    TraceEventSpec(
         "permission",
         frozenset({
             "session_number", "turn_number", "tool", "rule", "decision",

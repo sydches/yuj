@@ -138,7 +138,29 @@ def setup_run_outputs(
         cfg, client, system_prompt, system_prompt_file, prompt_metadata
     )
     if hasattr(client, "set_transcript"):
-        client.set_transcript(artifact_dir / "transcript.log")
+        transcript_path = artifact_dir / "transcript.log"
+        if getattr(cfg, "runtime_mode", "measurement") == "assistant":
+            _rotate_assistant_transcript(transcript_path)
+        client.set_transcript(transcript_path)
+
+
+def _rotate_assistant_transcript(transcript_path: Path) -> Path | None:
+    """Move one prior assistant segment aside before the next starts."""
+    transcript_path = Path(transcript_path)
+    if not transcript_path.is_file() or not transcript_path.stat().st_size:
+        return None
+    segment_number = 1
+    while (
+        transcript_path.parent
+        / f"{transcript_path.stem}.pre_seg_{segment_number}.log"
+    ).exists():
+        segment_number += 1
+    destination = (
+        transcript_path.parent
+        / f"{transcript_path.stem}.pre_seg_{segment_number}.log"
+    )
+    transcript_path.replace(destination)
+    return destination
 
 
 def load_system_prompt_and_provenance(

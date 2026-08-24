@@ -284,6 +284,9 @@ _DISPATCH = {
     "task": lambda args, cwd, cfg: (
         "ERROR: task tool is unavailable outside a configured Session"
     ),
+    "ask_user": lambda args, cwd, cfg: (
+        "ERROR: ask_user is handled only by an assistant session"
+    ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),

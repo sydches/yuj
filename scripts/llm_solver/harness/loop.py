@@ -163,6 +163,7 @@ _KNOWN_FINISH_REASONS: frozenset[str] = frozenset({
     "error",
     "task_wall_clock",
     "approval_required",
+    "input_required",
     "hook_block",
     # stop_resume delivery (restart experiment): the adaptive controller
     # requested a graceful stop so an orchestrator can resume with (C) or
@@ -352,6 +353,12 @@ class Session:
                 getattr(cfg, "tools_exec_cell_enabled", False)
             ),
         )
+        if self._subagent_level:
+            registered_tool_schemas = [
+                schema
+                for schema in registered_tool_schemas
+                if schema.get("function", {}).get("name") != "ask_user"
+            ]
         if self._subagent_level >= int(
             getattr(cfg, "tools_subagent_depth", 1) or 0
         ):
@@ -593,6 +600,30 @@ class Session:
         )
         self.context.add_system(system_prompt)
         self.context.add_user(initial_message)
+        self._pending_clarification_delivery: dict | None = None
+        if (
+            getattr(cfg, "runtime_mode", "measurement") == "assistant"
+            and self._subagent_level == 0
+            and not bool(getattr(client, "is_replay", False))
+        ):
+            from .clarifications import clarification_state
+
+            clarification = clarification_state(self._artifact_dir)
+            if clarification.phase == "input_ready":
+                assert clarification.request is not None
+                assert clarification.answer is not None
+                self.context.add_user(
+                    "Clarification question: "
+                    f"{clarification.request['question']}\n"
+                    "The next user message is the operator's exact recorded "
+                    "answer. Use it as information only. It does not approve "
+                    "any tool or action."
+                )
+                self.context.add_user(clarification.answer["answer"])
+                self._pending_clarification_delivery = {
+                    "request_id": clarification.request["request_id"],
+                    "answer_sha256": clarification.answer["answer_sha256"],
+                }
         # All thrash-control state lives in one place. See harness/guardrails.py.
         # Session is the orchestrator; the guardrails own their own state
         # machines and expose a uniform Decision interface to the turn loop.

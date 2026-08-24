@@ -43,6 +43,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj sessions` | List saved sessions. |
 | `yuj resume` | Continue a paused session. |
+| `yuj answer` | Record one exact answer for a pending clarification. |
 | `yuj rewind` | Restore a stopped session to an earlier conversation and tree turn. |
 | `yuj worktree rm` | Remove a retained session worktree and branch. |
 | `yuj approve` | Allow a tool action that needs approval. |
@@ -127,6 +128,7 @@ Yuj offers these tools to the model:
 | Change files | One of `edit`, `apply_patch`, `udiff`, or `write` | Profile-selected; `_base` uses `edit`. |
 | Run shell commands | `bash` | On |
 | Run tests | `run_tests` | Off |
+| Ask one clarification question | `ask_user` | On in the top-level assistant session; absent from child agents and measurements. |
 | Finish the task | `done` | On |
 | Leave a required planning phase | `exit_plan_mode` | On only when plan mode is required. |
 
@@ -389,11 +391,12 @@ yuj smoke
 `smoke` creates a throwaway directory. The directory contains one broken
 addition function and one test. It is not a Git repository.
 
-The model must fix the function. Yuj then checks all three results:
+The model must fix the function. Yuj then checks all four results:
 
 1. The expected code change exists.
 2. The target test passes.
 3. No approval request remains open.
+4. No clarification exchange remains unresolved.
 
 A successful smoke task tests this one path. It does not measure the model's
 general coding skill.
@@ -418,8 +421,8 @@ The command prints the throwaway path and keeps it after the check.
 Do not give `--root` a directory that contains work you need.
 
 Later commands have no `--assist-home` option. Set `HARNESS_ASSIST_HOME` to
-the same path before you run `status`, `show`, `approve`, `reject`, or
-`resume` for that smoke session.
+the same path before you run `status`, `show`, `answer`, `approve`, `reject`,
+or `resume` for that smoke session.
 
 ## Understand Git changes
 
@@ -450,8 +453,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | Command | What it shows |
 | --- | --- |
 | `yuj current` | The active or newest session for the current repository. If that repository has no session, the newest saved session. |
-| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, context mode, task source, recent turns, and recent trace events |
+| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj sessions --limit N` | Up to `N` recent sessions from all repositories; the default is 20 |
 
 Use `yuj show --turns N --trace-lines N [SESSION]` to choose how many recent
@@ -497,6 +500,9 @@ For `approve` and `reject`, Yuj first looks for a waiting request in the
 active session. It then looks in the current repository. Finally, it looks in
 the other sessions in its 200-session search.
 
+`answer` requires both an explicit session reference and the exact request ID.
+It does not choose a pending question automatically.
+
 Yuj stops with an error if an ID matches no session or more than one session.
 
 Automatic selection checks the active-session pointer first when the command
@@ -511,6 +517,8 @@ saved sessions.
 | `created` | Yuj saved the first session files but has not started the task. |
 | `running` | The trace has a start event and no later end event. Check the separate `lock` line to see whether a process currently owns the session. |
 | `approval_pending` | A tool action waits for your choice. |
+| `input_required` | The model asked one clarification question. Record the answer before resume. |
+| `input_ready` | One clarification answer is recorded and waiting for one resume delivery. |
 | `paused` | The last run segment stopped without success. The coding session can continue. |
 | `completed` | The model finished successfully or declared the task done. |
 | `error` | Yuj recorded an error as the final status. |
@@ -541,10 +549,16 @@ leaves no end event, the summary may be absent. The new context then starts
 from the original task and the current files.
 
 The trace, savings record, and system log continue in the same session
-directory. `transcript.log`, `checkpoint.json`, and `metrics.json` describe
+directory. `transcript.log` describes the newest run segment. Before resume,
+Yuj moves the preceding model transcript to the next
+`transcript.pre_seg_N.log` file. `checkpoint.json` and `metrics.json` describe
 only the newest run segment because a resume replaces them.
 
 `resume` does not accept new model, context, or settings options.
+
+`resume` refuses a session whose clarification still lacks an answer. When an
+answer is ready, resume adds the exact answer to one model request and records
+its consumption before transport. A later resume does not add it again.
 
 If you name a completed coding session, `resume` prints its result and exits
 without starting another run segment.
@@ -579,6 +593,43 @@ the saved messages match their file checkpoint, restores the files, adds a
 the session paused. Run the printed `yuj resume SESSION` command to continue
 from the messages saved at that turn. `rewind_max_per_session` still limits the
 number of successful rewinds.
+
+A rewind marks any pending or answered-but-unconsumed clarification as
+rewound. Its durable records remain available for audit, but the answer cannot
+enter the conversation after the rewind.
+
+## Answer a clarification question
+
+When the model needs one missing fact, it can pause the run segment with one
+exact question. Inspect the session:
+
+```bash
+yuj status SESSION
+yuj show SESSION
+```
+
+Both commands print the question, request ID, and exact next command. Record
+one answer with the displayed IDs:
+
+```bash
+yuj answer SESSION REQUEST_ID 'ANSWER'
+```
+
+Yuj records the `ANSWER` argument exactly. Quote it when it contains spaces or
+shell characters. There is no default or interactive prompt. Yuj refuses an
+empty answer, a wrong session or request ID, a second answer, and an answer
+when no question is pending. A refusal leaves the clarification records and
+trace unchanged.
+
+Resume after the answer:
+
+```bash
+yuj resume SESSION
+```
+
+The answer supplies information only. It does not approve any tool action.
+If an approval request is also pending, use `yuj approve` or `yuj reject`
+separately before resume.
 
 ## Remove an isolated session worktree
 
@@ -708,9 +759,9 @@ For an installed package, `<assist_home>` is `$XDG_STATE_HOME/yuj`, or
 checkout it is `<checkout>/.llm_assist`. Set `HARNESS_ASSIST_HOME` to use an
 exact alternative.
 
-The session directory can contain the task text, settings, trace, model
-messages for the newest run segment, `.solver/state.json`, approvals, final
-status, metrics, and context-saving records.
+The session directory can contain the task text, settings, trace, segmented
+model messages, `.solver/state.json`, clarification evidence, approvals,
+final status, metrics, and context-saving records.
 
 Most Yuj records stay in the session directory. Large kept tool output can
 also appear under `.tool_output/` in the target repository.
@@ -722,7 +773,7 @@ uses.
 
 | Status | Meaning |
 | ---: | --- |
-| 0 | The command succeeded. A coding session reported success. A smoke task also passed its three checks. |
+| 0 | The command succeeded. A coding session reported success. A smoke task also passed its four checks. |
 | 1 | The command failed, the session did not finish successfully, a required check failed, or Yuj rejected a semantic input such as an unknown session. |
 | 2 | The option parser rejected the command form or option combination. |
 | 130 | You stopped an active session with Ctrl-C, and Yuj paused it. |

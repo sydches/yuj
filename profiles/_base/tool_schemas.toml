@@ -109,6 +109,11 @@ required = ["agent", "prompt"]
 properties = { agent = { type = "string" }, prompt = { type = "string" } }
 
 [[tools]]
+name = "ask_user"
+required = ["question"]
+properties = { question = { type = "string", minLength = 1, maxLength = 4096 } }
+
+[[tools]]
 name = "done"
 required = []
 [tools.properties]

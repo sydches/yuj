@@ -39,6 +39,7 @@ person types into a terminal.
 | `exec_cell` | `source` | None | In code mode, run Python inside the shell sandbox and return printed text. |
 | `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Present only when deferred loading is enabled. |
 | `exit_plan_mode` | None | None | Validate `.solver/plan.md` and unlock implementation tools during a required planning phase. |
+| `ask_user` | `question` | None | In the top-level assistant session, save one exact clarification question and pause for one operator answer. Never requests or grants permission. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -55,6 +56,7 @@ schema, description, or result rule.
 | `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
+| `ask_user` | On for the top-level assistant session. Never present in child-agent or measurement requests. |
 | `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `task` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
@@ -100,18 +102,19 @@ only one `in_progress` item and no more than `todos_max_items` items. An empty
 list clears it. The tool changes harness state, not source files.
 
 A model profile may limit the number of visible tools. `done` always remains.
-Deferred loading also keeps `load_tools`. Required plan mode keeps
-`exit_plan_mode` and the exact plan-file write so the model can leave the
-phase.
+The top-level assistant session also keeps `ask_user`. Deferred loading keeps
+`load_tools`. Required plan mode keeps `exit_plan_mode` and the exact plan-file
+write so the model can leave the phase.
 
 ## Choose a tool set
 
 ### Required planning phase
 
 Required plan mode starts with inspection tools, read-only `bash`, `write`, and
-`exit_plan_mode`. `write` may target only `.solver/plan.md`. Yuj rejects edits,
-tests, mutating or unknown shell commands, subagents, code cells, deferred-tool
-activation, and `done` before they run.
+`exit_plan_mode`. The top-level assistant session also keeps `ask_user`.
+`write` may target only `.solver/plan.md`. Yuj rejects edits, tests, mutating
+or unknown shell commands, subagents, code cells, deferred-tool activation,
+and `done` before they run.
 
 `exit_plan_mode` takes no input. It succeeds only after the model writes a
 nonempty `.solver/plan.md`, then restores the normal tool set. The plan
@@ -122,7 +125,8 @@ the turn limit, CLI flag, trace events, resume rule, and state projection.
 ### Deferred tool loading
 
 With deferred loading, Yuj first sends `active_default`, `load_tools`, and
-`done`. Other enabled tools stay hidden. The model calls
+`done`. The top-level assistant session also receives `ask_user`. Other
+enabled tools stay hidden. The model calls
 `load_tools(names=[...])` to add exact names for the next request. Loading never
 removes a tool. Yuj rejects the whole call if the result would exceed the
 profile's `max_tools` limit.
@@ -145,11 +149,34 @@ state follow the checkpoint. File changes remain. This is not the operator
 rewind that restores conversation and files together. See
 [Configuration](configuration.html#collapse-a-model-exploration-branch).
 
+### Ask the operator for one clarification
+
+In a top-level assistant session, the model can call:
+
+```json
+{"question":"Which database should the migration target?"}
+```
+
+`question` must be a nonempty string. No other field is accepted. Yuj checks
+this schema even when general tool schema validation is off.
+
+A valid call saves the exact question and ends the run segment with
+`input_required`. Yuj does not dispatch another call from the same model
+response and does not make another model request. Use `yuj status` or `yuj
+show` to read the question and exact answer command. One coding session can
+create only one clarification request.
+
+The operator answer is information, not authorization. It cannot approve a
+tool, satisfy an approval request, change a permission rule, or bypass the
+sandbox. The next resume sends the recorded answer once. Measurement mode
+never sends the `ask_user` schema and never enters `input_required`.
+
 ### Code mode
 
-Code mode replaces the native catalog with three meta-tools and `done`. Call
-`list_functions`, request the needed schemas with `get_function_details`, then
-send Python to `exec_cell`. The cell provides `read`, `grep`, `glob`,
+Code mode replaces the native catalog with three meta-tools and `done`.
+Assistant code mode also keeps `ask_user`. Call `list_functions`, request the
+needed schemas with `get_function_details`, then send Python to `exec_cell`.
+The cell provides `read`, `grep`, `glob`,
 `list_definitions`, and `bash`. Each function returns text through the normal
 dispatcher. The Python program must print the text that should become the
 cell result.

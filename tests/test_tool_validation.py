@@ -49,6 +49,7 @@ VALID_ARGUMENTS = {
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
     "task": {"agent": "research", "prompt": "Find the config owner."},
+    "ask_user": {"question": "Which database should this use?"},
     "udiff": {
         "patch": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new"
     },
@@ -100,6 +101,8 @@ INVALID_ARGUMENTS = (
     ("apply_patch", {"patch": {"text": "patch"}}, "$.patch", "type"),
     ("task", {"agent": "research"}, "$.prompt", "required"),
     ("task", {"agent": 7, "prompt": "find it"}, "$.agent", "type"),
+    ("ask_user", {}, "$.question", "required"),
+    ("ask_user", {"question": ""}, "$.question", "minLength"),
     ("udiff", {}, "$.patch", "required"),
     ("udiff", {"patch": {"text": "patch"}}, "$.patch", "type"),
     ("load_tools", {}, "$.names", "required"),
