@@ -1081,8 +1081,9 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
 
         target: dict[str, object] = {
             "profile": cfg.profile_name or cfg.model,
-            "endpoint": cfg.advisor_endpoint,
         }
+        if cfg.advisor_endpoint:
+            target["endpoint"] = cfg.advisor_endpoint
         if cfg.advisor_model:
             target["model"] = cfg.advisor_model
         parse_model_target(target, field="advisor")

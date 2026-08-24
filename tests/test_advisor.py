@@ -147,6 +147,19 @@ max_note_chars = 333
         333,
     )
 
+    overlay.write_text(
+        """\
+[advisor]
+enabled = true
+model = ""
+endpoint = ""
+"""
+    )
+    reuse_main = load_config(overlay)
+    assert reuse_main.advisor_enabled is True
+    assert reuse_main.advisor_model == ""
+    assert reuse_main.advisor_endpoint == ""
+
     runtime_cfg = make_config(
         model="main-served-model",
         profile_name="_base",
