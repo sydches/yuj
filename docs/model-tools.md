@@ -16,7 +16,9 @@ person types into a terminal.
 
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
-| `bash` | `cmd` | None | Run one shell command and return its output. |
+| `bash` | `cmd` | `background` | Run one shell command and return its output. When background work is enabled, return a process ID instead of waiting. |
+| `bash_poll` | `proc_id` | `timeout_s` | Return new output from one background command and, when known, its exit status. |
+| `bash_kill` | `proc_id` | None | Stop one background process group. |
 | `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
@@ -88,108 +90,103 @@ When `bash` is on, the model can run a test command through `bash` even when
 `run_tests` is off. The `run_tests` tool gives Yuj a fixed test command and a
 structured result.
 
-`think` is a bounded model scratchpad, not model-provider hidden reasoning.
-Its `thought` argument remains in the append-only raw trace, while every
-context strategy removes the call and paired empty result after
-`think_keep_turns` turns. It is a non-mutating, non-progress action for the
-done and rumination guards. Set `[loop].think_streak_nudge_after` to choose
-when a consecutive streak reuses the existing rumination nudge; `0` disables
-that dedicated streak nudge.
+`think` is a visible, short-lived model scratchpad. It does not run a process
+or change a file. Yuj removes it from model context after `think_keep_turns`,
+but keeps its raw trace row for audit and replay.
 
-`write_todos` accepts statuses `pending`, `in_progress`, `completed`,
-`cancelled`, and `blocked`. Pass the complete desired list on every call; an
-empty list clears it. Yuj rejects more than one `in_progress` entry and more
-than `[tools].todos_max_items` entries. A successful call records a `todos`
-trace event, and the harness projects its list into `.solver/state.json` for
-bounded rendering by state-backed context modes. The tool never writes source
-files or state directly.
+`write_todos` replaces the whole list on every call. Its statuses are
+`pending`, `in_progress`, `completed`, `cancelled`, and `blocked`. Yuj allows
+only one `in_progress` item and no more than `todos_max_items` items. An empty
+list clears it. The tool changes harness state, not source files.
 
-A model profile can also limit how many enabled tools Yuj sends to the model.
-The `done` tool is not removed by that limit. When deferred loading is on,
-`load_tools` is also not removed. During a required planning phase,
-`exit_plan_mode` and the exact plan-file `write` remain available regardless
-of that limit, so the phase cannot deadlock.
+A model profile may limit the number of visible tools. `done` always remains.
+Deferred loading also keeps `load_tools`. Required plan mode keeps
+`exit_plan_mode` and the exact plan-file write so the model can leave the
+phase.
 
-## Required planning phase
+## Choose a tool set
 
-When `[loop].plan_mode = "required"`, Yuj starts with only the enabled
-inspection tools, `bash`, `write`, and `exit_plan_mode` in the model-facing
-surface. This phase surface temporarily takes precedence over edit-format,
-deferred-loading, and code-mode surfaces. The engine still checks every
-received call. `bash` must match a conservative read-only command
-classification, and `write` must target exactly `.solver/plan.md`; `edit`,
-`apply_patch`, `udiff`, other writes, unclassified or mutating shell commands,
-subagents, code cells, tool activation, and `done` are rejected without
-execution.
+### Required planning phase
 
-`exit_plan_mode` has no inputs. It succeeds only when `.solver/plan.md` exists
-and contains non-whitespace text. A missing or empty file returns a unified
-plan-mode error and keeps the phase active. A successful exit records the plan
-length in the raw trace and restores the normal profile-filtered tool surface,
-including its selected edit dialect and deferred active set. The plan file does
-not count as an implementation mutation for the done guard. See
+Required plan mode starts with inspection tools, read-only `bash`, `write`, and
+`exit_plan_mode`. `write` may target only `.solver/plan.md`. Yuj rejects edits,
+tests, mutating or unknown shell commands, subagents, code cells, deferred-tool
+activation, and `done` before they run.
+
+`exit_plan_mode` takes no input. It succeeds only after the model writes a
+nonempty `.solver/plan.md`, then restores the normal tool set. The plan
+file does not count as an implementation change. See
 [Configuration](configuration.html#require-a-plan-before-implementation) for
 the turn limit, CLI flag, trace events, resume rule, and state projection.
 
-## Deferred tool loading
+### Deferred tool loading
 
-When `[tools].lazy_loading_enabled = true`, Yuj sends only
-`[tools].active_default` plus `load_tools` and `done` at the start of a harness
-session. Other enabled, profile-shaped tools stay registered but hidden.
-Call `load_tools(names=[...])` to add exact names. Activation never removes a
-tool and takes effect on the next model request. A model profile's `max_tools`
-limits the active count, not the registry; an activation that would exceed the
-limit is rejected atomically.
+With deferred loading, Yuj first sends `active_default`, `load_tools`, and
+`done`. Other enabled tools stay hidden. The model calls
+`load_tools(names=[...])` to add exact names for the next request. Loading never
+removes a tool. Yuj rejects the whole call if the result would exceed the
+profile's `max_tools` limit.
 
-A hidden tool call returns a typed error naming `load_tools` and does not
-reach schema validation, permission policy, approval, or its handler. The
-ordinary error ladder and turn-level loop guards still count the
-rejection. A disabled tool is not loadable.
+A direct call to a hidden tool returns `tool_not_active` and names
+`load_tools`. A disabled tool cannot be loaded.
 See [Configuration](configuration.html#defer-tools-until-the-model-needs-them)
 for knobs, trace/state behavior, replay fidelity, and token metrics.
 
-`checkpoint` and `rewind` share one setting and survive a profile tool-count
-cap as a pair. A checkpoint is session-scoped. `rewind` consumes it and
-returns a typed error when no checkpoint is active. Rewind is applied only at
-the end of a complete tool-call turn, then the next model request contains the
-checkpoint prefix plus one user-role `<rewind-report goal="...">` message.
-Exploration calls remain in the append-only trace but leave the model-facing
-conversation and mechanical state projection. Files changed during
-exploration remain changed.
+### Conversation checkpoint and rewind
 
-## Code mode
+`checkpoint` and `rewind` use one setting and remain visible as a pair. The
+model calls `checkpoint(goal)` before an exploration. It later calls
+`rewind(report)` to return its conversation to that point and keep a short
+findings report. Yuj waits for every tool result in the current turn before it
+changes the conversation.
 
-Code mode replaces the ordinary native catalog with three meta-tools plus
-`done`. Call `list_functions`, request only the needed schemas with
-`get_function_details`, then pass Python source to `exec_cell`. The cell
-injects `read`, `grep`, `glob`, `list_definitions`, and `bash`; each returns a
-text result from the ordinary dispatcher. A program must print the text that
-should become the cell result.
+The raw trace keeps the abandoned exploration, but later model context and
+state follow the checkpoint. File changes remain. This is not the operator
+rewind that restores conversation and files together. See
+[Configuration](configuration.html#collapse-a-model-exploration-branch).
+
+### Code mode
+
+Code mode replaces the native catalog with three meta-tools and `done`. Call
+`list_functions`, request the needed schemas with `get_function_details`, then
+send Python to `exec_cell`. The cell provides `read`, `grep`, `glob`,
+`list_definitions`, and `bash`. Each function returns text through the normal
+dispatcher. The Python program must print the text that should become the
+cell result.
 
 Code mode and deferred tool loading are alternative compact surfaces. A
 configuration that enables both is rejected.
 
-Cells do not trust model-written Python. They run inside the selected shell
-sandbox, have no background-call option, and stop at the configured whole-cell
-timeout. Inner calls retain the normal filters, redaction, result envelope,
-ignore policy, permissions, and trace behavior. See
+Cells run model-written Python inside the selected shell sandbox. They cannot
+start background commands and stop at the whole-cell timeout. Inner calls keep
+the normal filters, redaction, result envelope, ignore rules, permissions, and
+trace behavior. See
 [Configuration](configuration.html#run-a-sandboxed-python-cell) for the two
 settings and [Sandbox](sandbox.html#python-code-mode) for the boundary.
 
-For a tool-calling profile, Yuj retains exactly one of `edit`, `apply_patch`,
-`udiff`, and `write` according to the effective edit format. `exact` selects
-`edit`, `apply_patch` selects the Codex V4A patch tool, `udiff` selects standard
-unified diffs, and `whole` selects `write`. Set inherited
-`[profile].edit_format` for a model or override it with `[tools].edit_format`
-or `--edit-format`. See
+### Edit format
+
+Yuj gives a tool-calling model one edit dialect at a time:
+
+| Format | Tool |
+| --- | --- |
+| `exact` | `edit` |
+| `apply_patch` | `apply_patch` |
+| `udiff` | `udiff` |
+| `whole` | `write` |
+
+The model profile selects the normal format. Override it with
+`[tools].edit_format` or `--edit-format`. See
 [Configuration](configuration.html#select-the-models-edit-format) for the
 precedence rules.
 
-When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
-successful edit-dialect mutation; this does not require the navigation tool to
-be enabled. The configured severity threshold controls which messages enter
-the model-facing result. See [Configuration](configuration.html) for the
-server table and timeout settings.
+### Language-server feedback
+
+With `[lsp].enabled = true`, Yuj adds matching diagnostics to a successful edit
+result. This does not require the `lsp` navigation tool. The severity setting
+controls which messages the model sees. Enable `[lsp].tool_enabled` separately
+to expose definition, reference, and symbol queries. See
+[Configuration](configuration.html#return-language-server-diagnostics-after-edits).
 
 ## File and shell limits
 
@@ -200,95 +197,88 @@ The `bash` tool follows the active sandbox and approval settings. Read
 [Sandbox](sandbox.html) before you let the model work on private files or use a
 Docker socket.
 
-`[permissions].rules` can allow, ask for approval, or deny a tool by its
-canonical command/path argument (`load_tools` uses its `names` array). The
-last matching `*`/`?` rule wins. Empty
-rules allow current behavior, and an allow still passes through bash-specific
-forbidden rules. Assistant `ask` decisions use `yuj approve|reject`; measurement
-runs deny them. See
+### Permission rules
+
+`[permissions].rules` can allow, ask, or deny a tool by its stable match value.
+The last matching `*` or `?` rule wins. Empty rules keep the normal behavior,
+and `allow` does not bypass shell-specific refusals. Assistant sessions pause
+for `yuj approve` or `yuj reject`; measurement runs deny `ask`. See
 [Configuration](configuration.html#apply-per-tool-permission-rules) for the
-table and exact match fields.
+rule table and each tool's match value.
 
-With `[tools].background_enabled = true`, pass `background = true` to `bash`
-to receive a `proc_id` without waiting for the command. `bash_poll` returns
-only output added since the preceding poll and waits no longer than
-`[tools].background_poll_timeout`; `bash_kill` terminates the process group.
-The live-process limit is `[tools].background_max_procs`. Poll output uses the
-same filters, redaction, result envelope, and output limit as other tools. Yuj
-kills every remaining child at session end.
+### Background commands
 
-Yuj can reject a shell fragment when an active dedicated tool owns the same
-operation. The result says `Blocked:` and names the tool to use. Write-side
-redirects cover in-place editors and file redirections. Set
-`[tools].bash_redirect_read_side = true` to also redirect `cat`/`head`/`tail`
-to `read`, `grep`/`rg` to `grep`, and `find`/`fd` to `glob`. The matcher checks
-compound commands and leading environment assignments, but leaves
-stdin-consuming pipe stages and aggregate commands such as `grep -c`,
-`rg --count`, `wc -l`, and `cat FILE | wc -l` alone. A rule does nothing when
-its target tool is not in the model's active tool set.
+With background commands enabled, the model passes `background = true` to
+`bash` and receives a `proc_id`. `bash_poll` returns only new output.
+`bash_kill` stops the process group. Polls keep the normal output filters,
+redaction, envelope, and size limit. Yuj stops every remaining child when the
+session ends.
+
+### Shell redirects
+
+Yuj can stop a shell fragment when an active dedicated tool owns the same
+operation. The error names the tool to use. Write-side rules cover in-place
+editors and file redirection. Set `bash_redirect_read_side = true` to route
+simple file display, text search, and path discovery to `read`, `grep`, and
+`glob`. Count-only commands and pipe stages that read standard input remain
+shell commands. A rule does nothing when its target tool is not active.
 
 The `glob` and `grep` tools return one page at a time. Read `next_page` in the
 result when another page exists. Yuj can refuse a search that starts too broad.
 Narrow its pattern or path when that happens.
 
-The read-before-edit guard can require current evidence for an `edit`. A typed
-`read`, or one successful single-file `cat`, `head`, `tail`, `sed -n`, `grep`,
-or `rg` shell command, records the current content hash. An external content
-change makes that observation stale. In `warn` mode Yuj applies the edit and
-adds a warning inside its result envelope; in `block` mode it returns
-`ERROR: stale_file: read PATH first` without changing the file. Successful
-`write`, `edit`, `apply_patch`, and `udiff` calls refresh their affected paths.
+### Read before edit
 
-The `apply_patch` dialect keeps the existing Codex V4A
-`*** Begin Patch`/`*** End Patch` grammar. The `udiff` dialect accepts ordinary
-`---`/`+++` file headers and `@@` hunks. It checks every file and hunk before
-the first write. Hunk line numbers are hints: Yuj may use one unique exact
-offset or one unique whitespace-normalized whole-line match. Missing or
-ambiguous hunks leave every file unchanged and return the same ranked
-`<candidates>` repair block used by a strict exact-string `edit` miss.
+The stale-file guard can require current contents before an edit. A typed
+`read` or one simple single-file shell read records the content hash. If the
+file changes later, that read becomes stale. `warn` applies the edit and adds a
+warning. `block` returns `ERROR: stale_file: read PATH first` without changing
+the file. A successful edit refreshes its affected paths.
 
-Repository-wide `list_definitions` rows use
-`path:line kind name signature`. `symbol` is an exact name, and `kind` is
-`def` or `ref`; omit either to keep both. Use `page` when the result envelope
-names a nonzero `next_page`. This mode requires the separately disabled
-`[tools].ast_search_enabled` setting as well as the normal
-`[tools.list_definitions].enabled` gate. The installed structural-search
-dependencies provide Python, JavaScript/TypeScript, Go, Rust, and Java
-grammars locally; a missing backend returns a setup error instead of
-downloading during the tool call.
+### Patch behavior
+
+`apply_patch` uses the Codex V4A `*** Begin Patch` and `*** End Patch`
+grammar. `udiff` uses standard `---`, `+++`, and `@@` lines. Yuj checks every
+file and hunk before it writes anything. A hunk line number is a hint, so Yuj
+may use one unique exact or whitespace-normalized whole-line match. A missing
+or ambiguous hunk changes no files and returns repair candidates.
+
+### Repository structural search
+
+Repository-wide `list_definitions` returns
+`path:line kind name signature`. `symbol` matches an exact name, and `kind` is
+`def` or `ref`. Use `page` when the result names a nonzero `next_page`. Enable
+both `list_definitions` and `ast_search_enabled`. Yuj ships local parsers for
+Python, JavaScript and TypeScript, Go, Rust, and Java. A missing parser returns
+a setup error instead of downloading one.
 
 ## Named subagents
 
-With `[tools].task_enabled = true`, `task(agent, prompt)` selects a checked-in
-`agents/<name>.toml` descriptor. The descriptor owns the child's model profile,
-tool allowlist, system prompt, turn limit, and read-only status. Named agents
-are read-only by default. See [Configuration](configuration.html#run-named-subagents)
-and [`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
-for the exact settings and descriptor format.
+With `task_enabled = true`, `task(agent, prompt)` selects
+`agents/<name>.toml`. That file chooses the child's model profile, tool
+allowlist, system prompt, turn limit, and read-only status. Agents are
+read-only by default.
 
-A child uses the same task directory and sandbox policy but a fresh
-conversation and model client. Calls run sequentially; the tool does not use
-the background-process facility. `tools.subagent_depth` bounds nesting, and
-`tools.subagent_max_turns` caps every descriptor's own limit. The parent sees
-only the final text. Yuj saves a separate child trace for audit and replay and
-adds child usage to post-run metrics.
+A child uses the parent's task directory and sandbox policy, but starts a new
+conversation and model client. Children run one at a time. Depth and turn
+settings limit their work. The parent sees only the final text. Yuj saves a
+separate child trace for audit and replay and includes child tokens in the run
+metrics. See [Configuration](configuration.html#run-named-subagents) and
+[`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md).
 
 ## Argument schema rejection
 
-When `[tools].schema_validation = "reject"`, Yuj checks a call against the
-same effective schema sent to the model before any handler or guard runs.
-Parameter objects are closed: fields not declared by the tool are invalid as
-well as missing required fields and values of the wrong JSON type. A rejected
-call does not execute and returns a normal model-visible error beginning:
+With `schema_validation = "reject"`, Yuj checks a call against the schema sent
+to the model before any handler or guard runs. Missing fields, undeclared
+fields, and wrong JSON types are errors. A rejected call does not run and
+returns a model-visible error that begins:
 
 ```text
 ERROR: {"error":{"errors":[...],"message":"Tool arguments do not match the declared schema.","tool":"read","type":"tool_schema_reject","version":1}}
 ```
 
-Each error names a JSON field path, failed schema keyword, expected shape, and
-actual JSON type. Argument values are excluded from the validation error and
-its `schema_reject` trace metadata so the model can repair the shape without
-duplicating potentially sensitive values.
+Each error names the JSON path, failed schema rule, expected shape, and actual
+type. It omits argument values from both the returned error and trace metadata.
 
 ## Test runners
 

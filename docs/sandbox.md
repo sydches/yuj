@@ -55,11 +55,10 @@ With the normal strict settings:
 The Docker socket can give a model command access to the Docker service. Do
 not expose the socket when the task must not use Docker.
 
-When Agent Skills are enabled, startup-validated skill directories outside
-the task cwd are part of the explicit read-only set. The `read` tool can open
-their `SKILL.md` files and bundled resources, and bwrap binds those directories
-read-only. File mutation tools remain cwd-only and explicitly reject an
-external skill path.
+When Agent Skills are enabled, Yuj adds validated external skill directories
+to the read-only set. `read` can open their `SKILL.md` files and resources, and
+`bwrap` mounts those directories read-only. File mutation tools still reject
+every external skill path.
 
 ## Use the first-class container backend
 
@@ -73,14 +72,13 @@ container_image = "local/yuj-task@sha256:YOUR_DIGEST"
 container_flags = ["--memory", "4g", "--pids-limit", "512"]
 ```
 
-Yuj runs the runtime with `--pull=never`; image acquisition is always a
-separate operator action. Before the model starts, Yuj resolves the runtime,
-inspects the local image ID, and pins later commands to that ID. The image must
-contain `/usr/bin/env` and `/bin/bash`. Review and trust the image itself: an
-image can contain executable startup behavior or declare `VOLUME` paths that
-become writable ephemeral mounts despite a read-only root.
+Yuj always uses `--pull=never`. Acquire and review the image yourself. Before
+the model starts, Yuj finds the runtime, inspects the local image ID, and pins
+commands to that ID. The image must contain `/usr/bin/env` and `/bin/bash`.
+Also inspect its declared `VOLUME` paths, which become writable temporary
+mounts even when the image root is read-only.
 
-Check the local substrate before a campaign:
+Check the local runtime and image before you use this backend:
 
 ```bash
 docker version
@@ -89,7 +87,7 @@ docker image inspect --format='{{json .Config.Volumes}}' IMAGE
 docker system df
 ```
 
-For each command the backend:
+For each command, Yuj:
 
 - mounts only the task directory read-write, at the same absolute path, plus
   each startup-validated external Agent Skill directory read-only at its
@@ -102,18 +100,17 @@ For each command the backend:
 - clears the image environment before applying Yuj's effective command
   environment.
 
-Extra container flags use a fail-closed allowlist. Resource and inert metadata
-options are accepted. Mount, network, environment, entrypoint, device,
-privilege, security, and unknown flags are rejected. Container commands are
-per-call; Yuj's persistent bwrap shell is not used.
+Yuj accepts only resource limits and metadata flags that do not change
+execution. It rejects mount, network, environment, entry-point, device,
+privilege, security, and unknown flags. Each tool call gets a new container;
+this backend does not reuse the persistent `bwrap` shell.
 
 ## Control the command environment
 
-`[sandbox.env]` applies one resolved environment to every model-command
-surface, including foreground and background shell calls, `run_tests`,
-post-edit checks, and language servers. It applies under bwrap, the
-first-class container backend, both legacy container modes, and an explicitly
-unsandboxed command path. It does not apply to trusted lifecycle hooks.
+`[sandbox.env]` gives one environment to foreground and background shell
+calls, `run_tests`, post-edit checks, and language servers. It applies under
+every sandbox mode and on an explicitly unsandboxed command path. It does not
+apply to trusted lifecycle hooks.
 
 The default `inherit = "core"` inherits only `PATH`, `HOME`, `LANG`, and
 `TERM` when present. Inherited names containing `KEY`, `SECRET`, or `TOKEN`
@@ -122,15 +119,14 @@ case-insensitive wildcard filters can exclude names or form a final include
 allowlist. See [Configuration](configuration.html#control-the-command-environment)
 for the exact order and settings.
 
-Yuj resolves this mapping once at run start. It clears the child environment
-before applying the mapping, including in ambient and unsandboxed command
-modes. The harness and provider client keep their own host environment. Trace
-provenance contains only the effective variable names. Fixed values are
-redacted from saved resolved configuration.
+Yuj builds this mapping once at run start. It clears the child environment
+before applying it, even in ambient and unsandboxed modes. Yuj itself and the
+model client keep the host environment. Saved provenance lists effective
+variable names but redacts fixed values.
 
 With `[tools].sandbox_required = true`, a missing runtime or local image stops
-the task before a model command. Setting it to false explicitly permits one
-loud startup warning followed by unsandboxed command execution.
+the task before a model command. Setting it to false prints one startup warning
+and then runs commands without a sandbox.
 
 The read-only host view can still contain private files. Hide selected paths
 with `[sandbox].unreadable_paths`:
@@ -159,28 +155,24 @@ for syntax, precedence, and trace provenance.
 
 ## Keep lifecycle hooks outside the task
 
-Configured `[hooks]` commands are trusted harness extensions. They do not run
-inside `bwrap`, the first-class container backend, or a legacy task container.
-They also do not use the restricted `[sandbox.env]` command environment. They
-run with the Yuj process's host permissions and environment, so they may have
-host filesystem and network access that model commands do not have.
+Lifecycle hooks are trusted host programs. They do not run inside `bwrap`, a
+first-class container, or a legacy task container. They also keep the Yuj
+process environment instead of `[sandbox.env]`. A hook may therefore reach
+host files and networks that model commands cannot reach.
 
-The model cannot choose a hook command, but model and tool data can reach its
-JSON standard input. Review the executable, use an absolute operator-owned
-path, avoid secrets in command arguments, and validate all payload fields.
-Do not store the executable or an imported script in the task directory.
+The model cannot choose the command, but model and tool data can reach the
+hook's JSON input. Use an absolute operator-owned path. Review the program,
+validate every input field, and keep secrets out of command arguments. Do not
+store the executable or any imported hook code in the task directory.
 
-When `[tools].sandbox_required = true`, Yuj checks every enabled handler before
-its first invocation. It refuses to start if the configured executable or a
-path argument resolves inside the task directory, including an
-interpreter command such as `python /task/hook.py`. This prevents a task from
-editing code that Yuj would later execute outside the sandbox. Yuj repeats the
-check immediately before each launch so a path created or retargeted during
-the session is still refused. This does not sandbox an external hook or prove
-that the external program is safe.
+With `sandbox_required = true`, Yuj rejects a hook executable or path argument
+that resolves inside the task directory. This includes commands such as
+`python /task/hook.py`. It checks during startup and again before each launch,
+so a task cannot add or retarget the path after startup. This check does not
+sandbox the hook or prove that an external program is safe.
 
-When `sandbox_required` is false, task-owned hook paths are allowed and run
-with host permissions. Make that choice only for a repository you trust. See
+With `sandbox_required = false`, Yuj allows task-owned hook paths to run with
+host permissions. Do this only for a repository you trust. See
 [Configuration](configuration.html#run-trusted-lifecycle-hooks) for the full
 handler contract.
 
@@ -209,19 +201,15 @@ form a general security boundary.
 
 ## Python code mode
 
-An enabled `exec_cell` uses this same selected sandbox, environment, writable
-task directory, network boundary, enabled read-only skill roots, and
-unreadable-path masks. Unlike ordinary
-`bash` with `sandbox_required = false`, a Python cell never degrades to host
-execution: it returns an error when the sandbox is off, missing, or unable to
-start. Its injected `read`, `grep`, `glob`, `list_definitions`, and `bash`
-functions call back into the host dispatcher; the model-written Python itself
-remains inside the sandbox for the whole cell.
+`exec_cell` uses the selected sandbox, command environment, writable task
+directory, no-network boundary, read-only skill roots, and unreadable-path
+masks. Unlike `bash` with `sandbox_required = false`, a cell never falls back
+to the host. It returns an error when the sandbox is off, missing, or broken.
 
-`[tools].exec_cell_timeout` bounds the process and its inner calls. The cell
-runner also arms an in-sandbox timer so a disconnected container client cannot
-leave model code running. The escape-attempt checks below apply to cell Python
-as well as shell commands.
+The injected `read`, `grep`, `glob`, `list_definitions`, and `bash` functions
+return through the host dispatcher, but the model-written Python stays inside
+the sandbox. `exec_cell_timeout` covers both the process and its inner calls.
+An in-sandbox timer also stops the code if the container client disconnects.
 
 ## Separate model work from Yuj records
 
@@ -231,29 +219,16 @@ Yuj itself writes the trace, checkpoints, metrics, and session data. These
 writes do not pass through the model shell. In normal CLI use, Yuj saves them
 under `.llm_assist/` in the Yuj installation.
 
-A configured `context.compaction_hook` is also harness-side Python. Yuj
-imports and calls it in the main process; `bwrap`, the container backend, and
-the shell environment policy do not isolate it. Enable only a reviewed module
-that you trust. Read [Compaction hooks](compaction.html) for its bounded input
-and return contract.
+Some Yuj-owned processes use different boundaries:
 
-When `[tools].file_checkpoints_enabled` is on, Yuj also writes an independent
-shadow-Git repository outside the task directory after each potentially
-mutating tool call. Its absolute path is added to the sandbox masks. The model
-cannot use file tools or shell commands to inspect it, and restore is not a
-model-callable operation.
+| Process or record | Boundary |
+| --- | --- |
+| Compaction hook | Runs inside the main Yuj process with host permissions. Enable only reviewed code. |
+| File checkpoint store | Lives outside the task directory and is masked from model file and shell tools. Restore is not model-callable. |
+| Language server | Runs under the selected command sandbox, file masks, and no-network rule. Yuj starts it only when needed and never downloads it. |
+| Background command | Uses the same sandbox as `bash`. Yuj exposes output only through traced polls and stops the process group at session end. |
 
-Configured language servers are harness-owned session children, but they run
-under the same filesystem masks and no-network boundary as model shell calls.
-They start lazily, are never downloaded at runtime, and are stopped at session
-teardown. If a configured binary is absent, Yuj warns once and continues
-without diagnostics.
-
-Background commands use the same selected sandbox backend, writable task
-directory, unreadable masks, and no-network policy as synchronous `bash`.
-Each command has its own process group. The harness captures combined output
-outside the model's control, exposes bytes only through explicit traced polls,
-and terminates all remaining groups before the session trace writer closes.
+Read [Compaction hooks](compaction.html) for the trusted Python contract.
 
 After most run segments, Yuj also tries to run `git add -A` and make a
 checkpoint commit when the target repository has uncommitted changes. That

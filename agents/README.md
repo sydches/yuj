@@ -1,7 +1,7 @@
 # Named agents
 
-Each `agents/<name>.toml` file defines one agent that the optional `task` tool
-can run. Agent names may contain letters, digits, `.`, `_`, and `-` and cannot
+Each `agents/<name>.toml` file defines one agent for the optional `task` tool.
+An agent name may contain letters, digits, `.`, `_`, and `-`. It may not
 contain a path separator.
 
 ```toml
@@ -13,17 +13,19 @@ max_turns = 12
 read_only = true
 ```
 
-`model_profile` selects a profile by name or family under `profiles/`. `tools`
-is an allowlist of public model tools. `system_prompt_file` is an existing
-Markdown file under `agents/`, resolved relative to the descriptor.
-`max_turns` is capped by `tools.subagent_max_turns`.
+| Field | Meaning |
+| --- | --- |
+| `model_profile` | Profile name or family under `profiles/`. |
+| `tools` | Complete allowlist of public model tools. |
+| `system_prompt_file` | Existing Markdown file under `agents/`, resolved from the descriptor. |
+| `max_turns` | Agent turn limit, capped by `tools.subagent_max_turns`. |
+| `read_only` | Reject mutation tools and restrict `bash` to simple inspection commands. Defaults to `true`. |
 
 The allowlist can restrict globally enabled tools; it cannot turn on a public
 tool whose own configuration gate is off.
 
-Agents are read-only unless `read_only = false` is explicit. A read-only agent
-cannot allow `write`, `edit`, `apply_patch`, `udiff`, `exec_cell`, `run_tests`,
-background-process tools, or `task`. Its `bash` tool accepts only a fail-closed
-allowlist of simple inspection commands: `cat`, `grep`, `head`, `ls`, `pwd`,
-`stat`, `tail`, and `wc`. Shell control, redirection, substitution, command
-paths, and unknown commands are rejected.
+Agents are read-only unless the descriptor sets `read_only = false`. A
+read-only agent cannot use `write`, `edit`, `apply_patch`, `udiff`, `exec_cell`,
+`run_tests`, background-process tools, or `task`. Its `bash` tool accepts only
+`cat`, `grep`, `head`, `ls`, `pwd`, `stat`, `tail`, and `wc`. It rejects shell
+control, redirection, substitution, command paths, and unknown commands.

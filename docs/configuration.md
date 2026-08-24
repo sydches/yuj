@@ -83,163 +83,72 @@ A paper comparison does not rely on the CLI defaults alone. Follow the exact
 order in the
 [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md).
 
-## Change common settings
+## Find a setting
 
-| Setting | Change it when you need to |
+Start from what you want to change. Each linked section gives the small TOML
+overlay and the limits that matter for that choice.
+
+| You want to | Read |
 | --- | --- |
-| `[server].provider` | Select the OpenAI-compatible or Anthropic API format. |
-| `[server].base_url` | Use another online model service or local model server. |
-| `[server].api_key` | Use a key value or an `$ENV:VARIABLE_NAME` reference. |
-| `[server].request_extra` | Add llama-server JSON request fields through the OpenAI SDK `extra_body`. |
-| `[server].cache_affinity` | Pin one product session to a deterministic llama-server slot. |
-| `[server].cache_retention` | Turn explicit per-request prompt-cache writes off or on for the session. |
-| `[server].cache_miss_warn_ratio` | Warn after the first turn when observed prefix reuse falls below this ratio. |
-| `[model].name` | Set the exact model ID that the service accepts. |
-| `[model].profile_name` | Use settings for a model's message and tool-call format. |
-| `[tools].edit_format` | Override the selected model profile's edit dialect with `exact`, `apply_patch`, `udiff`, or `whole`. Leave it empty to inherit. |
-| `[model].context_size` | Give Yuj an input limit when the service does not report one. |
-| `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
-| `[model].thinking_level` | Select the requested per-run reasoning effort. |
-| `[context].repo_map_tokens` | Append a ranked repository file/symbol map within this hard token budget. `0` (the default) disables it. |
-| `[context].repo_map_refresh` | Choose run-private symbol-cache reuse: `auto`, `always`, `files`, or `manual`. |
-| `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
-| `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
-| `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
-| `[models].fallback_revert` | Keep a selected fallback, or return to the primary target at the next session. |
-| `[advisor].enabled` | Ask an isolated second model to review eligible completed primary turns. Off by default. |
-| `[advisor].model` | Set the advisor's served model ID. Empty reuses `[model].name`. |
-| `[advisor].endpoint` | Set the advisor's absolute OpenAI-compatible endpoint. Empty reuses `[server].base_url`. |
-| `[advisor].every_n_turns` | Review every Nth completed primary turn. Defaults to `5`. |
-| `[advisor].immune_turns` | Skip this many completed primary turns after Yuj accepts an advisory. Defaults to `3`. |
-| `[advisor].max_note_chars` | Reject an advisory longer than this character limit. Defaults to `1200`. |
-| `[loop].max_turns` | Limit the number of model tool-call turns in one session. |
-| `[loop].plan_mode` | Start with an engine-enforced planning phase. Use `off` or `required`. |
-| `[loop].plan_mode_max_turns` | Limit planning turns before only the plan-file write and explicit exit remain available. |
-| `[loop].rewind_enabled` | Save exact completed-turn conversation snapshots and allow conversation/tree rewind. Off by default and requires file checkpoints. |
-| `[loop].rewind_max_per_session` | Limit successful rewind actions in one harness session. The default is 1. |
-| `[loop].interrupted_turn_mode` | Repair an interrupted trace and resume without replaying a dangling tool call. Defaults to `mechanical`. |
-| `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
-| `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
-| `[loop].stream_rules_enabled` | Load repository-owned response rules and check model output. Off by default. |
-| `[loop].stream_rules_dir` | Select the relative rule directory. Defaults to `.harness/stream_rules`. |
-| `[loop].stream_rules_context_mode` | On a streaming interrupt, discard partial output or keep completed partial prose. Defaults to `discard`. |
-| `[loop].stream_rules_repeat_gap` | Set the default completed-turn gap for rules that use `repeatMode = "after-gap"`. Defaults to `10`. |
-| `[loop].think_streak_nudge_after` | Reuse the rumination nudge after this many consecutive successful `think` calls. `0` disables the dedicated streak nudge. |
-| `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
-| `[prompts].skills_enabled` | Discover validated Agent Skills and add their metadata catalog to the system prompt. Off by default. |
-| `[prompts].skills_dirs` | Search these skill collection directories in order. Relative entries are searched from the task cwd to its project root. |
-| `[prompts].skill_paths` | Load these exact `SKILL.md` files or skill directories before directory discovery. |
-| `[context].compaction_hook` | Import one trusted synchronous `module:function` that can delegate, cancel, or replace a threshold-triggered compaction. Empty uses only the built-in path. |
-| `[tools].bash_timeout` | Limit the time for one shell command. |
-| `[tools].think_enabled` | Add the side-effect-free `think(thought)` scratchpad tool. Off by default. |
-| `[tools].think_keep_turns` | Keep each scratchpad argument in model-facing context for this many turns. `0` hides it immediately. |
-| `[tools].lazy_loading_enabled` | Send only the initial active tool subset and let the model activate other registered tools with `load_tools`. Off by default. |
-| `[tools].active_default` | Choose the tools visible at the start of each harness session when lazy loading is enabled. `load_tools` and `done` remain visible. |
-| `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
-| `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
-| `[sandbox].backend` | Select the first-class `bwrap` or `container` command backend. |
-| `[sandbox].container_runtime` | Select `docker` or `podman` for the container backend. |
-| `[sandbox].container_image` | Name an already-local trusted image. Required for the container backend. |
-| `[sandbox].container_flags` | Add allowlisted resource or metadata flags without weakening isolation. |
-| `[sandbox.env].inherit` | Choose inherited command variables: `all`, `core`, or `none`. `core` means `PATH`, `HOME`, `LANG`, and `TERM` when present. |
-| `[sandbox.env].set` | Add or override fixed command-environment values. Resolved values are redacted from saved configuration. |
-| `[sandbox.env].filters` | Include or exclude variable names with case-insensitive `*` and `?` patterns. Any include rule creates a final allowlist. |
-| `[sandbox.env].ignore_default_excludes` | Permit inherited names containing `KEY`, `SECRET`, or `TOKEN`; false by default. |
-| `[sandbox.env].allow_login_shell` | Let command shells load login profiles. False keeps profile and rc loading disabled. |
-| `[state].ignore_file_enabled` | Apply task-root Gitignore-style model-view files. On by default. |
-| `[state].ignore_file_names` | List ignore files in precedence order. Defaults to `.yujignore`. |
-| `[state].todos_char_budget` | Bound the todo block added to state-backed per-turn context. Defaults to 2,000 characters. |
-| `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
-| `[tools].checkpoint_enabled` | Add the paired `checkpoint(goal)` and `rewind(report)` conversation tools. Both are off by default. |
-| `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
-| `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
-| `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
-| `[tools].bash_redirect_read_side` | Redirect eligible `cat`/search/path-discovery shell reads to bounded dedicated tools. Off by default. |
-| `[tools].ast_search_enabled` | Add repository-wide definition/reference lookup to `list_definitions`. Off by default. |
-| `[tools].ast_search_max_rows` | Cap the rows available to one repository structural query before pagination. |
-| `[tools].todos_enabled` | Add the session-scoped `write_todos` tool. Off by default. |
-| `[tools].todos_max_items` | Limit the number of entries in one todo-list replacement. Defaults to 20. |
-| `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
-| `[tools].background_max_procs` | Limit live background children in one session. |
-| `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
-| `[security].scan_mode` | Scan untrusted tool and imported-instruction text as `off`, `flag`, or `block`. The default is `flag`. |
-| `[security].patterns_file` | Select the TOML pattern registry. A relative path starts at the active `config.toml` root. |
-| `[security].block_classes` | Name the finding classes that `block` mode rejects. Other matched classes remain flags. |
-| `[tools].task_enabled` | Add the sequential named-agent `task` tool. Off by default. |
-| `[tools].subagent_depth` | Cap nested `task` calls by child edges from the root session. Defaults to `1`. |
-| `[tools].subagent_max_turns` | Cap each named agent's descriptor-level turn limit. Defaults to `20`. |
-| `[tools].exec_cell_enabled` | Replace the native tool schemas with the code-mode meta surface. Off by default. |
-| `[tools].exec_cell_timeout` | Bound one Python cell, including all inner calls, in seconds. |
-| `[injections].enabled` | Load Markdown injection rules from `[injections].dir`. Off by default. |
-| `[injections].dir` | Select the task-relative rule directory. Defaults to `.harness/injections`. |
-| `[injections].path_rules_enabled` | Match rule `paths` globs against executed file-tool targets. Off by default and requires `[injections].enabled = true`. |
-| `[injections].path_rule_repeat` | Let path rules without a per-rule `repeat` value fire on every matching tool result. False means once per session. |
-| `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
-| `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
-| `[hooks].enabled` | Run explicitly configured trusted host commands at harness lifecycle events. Off by default. |
-| `[hooks].pre_tool`, `post_tool`, `pre_model`, `session_start`, `session_end`, `done` | Declare ordered lifecycle handlers with a matcher, command argv, and timeout. Empty by default. |
-| `[lsp].enabled` | Start a configured language server lazily after the selected edit tool changes a matching file, and return diagnostics. Off by default. |
-| `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
-| `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
-| `[lsp].min_severity` | Choose the least-severe diagnostic shown to the model: `error`, `warning`, `information`, or `hint`. |
-| `[lsp].tool_enabled` | Add the optional `lsp` navigation tool. Off by default. |
+| Choose a service or model | [Save model settings](#save-model-settings) |
+| Require a plan, correct a known response pattern, or choose an edit format | [Shape the model's work](#shape-the-models-work) |
+| Select a sandbox, control command variables, or hide paths | [Control the command boundary](#control-the-command-boundary) |
+| Use a worktree, save file checkpoints, or rewind | [Isolate and restore work](#isolate-and-restore-work) |
+| Add diagnostics, search, a scratchpad, schema checks, or todos | [Configure model tools](#configure-model-tools) |
+| Run background commands, named agents, or Python cells | [Run background work, agents, or code cells](#run-background-work-agents-or-code-cells) |
+| Set permissions, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
+| Route side requests, ask an advisor, or fall back to another model | [Route model requests](#route-model-requests) |
+| Control prompt caching or reasoning effort | [Tune model requests](#tune-model-requests) |
+| Choose, compact, or continue context | [Choose a context mode](#choose-a-context-mode) |
+| Load project instructions or Agent Skills | [Load project instruction files](#load-project-instruction-files) |
 
 The checked-in [`config.toml`](https://github.com/sydches/yuj/blob/main/config.toml)
-defines and comments the full public settings shape. Use a small settings file
-for changes. Do not copy the full file into your project.
+lists every public field and default. Use a small overlay for your changes.
+Do not copy the full file into your project.
 
-Read [Model tools](model-tools.html) for optional tool settings. Read
-[Run a local model](serving_overlay.html) for runtime files and profiles.
-Read [Extend Yuj with TOML files](extending-yuj.html) before you add or change
-a model, language, or tool descriptor.
+Read [Model tools](model-tools.html) for the model-facing tool interface. Read
+[Sandbox](sandbox.html) for isolation boundaries. Read
+[Saved files](harness_artifacts.html) for trace and provenance fields.
+
+## Shape the model's work
 
 ### Require a plan before implementation
 
-The shipped setting leaves plan mode off. Enable it for one installed coding
-session with `yuj code --plan-mode required`, use the same option on the
-measurement command, or put the settings in an overlay:
+Plan mode stops the model from changing the project until it has written a
+plan. Enable it for one coding session:
+
+```bash
+yuj code --plan-mode required "Plan the change, then implement it."
+```
+
+To make it part of a settings layer, use:
 
 ```toml
 [loop]
 plan_mode = "required"       # off | required
-plan_mode_max_turns = 15     # integer >= 1
+plan_mode_max_turns = 15
 ```
 
-`required` starts a task-level planning phase. The model-facing tool surface is
-limited to enabled `read`, `glob`, `grep`, `list_definitions`, `bash`, `write`,
-and `exit_plan_mode`. The engine admits `bash` only when every shell fragment
-matches its conservative read-only command allowlist, and admits `write` only
-for the exact task path `.solver/plan.md`. It rejects `edit`, `apply_patch`,
-`udiff`, other writes, mutating or unclassified shell commands, tests,
-background process controls, language-server calls, subagents, code-mode
-cells, deferred-tool activation, and `done`. A rejected call does not execute
-and returns the normal unified `<tool_result status="error"
-error_kind="plan_mode">` result.
+During the planning phase, the model may inspect the project with its enabled
+read tools. It may also run shell commands that Yuj classifies as read-only.
+The only file it may write is `.solver/plan.md`.
 
-The model exits by calling `exit_plan_mode` with no arguments. Yuj checks that
-`.solver/plan.md` exists and contains non-whitespace text before it records
-`plan_mode_exit` and restores the normal profile-filtered tool surface. A
-missing or empty plan returns the same unified plan-mode error and leaves the
-phase active. Natural model stop is not task success while the phase remains
-active. For a required-plan task, this explicit phase transition supersedes
-the legacy prompt-only `require_intent` gate.
+The model finishes the phase by writing a nonempty plan and calling
+`exit_plan_mode`. Yuj then restores the normal tool set. It rejects edits,
+tests, subagents, background commands, code cells, and `done` before that
+point, so a normal model stop does not complete the task.
 
-`plan_mode_max_turns` counts model turns across session restarts from the most
-recent `plan_mode_enter`. After the limit, inspection calls are rejected, but
-the exact plan write and `exit_plan_mode` remain available so the model can
-finish the transition. Resume reconstructs the phase from the raw trace; it
-does not infer phase from the presence of the plan file.
-
-The raw trace owns `plan_mode_enter` and `plan_mode_exit` transitions. The exit
-row records `turn` and `plan_chars`; `.solver/state.json` mechanically projects
-the current phase as `plan` or `implementation`. The plan file is a control
-artifact, not an implementation mutation: it does not satisfy a mutation-
-requiring done guard or the projection's mutation classification.
+`plan_mode_max_turns` applies across resumes. After that many planning turns,
+Yuj leaves only the plan write and `exit_plan_mode` available. Yuj rebuilds
+the phase from `plan_mode_enter` and `plan_mode_exit` trace rows, not from the
+presence of the plan file. The plan is a control file and does not count as an
+implementation change.
 
 ### Correct known response patterns during generation
 
-Mid-stream rules are repository-owned Markdown files under
-`.harness/stream_rules/*.md`. Enable them with a small overlay:
+Use a stream rule when a repository knows how to correct a specific response
+pattern. Store the rules as Markdown files under
+`.harness/stream_rules/*.md`, then enable them:
 
 ```toml
 [loop]
@@ -249,38 +158,34 @@ stream_rules_context_mode = "discard"
 stream_rules_repeat_gap = 10
 ```
 
-With `YUJ_STREAMING=1`, Yuj checks text, thinking, and accumulated tool-call
-arguments after every stream chunk. An interrupting match closes the response,
-records the trigger, adds the rule's hidden `<injected-fragment>` message, and
-requests the same logical turn again. `discard` keeps all partial assistant
-text and incomplete tool calls out of conversation context. `keep` preserves
-only completed partial prose; it never inserts an incomplete tool call.
+Yuj handles a match according to how the client receives the response:
 
-Without streaming, Yuj checks the completed response post hoc and never aborts
-or retries it. A matching prose rule becomes a hidden fragment at the next
-clean turn boundary. A non-interrupting tool rule prepends its
-`<system-reminder>` to that exact tool result. This completed-response behavior
-also applies when a rule explicitly sets `interruptMode = "never"`.
+| Response mode | What Yuj does |
+| --- | --- |
+| Streaming with `YUJ_STREAMING=1` | Check each chunk. An interrupting match stops the response, adds the rule text, and requests the same logical turn again. |
+| Non-streaming | Check the complete response. Add matching prose guidance at the next turn boundary, or add a tool reminder to the matching result. Do not retry the response. |
 
-Rules load once before the task's first model request. Invalid TOML
-frontmatter, regular expressions, scopes, modes, gaps, names, or duplicate
-names stop startup with the rule path in the error. A missing rule directory
-is an empty rule set. The directory must be relative to the task repository
-and cannot contain `..`.
+For an interrupted stream, `discard` removes all partial output from the next
+request. `keep` retains completed prose but still removes incomplete tool
+calls.
 
-The repeat clock is the logical solver turn, not a stream chunk or retry.
-`repeatMode = "once"` permits one injection per session.
-`repeatMode = "after-gap"` uses the rule's `repeatGap` when present and the
-global `stream_rules_repeat_gap` otherwise. Read
+Yuj loads and validates the rule directory before the first model request. A
+bad file stops startup and names the file. A missing directory supplies no
+rules. The directory must stay inside the task repository.
+
+`repeatMode = "once"` lets a rule fire once per session.
+`repeatMode = "after-gap"` uses the rule's `repeatGap`, or
+`stream_rules_repeat_gap` when the rule omits one. Yuj counts completed model
+turns, not stream chunks or retries. Read
 [Extend Yuj with TOML files](extending-yuj.html#add-a-mid-stream-rule) for the
-rule format and supported scopes.
+file format and supported scopes.
 
 ### Select the model's edit format
 
-For a profile that supports tool calls, Yuj retains exactly one file-edit
-dialect in the model-facing tool surface. The selected model profile owns the
-normal choice through inherited `[profile].edit_format`. The shipped `_base`
-profile selects `exact`.
+For a profile that supports tool calls, Yuj sends the model exactly one
+file-edit dialect. The selected model profile supplies the normal choice
+through inherited `[profile].edit_format`. The shipped `_base` profile selects
+`exact`.
 
 | Value | Model-facing tool | Input shape |
 | --- | --- | --- |
@@ -289,7 +194,7 @@ profile selects `exact`.
 | `udiff` | `udiff` | Standard `---`/`+++` unified-diff text in `patch` |
 | `whole` | `write` | `path` and complete replacement `content` |
 
-Override the profile for one settings layer with the canonical public knob:
+Override the profile for one settings layer with the public setting:
 
 ```toml
 [tools]
@@ -300,7 +205,7 @@ The checked-in `config.toml` uses an empty string, which means inherit the
 profile. Resolution order is `--edit-format` when supplied, the merged
 `[tools].edit_format` value when non-empty, the legacy
 `[tools.apply_patch].enabled = true` compatibility selector, then the effective
-profile. A non-empty canonical setting wins over the legacy selector. New
+profile. A nonempty public setting wins over the legacy selector. New
 settings files should use only `[tools].edit_format`.
 
 Yuj validates profile and settings values before a run. It filters the tool
@@ -310,29 +215,36 @@ With deferred tool loading, the registry also excludes the unselected
 dialects, and an edit-dialect entry in `[tools].active_default` resolves to the
 selected tool.
 
+## Control the command boundary
+
 ### Select a shell sandbox backend
 
-The shipped `[sandbox].backend = "bwrap"` keeps the existing Linux behavior.
-Set it to `"container"`, choose `docker` or `podman`, and name a trusted local
-image to start one short-lived container for each shell-like command. Yuj
-mounts the task directory read-write at the identical absolute path, disables
-networking, keeps the image root read-only, drops capabilities, and never
-pulls a missing image. `bash`, `run_tests`, post-edit checks, and configured
-language servers use the same selected backend. Persistent shell reuse and
-host-side trivial-read shortcuts are disabled for container calls.
+Yuj uses `bwrap` by default. To run each command in a short-lived Docker or
+Podman container, name an image that already exists on the host:
 
-At task startup Yuj resolves the runtime and inspects the local image ID. With
-`[tools].sandbox_required = true`, a missing runtime or image stops before a
-model command. With it false, a failed container preflight produces a warning
-and the run explicitly degrades to unsandboxed command execution. Successful
-runs pin calls to the inspected image ID. A first-class container selection
-cannot be combined with the legacy `YUJ_CONTAINER` modes.
+```toml
+[sandbox]
+backend = "container"
+container_runtime = "docker"  # or "podman"
+container_image = "local/yuj-task@sha256:YOUR_DIGEST"
+container_flags = ["--memory", "4g", "--pids-limit", "512"]
+```
 
-`[sandbox].container_flags` accepts only reviewed resource and metadata
-options such as memory, CPU, PID-count, labels, and `--init`. Mount, network,
-environment, entrypoint, device, privilege, and security-boundary flags are
-rejected. See [Sandbox](sandbox.html) for the exact boundary and local-image
-preflight.
+Yuj inspects the image at task startup and pins commands to that image ID. It
+never pulls an image. The container mounts the task directory read-write,
+keeps the image root read-only, disables networking, and drops capabilities.
+The same backend runs `bash`, `run_tests`, post-edit checks, and language
+servers.
+
+When `[tools].sandbox_required = true`, a missing runtime or image stops the
+task. When it is false, Yuj warns and runs commands without a sandbox. You
+cannot combine this backend with a legacy `YUJ_CONTAINER` mode.
+
+`container_flags` accepts resource limits and metadata that does not change
+execution. It rejects
+flags that change mounts, networking, the environment, the entry point,
+devices, privileges, or the security boundary. Read [Sandbox](sandbox.html)
+before you enable this backend.
 
 ### Control the command environment
 
@@ -351,27 +263,25 @@ allow_login_shell = false
 # "PATH" = "include"
 ```
 
-Resolution starts with the selected inherited names, removes inherited names
-containing `KEY`, `SECRET`, or `TOKEN` unless the escape hatch is on, applies
-custom excludes, overlays `set`, and finally applies an include allowlist when
-one or more include patterns exist. Matching is case-insensitive. An explicit
-`set` can therefore restore a default-excluded name, but it must also match the
-final include allowlist when one exists.
+Yuj builds the command environment once, in this order:
 
-The checked-in configuration keeps the existing deterministic command
-defaults for noninteractive output: `MPLCONFIGDIR`, `PAGER`, `NO_COLOR`,
-`TERM`, `FORCE_COLOR`, and `PYTHONIOENCODING`. Fixed values override inherited
-values. Set `allow_login_shell = true` only when shell startup files are part
-of the intended treatment, because those files can change the resolved
-environment after Yuj starts the shell.
+1. Inherit names from `all`, `core`, or `none`.
+2. Remove inherited names that contain `KEY`, `SECRET`, or `TOKEN`, unless
+   `ignore_default_excludes` is true.
+3. Apply the custom exclude patterns.
+4. Apply the fixed values from `set`.
+5. If any include pattern exists, keep only matching names.
 
-The same immutable mapping reaches foreground and background `bash`,
-`run_tests`, post-edit checks, and language servers under bwrap, container,
-ambient-container, and explicit unsandboxed modes. It does not replace the
-harness process environment, so provider credentials remain available to the
-host-side client. Each raw `session_start` records sorted variable names in
-`sandbox_env_names`, never values; resolved fixed values are redacted in
-post-run configuration provenance.
+Pattern matching ignores case. A fixed value can restore a name removed in
+step 2, but it must still pass the final include list.
+
+Keep `allow_login_shell = false` unless startup files are part of the run you
+intend to test. Those files can change the environment after Yuj builds it.
+
+Yuj gives the same mapping to shell calls, test runners, post-edit checks, and
+language servers under every command backend. The mapping does not change the
+harness process, so the model client can still read its provider credentials.
+Saved provenance records variable names, not values, and redacts fixed values.
 
 ### Hide repository paths from the model view
 
@@ -383,111 +293,117 @@ ignore_file_enabled = true
 ignore_file_names = [".yujignore"]
 ```
 
-The syntax follows Gitignore conventions: blank lines and `#` comments;
-`*`, `?`, character classes, and `**`; a leading `/` for a task-root anchor;
-a trailing `/` for directories; and `!` to make a later match visible again.
-Within one file, the last matching rule wins. If you configure several file
-names, the first file that decides a path wins.
+The file uses Gitignore syntax. It supports comments, `*`, `?`, character
+classes, `**`, root anchors, directory rules, and later `!` exceptions. The
+last matching rule in one file wins. If you list several ignore files, the
+first file that decides a path wins.
 
-One immutable policy is loaded before the first session. Editing an ignore
-file during that run does not silently change the model's view. The policy is
-applied before totals and pagination in `read`, `glob`, `grep`, and
-`list_definitions`, including repository structural search. The same matched
-paths are supplied as masks to `bash`, background commands, `run_tests`,
-post-edit checks, configured language servers, and either sandbox backend.
-Simple `bash` `ls`, `cat`, and `head` reads use the same filtered view, which
-also prevents an individual masked filename from appearing in their output.
+Yuj loads the policy once, before the first model request. It applies the same
+view to file tools, search tools, shell commands, tests, post-edit checks, and
+language servers. Editing `.yujignore` during a run does not change that run.
 
-This is a harness/model visibility rule, not a repository deletion or scorer
-rule. External verification still sees the full task tree. Each raw
-`session_start` records the exact loaded-byte hash and loaded file names, but
-never records patterns or file contents. Set `ignore_file_enabled = false` for
-a treatment that must preserve the unfiltered repository view.
+This setting hides paths from the model. It does not delete them, and an
+external test or scorer can still read them. The trace records the loaded file
+names and a hash of their bytes, but not the patterns or hidden paths. Set
+`ignore_file_enabled = false` when the model must see the whole repository.
+
+## Isolate and restore work
 
 ### Isolate a session in a Git worktree
 
-The default `[runtime].worktree = "off"` keeps the current checkout as the
-task directory. Set it to `"auto"` to create
-`<repository>/.yuj_worktrees/<run-id>` on branch `worktree-<run-id>`, or set a
-Git branch name explicitly. Yuj creates the worktree before it fixes the
-sandbox cwd, so file tools and shell commands operate in the isolated copy and
-trace paths remain the same inside and outside the sandbox.
+The default value, `off`, lets the model work in the current checkout. Use
+`auto` to give the session its own retained Git worktree:
 
-Creation refuses an uncommitted source checkout, an existing branch, or an
-unowned/colliding path. The worktree and branch are preserved after normal,
-fatal, and interrupted exits. Assistant resume reuses the exact stored path,
-branch, and base commit and stops if any part is missing or mismatched. Every
-`session_start` trace row records those three fields while isolation is on.
+```toml
+[runtime]
+worktree = "auto"
+```
 
-Remove a retained assistant worktree manually with
-`yuj worktree rm SESSION`. Cleanup refuses uncommitted files and commits not
-merged into the source branch. `--force` explicitly discards both. Direct
-measurement runs use the same runtime setting but leave cleanup to ordinary
-`git worktree remove` and branch management. Bench launchers that already
-isolate task copies should leave this setting off.
+`auto` creates `<repository>/.yuj_worktrees/<run-id>` on
+`worktree-<run-id>`. You may give an explicit branch name instead. Yuj refuses
+to create the worktree when the source checkout is dirty, the branch exists,
+or the target path belongs to something else.
+
+Yuj keeps the worktree after every exit so `resume` can return to the same
+files. It records the path, branch, and base commit, and refuses a resume when
+they no longer match.
+
+Remove an assistant worktree after you merge or save its work:
+
+```bash
+yuj worktree rm SESSION
+```
+
+The command refuses dirty files and unmerged commits. `--force` discards both.
+Measurement runs do not use this cleanup command. Leave worktree mode off when
+an external benchmark launcher already creates an isolated task copy.
 
 ### Save restorable file checkpoints
 
-Set `[tools].file_checkpoints_enabled = true` to create one independent
-shadow-Git commit after every executed `bash` or edit-dialect mutation. A
-nonzero or timed-out shell call is still checkpointed
-because it may have changed files before it stopped. Calls rejected before
-execution are not checkpointed.
+Enable file checkpoints when an operator may need to restore an earlier turn:
 
-The shadow repository is harness-owned and lives outside the task directory.
-It uses the task directory as its Git work tree without changing the
-project's own Git index, refs, or history. Model file tools cannot traverse to
-it, and sandboxed shell commands mask its absolute path. Restore is an
-operator/harness function, not a model tool:
-`workspace_checkpoints.restore_checkpoint(workspace, turn)`.
+```toml
+[tools]
+file_checkpoints_enabled = true
+```
 
-Tracked files and non-ignored untracked files are included. Project
-`.gitignore` entries and `[tools].file_checkpoints_exclude` patterns are left
-outside both capture and restore. Git trees preserve file bytes, executable
-mode, and symlink targets; they do not preserve owners, ACLs, or extended
-attributes. Each raw `checkpoint` trace row identifies the commit and cost,
-and `metrics.json.file_checkpoints.per_call` reports duration, file count, and
-byte count for every capture.
+After each shell or edit call that may have changed files, Yuj saves a commit
+in a separate shadow Git repository. It also saves a checkpoint after a shell
+call that fails or times out, because that call may still have changed files.
+It does not checkpoint a call rejected before execution.
+
+The shadow repository lives outside the task directory and does not change the
+project's index, branches, or history. Model tools cannot read it. Restore is
+an operator function, not a model tool.
+
+Checkpoints include tracked files and unignored untracked files. They exclude
+project `.gitignore` matches and `[tools].file_checkpoints_exclude` matches.
+They preserve file bytes, executable bits, and symlink targets, but not owners,
+ACLs, or extended attributes. Read [Saved files](harness_artifacts.html) for
+the trace and cost records.
 
 ### Rewind conversation and files together
 
-Set both `[loop].rewind_enabled = true` and
-`[tools].file_checkpoints_enabled = true` to make completed turns rewindable.
-Yuj rejects an enabled rewind setting without file checkpoints. At every
-balanced turn boundary it saves the lossless conversation history, the exact
-messages sent to the model at that point, and the matching shadow-Git commit.
-A turn without a mutating call receives a boundary checkpoint so conversation
-and files always name the same state.
+Conversation rewind restores the messages and files from the same completed
+turn. It requires file checkpoints:
 
-`[loop].rewind_max_per_session` is a positive integer and defaults to `1`.
-It bounds successful actions, whether an in-session guardrail returns
-`rewind_on_<class>` or an operator runs `yuj rewind SESSION TURN`. A rewind
-target must be an earlier completed turn in the current harness session.
+```toml
+[loop]
+rewind_enabled = true
+rewind_max_per_session = 1
 
-Rewind never truncates `.trace.jsonl`. It appends a `rewind` row with the
-source turn, target turn, reason, checkpoint commit, action count, and delivery
-mode. The state writer treats that row as a branch instruction and rebuilds
-`.solver/state.json` from the active view. Assistant-shell rewind restores the
-tree immediately and stores one pending continuation; the next `yuj resume`
-restores the exact saved model-facing messages before another request.
+[tools]
+file_checkpoints_enabled = true
+```
+
+At each completed turn, Yuj binds the exact model-facing messages to a file
+checkpoint. An operator can then run `yuj rewind SESSION TURN`, or an enabled
+guardrail can request a rewind. The target must be an earlier completed turn
+in the current session. `rewind_max_per_session` limits all successful rewind
+actions together.
+
+Yuj restores the files at once. The next `yuj resume` restores the matching
+messages before it contacts the model. The raw trace stays append-only: Yuj
+adds a `rewind` event and rebuilds `.solver/state.json` to show the active
+branch.
 
 ### Collapse a model exploration branch
 
-`[tools].checkpoint_enabled = false` is the shipped default. Set it to `true`
-to add both `checkpoint(goal)` and `rewind(report)` to the effective
-model-facing tool set. The tools are gated as a pair; Yuj never exposes only
-one of them.
+This separate feature lets the model discard an unhelpful exploration from
+its conversation while keeping a short report. Enable both model-facing tools
+with one setting:
 
-`checkpoint` marks the end of its complete tool-call turn. If that assistant
-turn contains several calls, Yuj waits for every result before activating the
-mark. This guarantees that a later cut cannot separate an assistant tool call
-from its result. One checkpoint is active at a time in each session, and a
-later checkpoint replaces it.
+```toml
+[tools]
+checkpoint_enabled = true
+```
 
-`rewind` requires an active checkpoint. A call without one returns a typed
-`no_active_checkpoint` error. A valid call is deferred until every result in
-the current turn has been recorded. Yuj then restores the saved conversation
-prefix and appends one user-role message:
+The model calls `checkpoint(goal)` before it explores. The checkpoint becomes
+active after every tool call in that turn has a result. A later checkpoint
+replaces it.
+
+The model can then call `rewind(report)`. After the current turn finishes, Yuj
+returns the conversation to the checkpoint and adds:
 
 ```text
 <rewind-report goal="GOAL">
@@ -495,90 +411,90 @@ SHORT FINDINGS REPORT
 </rewind-report>
 ```
 
-The raw `.trace.jsonl` remains append-only. Its `rewind` row records the full
-goal/report plus `from_turn`, `to_turn`, and `report_chars`; the mechanical
-state writer derives a truncated model-state view while retaining the raw
-event count. Replay sends recorded checkpoint/rewind calls through the same
-turn-boundary logic.
+`rewind` returns `no_active_checkpoint` when the model has not set a
+checkpoint. A successful rewind consumes that checkpoint. The raw trace keeps
+the full exploration and report, while the
+model-facing conversation and state view follow the selected branch. Replay
+uses the same turn-boundary behavior.
 
-This feature changes conversation context only. It does not restore, delete,
-or rewrite task files. Any filesystem effects produced during exploration
-remain present. Use the separate
-[`file_checkpoints_enabled`](#save-restorable-file-checkpoints) operator
-facility when you need a restorable workspace snapshot.
+This feature does not restore files. Any file changes made during exploration
+remain in place. Use
+[`file_checkpoints_enabled`](#save-restorable-file-checkpoints) when an
+operator needs to restore the workspace too. The two rewind features share a
+name, but their trace fields identify which one ran.
 
-This model-facing `rewind(report)` tool is separate from the operator and
-guardrail conversation/workspace rewind controlled by `[loop].rewind_enabled`.
-Both append a `rewind` trace row, but their documented fields identify which
-operation occurred.
+## Configure model tools
 
 ### Return language-server diagnostics after edits
 
-Language-server support is off until `[lsp].enabled` is true and at least one
-entry exists under `[lsp.servers]`. Each server entry needs `command` and
-`extensions`; `root_markers` and `initialization` are optional. Yuj starts a
-matching server only after the selected edit tool touches one of its extensions.
-The server runs as a session child inside the shell sandbox with networking
-disabled, and Yuj stops it when the run segment ends.
+Language-server support needs `[lsp].enabled = true` and at least one
+`[lsp.servers]` entry. Each entry names a `command` and its `extensions`.
+It may also name `root_markers` and `initialization` data.
 
-The default `min_severity = "error"` still counts warnings in the raw
-`lsp_diagnostics` trace row but does not put warning text in the model-facing
-result. Diagnostics are inserted inside the same `<tool_result>` envelope as
-the successful edit and are clipped with the rest of that result to
-`[output].max_output_chars`. A timeout is a traced no-op. A missing or failing
-server is also a no-op and produces one harness warning per configured server;
-it never fails the task run.
+```toml
+[lsp]
+enabled = true
+diagnostics_timeout_s = 2.0
+min_severity = "error"
+tool_enabled = false
+```
 
-Set `[lsp].tool_enabled = true` to add the `lsp` tool with `definition`,
-`references`, and `symbols` queries. Navigation uses the same lazy server pool.
-Language-server binaries must already exist in the sealed runtime; Yuj never
-downloads them.
+Yuj starts a server only after an edit touches a matching file. It runs the
+server inside the selected shell sandbox, with networking disabled, and stops
+it at the end of the run segment.
+
+After a successful edit, Yuj adds matching diagnostics to the same tool
+result. `min_severity` controls which diagnostics the model sees. The trace
+still counts messages below that level. A timeout, missing binary, or failed
+server produces a warning but does not fail the task.
+
+Set `[lsp].tool_enabled = true` to let the model ask for definitions,
+references, and document symbols. Install every language-server binary before
+the run. Yuj never downloads one.
 
 ### Require current file evidence before editing
 
-`[tools].stale_guard_mode` controls a session-local read ledger. `off` skips
-the check. `warn` (the shipped default) runs an edit but adds
-`WARNING: stale_file: read PATH first` to its result when the file was not
-read or its content changed since the last read. `block` refuses that edit
-with the same message under an `ERROR` prefix. A blocked result has the stable
-error class `stale_file`, so repeated hits participate in the normal error
-ladder.
+Set `[tools].stale_guard_mode` to control whether the model must have current
+file contents before it edits:
 
-A successful `read` records the file's size, modification time, and content
-hash. A successful `write`, `edit`, `apply_patch`, or `udiff` refreshes the
-affected paths; a patch deletion removes its path from the ledger. A successful
-single-file `cat`, `head`, `tail`, `sed -n`, `grep`, or `rg` shell command also
-earns read credit. No-match exit status 1 from `grep` or `rg` still earns
-credit because the file was read. Compounds, pipelines, redirects,
-substitutions, recursive or multi-file searches, and aggregate/count forms do
-not earn credit.
+| Mode | When the file was not read, or changed after the read |
+| --- | --- |
+| `off` | Run the edit without this check. |
+| `warn` | Run the edit and add `WARNING: stale_file: read PATH first`. This is the default. |
+| `block` | Refuse the edit with `ERROR: stale_file: read PATH first`. |
 
-The ledger is harness state, not model-side state. Raw
-`stale_guard_observe` trace rows are its only resume source;
-`.solver/state.json` does not copy the ledger.
+A successful `read` records the file's content hash and metadata. A successful
+file edit refreshes that record. A simple, single-file `cat`, `head`, `tail`,
+`sed -n`, `grep`, or `rg` command also counts as a read. Compound commands,
+pipelines, redirects, recursive searches, and count-only searches do not.
+
+Yuj rebuilds this session ledger from `stale_guard_observe` trace rows on
+resume. It does not copy the ledger into `.solver/state.json`.
 
 ### Redirect shell commands to dedicated tools
 
-The `[[redirect]]` rules in `scripts/llm_solver/bash_quirks/forbidden.toml`
-intercept shell fragments that have a safer bounded tool equivalent. A match
-does not execute or rewrite the command. It returns
-`Blocked: MESSAGE` in a `<tool_result status="error"
-error_kind="redirect_rule">` envelope, emits a raw `redirect_rule` trace row,
-and participates in the ordinary error ladder.
+Redirect rules stop shell commands when an active, dedicated tool owns the same
+job. Yuj does not run or rewrite a matching command. It returns a
+`redirect_rule` error that names the tool to use.
 
-Write-side rules route in-place editors and shell redirections to `edit` or
-`write`. Set `[tools].bash_redirect_read_side = true` to additionally route
-file display commands to `read`, text searches to `grep`, and path discovery
-to `glob`. Each rule is inert when its target tool is absent from the current
-profile-filtered tool set. Matching is compound-aware: quoted operators and
-leading `NAME=value` assignments are preserved, while a pipe stage consuming
-stdin is not redirected. Aggregate uses such as `grep -c`, `rg --count`, and
-`cat FILE | wc -l` remain shell commands.
+Write-side rules redirect in-place editors and shell output redirection to an
+edit tool. Set `[tools].bash_redirect_read_side = true` to cover these read
+commands too:
+
+| Shell job | Dedicated tool |
+| --- | --- |
+| Display a file | `read` |
+| Search text | `grep` |
+| Find paths | `glob` |
+
+A rule applies only when its target tool is active. It understands compound
+commands and leading environment assignments, but it leaves input-consuming
+pipe stages and count-only commands such as `grep -c` or `wc -l` alone.
 
 ### Defer tools until the model needs them
 
-Deferred tool loading is off by default, so existing runs keep their fixed
-tool list. Enable it with a small overlay:
+Deferred loading starts the model with a smaller tool set. The model can add
+other enabled tools when it needs them. Enable it with:
 
 ```toml
 [tools]
@@ -586,19 +502,13 @@ lazy_loading_enabled = true
 active_default = ["bash", "read", "edit", "glob", "grep", "done"]
 ```
 
-Deferred loading and code mode are alternative schema-reduction modes. Yuj
-rejects a configuration that enables both `lazy_loading_enabled` and
-`exec_cell_enabled` instead of silently choosing one surface.
+Yuj registers every enabled tool, but sends only `active_default`,
+`load_tools`, and `done` on the first request. An optional tool still needs its
+own enable setting. The selected profile's `max_tools` limits the active set,
+and Yuj rejects a load that would exceed it.
 
-Yuj first applies ordinary tool enable switches and the selected model
-profile's schema simplification. It keeps every resulting schema registered,
-then sends only the names in `active_default`, plus the cap-immune
-`load_tools` and `done` tools.
-A name in `active_default` must be a shipped tool name. An optional tool still
-needs its own enable switch before it can be active or loaded. The profile's
-`max_tools` remains the maximum active count; `load_tools` rejects an atomic
-request that would exceed it. With deferred loading off, the profile cap keeps
-its historical fixed-surface behavior.
+Deferred loading and code mode are two different ways to reduce tool schemas.
+Yuj rejects a configuration that enables both.
 
 The model activates hidden registered tools additively:
 
@@ -606,62 +516,43 @@ The model activates hidden registered tools additively:
 {"names":["write","run_tests"]}
 ```
 
-The `load_tools` result lists newly activated, already-active, and full active
-names. Yuj rebuilds the next request's `tools` array from that active set. A
-second tool call from the same model response still uses the tool surface that
-was visible for that response; it cannot bypass the loader by appearing after
-`load_tools` in the same batch. A direct call to a hidden tool does not run. It
-returns an `ERROR` envelope with type `tool_not_active` and explicitly names
-`load_tools`.
+`load_tools` adds tools for the next model request. It never removes one. A
+second call in the same response still uses the old tool set. A direct call to
+a hidden tool returns `tool_not_active` and does not run.
 
-The active set starts from `active_default` for each fresh harness session.
-Each successful loader call writes a raw `tools_activated` trace event. The
-event records requested names, the additive change, already-active names, and
-the resulting full set. `.solver/state.json` mechanically projects the
-current set and the session's activation rows under `tools`; the trace remains
-authoritative. Replay compares the exact recorded request tool-name order on
-every turn where the source transcript contains a `tools` array, so a missing
-or mistimed activation is a replay divergence.
-
-`metrics.json` reports the initial block under
-`metrics.tool_loading.default_tool_block_tokens`, together with its names and
-count method. With `[model].tokenizer_id`, Yuj uses the rendered chat-template
-delta. Without it, Yuj reports the declared `chars_div_4` estimate over the
-compact schema JSON. Activating a tool changes the request prefix and may
-change KV-cache reuse. Align a `tools_activated` row with the following
-`turn` row's `cached_tokens` and `cache_hit_ratio`; unavailable cache telemetry
-stays unknown.
+Each new harness session starts from `active_default`. The trace records every
+successful activation, and `.solver/state.json` shows the current set. Replay
+checks the recorded tool-name order when the source transcript contains it.
+`metrics.json` reports the size of the initial tool block.
 
 ### Search definitions and references across a repository
 
-Repository structural search is an optional mode of `list_definitions`. Turn
-on both `[tools.list_definitions].enabled` and
-`[tools].ast_search_enabled`. A repository call uses `repo_wide = true`, treats
-`path` as the search root, and accepts an exact `symbol` plus
-`kind = "def" | "ref"`. Results are deterministic
-`path:line kind name signature` rows. `page` follows the same page size as
-`grep` when search pagination is enabled. `[tools].ast_search_max_rows` caps
-the available result set before pages are selected, and
-`[output].max_output_chars` can reduce a page to complete rows without cutting
-one in the middle.
+Turn on both settings to let `list_definitions` search a whole repository:
 
-The installed package includes tree-sitter itself, the tag-query package, and
-prebuilt Python, JavaScript/TypeScript, Go, Rust, and Java grammar wheels.
-Those supported parsers are loaded locally; a model tool call never downloads
-a grammar. If the dependencies are absent, the tool returns a typed
-`backend_unavailable` error with reinstall guidance. Files matched by
-`[sandbox].unreadable_paths` are rejected before they are read.
+```toml
+[tools.list_definitions]
+enabled = true
 
-Repeated calls reuse a bounded in-process content-hash cache. Repository
-queries remain ordinary `tool_call` trace rows; neither search results nor the
-cache are projected into `.solver/state.json`. Calling `list_definitions` with
-only a file `path` preserves the existing standard-library Python outline and
-does not require tree-sitter.
+[tools]
+ast_search_enabled = true
+```
 
-### Give the model a bounded scratchpad
+The model sets `repo_wide = true`, uses `path` as the search root, and may
+filter by an exact `symbol` and `kind = "def"` or `"ref"`. Results use the
+stable form `path:line kind name signature` and support pages.
+`ast_search_max_rows` caps the result set before paging.
 
-The optional `think` tool gives a non-thinking model, or a run with model
-thinking disabled, one explicit place to plan without executing anything:
+Yuj ships local parsers for Python, JavaScript and TypeScript, Go, Rust, and
+Java. It never downloads a grammar during a tool call. A missing parser
+returns `backend_unavailable`. Unreadable-path rules still apply.
+
+A call with only one file path keeps the existing Python outline behavior and
+does not require structural-search support.
+
+### Give the model a temporary scratchpad
+
+The optional `think` tool gives the model a short-lived scratchpad. It does not
+run a process or change a file:
 
 ```toml
 [tools]
@@ -672,22 +563,19 @@ think_keep_turns = 4
 think_streak_nudge_after = 3
 ```
 
-`think(thought)` has no filesystem or process effect and returns an empty
-successful `<tool_result>` envelope. Its ordinary raw `tool_call` trace row
-keeps the bounded `thought` argument for audit and replay. Every context mode
-removes that call and its empty result after `think_keep_turns` subsequent
-turns; state-backed modes also replace expired projected actions with the
-content-free `think()` breadcrumb. The append-only trace is never rewritten.
+`think(thought)` returns an empty successful result. The raw trace keeps the
+`thought` text for audit and replay. Model context removes the call and
+result after `think_keep_turns`; state-backed views then keep only a `think()`
+breadcrumb. The trace remains unchanged.
 
-`think` is a non-mutation and counts toward the general non-write rumination
-budget. A consecutive successful streak of `think_streak_nudge_after` calls
-reuses the existing rumination nudge; a different tool resets that narrow
-streak. Set either numeric setting to `0` to retain no thought turns or disable
-the dedicated streak nudge, respectively.
+Yuj counts `think` as a non-write action. After
+`think_streak_nudge_after` consecutive calls, it gives the existing rumination
+nudge. Another tool resets the streak. Set either number to `0` to hide a
+thought immediately or disable the streak nudge.
 
 ### Validate and constrain tool-call arguments
 
-The default tool-call path remains unchanged:
+Both settings are off by default:
 
 ```toml
 [tools]
@@ -695,23 +583,18 @@ schema_validation = "off"       # off | reject
 constrained_decoding = "off"    # off | json_schema | grammar
 ```
 
-Set `schema_validation = "reject"` to validate every native tool call against
-the effective profile-filtered schema before `done`, approvals, guardrails, or
-the handler. Missing required fields, wrong JSON types, and undeclared fields
-return a repairable `ERROR:` envelope and never execute the tool. The ordinary
-error ladder counts the result. A raw `schema_reject` trace row stores the tool
-name and value-free field errors; the associated non-executed `tool_call` row
-is the only part visible to normal state projection.
+Set `schema_validation = "reject"` to check each native tool call against the
+schema sent to the model. Yuj rejects missing fields, wrong JSON types, and
+undeclared fields before approval checks, guardrails, or the tool handler. The
+model receives a repairable error, and the trace stores only the tool name and
+field errors, not the rejected values.
 
-`constrained_decoding` can ask llama-server to constrain the tool-call span
-with the active tools' strict JSON schema or generated GBNF grammar. This is
-independently gated by `[model].supports_constrained_tools = true` in the
-selected profile. Every shipped profile defaults the capability to false
-until its exact server, chat template, reasoning mode, and tool wrapper have
-been verified; an unsupported profile sends no constraint and runtime reject
-validation remains available. Constraints apply only to normal requests that
-carry tools, never harness-owned side requests. Cache request policy is still
-applied last.
+`constrained_decoding` asks llama-server to constrain the tool-call span with
+JSON Schema or a generated GBNF grammar. The selected model profile must also
+set `[model].supports_constrained_tools = true`. Shipped profiles leave this
+off until their exact server, template, reasoning mode, and tool wrapper have
+been tested. Unsupported profiles send no constraint, but runtime schema
+validation can still reject bad calls.
 
 ### Maintain a model todo list
 
@@ -727,19 +610,18 @@ todos_max_items = 20
 todos_char_budget = 2000
 ```
 
-`write_todos` accepts `todos = [{description, status}, ...]`. A status must be
-`pending`, `in_progress`, `completed`, `cancelled`, or `blocked`, and a list
-may contain at most one `in_progress` item. Every successful call replaces the
-whole session list, including an empty list used to clear it. The item count
-cannot exceed `tools.todos_max_items`.
+`write_todos` accepts a complete list of `{description, status}` items. A
+status must be `pending`, `in_progress`, `completed`, `cancelled`, or
+`blocked`. The list may contain only one `in_progress` item and no more than
+`todos_max_items` items. Each call replaces the full list; an empty list clears
+it.
 
-The model does not write `.solver/state.json`. A successful call first creates
-a raw `todos` trace event, and the harness projects only the latest such event
-into the top-level `todos` section of `.solver/state.json`. State-backed
-context modes render that projection beside the normal continuation suffix on
-subsequent projected turns. `state.todos_char_budget` caps the complete
-`=== Todos ===` block; truncation affects only model context, never the trace
-event or state projection.
+Yuj writes the list to the trace and projects the newest list into
+`.solver/state.json`. The model never writes that file. State-backed context
+modes show the list on later turns. `todos_char_budget` limits only the block
+sent to the model; it does not cut the trace or saved state.
+
+## Add policy and trusted automation
 
 ### Apply per-tool permission rules
 
@@ -763,35 +645,37 @@ ask_fallback = "deny"
 "docs/*" = "allow"
 ```
 
-Rules retain TOML declaration order and the last matching rule wins. Matching
-is case-sensitive. Only `*` and `?` are wildcards; they include `/` and
-newlines, while brackets are literal characters. A string such as
-`read = "deny"` is shorthand for a `"*"` argument rule. A global `"*"` tool
-entry can set a baseline which a later exact-tool entry overrides.
+Yuj reads rules in TOML order, and the last match wins. Matching is
+case-sensitive. `*` and `?` are the only wildcards, and both can match `/` or a
+newline. Brackets are literal. A string such as `read = "deny"` means the same
+as a `"*" = "deny"` rule for that tool. Use the global `"*"` tool entry for a
+baseline, then override it with a later tool entry.
 
-Each tool has one canonical match value. `bash` uses `cmd`; `read`, `write`,
-`edit`, `glob`, `grep`, `run_tests`, `list_definitions`, and `lsp` use `path`
-(`glob` and `grep` default it to `.`); `apply_patch` and `udiff` use `patch`;
-`done` uses `message`; `task` uses `agent`; `think` uses `thought`;
-`bash_poll`/`bash_kill` use `proc_id`; and `write_todos` uses its canonical
-todo array. Calls without a dedicated field use a canonical sorted JSON
-argument object.
+Each tool matches one stable value:
 
-In assistant mode, `ask` writes `approval_request.json`, pauses, and can be
-continued with `yuj approve` or refused with `yuj reject`. `--always` stores a
-stable action identity for any tool, not only shell commands. If an assistant
-session has no usable approval-artifact path, `ask_fallback` explicitly chooses
-allow or deny. Measurement mode never creates an approval request and always
-turns `ask` into `deny`, regardless of that fallback.
+| Tools | Match value |
+| --- | --- |
+| `bash` | `cmd` |
+| `read`, `write`, `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, `lsp` | `path`; `glob` and `grep` use `.` when omitted |
+| `apply_patch`, `udiff` | `patch` |
+| `done` | `message` |
+| `task` | `agent` |
+| `think` | `thought` |
+| `bash_poll`, `bash_kill` | `proc_id` |
+| `write_todos` | The canonical todo array |
+| Any other tool | The sorted JSON argument object |
 
-When hooks are disabled, the fixed order is schema validation, the general
-permission table, operator approval, bash-specific redirects/forbidden rules,
-then the handler. With hooks enabled, `pre_tool` runs first so a rewrite passes
-through that entire sequence. An `allow` decision therefore does not bypass
-`bash_quirks/forbidden.toml`.
-Permission denials use the normal error ladder. Raw `permission` trace rows
-record only tool, matched rule, and effective decision; they do not record the
-matched command/path and are not projected into `.solver/state.json`.
+In an assistant session, `ask` writes `approval_request.json` and pauses. Use
+`yuj approve` or `yuj reject` to continue. `--always` stores the exact action
+identity for any tool. If the session cannot write an approval request,
+`ask_fallback` decides whether to allow or deny. Measurement runs always deny
+`ask` and never create an approval request.
+
+An `allow` rule does not bypass other controls. Yuj applies schema validation,
+permissions, operator approval, shell redirects and refusals, then the tool
+handler. An enabled `pre_tool` hook runs before this chain, so Yuj checks any
+replacement arguments from the hook. Permission trace rows store the tool,
+matched rule, and decision, but not the matched argument.
 
 ### Scan untrusted text for prompt injection
 
@@ -810,48 +694,42 @@ block_classes = [
 ]
 ```
 
-`off` does not load or apply the registry. `flag` executes the tool and
-prepends one value-free `<security-finding .../>` marker for each matching
-rule inside a `<tool_result>` envelope. This security envelope is present for
-a flagged result even if the general unified-envelope setting is off.
+The modes differ only in what Yuj does after a match:
 
-`block` rejects findings whose class appears in `block_classes`. A match from
-another class is still flagged. An empty class list therefore makes `block`
-mode flag every match without rejecting one. An argument block happens before
-redirects, command rewrites, or tool execution. A result block happens after
-execution but discards the matched result before it reaches the model. Both
-return an error envelope with `error_kind="security_block"` and participate in
-the ordinary guardrail error ladder.
+| Mode | Result |
+| --- | --- |
+| `off` | Do not load or apply the registry. |
+| `flag` | Run the tool and add a value-free `<security-finding .../>` marker to the result. |
+| `block` | Reject matches whose class appears in `block_classes`; flag other matches. |
 
-The scanner examines string values in tool arguments and the raw result from
-each dispatched tool. It also scans resolved `--system-prompt` arm files,
-project instruction files, Agent Skills catalog metadata, enabled
-`.harness/injections/*.md` bodies, and enabled `.harness/stream_rules/*.md`
-bodies at startup. A skill body subsequently loaded with `read` crosses the
-ordinary tool-result scan. Harness pretest output is scanned before it is
-prepended to the task message. A startup block stops before the first model
-request. Flagged imported or pretest content carries the same finding marker
-in its prompt block. The task prompt, the built-in system header, and trusted
-model-profile preambles are not scanned; this keeps benchmark task text from
-becoming a security-policy decision.
+An empty `block_classes` list makes `block` behave like `flag`. An argument
+block happens before the tool runs. A result block happens after the tool runs,
+so it can hide the result from the model but cannot undo side effects. Both
+forms return `error_kind="security_block"`.
 
-The default registry at `security/patterns.toml` is pattern-only and makes no
-model or network request. It detects broad destructive commands, credential
-exfiltration command shapes, instruction-override phrases, invisible Unicode
-controls, and embedded tool-call syntax. Each `[[pattern]]` table has a unique
-lowercase `rule`, a lowercase `class`, `stages = ["args", "result"]` or a
-subset, and a Python `regex`. Invalid, duplicate, empty-matching, or unreadable
-active registries fail configuration loading. Use an absolute path for a
-registry outside the Yuj installation. In `block` mode, a class name absent
-from that active registry is also a configuration error rather than a silent
-non-blocking typo.
+Yuj scans string values in tool arguments and raw tool results. At startup it
+also scans these model inputs:
 
-Every match writes a raw
-`security_finding{id, rule, stage, action}` trace event with an `SEC-<uuid>`
-identifier. The event contains no matched text, argument value, result value,
-or source path. It is not independently projected into `.solver/state.json`;
-the associated flagged or blocked `tool_call` result follows the ordinary
-mechanical projection.
+- resolved `--system-prompt` files;
+- project instruction files;
+- Agent Skills catalog metadata;
+- enabled injection and stream-rule bodies; and
+- harness pretest output.
+
+A startup block stops before the first model request. Yuj does not scan the
+task prompt, built-in system header, or trusted model-profile preamble. A skill
+body read later passes through the normal tool-result scan.
+
+The default local registry, `security/patterns.toml`, makes no model or network
+request. Each `[[pattern]]` entry needs a unique lowercase `rule`, a lowercase
+`class`, a Python `regex`, and one or both of the `args` and `result` stages.
+Yuj rejects an unreadable registry, duplicate rules, bad expressions, and
+expressions that match empty text. In `block` mode, every named block class
+must exist in the active registry.
+
+Each match writes `security_finding{id, rule, stage, action}` to the raw trace.
+The event never stores matched text, argument values, result values, or source
+paths. The related tool-call row carries the model-visible marker or error.
 
 ### Run trusted lifecycle hooks
 
@@ -869,21 +747,19 @@ command = ["/opt/yuj-hooks/check-change", "--policy", "strict"]
 timeout_s = 5
 ```
 
-Each event accepts one handler table or an ordered array of tables. `matcher`
-defaults to `"*"`. For `pre_tool` and `post_tool`, it matches the tool name;
-for the other events, it matches the event name. A literal string is an exact
-match, `"*"` matches every event, and a value beginning with `re:` is a full
-regular-expression match. A string `command` is one executable path, not a
-shell command line. Use an array of strings for executable arguments. Yuj
-does not invoke a shell or split a command string.
+Each event accepts one handler or an ordered list. `matcher` defaults to `"*"`.
+For tool events, it matches the tool name. For other events, it matches the
+event name. Use a literal for an exact match, `"*"` for every match, or a
+`re:` prefix for a full regular-expression match.
 
-Yuj writes one JSON object to the handler's standard input. Every payload has
+Give `command` as one executable path or an array of executable arguments.
+Yuj does not start a shell or split a command string.
+
+Yuj sends one JSON object to the handler's standard input. Every payload has
 `event`, `run_id`, `session`, `turn`, `model`, and `profile_name`. Tool events
-also have `tool_call_id`, `tool_name`, and `tool_args`; `post_tool` adds
-`result`. `done` identifies explicit or implicit completion, and
-`session_end` includes the resulting finish reason, completion flag, and turn
-count. Treat every payload field that originated with the model or tool as
-untrusted input.
+add the tool-call ID, name, and arguments. `post_tool` also adds the result.
+`session_end` adds the finish reason, completion flag, and turn count. Treat
+all model and tool data as untrusted input.
 
 Handlers may return these effects:
 
@@ -897,49 +773,50 @@ Handlers may return these effects:
 | Timeout | Record `timeout`, warn, and fail open. Yuj kills the handler's process group. |
 | Any other nonzero exit | Record `error`, warn, and fail open. |
 
-All matching handlers run in declaration order until one blocks. A
-`pre_tool` block prevents the tool handler from starting. A `post_tool` block
-happens after the handler has run, so it replaces the returned result with an
-error but cannot undo side effects. `pre_model`, `session_start`, and
-`session_end` can stop their boundary. `done` can reject explicit or implicit
-completion and let the model continue when turns remain. A `session_end`
-annotation remains in its raw hook trace row, but there is no later model
-request to receive it.
+Yuj runs matching handlers in their declared order until one blocks. A
+`pre_tool` block stops the tool. A `post_tool` block replaces the returned
+result but cannot undo the tool's side effects. A `done` block lets the model
+continue when turns remain. An annotation from `session_end` stays in the
+trace because no later model request can receive it.
 
-Hooks are harness-owned host processes. They run outside `bwrap` and the
-container backend, with the Yuj process's host environment plus
-`YUJ_RUN_DIR`, `YUJ_RUN_ID`, `YUJ_TASK_CWD`, and `YUJ_HOOK_EVENT`. Install and
-review the executable separately; do not point a trusted hook at code the
-task can edit. When `[tools].sandbox_required = true`, Yuj rejects an enabled
-hook whose executable or path argument resolves inside the task directory.
-Read [Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task) for the
-security boundary.
+Hooks run as host processes, outside every model-command sandbox. They receive
+the Yuj process environment plus `YUJ_RUN_DIR`, `YUJ_RUN_ID`, `YUJ_TASK_CWD`,
+and `YUJ_HOOK_EVENT`. Install and review the executable separately. Do not run
+hook code from the task repository. When `[tools].sandbox_required = true`,
+Yuj rejects executable paths and path arguments that resolve inside the task
+directory. Read [Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task)
+for this boundary.
 
-Every invocation writes a raw `hook` trace row with `hook_event`, `command`,
-`exit`, `ms`, and `outcome`, plus any normalized reason, rewrite, or annotation.
-These rows do not enter `.solver/state.json`. Replay consumes those recorded
-effects and never starts the external command. A different configured command
-at the same recorded hook position is a replay error. See
+Each invocation writes a `hook` trace row with the event, command, exit status,
+duration, outcome, and any accepted effect. Replay applies those recorded
+effects and never starts the program. A different configured command at the
+same replay position is an error. See
 [Replay a saved run](replay_mode_spec.html#what-happens-on-each-turn) and
 [Saved files](harness_artifacts.html).
 
+## Run background work, agents, or code cells
+
 ### Run background commands
 
-Set `[tools].background_enabled = true` to let `bash` accept
-`background = true` and to expose `bash_poll` and `bash_kill`. A background
-call returns a session-local `proc_id` immediately. At most
-`background_max_procs` children may be live, and each poll wait is capped by
-`background_poll_timeout` even when the model asks for longer.
+Enable background shell work and set its limits:
 
-The process runs under the selected shell sandbox with the task directory as
-its only writable project mount and no network. Output is combined into a
-harness-owned `.procs/<proc_id>.log`; only new bytes explicitly returned by a
-`bash_poll` enter model context. Those bytes pass through the ordinary output
-filters, redaction, envelope, and `[output].max_output_chars` cap before the
-raw `proc_poll` trace row is written. Yuj terminates every live process group
-when the session ends. Raw `proc_*` lifecycle rows are not copied to
-`.solver/state.json`; its ordinary `tool_call` row carries the admitted poll
-result.
+```toml
+[tools]
+background_enabled = true
+background_max_procs = 4
+background_poll_timeout = 300
+```
+
+The model can then call `bash` with `background = true`. Yuj returns a
+session-local `proc_id` at once and exposes `bash_poll` and `bash_kill`.
+`background_max_procs` limits live children. `background_poll_timeout` limits
+one poll, even when the model asks to wait longer.
+
+The command uses the selected shell sandbox and has no network access. Yuj
+writes combined output to `.procs/<proc_id>.log`. Only new bytes returned by
+`bash_poll` enter model context, after the normal filters, redaction, and output
+limit. Yuj stops every remaining process group when the session ends. Read
+[Saved files](harness_artifacts.html) for the trace boundary.
 
 ### Run named subagents
 
@@ -952,34 +829,23 @@ subagent_depth = 1
 subagent_max_turns = 20
 ```
 
-A call has the shape `task(agent, prompt)`. The agent name selects
-`agents/<name>.toml`. Each descriptor names a model profile, a tool allowlist,
-a Markdown system-prompt file, and its own `max_turns`. The effective turn
-limit is the smaller of that value and `tools.subagent_max_turns`. See
+A call uses `task(agent, prompt)`. The agent name selects
+`agents/<name>.toml`. The descriptor names a model profile, complete tool
+allowlist, Markdown system prompt, and turn limit. Yuj uses the smaller of the
+descriptor limit and `subagent_max_turns`. See
 [`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
 for the descriptor format.
 
-The root session is depth `0`; each `task` call adds one edge. At the configured
-depth cap, Yuj removes `task` from the child's tool surface and rejects a direct
-nested call. Agents are read-only unless their descriptor explicitly says
-otherwise. A read-only descriptor cannot allow mutation tools, and its `bash`
-calls pass through a fail-closed inspection-command allowlist.
+The root session has depth `0`, and each nested `task` call adds one. At
+`subagent_depth`, Yuj removes `task` from the child and rejects a direct nested
+call. Agents are read-only unless their descriptor explicitly allows writes.
+A read-only agent may run only a small, fail-closed set of inspection commands.
 
-Children run one at a time in the parent's task directory and with the same
-sandbox policy. Each child has a fresh conversation and a separate model
-client. The parent receives only the child's final text. Yuj saves the child's
-trace at `<run_dir>/subagents/<id>/.trace.jsonl`; replay reads that terminal
-result instead of calling the child model again. Child usage is included in
-the ordinary token totals, `tokens_by_role`, and the `metrics.subagents`
-summary.
-
-The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
-token for every four characters. This avoids a model-specific download during
-normal use.
-
-The paper runtime files set the tokenizer for each reported model. Apply the
-files in the [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
-when you reproduce an experiment.
+Children run one at a time in the parent's task directory and use the same
+sandbox policy. Each child gets a fresh conversation and model client. The
+parent receives only its final text. Yuj saves a separate child trace and adds
+child use to the normal token totals. Replay returns the saved result instead
+of calling the child model again.
 
 ### Run a sandboxed Python cell
 
@@ -991,43 +857,35 @@ exec_cell_enabled = true
 exec_cell_timeout = 30
 ```
 
-When enabled, Yuj sends `list_functions`, `get_function_details`,
-`exec_cell`, and `done` instead of the full native tool-schema catalog.
-`list_functions` returns the names available inside a cell.
-`get_function_details` returns the selected input schemas on demand. This
-keeps the initial request smaller while preserving exact function details.
+Code mode replaces the native tool set with `list_functions`,
+`get_function_details`, `exec_cell`, and `done`. The model first lists the
+available functions, then asks for only the schemas it needs.
 
-`exec_cell` runs Python with five injected functions: `read`, `grep`, `glob`,
-`list_definitions`, and `bash`. Each function returns text. Print the final
-text that the model needs from the cell. An injected call re-enters the normal
-tool dispatcher, including shell quirks, output filters, secret redaction,
-the unified result envelope, repository ignore policy, and configured
-permission rules. Repository-wide `list_definitions` still requires
-`ast_search_enabled = true`.
+`exec_cell` runs Python with `read`, `grep`, `glob`, `list_definitions`, and
+`bash` injected as functions. Each one returns text through the normal tool
+dispatcher. The model must print the text that it wants the cell to return.
+Permissions, ignore rules, shell rules, output filters, and redaction still
+apply. Repository-wide definition search still needs `ast_search_enabled`.
 
-The Python process always uses the selected shell sandbox and the same
-command environment, read-only skill roots, and unreadable-path masks as
-`bash`. It fails closed when the sandbox is disabled or cannot start, even
-when ordinary shell settings would permit an unsandboxed fallback. The
-timeout covers the whole cell and all inner calls. A cell cannot start a
-background shell process.
+The Python process always uses the selected shell sandbox. If the sandbox is
+off or cannot start, the cell fails instead of running on the host. The timeout
+covers the whole cell and every inner call. A cell cannot start a background
+command.
 
-The raw trace stores the complete accepted cell source and its combined
-stdout/stderr byte and character counts. Every injected call is a normal
-`tool_call` child row with `parent_tool_call_id` and `cell_inner_index`. The
-ordinary deterministic state writer projects those child rows as tool steps;
-it does not run or reinterpret the cell source.
+The raw trace stores the accepted source and output sizes. It records every
+injected function call as a child tool call. The state writer projects those
+calls as ordinary tool steps but never runs the cell again. Yuj keeps the
+complete four-tool code-mode set even when the model profile sets a
+smaller native-tool cap.
 
-Profile schema simplification still applies to the four code-mode tools. The
-fixed code-mode surface is kept intact even when a profile's native-tool cap
-is smaller, because a partial discovery/execution surface cannot run a cell.
+## Route model requests
 
-## Configure auxiliary model roles
+### Configure auxiliary model roles
 
-Named roles let harness-owned side requests use a smaller model without
-changing the model that works on the task. The public roles are `weak` and
-`editor`. A blank role uses the main model and endpoint. Set a profile name for
-a role that shares the main endpoint:
+Named roles let Yuj send side requests to another model without changing the
+model that works on the task. Yuj defines two roles: `weak` and `editor`.
+
+Use a profile name when the role shares the main endpoint:
 
 ```toml
 [models.roles]
@@ -1044,24 +902,21 @@ model = "served-small"
 context_size = 32768
 ```
 
-`endpoint` must be an absolute HTTP or HTTPS URL without embedded
-credentials. An inline target may also set `api_key`, but keep literal secrets
-in ignored local configuration and prefer environment-backed credentials.
-Yuj loads and validates the main profile and every configured role profile at
-startup. An invalid role stops the run before model work begins.
+`endpoint` must be an absolute HTTP or HTTPS URL with no embedded credentials.
+An inline target may also set `api_key`, but prefer an environment-backed key
+in ignored local configuration. Yuj validates every configured role before the
+first model request.
 
 Checkpoint summaries, fresh-session handoffs, and the model-backed hurdle
-classifier request the `weak` role. If it is unset, the resolver returns the
-actual main client and records that fallback in side-request telemetry. Role
-clients are created only when first used and are reused for the same resolved
-target. Yuj does not launch or supervise another server: a distinct endpoint
-normally means you must run a second llama-server process yourself.
+classifier use `weak`. A blank role uses the actual main client. Yuj creates a
+role client only when something uses it, then reuses that client. Yuj does not
+start another server, so run a second server yourself when the role uses a
+different endpoint.
 
-Every model response is charged once to its effective role. Post-run
-`metrics.json` reports request, prompt, completion, cached, and total token
-counts under `metrics.tokens_by_role`.
+`metrics.json` charges each response once to its effective role under
+`metrics.tokens_by_role`.
 
-## Run a passive second-opinion advisor
+### Run a passive second-opinion advisor
 
 The advisor is off by default. Enable it in a small overlay:
 
@@ -1075,28 +930,25 @@ immune_turns = 3
 max_note_chars = 1200
 ```
 
-An empty `model` reuses `[model].name`; an empty `endpoint` reuses
-`[server].base_url`. The advisor uses the selected main model profile and API
-key, so a distinct endpoint must accept the same message and tool-call format.
-Yuj does not launch or schedule that endpoint. On one GPU, running a second
-server or reviewing too frequently can add substantial latency.
+An empty `model` uses `[model].name`, and an empty `endpoint` uses
+`[server].base_url`. The advisor shares the main model profile and API key, so
+a separate endpoint must accept the same message and tool-call format. Yuj
+does not start or schedule that server. Frequent reviews or two servers on one
+GPU can add substantial delay.
 
-Each eligible review starts a new isolated conversation. Its only primary-run
-input is a bounded JSON projection of the just-completed turn: assistant
-reasoning, new tool calls, and the current turn's bounded tool-result rows. It
-does not receive the task prompt, primary transcript, `.trace.jsonl`,
-`.solver/state.json`, or other harness artifacts. It may inspect visible task
-files through exactly `read`, `grep`, and `glob`, then either call
-`advise({severity, note})` or return exactly `NO_ADVISORY`. If the task root has
-a visible `WATCHDOG.md`, Yuj appends at most 16,000 characters from it to the
-advisor's fixed system prompt as repository-specific review priorities.
+Each review starts an isolated conversation. The advisor receives only a
+limited view of the completed primary turn: assistant reasoning, new tool
+calls, and limited result rows. It does not receive the task prompt, primary
+transcript, trace, state file, or other harness records. It may inspect visible
+task files with `read`, `grep`, and `glob`. A visible root `WATCHDOG.md` may add
+up to 16,000 characters of repository-specific review guidance.
 
-The advisor has no mutating or shell tool. Yuj quarantines fabricated tools,
-mixed `advise` calls, malformed arguments, unstructured note text, invalid
-severity, and over-limit notes without dispatching them. It also deduplicates
-accepted notes after whitespace/case normalization. After an accepted note,
-`immune_turns` counts completed primary turns; cadence and cooldown continue
-across fresh context sessions in the same run.
+The advisor must call `advise({severity, note})` or return exactly
+`NO_ADVISORY`. It has no shell or mutation tool. Yuj quarantines fabricated
+tools, mixed calls, malformed input, free-form notes, bad severity values, and
+notes above `max_note_chars`. It also removes duplicate notes. After Yuj accepts
+a note, `immune_turns` delays the next eligible review. Cadence and cooldown
+continue across fresh context sessions in the same run.
 
 Yuj inserts an accepted note into the next model request as:
 
@@ -1106,17 +958,13 @@ Concise, actionable note.
 </injected-fragment>
 ```
 
-Projection context modes carry this block through a transient next-request
-field and consume that field only after a successful model response. Append-log
-modes retain the ordinary conversation history. The raw trace stores an
-`advisor_note` row with severity, character count, source turn, ordinal, and a
-note hash, but not the note body. The isolated conversation and note body live
-in `<run_dir>/advisor.jsonl`; `.solver/state.json` does not project either.
-Replay clients never run the advisor. With the default `enabled = false`, no
-advisor client, request, note, trace row, or transcript is created, so recorded
-run replay keeps its existing deterministic path.
+Yuj places an accepted note in the next model request. Projection modes keep it
+until one request succeeds; append-log modes keep the normal conversation
+history. The raw trace stores the note's severity, size, source turn, order,
+and hash, but not its text. `advisor.jsonl` stores the isolated review and note
+text. `.solver/state.json` stores neither. Replay never runs the advisor.
 
-## Configure model fallback
+### Configure model fallback
 
 Fallback is off by default. Each role's chain is an empty list until you opt
 in. A string entry uses exact `<profile>@<endpoint>` syntax:
@@ -1132,7 +980,7 @@ editor = []
 ```
 
 An inline target may also set `model`, `context_size`, or an endpoint-specific
-`api_key`. Credentials are used for requests but excluded from trace and
+`api_key`. Yuj uses credentials for requests but excludes them from trace and
 provenance artifacts:
 
 ```toml
@@ -1143,80 +991,83 @@ model = "served-small"
 context_size = 32768
 ```
 
-Yuj validates every fallback profile at startup. During a solver turn, it
-uses the configured transient retry budget on the active target first. It may
-then advance the `main` chain for an exhausted connection/timeout/server
-failure, a server out-of-memory failure, or a recognized context-overflow
-response. Authentication failures, arbitrary bad requests, malformed
-profiles, and tool/protocol errors stay fatal.
+Yuj validates every fallback profile at startup. It first spends the normal
+retry budget on the active target. It advances the chain only after an eligible
+connection, timeout, server, out-of-memory, or context-overflow failure.
+Authentication errors, other bad requests, bad profiles, and tool-protocol
+errors remain fatal.
 
-Before sending any task message to a replacement, Yuj queries that target's
-live context window, applies its profile to the canonical messages and tool
-schemas, and checks the resulting prompt against `context_fill_ratio`. A
-candidate that cannot fit is traced and skipped. A candidate that fits gets a
-fresh retry budget. Client, profile, context-derived limits, tool schemas, and
-the context token estimator switch together; old-profile wire messages are
-never reused.
+Before Yuj uses a candidate, it asks for the live context window, applies the
+candidate profile, and checks whether the prompt fits `context_fill_ratio`.
+It skips and traces a candidate that cannot fit. When a candidate fits, Yuj
+switches the client, profile, context limits, tool schemas, and token estimator
+together, then gives it a fresh retry budget.
 
 `fallback_revert = "never"` keeps the selected target for later sessions.
-`"next_session"` returns to the primary target when the next session begins.
-Every transition changes the treatment and is recorded as `model_fallback`.
-Post-run metrics include `model_fallback_used`, `model_fallback_count`,
-`model_fallback_roles`, and `model_fallback_active_targets`, so studies can
-exclude runs that changed models.
+`next_session` returns to the primary target when the next session starts.
+Every transition changes the run treatment, so Yuj records it in the trace and
+in post-run fallback metrics. Studies can use those fields to exclude runs that
+changed models.
 
-## Configure llama-server prompt caching
+## Tune model requests
+
+### Configure llama-server prompt caching
 
 The `[server]` cache settings apply to the OpenAI-compatible llama-server
 client. They do not describe provider TTLs.
 
-`request_extra` is a TOML table of additional JSON body fields. Yuj passes
-these through the OpenAI SDK's `extra_body`. `cache_affinity = false` disables
-slot selection; `true` selects slot 0; a positive integer hashes the stable
-product session ID across that many slot numbers. Configure no more slots than
-the active llama-server actually exposes.
+Use the cache settings only with the OpenAI-compatible llama-server client:
 
-`cache_retention = "off"` sends `cache_prompt=false`. Set it to `"session"`
-to send `cache_prompt=true` on normal solver turns. When affinity is enabled,
-the same requests also carry the derived `id_slot`. Cache policy owns both
-fields and overrides copies placed in `request_extra`.
+| Setting | What it controls |
+| --- | --- |
+| `request_extra` | Extra JSON body fields sent through the OpenAI SDK's `extra_body`. |
+| `cache_affinity = false` | Do not select a slot. |
+| `cache_affinity = true` | Select slot 0. |
+| `cache_affinity = N` | Hash the stable product session ID across `N` slots. |
+| `cache_retention = "off"` | Send `cache_prompt=false`. |
+| `cache_retention = "session"` | Send `cache_prompt=true` on normal model turns. |
+| `cache_miss_warn_ratio` | Warn after the first request when the observed hit ratio falls below this value. `0` disables the warning. |
 
-`cache_miss_warn_ratio` accepts a value from 0 through 1. Zero disables the
-warning. A positive value logs a warning when an observed cache hit ratio is
-below the threshold after the session's first request. Missing server cache
-telemetry stays unknown and does not produce a false miss warning.
+Do not configure more affinity slots than the server exposes. Cache policy
+owns `cache_prompt` and `id_slot`, so it overrides those fields in
+`request_extra`.
 
-Compaction, handoff, and other harness side requests always send
-`cache_prompt=false` and omit `id_slot`, so they cannot replace the solver
-conversation's retained prefix. Each solver response records prompt tokens,
-cached tokens, and its hit ratio in a `turn` trace row. `metrics.json` contains
-the token-weighted run ratio under `metrics.prompt_cache`, and the installed
-session summary reports that latest ratio.
+Compaction, handoff, and other Yuj-owned side requests always disable prompt
+retention and omit the slot. Missing server telemetry remains unknown and does
+not produce a false warning. The trace stores per-turn prompt and cached token
+counts. `metrics.json` reports the token-weighted run ratio.
 
-## Select reasoning effort
+### Count tokens
+
+The checked-in `config.toml` leaves `[model].tokenizer_id` empty. Yuj then
+estimates one token for every four characters, which avoids a model-specific
+download during normal use.
+
+Released paper runtime files set the tokenizer for each reported model. Apply
+the files in the
+[paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
+when you reproduce an experiment.
+
+### Select reasoning effort
 
 Set `[model].thinking_level` or pass `--thinking` with one of `off`,
 `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The checked-in default
 is `off`.
 
-Each model profile declares the request body for its supported levels under
-`[reasoning_levels.<level>]`. The base profile provides boolean `off` and `on`
-mappings through `chat_template_kwargs.enable_thinking`. A model-specific
-profile may instead map levels to fields such as `reasoning_effort` or
-`thinking_budget`.
+Each model profile maps its supported levels to request fields under
+`[reasoning_levels.<level>]`. The base profile maps `off` and `on` through
+`chat_template_kwargs.enable_thinking`. A model-specific profile may use fields
+such as `reasoning_effort` or `thinking_budget` instead.
 
-If the profile does not declare the exact requested level, Yuj clamps
-deterministically and logs a warning. It chooses the closest supported effort
-that does not exceed the request when possible; a boolean-only profile maps
-any positive effort to its internal `on` capability. The effective level is
-applied on every normal model request. Harness side requests still force
-thinking off.
+When a profile does not support the exact level, Yuj warns and chooses the
+closest supported effort that does not exceed the request when possible. A
+boolean profile maps every positive level to `on`. Yuj applies the effective
+level to normal model requests and forces thinking off for harness side
+requests.
 
-Profile `[server].reasoning_mode` and `reasoning_disable_flag` remain model
-server launch defaults. They do not replace the per-request choice. Each
-`session_start` trace row records the effective level (and the requested level
-when clamped), while run provenance records requested, effective, and clamp
-status.
+Profile server launch fields do not replace this per-request setting. The
+trace and run provenance record the requested and effective levels and whether
+Yuj clamped the request.
 
 ## Choose a context mode
 
@@ -1268,8 +1119,7 @@ sessions.
 
 ### Add a ranked repository map to the task
 
-Set a positive `[context].repo_map_tokens` value to append one compact
-`<repo-map>` block after the task text in the session's first user message:
+Set a token budget to add one compact `<repo-map>` block after the task text:
 
 ```toml
 [context]
@@ -1277,33 +1127,19 @@ repo_map_tokens = 1024
 repo_map_refresh = "auto"
 ```
 
-This setting works through the normal installed and measurement command
-surfaces, so a small overlay can be passed to `yuj code --config FILE.toml` or
-`python -m scripts.llm_solver ... --config FILE.toml`. The checked-in default
-is `0`: existing runs keep their task message unchanged until the feature is
-enabled explicitly.
+The default budget is `0`, which adds no map. Yuj uses local parsers for
+Python, JavaScript and TypeScript, Go, Rust, and Java. It ranks definitions and
+references from paths named in the task, with stable tie-breaking. No model
+writes or ranks the map.
 
-Yuj reuses the tree-sitter tag extractor behind repository-wide
-`list_definitions`. It collects definitions, references, and signatures for
-the locally installed Python, JavaScript/TypeScript, Go, Rust, and Java
-grammars. Files are graph nodes; a reference to a definition forms an edge.
-A deterministic personalized PageRank-style pass starts from repository paths
-named in the task, then places symbols referenced by those files before
-unreferenced definitions. Ties use stable path, location, and signature order.
-No model call authors or ranks the map.
+The budget counts only the added block. Yuj uses `tokenizer_id` when set,
+otherwise the active profile estimator and then the one-token-per-four-
+characters fallback. If even the wrapper and top definition do not fit, Yuj
+omits the map.
 
-The budget is a hard incremental count for adding the block to the task user
-message. When `[model].tokenizer_id` is set, Yuj uses that local tokenizer and
-attempts to synchronize its chat template from the active server before
-counting. Otherwise it uses the active profile estimator, then the documented
-one-token-per-four-characters fallback. If the wrapper and highest-ranked
-definition cannot fit, Yuj omits the map rather than exceed the budget.
-
-The rendered block is immutable for one solver session. It stays in the
-stable task prefix on every turn and survives deterministic or checkpoint
-compaction as part of that unchanged task message. A later solver session may
-build a new map from its then-current tree. `repo_map_refresh` controls the
-mechanical symbol-row cache used at that boundary:
+The map stays fixed for one harness session and remains in the task prefix
+through compaction. A later session may build a new map. `repo_map_refresh`
+controls the symbol cache at that boundary:
 
 | Value | Cache behavior at session start |
 | --- | --- |
@@ -1312,19 +1148,11 @@ mechanical symbol-row cache used at that boundary:
 | `files` | Content-hash every supported source file before deciding whether to reuse. |
 | `manual` | Reuse any valid cache for the same repository; parse only when no valid cache exists. |
 
-For measurement commands the per-task cache is beneath
-`<run_dir>/.repo_map_cache/`; installed sessions keep it beneath their private
-session artifact directory. An unusual caller that places an artifact
-directory inside the task tree is redirected to the harness telemetry sibling.
-The cache is always outside the model's file-tool root and is also added to
-shell unreadable masks.
-
-Both configured `[sandbox].unreadable_paths` and the immutable task-root
-`.yujignore` policy are applied before files are fingerprinted or parsed.
-`session_start` records the actual incremental token count, content hash,
-refresh policy, scanned-file count, emitted-symbol count, and cache-hit flag;
-it never records the map body or cache path. These fields are raw run-start
-provenance and are not projected into `.solver/state.json`.
+Yuj stores the cache with private run artifacts, outside the model's file root,
+and masks it from shell commands. It applies unreadable-path and `.yujignore`
+rules before it fingerprints or parses files. The trace records the token
+count, content hash, refresh mode, file and symbol counts, and cache hit. It
+does not record the map body or cache path.
 
 ### Compact a nearly full context
 
@@ -1341,95 +1169,76 @@ allow it. These settings live under `[context]`:
 | `digest_keep_recent_turns` | `8` | Digest tail size and the close-compaction guard window. |
 | `digest_compaction_gate_min_mutations` | `0` | Minimum successful mutations before compaction may run. |
 
-Checkpoint mode makes one no-tool call through the `weak` model role. Thinking
-is off for that call. Yuj keeps the system prompt and task message unchanged, places
-the validated checkpoint after the task, and keeps a verbatim recent tail
-beginning at an assistant-turn boundary. The checkpoint must contain every
-required section and every mechanically observed modified path, fit the
-budget, and reduce the prompt token count. Any request, response, validation,
-or size failure uses the deterministic digest instead.
+`digest` builds a deterministic summary from trace facts. `checkpoint` makes
+one no-tool request through the `weak` model role with thinking off. Yuj keeps
+the system prompt and task unchanged, inserts the validated checkpoint after
+the task, and keeps a recent tail that starts at an assistant-turn boundary.
+The checkpoint must use the required sections, name every observed modified
+path, fit the budget, and make the prompt smaller. Any failure falls back to
+`digest`.
 
-When `compaction_hook` is non-empty, Yuj resolves it while configuration is
-loaded, before model work starts. The hook may return `None` for the built-in
-method, `Cancel()` to keep the current conversation, or a validated
-`Compaction(summary, first_kept_turn)`. Hook failures and invalid replacements
-use the digest. Read [Compaction hooks](compaction.html) for the exact Python
-types, preparation fields, validation rules, and trace outcomes. The hook runs
-inside the harness process, not inside the model-command sandbox.
+`compaction_hook` names trusted in-process Python. Yuj imports it before model
+work starts. The hook may use the built-in method, cancel one attempt, or
+return a replacement that passes the same checks. A hook error or bad result
+falls back to `digest`. Read [Compaction hooks](compaction.html) for the Python
+contract. The model-command sandbox does not isolate this code.
 
-Yuj records only compaction metadata in the trace and state projection; it
-does not copy model-written checkpoint text into `.solver/state.json`. If two
-compactions occur within `digest_keep_recent_turns`, later compactions in that
-run segment use digest to avoid a compaction loop.
+The trace and state store compaction metadata, not model-written summary text.
+If two compactions occur within `digest_keep_recent_turns`, Yuj uses `digest`
+for the later attempt to avoid a loop.
 
 ### Summarize work for a fresh session
 
-Set `[loop].handoff_summary_enabled = true` to make one no-tool `weak`-role side request
-when a session ends because of `context_full`, `length`, or `max_turns` and
-another session is available. `[prompts].handoff_max_tokens` defaults to
-`2000` and limits the returned summary. Thinking is off for this request.
+Set `[loop].handoff_summary_enabled = true` to ask the `weak` role for a
+summary when a session ends at `context_full`, `length`, or `max_turns` and
+another session can run. `[prompts].handoff_max_tokens` limits the response and
+defaults to `2000`. Yuj turns thinking off for this request.
 
-Yuj validates the seven required sections, the response size, and coverage of
-every modified path found in the raw trace. A valid `<handoff>` is placed after
-the task statement and before the existing mechanical resume tail. A missing
-section, omitted path, oversized response, request failure, or model failure
-leaves that mechanical prompt byte-for-byte unchanged. The trace records only
-the attempt's token count, validity, fallback, and model role; model-written
-handoff text is not copied into `.solver/state.json`.
+Yuj checks the required sections, size, and every modified path in the trace.
+It places a valid `<handoff>` after the task and before the existing resume
+tail. If the request or any check fails, Yuj leaves that tail unchanged. The
+trace records status and token metadata, not the summary text, and
+`.solver/state.json` does not store the summary.
 
 ### Recover an interrupted tool turn
 
-`[loop].interrupted_turn_mode = "mechanical"` is the default. Before a
-trace-backed resume reads prior events, Yuj removes only a malformed trailing
-JSON fragment, fsyncs the repaired prefix, and appends one `turn_aborted`
-event. The next user message names any call that had started without a durable
-result and says its outcome is unknown. Transcript resume closes the dangling
-assistant/tool protocol edge with a synthetic tool result; it never reruns the
-call or claims that its filesystem effects succeeded or failed.
+The default, `[loop].interrupted_turn_mode = "mechanical"`, repairs a trace
+that ended during a tool turn. Before resume reads the trace, Yuj removes only
+a malformed final JSON fragment and adds `turn_aborted`. The next user message
+names each tool call that started without a durable result and marks its
+outcome as unknown. Yuj closes any dangling transcript edge with a synthetic
+result. It never reruns the call or guesses whether its file effects happened.
 
-Before every real dispatch Yuj fsyncs a bounded `tool_start` event. SIGTERM,
-SIGINT, fatal exceptions, normal scope completion, and process exit record a
-`session_exit` event with the pending-call set. A hard kill cannot run an exit
-handler, so the already-durable start row remains the recovery evidence.
+Before each dispatch, Yuj saves and syncs a small `tool_start` event. Normal
+exit paths also record pending calls in `session_exit`. A hard kill may skip
+the exit handler, but the durable start remains.
 
-Set the mode to `"off"` to disable mechanical repair. In that mode resume does
-not truncate a malformed suffix and does not append `turn_aborted`; ordinary
-trace loading may therefore reject or stop at the damaged tail.
+Set the mode to `off` to disable repair. Resume then leaves a malformed suffix
+in place, so normal trace loading may reject the trace or stop at that suffix.
 
 ### Continue a length-limited response
 
-`[loop].length_continue_max = 0` keeps the normal one-request behavior. Set a
-positive limit to let a capability-approved profile continue a response in
-the same turn when the server returns `finish_reason = "length"`. Each
-follow-up starts from the original prepared request and adds one assistant
-message containing the complete joined partial response. Yuj removes only an
-exact suffix/prefix overlap between pieces; it does not normalize whitespace
-or guess at near matches.
+The default, `[loop].length_continue_max = 0`, makes one request per model
+turn. Set a positive limit to continue the same turn when the server returns
+`finish_reason = "length"`. The active profile must also set
+`[model].supports_prefill = true`.
 
-Continuation requires the active profile's `[model].supports_prefill = true`.
-The follow-up request adds `continue_final_message = true` and
-`add_generation_prompt = false` under the OpenAI SDK `extra_body`. These
-llama-server template controls are never sent by the default-off path, a
-profile without the capability, a legacy client, or a replay client. Every
-raw piece, including streamed pieces, is joined before the profile normalize
-pipeline runs once. Only the final canonical assistant message enters model
-context.
+Each follow-up starts from the original prepared request and adds the full
+partial assistant response. Yuj removes only an exact overlap between pieces.
+It does not change whitespace or guess at near matches. For llama-server, the
+request uses `continue_final_message = true` and
+`add_generation_prompt = false`. Yuj never sends those fields through the
+default path, an unsupported profile, a legacy client, or replay.
 
-When a provider exposes a length-cut function call as structured
-`tool_calls` instead of assistant text, its chat template may be unable to
-render the incomplete argument as a prefill. For that shape only, each bounded
-follow-up receives a cumulative generation cap so a deterministic server can
-reproduce the exact structured prefix and extend it; the cap never exceeds the
-remaining configured context room reported by the prior call. A complete
-argument object is then promoted to the normal `tool_calls` finish path.
+Some providers return an incomplete function call as structured `tool_calls`.
+For that shape, Yuj may repeat the exact prefix with a larger cumulative output
+cap until the argument becomes complete. It never exceeds the context room
+reported by the previous call.
 
-If the bounded attempts still do not yield a complete normalized tool call,
-the logical response remains `length`; the existing fresh-session rollover
-and `[prompts].resume_length` message apply. Raw trace rows named
-`length_continue` record the attempt number and completion-token count but no
-response or request text. Post-run `metrics.length_continuations` counts the
-follow-up requests, while the normal prompt/completion totals include every
-initial and follow-up call.
+If the allowed follow-ups still do not complete the response, the turn remains
+length-limited and uses the normal fresh-session rollover. The trace records
+attempt numbers and completion-token counts, not request or response text.
+Metrics count the extra requests, while normal token totals include them.
 
 ### Load conditional injection rules
 
@@ -1459,30 +1268,32 @@ repeat = false
 Follow this repository's Python and test conventions.
 ```
 
-`name` is required and must be a non-empty string. `paths` and `keywords`,
-when present, must be arrays of non-empty strings. `repeat` must be `true` or
-`false`. A rule with neither `paths` nor `keywords` is unscoped and is added
-once at the start of a session. The older explicit `trigger` and `fire_once`
-fields remain readable; do not combine `repeat` and `fire_once` in one file.
+The frontmatter fields have these jobs:
 
-Path globs are project-relative POSIX patterns. They support `*`, `?`,
-character classes, and slash-aware `**`. Absolute paths, parent traversal,
-directory-only patterns, empty entries, and non-string entries are rejected.
-Matching checks both the model's contained path spelling and its
-symlink-resolved target. The visible and traced path is always the canonical
-task-relative target.
+| Field | Rule |
+| --- | --- |
+| `name` | Required nonempty rule name. |
+| `paths` | Optional list of project-relative POSIX globs. |
+| `keywords` | Optional list of nonempty strings. |
+| `repeat` | Optional boolean. `false` is the default. |
 
-A path rule can fire after an executed `read`, `edit`, or `write`, after an
-`apply_patch` operation was applied, or after a shell command is proven to
-read one explicit file. The shell classifier accepts bounded forms of `cat`,
-`head`, `tail`, `sed -n`, `grep`, and `rg`. Compounds, pipelines,
-redirections, recursive or multi-file reads, and rewritten shell commands do
-not qualify. A non-matching target adds nothing.
+A rule with no `paths` or `keywords` is unscoped, so Yuj adds it once at
+session start. The older `trigger` and `fire_once` fields remain readable. Do
+not combine `repeat` and `fire_once`.
 
-By default, the first path or keyword match consumes the rule for that
-session. `repeat = true` on the rule makes both trigger kinds repeat.
-`path_rule_repeat = true` changes only the default for path matches when the
-rule omits `repeat`; a per-rule value wins.
+Path globs support `*`, `?`, character classes, and slash-aware `**`. Yuj
+rejects absolute paths, parent traversal, directory-only patterns, empty
+entries, and non-string entries. It checks both the model's path and the
+symlink target, then reports only the normalized task-relative path.
+
+A path rule may fire after a file tool runs or after Yuj proves that a simple
+`cat`, `head`, `tail`, `sed -n`, `grep`, or `rg` command read one file.
+Compound commands, pipelines, redirection, recursive searches, multi-file
+reads, and rewritten commands do not count.
+
+By default, the first path or keyword match consumes the rule. Set the rule's
+`repeat = true` to let either trigger repeat. `path_rule_repeat = true` changes
+only the default for path rules that omit `repeat`.
 
 A path fire appends this shape to the same model-visible tool result:
 
@@ -1492,12 +1303,11 @@ Follow this repository's Python and test conventions.
 </injected-fragment>
 ```
 
-Each conditional fire also writes a raw `injection` trace row with `rule`,
-`trigger`, and `path`; keyword rows use an empty path. That metadata row is
-not copied into `.solver/state.json`. The visible fragment remains part of
-the ordinary tool result and therefore follows the normal `tool_call`
-projection. Startup logs name each armed rule, its trigger kinds, and its safe
-source label without copying the rule body.
+Each fire writes `rule`, `trigger`, and `path` to an `injection` trace row.
+Keyword rows use an empty path. The metadata does not enter
+`.solver/state.json`; the visible fragment remains part of the ordinary tool
+result. Startup logs name armed rules and trigger types without copying their
+bodies.
 
 ### Load project instruction files
 
@@ -1515,52 +1325,50 @@ imports_enabled = true
 imports_max_depth = 5
 ```
 
-When enabled, Yuj first considers the global directory, then walks from the
-nearest marked project root down to the task working directory. At each
-location it loads at most one non-empty file. `AGENTS.override.md` has first
-precedence; configured `project_doc_names` are fallbacks in their listed
-order. Empty files are skipped so the next candidate can apply. A blank
-`project_doc_global_dir` disables only the global location.
+When enabled, Yuj finds instruction files in this order:
 
-`imports_enabled` applies to `--system-prompt` arm files, selected project
-instructions, and enabled `.harness/injections/*.md` fragments. It defaults to
-`true` because arm-file `@path` expansion predates the switch; setting it to
-`false` is an explicit prompt-treatment change and leaves standalone import
-lines literal. A directive is a standalone `@relative/file.md` or
-`@/absolute/file.md` line. Nested relative paths resolve from the file that
-contains them. Direct imports have depth 1, and a target deeper than
-`imports_max_depth` is not read. Directives inside fenced or indented code and
-inside inline backtick spans remain literal.
+1. Check the global directory, unless `project_doc_global_dir` is blank.
+2. Find the nearest directory that contains a configured project-root marker.
+3. Walk from that root down to the task working directory.
 
-Imports accept Markdown files only and cannot escape their source policy even
-through a symlink: an arm may read below the project root or its own parent, a
-project instruction only below its project root, a global instruction only
-below its global directory, and an injection only below the project root.
-`[sandbox].unreadable_paths` is checked before import reads. Missing, cyclic,
-over-depth, unreadable, non-Markdown, and outside-policy targets become bounded
-`yuj-import-error` HTML comments; host exception text is not placed in the
-prompt.
+At each location, Yuj loads at most one nonempty file.
+`AGENTS.override.md` wins first. The names in `project_doc_names` follow in
+their listed order. An empty file lets Yuj try the next name.
 
-The final selected project-instruction chain is capped by
-`project_doc_max_bytes` after imports expand, measured in UTF-8 bytes; a final
-document can be clipped only at a valid character boundary. A short import
-directive therefore cannot evade the cap. Files and directories matched by
-`[sandbox].unreadable_paths` are rejected before any content read, including
-absolute masks for the global directory. Symlinks cannot escape the project or
-global scope. Each selected document is wrapped as
-`<project-instructions path="...">` using a safe project-relative or
-`global/<name>` label.
+With `imports_enabled = true`, a standalone `@path/to/file.md` line imports
+another Markdown file. This works in `--system-prompt` files, selected project
+instructions, and enabled injection fragments. A relative path starts beside
+the file that contains it. Direct imports have depth 1, and
+`imports_max_depth` limits nesting. Directives inside code blocks or inline
+code remain literal. Set `imports_enabled = false` to leave every import line
+literal.
 
-Prompt order is the resolved `--system-prompt` arm file, project-instruction
-blocks, `prompts.system_header`, then an enabled Agent Skills catalog; a
-model-profile preamble remains outermost. `session_start.prompt_import_tree`
-records ordered source envelopes and nested status/depth/byte metadata with
-safe labels. It stores no prompt
-body or absolute host path, and injection entries mean a fragment was resolved,
-not that it fired. Project source, imported, and admitted resolved bytes are
-reported separately. `metrics.json` provenance hashes and counts the exact
-fully resolved prompt, never its body. Enabling project instruction discovery
-changes model input and must be treated as an experimental condition.
+An import must stay inside the boundary owned by its source:
+
+| Source | Allowed import area |
+| --- | --- |
+| System-prompt file | Its own parent or the project root |
+| Project instruction | The project root |
+| Global instruction | The global instruction directory |
+| Injection fragment | The project root |
+
+Symlinks cannot escape these areas. Unreadable-path rules apply before Yuj
+reads a file. A missing, cyclic, too-deep, unreadable, non-Markdown, or outside
+import becomes a short `yuj-import-error` HTML comment. Yuj does not put host
+exception text in the prompt.
+
+After imports expand, `project_doc_max_bytes` caps the complete selected
+instruction chain in UTF-8 bytes. Yuj cuts only at a valid character boundary.
+It wraps each selected file in a `<project-instructions>` block with a safe
+project-relative or `global/<name>` label.
+
+Yuj builds the prompt in this order: resolved `--system-prompt`, project
+instructions, `prompts.system_header`, then the optional Agent Skills catalog.
+The model-profile preamble remains outside that sequence. Run-start provenance
+stores safe source labels, import status, depth, and byte counts, but no prompt
+body or absolute path. `metrics.json` stores only the final prompt hash and
+size. Because these files change model input, record this setting as part of
+any comparison.
 
 ### Load Agent Skills on demand
 
@@ -1585,69 +1393,63 @@ skills_dirs = [
 skill_paths = ["/opt/team-skills/release/SKILL.md"]
 ```
 
-`skill_paths` is the exact-path layer and is considered first, in declaration
-order. An entry may name `SKILL.md` or its containing directory; a missing
-exact path is a startup error. Yuj then searches `skills_dirs` in declaration
-order. It ignores a missing collection directory. An absolute, `~`-expanded,
-or environment-expanded entry names one collection. A relative entry is
-searched at the task cwd and each ancestor through the nearest directory with
-one of `[prompts].project_root_markers`. Collection discovery is deterministic
-across subdirectories, with a six-level and 2,000-directory safety bound. A
-subdirectory is a skill only when it contains a file named exactly `SKILL.md`;
-a collection-root `SKILL.md` is not discovered implicitly and should instead
-be named in `skill_paths`.
+Yuj discovers skills in two layers:
 
-When more than one validated skill has the same frontmatter `name`, Yuj logs a
-warning and keeps the first. Exact paths therefore let an overlay take
-precedence over collection discovery. Multiple collection roots retain their
-declared order.
+1. Read `skill_paths` in order. An entry may name `SKILL.md` or its directory.
+   A missing exact path stops startup.
+2. Search `skills_dirs` in order. A missing collection is ignored. A relative
+   collection is searched from the task directory up to the nearest project
+   root. An absolute or expanded path names one collection directly.
 
-Startup validates these frontmatter rules before any model call:
+Collection search is deterministic and stops after six directory levels or
+2,000 directories. A skill must live in a subdirectory that contains a file
+named exactly `SKILL.md`. Name a collection-root skill explicitly in
+`skill_paths`.
 
-- `name` is required, has at most 64 characters, uses lowercase letters,
-  digits, and single hyphens, and matches the parent directory;
-- `description` is required, non-empty, and at most 1,024 characters;
-- `license` and experimental `allowed-tools` are non-empty strings when set;
-- `compatibility` is a non-empty string of at most 500 characters when set;
-- `metadata` maps string keys to string values; and
-- `disable-model-invocation` is a boolean when set.
+If two valid skills have the same frontmatter `name`, Yuj warns and keeps the
+first. Exact paths therefore take priority over collection discovery.
 
-`disable-model-invocation = true` keeps a validated skill out of the `<skills>`
-block. It remains in raw startup provenance and can still be read when its path
-is explicitly supplied. `allowed-tools` is validated metadata only: a skill
-cannot weaken `[permissions]`, approvals, sandboxing, or the effective profile
-tool set.
+Yuj checks the frontmatter before the first model request:
 
-The catalog tells the model to use the ordinary `read` tool with the listed
-absolute path and to resolve relative resource references from the skill
-directory. Every successfully loaded skill directory is added to that run's
-skill-readable path set. An external skill directory is readable through `read` and
-available read-only to bwrap and the first-class container backend; `write`
-and `edit` reject its absolute paths. A project skill already under the task
-cwd follows the normal task rule and remains writable. Configured unreadable
-masks still apply to external skill reads and shell mounts; `.yujignore`
-continues to govern project-local skills. A masked discovered skill is skipped,
-while a masked exact `skill_paths` entry is a conflicting startup error.
+| Field | Rule |
+| --- | --- |
+| `name` | Required; at most 64 characters; lowercase letters, digits, and single hyphens; must match the parent directory. |
+| `description` | Required, nonempty, and at most 1,024 characters. |
+| `license`, `allowed-tools` | Optional nonempty strings. |
+| `compatibility` | Optional nonempty string of at most 500 characters. |
+| `metadata` | Optional map from string keys to string values. |
+| `disable-model-invocation` | Optional boolean. |
 
-Every raw `session_start` trace row contains `loaded_skills`, including the
-canonical path and `disable_model_invocation` value for each first-wins skill.
-This provenance is not projected into `.solver/state.json`. Post-run resolved
-configuration records the effective skill-readable directories, and the savings
-ledger records only the visible catalog's character cost, not any skill body.
+`disable-model-invocation = true` leaves the skill out of the model catalog.
+The trace still records it, and an explicit path can still be read.
+`allowed-tools` is metadata only. A skill cannot weaken permissions,
+approvals, the sandbox, or the profile tool set.
 
-Apply this overlay with the normal CLI configuration surface:
+The catalog tells the model to read the listed absolute `SKILL.md` path and to
+resolve resources from that skill's directory. Yuj gives external skill
+directories read-only access through `read`, `bwrap`, and the first-class
+container backend. File mutation tools reject those external paths. A skill
+inside the task directory follows normal task rules and may remain writable.
+Unreadable-path rules apply to external skills, and `.yujignore` applies to
+project skills. Yuj skips a masked discovered skill, but treats a masked exact
+path as a startup conflict.
+
+Run-start provenance stores each loaded skill's canonical path and
+`disable_model_invocation` value, but not its description or body. Resolved
+configuration lists the read-only skill directories. The savings ledger counts
+only the visible catalog text.
+
+Apply the overlay with the normal CLI command:
 
 ```bash
 yuj code --config skills.toml "Prepare the release."
 ```
 
-All model profiles use the same discovery, prompt catalog, normal `read` tool,
-and sandbox boundary. When at least one skill loads and a profile caps its tool
-count, `read` gets first priority after the always-present `done` tool; a cap
-too small to retain `read` stops startup. Yuj does not add a separate
-skill-loader tool. These are run-start settings; a live adaptive TOML
-transaction cannot change them after the catalog and skill-readable roots have
-been fixed.
+All profiles use the same discovery, catalog, `read` tool, and sandbox rules.
+When a profile caps tool count, `read` gets first priority after `done` if any
+skill loads. A cap too small to keep `read` stops startup. Yuj adds no separate
+skill-loader tool. These settings apply at run start and cannot change after
+Yuj fixes the catalog and readable roots.
 
 ## Apply a small TOML file
 

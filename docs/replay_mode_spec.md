@@ -76,82 +76,47 @@ Replay joins the parts and gives their turns one continuous order.
 Replay does not restore a saved working tree. It runs the saved actions again
 on the fresh task copy.
 
-An enabled in-session conversation/workspace `rewind` is part of that action
-stream. At the recorded
-`from_turn` boundary, replay saves the fresh run's own conversation/checkpoint
-pair, calls the normal rewind path with the recorded target and reason, and
-continues from the restored messages and tree. It compares `from_turn`,
-`to_turn`, reason, and delivery mode. It does not compare the shadow-Git commit
-hash because a fresh replay creates new Git objects. Assistant-shell
-`delivery=next_session` rewind remains subject to the multi-segment replay
-limits below.
+Some recorded features need special replay behavior:
 
-When `[tools].checkpoint_enabled` was active, replay also executes the saved
-model-facing `checkpoint` and `rewind(report)` calls through the normal session
-handlers. The
-checkpoint becomes active only after its complete tool-call turn; rewind then
-rebuilds the model-facing conversation from that prefix plus the retained
-user-role report. The replay trace remains append-only, and replay does not
-restore files changed during the abandoned conversation interval. Focused
-tests compare every model-facing message in such a source/replay pair. The
-general runtime request-comparison limit below still applies: replay does not
-yet enforce full-request equality as a fidelity gate for arbitrary runs.
+| Feature | What replay does |
+| --- | --- |
+| Conversation and file rewind | At the recorded boundary, save the replay's own messages and file checkpoint, then run the normal rewind with the saved target and reason. Compare source and target turns, reason, and delivery mode. Do not compare the Git object ID because the replay creates new objects. A next-session rewind still has the multi-segment limit below. |
+| Model `checkpoint` and `rewind(report)` | Run both through their normal turn-boundary handlers. Restore the conversation and report, but leave file changes in place. The new trace remains append-only. |
+| Background command | Check the saved start-command hash. Return recorded poll bytes and consume recorded kills without starting a process. |
+| Lifecycle hook | Match the saved hook position and apply its recorded block, rewrite, note, timeout, or error. Never start the external command. Stop if the configured command differs from the source. |
+| Named subagent | Verify the saved child identity, result hash and size, turns, and tokens. Return the recorded final text instead of running a child model. Copy the child trace when the replay writes to another run directory. |
+| Stream rule | Reproduce the saved interrupt and hidden injection, then consume the next response for the same logical turn. Do not read the current rule file to rebuild the retry. |
 
-Background process lifecycle is the exception to command re-execution:
-`proc_start`, `proc_poll`, and `proc_kill` rows form an ordered auxiliary
-stream. Replay validates the recorded start command hash, returns each saved
-poll result byte-for-byte, and consumes recorded kills without starting an
-operating-system process. The ordinary replay fidelity check still compares
-the associated `tool_call` result seen by the model.
-
-Configured lifecycle hooks are also an exception. Replay matches each hook
-position by session, event, turn, handler index, and tool-call ID, then applies
-the recorded block, rewrite, annotation, timeout, or error outcome. It writes
-a fresh `hook` row with `replayed = true` and never launches the external
-command. If the configured command differs from the source row at a matched
-position, replay stops with a hook replay error. A synthetic stop or partial
-replay boundary with no source hook row applies no hook effect and still never
-falls back to live execution.
-
-Named subagents are the other execution exception. For a replayed `task` call,
-Yuj consumes the next parent `subagent` event, reads
-`subagents/<id>/.trace.jsonl`, and verifies the child identity, result length
-and hash, turns, and tokens. It returns that recorded final text and copies the
-child trace into the replay run when the source and destination differ. It
-does not create a model client or run the child loop again. The ordinary
-tool-call fidelity check still compares the admitted `task` result.
+The ordinary tool-call fidelity check still compares every model-visible result
+from these paths. Focused rewind tests compare each model-facing message, but
+the general replay command still lacks a full request check.
 
 The replay run writes a new transcript. For each replayed turn, the input block
 holds `messages` and `tools` from before model-profile conversion. The output
 block copies the recorded model reply. Yuj flushes the file after each turn.
 
-An enabled stream rule can make one logical solver turn consume more than one
-transcript request/response pair. The interrupted output is valid JSON with an
-internal stream-rule marker, the assembled partial response, and the exact
-hidden-injection record. Replay raises the same typed interrupt, lets the
-harness append the same `<injected-fragment>`, and consumes the next recorded
-reply with the same 0-based logical `turn_number`. It does not re-evaluate the
-mutable rule file to reconstruct that retry. The fresh replay trace records
-`stream_rule_triggered` and `stream_rule_injection` again.
+One logical turn may therefore consume more than one transcript pair. For a
+stream-rule interrupt, the saved partial output remains valid JSON and includes
+the internal marker and exact hidden-injection record. The replay trace writes
+the trigger and injection events again.
 
 After a handover, the live client adds HTTP request and response data to the
 same file. A replay-to-live transcript can therefore contain two input formats.
 
 ## How Yuj checks a replay
 
-The replay contract requires two complete checks. The current implementation
-also makes one narrower request check:
+The contract requires a full request check and a tool-call/result check. The
+current code implements the second with the limits below. For requests, it
+implements only one narrow subset:
 
-| Check | Required rule |
-| --- | --- |
-| Model request | Compare the request that Yuj builds with the saved request for the same turn. Run the comparison after the same model-profile conversion. |
-| Ordered tool surface (implemented subset) | When the saved pre-profile input contains `tools`, compare every function name and its order with the current pre-profile tool array before returning the saved reply. |
-| Tool call and result | Compare the tool, action, and result after Yuj runs the tool through the normal path. |
+| Check | Contract | Current code |
+| --- | --- | --- |
+| Model request | Compare the complete post-profile request for the same turn. | Compare only the ordered tool names from the pre-profile request, and only when the source transcript contains `tools`. |
+| Tool call and result | Compare the tool, action, and result after normal execution. | Run this check for the source row that the current loader retains. |
 
-The replay client performs the ordered-tool-surface check. This makes a saved
-`load_tools` call replay through the normal loader and proves that its expanded
-active set appears on the same following request. A missing recorded `tools`
-array skips this check; Yuj does not infer it from `tools_activated` trace rows.
+The tool-name check proves that a saved `load_tools` call changes the same next
+request. When the transcript has no `tools` array, Yuj skips this check. It does
+not infer the array from `tools_activated` trace rows.
 
 The current run loop separately calls the tool-call and result check. For each
 tool call that reaches this check, Yuj applies these rules in order:
@@ -274,7 +239,7 @@ model input. Supply the same input manually, and record what you supplied.
 
 Use `--replay-extra-config PATH` only for measurement code that does not change
 what the model sees. Repeat the option to add more than one file. A
-tool-surface check detects a changed active tool-name set or order when the
+tool-name check detects a changed active tool-name set or order when the
 source transcript recorded `tools`, and a later tool-call check may find other
 model-visible changes. The current code still cannot prove full request parity.
 

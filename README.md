@@ -1,12 +1,10 @@
 # Yuj
 
-Yuj means “to yoke” or “to harness” in Sanskrit.
+Yuj lets a coding model read, change, and test a Git repository while it
+manages the model's tools, shell access, context, and saved session.
 
-Yuj is a coding-agent harness that watches the LLM and keeps it on course. It
-maintains relevant context without extra LLM calls.
-
-The model can read, change, and test code in a Git repository. Yuj can use an
-online model service or a model server that you run yourself.
+Yuj connects to an online model service or a model server that you run
+yourself. The name Yuj means “to yoke” or “to harness” in Sanskrit.
 
 [Getting started](docs/getting-started.md) ·
 [CLI reference](docs/using-yuj.md) ·
@@ -88,9 +86,8 @@ continue through more than one run segment.
 - You can inspect, pause, approve, reject, and resume a session.
 - Yuj can shorten old command output when the model nears its input limit.
 - Yuj can suggest a next step when the model repeats a known failed step.
-- Yuj can optionally ask an isolated, read-only second model for a bounded next-turn advisory.
-- Yuj can disclose validated Agent Skills metadata and let the model read the
-  matching instructions on demand.
+- Yuj can ask an isolated, read-only model to review a completed turn.
+- Yuj can list validated Agent Skills and let the model read one when needed.
 - A Yuj quirk is a TOML rule that users can read, share, and measure.
 - Yuj saves the settings, model-message records, tool calls, and final status.
 - After most run segments, Yuj tries to stage all uncommitted changes in the
@@ -118,9 +115,9 @@ own repository.
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj show` | Show settings and recent session activity. |
 | `yuj resume` | Continue a paused session. |
-| `yuj rewind SESSION TURN` | Restore an enabled session's conversation and files to an earlier completed turn. |
-| `yuj approve` | Allow a shell action that needs approval. |
-| `yuj reject` | Refuse a shell action that needs approval. |
+| `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |
+| `yuj approve` | Allow a tool action that needs approval. |
+| `yuj reject` | Refuse a tool action that needs approval. |
 | `yuj sessions` | List saved sessions. |
 
 The [CLI reference](docs/using-yuj.md) lists every option for the installed

@@ -1,5 +1,5 @@
 title: Yuj
-description: Yuj is a coding-agent harness that watches the LLM and keeps it on course. It maintains relevant context without extra LLM calls.
+description: Yuj lets a coding model read, change, and test a Git repository while it manages the model's tools, shell access, context, and saved session.
 remote_theme: just-the-docs/just-the-docs@v0.12.0
 
 url: https://sydches.github.io

@@ -41,8 +41,8 @@ Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
 | `yuj resume` | Continue a paused session. |
 | `yuj rewind` | Restore a stopped session to an earlier conversation and tree turn. |
 | `yuj worktree rm` | Remove a retained session worktree and branch. |
-| `yuj approve` | Allow a shell action that needs approval. |
-| `yuj reject` | Refuse a shell action that needs approval. |
+| `yuj approve` | Allow a tool action that needs approval. |
+| `yuj reject` | Refuse a tool action that needs approval. |
 
 When you run `yuj` with no command, Yuj normally prints its help. On the first
 interactive run with no local settings file, Yuj starts interactive setup.
@@ -398,43 +398,12 @@ saved sessions.
 | --- | --- |
 | `created` | Yuj saved the first session files but has not started the task. |
 | `running` | The trace has a start event and no later end event. Check the separate `lock` line to see whether a process currently owns the session. |
-| `approval_pending` | A shell action waits for your choice. |
+| `approval_pending` | A tool action waits for your choice. |
 | `paused` | The last run segment stopped without success. The coding session can continue. |
 | `completed` | The model finished successfully or declared the task done. |
 | `error` | Yuj recorded an error as the final status. |
 
 ## Resume a session
-
-### Rewind before resuming
-
-For a session started with conversation rewind and file checkpoints enabled,
-restore an earlier completed turn with:
-
-```bash
-yuj rewind SESSION TURN
-```
-
-Use `--reason TEXT` to record an operator reason. The session must be unlocked,
-the turn must be earlier than the latest turn in the newest run segment, and
-the saved conversation must match its shadow-Git checkpoint. The command
-restores the files immediately, appends a `rewind` event without truncating the
-trace, rebuilds the state view, and pauses the session. Run the printed
-`yuj resume SESSION` command to continue with the exact messages saved at that
-turn. The configured per-session rewind limit still applies.
-
-Enable this capability in a settings overlay before the session starts:
-
-```toml
-[loop]
-rewind_enabled = true
-rewind_max_per_session = 1
-
-[tools]
-file_checkpoints_enabled = true
-```
-
-Without a rewind, resume continues to use the ordinary mechanical summary
-described below.
 
 Resume the session that Yuj selects:
 
@@ -455,9 +424,9 @@ Yuj keeps the files already changed in the target repository. It starts a new
 model context with the original task and a short summary built from the most
 recent ended run segment in the trace.
 
-Ordinary resume does not restore the full prior conversation. If an interrupt leaves no
-end event, the summary may be absent. The new context then starts from the
-original task and the current files.
+Ordinary resume does not restore the full prior conversation. If an interrupt
+leaves no end event, the summary may be absent. The new context then starts
+from the original task and the current files.
 
 The trace, savings record, and system log continue in the same session
 directory. `transcript.log`, `checkpoint.json`, and `metrics.json` describe
@@ -472,6 +441,33 @@ Press Ctrl-C during `code`, `run`, `smoke`, or `resume` to pause the
 session. Yuj saves an interrupt mark, prints the resume command, and returns
 status 130.
 
+### Rewind before the next resume
+
+Enable conversation rewind and file checkpoints before you start the session:
+
+```toml
+[loop]
+rewind_enabled = true
+rewind_max_per_session = 1
+
+[tools]
+file_checkpoints_enabled = true
+```
+
+Stop the session before you rewind it. Choose a completed turn earlier than
+the latest turn in the newest run segment, then run:
+
+```bash
+yuj rewind SESSION TURN
+```
+
+Add `--reason TEXT` when you want to record why you rewound. Yuj checks that
+the saved messages match their file checkpoint, restores the files, adds a
+`rewind` event without deleting trace rows, rebuilds the state view, and leaves
+the session paused. Run the printed `yuj resume SESSION` command to continue
+from the messages saved at that turn. `rewind_max_per_session` still limits the
+number of successful rewinds.
+
 ## Remove an isolated session worktree
 
 When `[runtime].worktree` is enabled, Yuj keeps the session's worktree and
@@ -482,18 +478,21 @@ session ID or unique reference only when you no longer need that workspace:
 yuj worktree rm SESSION
 ```
 
-The normal command refuses uncommitted files and commits that are not merged
-into the source checkout. To explicitly discard both, use:
+The command refuses uncommitted files and commits that are not merged into the
+source checkout. Use `--force` only when you intend to discard both:
 
 ```bash
 yuj worktree rm SESSION --force
 ```
 
-Yuj resolves the session through its store and verifies the recorded path,
-branch, base commit, Git registration, and ownership metadata before removal.
-It never removes a worktree automatically.
+Before removal, Yuj verifies the saved path, branch, base commit, Git
+registration, and ownership metadata. It never removes a worktree
+automatically.
 
-## Approve or reject a shell action
+## Approve or reject a tool action
+
+A permission rule can require approval for any tool. Yuj also applies a fixed
+approval check to risky shell commands.
 
 Yuj checks each shell segment in a `bash` command. It pauses when a segment
 starts with one of these command forms:
@@ -542,15 +541,17 @@ yuj resume [SESSION]
 | Command | Option | What it does |
 | --- | --- | --- |
 | `yuj approve` | `SESSION` | Select a session with a waiting request. |
-| `yuj approve` | `--always` | Approve the same tool and command for the rest of this session. |
+| `yuj approve` | `--always` | Approve the same tool action for the rest of this session. |
 | `yuj reject` | `SESSION` | Select a session with a waiting request. |
 | `yuj reject` | `--reason TEXT` | Send this reason to the model. |
-| `yuj reject` | `--always` | Reject the same tool and command for the rest of this session. |
+| `yuj reject` | `--always` | Reject the same tool action for the rest of this session. |
 
 If you omit `--reason`, Yuj sends `operator rejected the action`.
 
-`--always` matches the exact tool name and command text. It applies only to
-this coding session.
+`--always` matches the exact tool action. For `bash`, this includes the command
+text. For other tools, Yuj uses the stable argument identity described in
+[Configuration](configuration.html#apply-per-tool-permission-rules). The
+choice applies only to this coding session.
 
 Yuj does not resume while a request is waiting. Approve or reject the request
 first.

@@ -6,8 +6,8 @@ nav_order: 1
 
 # Yuj documentation
 
-Yuj is a coding-agent harness that watches the LLM and keeps it on course. It
-maintains relevant context without extra LLM calls.
+Yuj lets a coding model read, change, and test a Git repository while it
+manages the model's tools, shell access, context, and saved session.
 
 The `yuj` command starts and controls coding sessions. A coding session is one
 saved task record. It can continue after a resume.
@@ -31,6 +31,8 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 | Start a local model server | [Run a local model](serving_overlay.html) |
 | Understand the default and plain settings | [Treatment](treatment.html) |
 | Change a model, time limit, or context mode | [Configuration](configuration.html) |
+| Add a model, profile, rule, or named agent | [Extend Yuj with TOML files](extending-yuj.html) |
+| Add trusted Python at the compaction boundary | [Compaction hooks](compaction.html) |
 | Control shell access | [Sandbox](sandbox.html) |
 | Understand the files that Yuj saves | [Saved files](harness_artifacts.html) |
 | Run a fixed comparison | [Measurements](measurement.html) |
@@ -58,7 +60,7 @@ Replace `/path/to/yuj` with the path to your Yuj clone:
 ```
 
 Use `/path/to/yuj/.venv/bin/yuj approve` or
-`/path/to/yuj/.venv/bin/yuj reject` when a shell action needs your choice.
+`/path/to/yuj/.venv/bin/yuj reject` when a tool action needs your choice.
 Use `/path/to/yuj/.venv/bin/yuj resume` after you approve, reject, or stop a
 session.
 

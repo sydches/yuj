@@ -45,7 +45,7 @@ Do not pass a descriptor file with `--config`.
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
-| Threshold-triggered context compaction | A settings overlay with `[context].compaction_hook` plus a trusted Python module | The config loader resolves `module:function` at startup. | Yes. The function uses the bounded compaction-hook contract. |
+| Threshold-triggered context compaction | A settings overlay with `[context].compaction_hook` plus a trusted Python module | The config loader resolves `module:function` at startup. | Yes. The function receives a fixed, limited input and return contract. |
 | A new tool or server type | Python and its data files | The dispatcher or server launcher must know the new type. | Yes. |
 
 ## Share an extension
@@ -72,9 +72,10 @@ files. It stores language, shell, and tool quirks in the matching directories.
 Do not share an API key, private host name, or private filesystem path. Keep
 those values in `config.local.toml` or in a private runtime copy.
 
-Agent Skills can contain instructions and executable scripts. Review the whole
-directory before enabling it. See [Configuration](configuration.html#load-agent-skills-on-demand)
-for discovery, validation, collision, prompt, trace, and sandbox behavior.
+An Agent Skill may contain instructions and executable scripts. Review the
+whole directory before you enable it. See
+[Configuration](configuration.html#load-agent-skills-on-demand) for discovery,
+validation, duplicate names, prompt use, provenance, and file access.
 
 Test a shared extension before you use it on a real repository. The sections
 below give the test command for each extension type.
@@ -303,11 +304,17 @@ Yuj first looks for an exact profile directory. It next looks for one profile
 with the requested `[profile].family`. It uses `_base` when neither exists.
 More than one family match is an error.
 
-A child profile inherits `edit_format` when it omits the field. `exact` sends
-the `edit` schema, `apply_patch` sends the Codex V4A patch schema, `udiff`
-sends the standard unified-diff schema, and `whole` sends the `write` schema.
-The loader rejects any other value. Use `[tools].edit_format` or
-`--edit-format` for a run-specific override instead of copying a model profile.
+A child profile inherits `edit_format` when it omits the field:
+
+| Value | Tool schema |
+| --- | --- |
+| `exact` | `edit` |
+| `apply_patch` | Codex V4A `apply_patch` |
+| `udiff` | Standard unified-diff `udiff` |
+| `whole` | Complete-file `write` |
+
+Yuj rejects any other value. For one run, use `[tools].edit_format` or
+`--edit-format` instead of copying the profile.
 
 Use these profile fields for these active jobs:
 
@@ -319,7 +326,7 @@ Use these profile fields for these active jobs:
 | `[model].supports_system_role` | Keep or fold the system message. |
 | `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
 | `[capacity].preamble` | Add text before the system prompt. |
-| `[capacity].max_tools` | Limit the fixed tool surface, or the active count when deferred loading is enabled. |
+| `[capacity].max_tools` | Limit the fixed tool set, or the active count when deferred loading is enabled. |
 | `[capacity].simplify_schemas` | Remove descriptions from tool schemas. |
 | `[normalize].rules` | Apply supported rules to a model reply. |
 | `[denormalize].rules` | Choose how Yuj sends the system message. |
@@ -366,16 +373,20 @@ max_turns = 12
 read_only = true
 ```
 
-The descriptor must contain exactly one `[agent]` table. `model_profile`
-selects a profile name or family under `profiles/`; `tools` is the complete
-model-facing allowlist. The prompt must be an existing Markdown file below
-`agents/`.
-Agents default to read-only, which rejects mutation tools and limits `bash` to
-a small inspection-command allowlist. Set `read_only = false` only when the
-agent is deliberately allowed to modify the task directory.
+The descriptor must contain one `[agent]` table:
+
+| Field | Meaning |
+| --- | --- |
+| `model_profile` | Profile name or family under `profiles/`. |
+| `tools` | Complete model-facing tool allowlist. |
+| `system_prompt_file` | Existing Markdown file below `agents/`. |
+| `max_turns` | Descriptor turn limit, still capped by the public tool setting. |
+| `read_only` | Reject mutation tools and allow only simple inspection commands through `bash`. Defaults to `true`. |
+
+Set `read_only = false` only when the agent should change the task directory.
 
 Enable the caller with `[tools].task_enabled = true`. The public depth and turn
-caps remain authoritative over descriptor values. See
+settings still cap descriptor values. See
 [`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
 for the complete validation rules.
 
@@ -479,29 +490,26 @@ Do not use a recursive forced delete. Choose a bounded operation and name its
 exact target.
 ```
 
-`name` may be omitted; the filename stem then owns the name. Each file needs
-`condition`, `astCondition`, or both. `condition` is a Python regular
-expression. A string or array of strings is accepted; any matching condition
-triggers the rule.
+Use these frontmatter fields:
 
-`scope` accepts a comma-separated string or an array made from `text`,
-`thinking`, `tool`, and `tool:<name>(<glob>)`. `toolcall` is accepted as an
-alias for `tool`. The default is `text` plus `tool`. A scoped tool glob is
-matched against path-like tool arguments. Top-level `globs` adds a path gate
-to every scope in that rule. Repository globs support `*`, `?`, character
-classes, and `**`; `**/*.py` includes a Python file at the repository root.
+| Field | Meaning |
+| --- | --- |
+| `name` | Rule name. The filename stem supplies it when omitted. |
+| `condition` | One Python regular expression or a list. Any match triggers the rule. |
+| `astCondition` | Structural pattern for `edit` and `write` content. A rule needs `condition`, `astCondition`, or both. |
+| `scope` | Comma-separated text or a list made from `text`, `thinking`, `tool`, and `tool:<name>(<glob>)`. Defaults to `text` and `tool`; `toolcall` is an alias for `tool`. |
+| `globs` | Optional path gate for every scope. Repository globs support `*`, `?`, character classes, and `**`. |
+| `interruptMode` | `never`, `prose-only`, `tool-only`, or `always`. Defaults to `always`. |
+| `repeatMode` | `once` or `after-gap`. Defaults to `once`. |
+| `repeatGap` | Positive turn gap for `after-gap`; otherwise use `stream_rules_repeat_gap`. |
 
-`astCondition` provides a structural pattern for `edit` and `write` content.
-It runs only when a path selects one of Yuj's installed Python,
-JavaScript/TypeScript, Go, Rust, or Java parsers. Uppercase placeholders such
-as `$ARG` match one syntax node; repeated uses of the same placeholder must
-have identical source text. Structural matching is local and never downloads
-a grammar.
+A scoped tool glob checks path-like tool arguments. `**/*.py` also matches a
+Python file at the repository root.
 
-`interruptMode` is `never`, `prose-only`, `tool-only`, or `always`; the default
-is `always`. `repeatMode` is `once` or `after-gap`; the default is `once`.
-An `after-gap` rule may set an integer `repeatGap >= 1`, otherwise it uses
-`[loop].stream_rules_repeat_gap`.
+Structural conditions use Yuj's local parsers for Python, JavaScript and
+TypeScript, Go, Rust, and Java. An uppercase placeholder such as `$ARG` matches
+one syntax node. Repeated placeholders must match the same source text. Yuj
+never downloads a grammar while it checks a rule.
 
 Yuj loads files in filename order and rejects an invalid file or duplicate
 rule name before the first model request. Use a prefix such as `10-` when
@@ -552,11 +560,11 @@ Read [Model tools](model-tools.html) for every public tool and input.
 
 ### Run a command at a lifecycle event
 
-Use `[hooks]` when a trusted host program must inspect, reject, rewrite, or
-annotate an event without becoming a model-callable tool. The public events
-are `session_start`, `pre_model`, `pre_tool`, `post_tool`, `done`, and
-`session_end`. Keep the executable outside the task repository, pass its path
-as `command`, and enable the group explicitly:
+Use a lifecycle hook when a trusted host program must inspect, reject, rewrite,
+or add context to an event without becoming a model tool. The events are
+`session_start`, `pre_model`, `pre_tool`, `post_tool`, `done`, and
+`session_end`. Keep the executable outside the task repository and enable it
+explicitly:
 
 ```toml
 [hooks]
@@ -568,10 +576,9 @@ command = ["/opt/yuj-hooks/audit-result"]
 timeout_s = 3
 ```
 
-This is a trusted-code extension seam, not a plugin installer or another
-shell-quirk rule. Yuj runs it as the harness account outside the model-command
-sandbox. The task can cause configured events and influence their JSON input,
-so the program must parse that input defensively. Read
+Yuj runs the hook as your account, outside the model-command sandbox. The task
+can cause events and influence their JSON input, so treat that input as
+untrusted. Read
 [Configuration](configuration.html#run-trusted-lifecycle-hooks) for payloads,
 effects, ordering, trace, and replay behavior, and read
 [Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task) before enabling
@@ -594,9 +601,9 @@ Set `[loop].bash_transforms_universal_enabled = false` to turn off the
 universal rewrite list. Set `[loop].bash_quirks_forbidden_enabled = false` to
 turn off the forbidden list. Set `[tools].bash_redirect_read_side = true` to
 activate redirect rules targeting `read`, `grep`, or `glob`; redirect rules
-targeting `write` or `edit` remain active. Every redirect is gated on its
-target appearing in the effective model-facing tool set. Secret redaction has
-no off switch.
+targeting `write` or `edit` remain active. A redirect applies only when its
+target appears in the tool set sent to the model. Secret redaction has no off
+switch.
 
 Test a new rule against both a matching command and a command that must stay
 unchanged:
@@ -618,16 +625,14 @@ the tool handler.
 
 ### Change a prompt-injection pattern
 
-Copy the checked-in `security/patterns.toml` registry, review every regular
-expression, and point a small settings overlay at the copy with
-`[security].patterns_file`. Test both matching and non-matching text for every
-rule. The current registry shape supports a rule name, finding class, `args`
-or `result` stages, and one regular expression. A new scan stage, classifier,
-or action needs Python.
+Copy `security/patterns.toml`, review each regular expression, and point
+`[security].patterns_file` at the copy. Test matching and non-matching text for
+every rule. Each rule has a name, finding class, `args` or `result` stages, and
+one regular expression. A new scan stage, classifier, or action needs Python.
 
 Read [Configuration](configuration.html#scan-untrusted-text-for-prompt-injection)
-for the canonical `security.scan_mode`, `security.patterns_file`, and
-`security.block_classes` contract and the exact trace/model boundaries.
+for `security.scan_mode`, `security.patterns_file`, and
+`security.block_classes`, including what Yuj records and what the model sees.
 
 ### Change tool schemas or descriptions
 
@@ -653,11 +658,10 @@ Run the schema tests after either change:
 
 ## Know when TOML is not enough
 
-The custom compaction hook is the narrow public Python extension point for
-context compaction. Configure it with `context.compaction_hook`; do not fork
-`harness/_loop/compaction.py`. Read [Compaction hooks](compaction.html) before
-enabling one. Hook modules are trusted in-process code, and an invalid import
-stops startup.
+Use `context.compaction_hook` when you need custom Python at the compaction
+boundary. Do not fork `harness/_loop/compaction.py`. Read
+[Compaction hooks](compaction.html) first. The module runs inside Yuj, and an
+invalid import stops startup.
 
 | Change | Why Python is needed |
 | --- | --- |
