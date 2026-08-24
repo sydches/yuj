@@ -134,8 +134,9 @@ def _parent_session(
     trace_file=None,
     client=None,
     run_root: Path | None = None,
+    cfg=None,
 ):
-    cfg = _task_cfg()
+    cfg = cfg or _task_cfg()
     parent_client = client or ScriptedClient([])
 
     def factory(parent, spec, task_id):
@@ -307,6 +308,31 @@ def test_child_trace_parent_summary_and_token_accounting(tmp_path):
         "completion_tokens": 4,
         "total_tokens": 15,
     }
+
+
+def test_subagent_does_not_inherit_primary_advisor(tmp_path):
+    agents = _write_agent(tmp_path / "agents")
+    child = ScriptedClient([_stop("exact child result", 11, 4)])
+    cfg, parent, _runtime, _trace = _parent_session(
+        tmp_path,
+        child_client=child,
+        agents_dir=agents,
+        cfg=_task_cfg(advisor_enabled=True),
+    )
+
+    result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Find the exact owner."},
+        cwd=str(tmp_path),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+
+    assert result == "exact child result"
+    assert child.cfg.advisor_enabled is False
+    assert not (
+        tmp_path / "run" / "subagents" / "task-000001" / "advisor.jsonl"
+    ).exists()
 
 
 def test_production_model_router_builds_a_fresh_profiled_child(tmp_path):

@@ -402,6 +402,7 @@ class SubagentRuntime:
                 done_require_pretest_parity=False,
                 cache_affinity=False,
                 cache_retention="off",
+                advisor_enabled=False,
             )
             if "cfg" in getattr(binding.client, "__dict__", {}):
                 binding.client.cfg = child_cfg
