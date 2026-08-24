@@ -39,6 +39,7 @@ Do not pass a descriptor file with `--config`.
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
 | On-demand task instructions and resources | An [Agent Skills](https://agentskills.io/) directory containing `SKILL.md` | `[prompts].skills_dirs` discovers skill collections; `[prompts].skill_paths` names exact skills. | No. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
+| A prompt-injection scan rule | `security/patterns.toml` or another reviewed registry | The dispatcher and imported-instruction loader apply `[security]` settings. | No, for the current pattern shape. |
 | A trusted command at a harness lifecycle event | A small settings file under `[hooks]`, plus an independently installed executable | The config loader validates the handler and the harness sends it JSON on standard input. | No, for the supported lifecycle effects. |
 | A repository-specific live response correction | `.harness/stream_rules/*.md` in the task repository | The harness validates the enabled rule directory at task startup. | No, for the current rule fields and supported structural languages. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
@@ -159,6 +160,7 @@ The public data files have separate jobs.
 | `profiles/` | Adapt model messages, tool schemas, and replies. |
 | `scripts/llm_solver/language_quirks/` | Describe test runners and their output. |
 | `scripts/llm_solver/bash_quirks/` | Describe shell rewrites, refusals, and redactions. |
+| `security/patterns.toml` | Define prompt-injection scan rules and finding classes. |
 | `scripts/llm_solver/tool_quirks/` | Describe supported result changes for non-shell tools. |
 | `<task repository>/.harness/stream_rules/` | Describe repository-specific model-output corrections. |
 
@@ -613,6 +615,19 @@ for `glob`. Put its numeric limits in a settings overlay under `[tools]`.
 The current `tool_quirks` loader is not a general tool plugin loader. A new
 result transform needs Python in `tool_quirks/transforms.py` and a call from
 the tool handler.
+
+### Change a prompt-injection pattern
+
+Copy the checked-in `security/patterns.toml` registry, review every regular
+expression, and point a small settings overlay at the copy with
+`[security].patterns_file`. Test both matching and non-matching text for every
+rule. The current registry shape supports a rule name, finding class, `args`
+or `result` stages, and one regular expression. A new scan stage, classifier,
+or action needs Python.
+
+Read [Configuration](configuration.html#scan-untrusted-text-for-prompt-injection)
+for the canonical `security.scan_mode`, `security.patterns_file`, and
+`security.block_classes` contract and the exact trace/model boundaries.
 
 ### Change tool schemas or descriptions
 

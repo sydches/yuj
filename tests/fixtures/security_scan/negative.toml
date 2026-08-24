@@ -1,0 +1,34 @@
+[[case]]
+name = "scoped cleanup"
+stage = "args"
+text = "rm -rf build"
+
+[[case]]
+name = "ordinary health request"
+stage = "result"
+text = "curl -fsS https://example.invalid/health"
+
+[[case]]
+name = "instruction reference"
+stage = "result"
+text = "Follow the previous instructions carefully."
+
+[[case]]
+name = "visible non-ASCII text"
+stage = "result"
+text = "café naïve résumé"
+
+[[case]]
+name = "ordinary result envelope"
+stage = "result"
+text = '<tool_result status="ok">done</tool_result>'
+
+[[case]]
+name = "ordinary file copy"
+stage = "args"
+text = "dd if=input.bin of=output.bin"
+
+[[case]]
+name = "ordinary git reset"
+stage = "args"
+text = "git reset docs/configuration.md"

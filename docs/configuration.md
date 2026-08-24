@@ -162,6 +162,9 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[security].scan_mode` | Scan untrusted tool and imported-instruction text as `off`, `flag`, or `block`. The default is `flag`. |
+| `[security].patterns_file` | Select the TOML pattern registry. A relative path starts at the active `config.toml` root. |
+| `[security].block_classes` | Name the finding classes that `block` mode rejects. Other matched classes remain flags. |
 | `[tools].task_enabled` | Add the sequential named-agent `task` tool. Off by default. |
 | `[tools].subagent_depth` | Cap nested `task` calls by child edges from the root session. Defaults to `1`. |
 | `[tools].subagent_max_turns` | Cap each named agent's descriptor-level turn limit. Defaults to `20`. |
@@ -789,6 +792,66 @@ through that entire sequence. An `allow` decision therefore does not bypass
 Permission denials use the normal error ladder. Raw `permission` trace rows
 record only tool, matched rule, and effective decision; they do not record the
 matched command/path and are not projected into `.solver/state.json`.
+
+### Scan untrusted text for prompt injection
+
+The checked-in default is a visible warning policy:
+
+```toml
+[security]
+scan_mode = "flag"  # off | flag | block
+patterns_file = "security/patterns.toml"
+block_classes = [
+  "destructive_command",
+  "exfiltration",
+  "prompt_injection",
+  "invisible_unicode",
+  "embedded_tool_call",
+]
+```
+
+`off` does not load or apply the registry. `flag` executes the tool and
+prepends one value-free `<security-finding .../>` marker for each matching
+rule inside a `<tool_result>` envelope. This security envelope is present for
+a flagged result even if the general unified-envelope setting is off.
+
+`block` rejects findings whose class appears in `block_classes`. A match from
+another class is still flagged. An empty class list therefore makes `block`
+mode flag every match without rejecting one. An argument block happens before
+redirects, command rewrites, or tool execution. A result block happens after
+execution but discards the matched result before it reaches the model. Both
+return an error envelope with `error_kind="security_block"` and participate in
+the ordinary guardrail error ladder.
+
+The scanner examines string values in tool arguments and the raw result from
+each dispatched tool. It also scans resolved `--system-prompt` arm files,
+project instruction files, Agent Skills catalog metadata, enabled
+`.harness/injections/*.md` bodies, and enabled `.harness/stream_rules/*.md`
+bodies at startup. A skill body subsequently loaded with `read` crosses the
+ordinary tool-result scan. Harness pretest output is scanned before it is
+prepended to the task message. A startup block stops before the first model
+request. Flagged imported or pretest content carries the same finding marker
+in its prompt block. The task prompt, the built-in system header, and trusted
+model-profile preambles are not scanned; this keeps benchmark task text from
+becoming a security-policy decision.
+
+The default registry at `security/patterns.toml` is pattern-only and makes no
+model or network request. It detects broad destructive commands, credential
+exfiltration command shapes, instruction-override phrases, invisible Unicode
+controls, and embedded tool-call syntax. Each `[[pattern]]` table has a unique
+lowercase `rule`, a lowercase `class`, `stages = ["args", "result"]` or a
+subset, and a Python `regex`. Invalid, duplicate, empty-matching, or unreadable
+active registries fail configuration loading. Use an absolute path for a
+registry outside the Yuj installation. In `block` mode, a class name absent
+from that active registry is also a configuration error rather than a silent
+non-blocking typo.
+
+Every match writes a raw
+`security_finding{id, rule, stage, action}` trace event with an `SEC-<uuid>`
+identifier. The event contains no matched text, argument value, result value,
+or source path. It is not independently projected into `.solver/state.json`;
+the associated flagged or blocked `tool_call` result follows the ordinary
+mechanical projection.
 
 ### Run trusted lifecycle hooks
 

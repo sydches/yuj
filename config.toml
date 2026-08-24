@@ -499,6 +499,22 @@ path_rules_enabled = false  # opt in to paths= glob matching for read/edit/write
 path_rule_repeat = false    # default false fires each path rule once per session; per-rule repeat overrides it
 
 # ---------------------------------------------------------------------------
+# Prompt-injection scan at untrusted tool and imported-instruction boundaries.
+# Findings contain rule metadata only; matched content is never copied into
+# the raw finding trace event. ``block`` rejects only the listed classes.
+# ---------------------------------------------------------------------------
+[security]
+scan_mode = "flag"                 # off | flag | block
+patterns_file = "security/patterns.toml"
+block_classes = [
+  "destructive_command",
+  "exfiltration",
+  "prompt_injection",
+  "invisible_unicode",
+  "embedded_tool_call",
+]
+
+# ---------------------------------------------------------------------------
 # Declarative per-tool permission policy. Empty rules preserve allow-by-default
 # behavior. Later matching entries win; assistant-only "ask" pauses for an
 # operator, while measurement runs resolve "ask" to deny.

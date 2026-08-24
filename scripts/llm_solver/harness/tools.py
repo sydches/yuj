@@ -59,6 +59,13 @@ from .tool_specs import (
 )
 from .checkpoint_rewind import unavailable_tool_result
 from .process_manager import AdmittedProcessOutput, ProcessManagerError
+from .security_scan import (
+    SecurityScanOutcome,
+    SecurityScanner,
+    emit_findings,
+    render_security_block,
+    security_block_stage,
+)
 from .sandbox.ignore_policy import (
     IgnorePolicy,
     activate_ignore_policy,
@@ -207,11 +214,13 @@ def _dispatch_exec_cell(args, cwd, cfg):
             stale_guard=inherited.get("stale_guard"),
             active_tools=EXEC_CELL_API_TOOL_NAMES,
             redirect_event_sink=inherited.get("redirect_event_sink"),
+            security_event_sink=inherited.get("security_event_sink"),
             ignore_policy=inherited.get("ignore_policy"),
             execution_metadata=metadata,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
         )
+        metadata["gate_blocked"] = security_block_stage(result) == "args"
         return result, metadata
 
     return execute_cell(
@@ -350,6 +359,7 @@ def admit_tool_output(
     output_control=None,
     redactions=None,
     filter_shell_output: bool = True,
+    security_findings=(),
 ) -> str:
     """Apply the single model-facing output-admission pipeline.
 
@@ -386,7 +396,19 @@ def admit_tool_output(
         from ..bash_quirks import apply_redactions
         result = apply_redactions(result, redactions)
 
-    if (
+    finding_markers = "\n".join(
+        finding.marker() for finding in security_findings
+    )
+    if finding_markers and result.startswith("<tool_result"):
+        open_end = result.find(">")
+        if open_end >= 0:
+            result = (
+                result[: open_end + 1]
+                + "\n"
+                + finding_markers
+                + result[open_end + 1 :]
+            )
+    elif finding_markers or (
         getattr(cfg, "tools_unified_envelope_enabled", False)
         and not owns_native_envelope
     ):
@@ -396,7 +418,8 @@ def admit_tool_output(
         if error_kind:
             attrs += f' error_kind="{_xml_attr(error_kind)}"'
         attrs += f' v="{_UNIFIED_ENVELOPE_VERSION}"'
-        result = f'<tool_result{attrs}>\n{result}\n</tool_result>'
+        body = f"{finding_markers}\n{result}" if finding_markers else result
+        result = f'<tool_result{attrs}>\n{body}\n</tool_result>'
 
     return truncate_output(result, cfg)
 
@@ -407,6 +430,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              tool_registry: ToolRegistry | None = None,
              stale_guard=None,
              active_tools=(), redirect_event_sink=None,
+             security_event_sink=None,
              rewrite_log: list | None = None,
              execution_metadata: dict | None = None,
              ignore_policy: IgnorePolicy | None = None,
@@ -434,6 +458,23 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     handler = reg.handlers.get(name)
     if handler is None:
         return f"ERROR: unknown tool '{name}'"
+
+    scanner = SecurityScanner.from_config(cfg)
+    argument_scan = scanner.scan_arguments(arguments)
+    try:
+        emit_findings(argument_scan.findings, security_event_sink)
+    except Exception as exc:
+        log.warning("security finding emit failed: %s", exc)
+    security_findings = list(argument_scan.findings)
+    if argument_scan.blocked:
+        result = render_security_block(name, argument_scan)
+        if execution_metadata is not None:
+            execution_metadata["executed"] = False
+            execution_metadata["security_blocked_stage"] = "args"
+            execution_metadata["output_sha256"] = hashlib.sha256(
+                result.encode("utf-8", errors="replace")
+            ).hexdigest()
+        return truncate_output(result, cfg)
 
     # Dedicated-tool redirects inspect the exact model command before any
     # rewrite. A match is a typed tool error: no shell handler runs, no stale
@@ -543,6 +584,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                     "tool_registry": reg,
                     "stale_guard": stale_guard,
                     "redirect_event_sink": redirect_event_sink,
+                    "security_event_sink": security_event_sink,
                     "ignore_policy": ignore_policy,
                 })
                 try:
@@ -554,6 +596,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             except (KeyError, TypeError) as e:
                 return f"ERROR: bad arguments for {name}: {e}"
 
+    already_admitted = isinstance(result, AdmittedProcessOutput)
     applied_operations = tuple(getattr(result, "applied_operations", ()))
     raw_exit_status = getattr(result, "exit_status", None)
     raw_timed_out = bool(getattr(result, "timed_out", False))
@@ -561,6 +604,25 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     if execution_metadata is not None and canonical_todos is not None:
         execution_metadata["todos"] = [dict(item) for item in canonical_todos]
     exec_cell_metadata = getattr(result, "trace_metadata", None)
+
+    # Process-manager polls are scanned in their admission callback before
+    # proc_poll records the exact model-visible bytes. Do not create a second
+    # finding when that admitted value returns through dispatch.
+    result_scan = (
+        SecurityScanOutcome()
+        if already_admitted
+        else scanner.scan_text(str(result), stage="result")
+    )
+    try:
+        emit_findings(result_scan.findings, security_event_sink)
+    except Exception as exc:
+        log.warning("security finding emit failed: %s", exc)
+    security_findings.extend(result_scan.findings)
+    if result_scan.blocked:
+        combined_scan = SecurityScanOutcome(tuple(security_findings))
+        result = render_security_block(name, combined_scan)
+        if execution_metadata is not None:
+            execution_metadata["security_blocked_stage"] = "result"
 
     # Update the mechanical read ledger only after an operation actually
     # succeeded. Observation failures never turn a completed tool call into a
@@ -607,7 +669,6 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     if stale_decision is not None and stale_decision.message and not stale_decision.blocked:
         result = str(result) + "\n\n" + stale_decision.message
 
-    already_admitted = isinstance(result, AdmittedProcessOutput)
     if execution_metadata is not None:
         execution_metadata["executed"] = executed
         if callable(exec_cell_metadata):
@@ -620,6 +681,19 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             execution_metadata["timed_out"] = bool(getattr(result, "timed_out", False))
     if already_admitted:
         result = str(result)
+        if security_findings:
+            # Background polls already passed through ordinary filtering and
+            # redaction before the raw proc_poll row was written. Add only
+            # the newly detected marker/envelope; never transform the bytes a
+            # second time.
+            result = admit_tool_output(
+                name,
+                result,
+                arguments=arguments,
+                cfg=cfg,
+                filter_shell_output=False,
+                security_findings=security_findings,
+            )
     else:
         result = admit_tool_output(
             name,
@@ -629,6 +703,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             output_control=output_control,
             redactions=redactions,
             filter_shell_output=not redirected,
+            security_findings=(
+                () if result_scan.blocked else security_findings
+            ),
         )
     if execution_metadata is not None:
         execution_metadata["output_sha256"] = hashlib.sha256(

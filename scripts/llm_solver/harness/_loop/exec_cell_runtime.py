@@ -8,6 +8,7 @@ from .._tool_filters import resolve_tool_permission
 from .._tools.exec_cell import execute_cell
 from ..approvals import approval_decision, approval_transport_available
 from ..schemas import get_exec_cell_function_schemas
+from ..security_scan import security_block_stage
 from ..tool_specs import EXEC_CELL_API_TOOL_NAMES
 from ..tool_validation import ToolSchemaSet
 from .session_io import _summarize_args
@@ -129,10 +130,14 @@ def build_session_exec_cell_handler(
                 stale_guard=session._stale_guard,
                 active_tools=EXEC_CELL_API_TOOL_NAMES,
                 redirect_event_sink=session._redirect_event_sink,
+                security_event_sink=session._security_event_sink,
                 ignore_policy=session._ignore_policy,
                 effective_env=session._effective_env,
                 allow_login_shell=session._allow_login_shell,
                 execution_metadata=execution_metadata,
+            )
+            execution_metadata["gate_blocked"] = (
+                security_block_stage(result) == "args"
             )
             return result, execution_metadata
 

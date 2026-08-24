@@ -263,6 +263,18 @@ class Config:
     runtime_mode: str = "measurement"
     permissions_rules: dict[str, object] = field(default_factory=dict)
     permissions_ask_fallback: str = "deny"
+    # Pattern-based scan at the untrusted tool/prompt boundary. ``flag`` is
+    # the safe default; ``block`` rejects only classes named by the explicit
+    # block list, while preserving value-free findings for every match.
+    security_scan_mode: str = "flag"
+    security_patterns_file: str = "security/patterns.toml"
+    security_block_classes: tuple[str, ...] = (
+        "destructive_command",
+        "exfiltration",
+        "prompt_injection",
+        "invisible_unicode",
+        "embedded_tool_call",
+    )
     analysis_task_format: str = "auto"  # resolved per-repo via detect_runner; multilingual default
     provider: str = "openai-compatible"
     rumination_gate_max_blocks: int = 0
@@ -773,7 +785,10 @@ class Config:
 
 # Every key must exist in config.toml — no silent defaults at read time.
 # Values here are the hardcoded safety net only for keys intentionally optional.
-_REQUIRED_SECTIONS = ("server", "model", "loop", "output", "tools", "experiment", "prompts")
+_REQUIRED_SECTIONS = (
+    "server", "model", "loop", "output", "tools", "experiment", "prompts",
+    "security",
+)
 
 
 

@@ -24,6 +24,11 @@ from ...server.request_controls import CacheUsageAccumulator
 from ..context import ContextManager
 from ..solver import write_checkpoint, write_run_metrics
 from ..state_writer import write_state_from_trace
+from ..security_scan import (
+    SecurityScanBlocked,
+    SecurityScanner,
+    prepend_finding_markers,
+)
 from . import (
     _normalize_repo_timestamps,
     _pretest_is_green,
@@ -36,6 +41,7 @@ from ._driver_setup import (
     load_system_prompt_and_provenance,
     load_transforms_and_estimator,
     resolve_task_format, resolve_run_paths,
+    scan_session_injections, scan_session_stream_rules,
     setup_run_outputs, thinking_trace_fields,
 )
 from ._session_setup import build_context_manager, inject_resume_messages
@@ -218,8 +224,16 @@ def solve_task(
     resolved_injections, injection_import_tree = load_session_injections(
         cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
     )
+    (resolved_injections, injection_security_findings,
+     injection_security_blocked) = scan_session_injections(
+         cfg, resolved_injections
+    )
     resolved_stream_rules, stream_rule_files = load_session_stream_rules(
         cfg, work_dir,
+    )
+    (resolved_stream_rules, stream_security_findings,
+     stream_security_blocked) = scan_session_stream_rules(
+         cfg, resolved_stream_rules
     )
     if injection_import_tree:
         prompt_metadata = replace(
@@ -227,6 +241,30 @@ def solve_task(
             prompt_import_tree=(
                 *prompt_metadata.prompt_import_tree,
                 *injection_import_tree,
+            ),
+        )
+    if injection_security_findings:
+        prompt_metadata = replace(
+            prompt_metadata,
+            security_findings=(
+                *prompt_metadata.security_findings,
+                *injection_security_findings,
+            ),
+            security_blocked=(
+                prompt_metadata.security_blocked
+                or injection_security_blocked
+            ),
+        )
+    if stream_security_findings:
+        prompt_metadata = replace(
+            prompt_metadata,
+            security_findings=(
+                *prompt_metadata.security_findings,
+                *stream_security_findings,
+            ),
+            security_blocked=(
+                prompt_metadata.security_blocked
+                or stream_security_blocked
             ),
         )
     prev_session: "Session | None" = None
@@ -385,6 +423,19 @@ def solve_task(
                 f"yuj_container={env_fields['yuj_container']!r}). Refusing "
                 "to start a session that would run model commands unsandboxed."
             )
+        for finding in prompt_metadata.security_findings:
+            _emit_trace_event(
+                trace_file,
+                "security_finding",
+                session_number=start_session_num,
+                turn_number=0,
+                **finding.trace_fields(),
+            )
+        if prompt_metadata.security_blocked:
+            raise SecurityScanBlocked(
+                "security scan blocked imported instruction content before "
+                "the first model call"
+            )
         for session_num in range(start_session_num, end_session_num + 1):
             # Pretest: run failing tests BEFORE every session. Verdict becomes
             # the first block of the session's first user message. On sessions
@@ -397,6 +448,25 @@ def solve_task(
                 pretest_timeout=cfg.pretest_timeout,
                 pretest_head_chars=cfg.pretest_head_chars,
                 pretest_tail_chars=cfg.pretest_tail_chars,
+            )
+            pretest_scan = SecurityScanner.from_config(cfg).scan_text(
+                pretest_block, stage="result"
+            )
+            for finding in pretest_scan.findings:
+                _emit_trace_event(
+                    trace_file,
+                    "security_finding",
+                    session_number=session_num,
+                    turn_number=0,
+                    **finding.trace_fields(),
+                )
+            if pretest_scan.blocked:
+                raise SecurityScanBlocked(
+                    "security scan blocked pretest output before the first "
+                    "model call"
+                )
+            admitted_pretest_block = prepend_finding_markers(
+                pretest_block, pretest_scan.findings
             )
             _pretest_duration_ms = int((time.time() - _pretest_t0) * 1000)
             # Record a pretest_run trace event so replay tools can answer
@@ -412,14 +482,14 @@ def solve_task(
             # `pretest_block` per
             # session — mirrors the existing protocol_commandments per-
             # task entry.
-            if pretest_block:
+            if admitted_pretest_block:
                 from ..savings import get_ledger as _get_ledger
                 _get_ledger().record(
                     bucket="pretest_block",
                     layer="harness",
                     mechanism=f"session_{session_num}",
                     input_chars=0,
-                    output_chars=len(pretest_block),
+                    output_chars=len(admitted_pretest_block),
                     measure_type="exact",
                     ctx={"duration_ms": _pretest_duration_ms},
                 )
@@ -495,7 +565,7 @@ def solve_task(
                 pending_handoff = None
 
             if pretest_block:
-                initial = pretest_block + "\n" + initial
+                initial = admitted_pretest_block + "\n" + initial
             log.info("[session %d/%d] %s", session_num, end_session_num, work_dir.name)
             model_binding = model_role_runtime.begin_model_session(client, cfg)
             session_client, session_cfg = model_binding.client, model_binding.config

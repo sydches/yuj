@@ -112,6 +112,17 @@ def _outcome_fields(
             "exit_status": None,
             "error_class": "harness_gate",
         }
+    status, error_kind = derive_envelope_status(result)
+    # A result-stage security block happens after the handler and therefore
+    # may retain a successful raw exit status.  The admitted error envelope
+    # is authoritative for the model-visible outcome.
+    if error_kind == "security_block":
+        return {
+            "outcome": "error",
+            "pass_fail": "fail",
+            "exit_status": None,
+            "error_class": "security_block",
+        }
     execution_metadata = execution_metadata or {}
     if execution_metadata.get("timed_out"):
         return {
@@ -130,7 +141,6 @@ def _outcome_fields(
                 "exit_status": int(exit_status),
                 "error_class": "" if passed else "nonzero_exit",
             }
-    status, error_kind = derive_envelope_status(result)
     pass_fail = "pass" if classify_outcome(result) == "OK" else "fail"
     exit_status = _exit_status(result)
     if exit_status is None and tool_name in {"bash", "run_tests"} and pass_fail == "pass":
