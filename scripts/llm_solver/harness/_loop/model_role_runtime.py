@@ -104,7 +104,16 @@ def _target_config(cfg: Config, resolution: ResolvedModelRole) -> Config:
     )
 
 
-def _effective_role_specs(cfg: Config) -> dict[str, object]:
+def _main_profile_name(cfg: Config, main_profile: Any) -> str:
+    """Keep the wire model ID separate from the profile actually loaded."""
+    return (
+        cfg.profile_name
+        or str(getattr(main_profile, "name", "") or "")
+        or cfg.model
+    )
+
+
+def _effective_role_specs(cfg: Config, *, main_profile_name: str) -> dict[str, object]:
     """Return configured roles plus the canonical ``advisor.*`` target.
 
     ``advisor.model`` and ``advisor.endpoint`` are the public owners for this
@@ -117,7 +126,7 @@ def _effective_role_specs(cfg: Config) -> dict[str, object]:
         return specs
     specs.pop("advisor", None)
     specs["advisor"] = {
-        "profile": cfg.profile_name or cfg.model,
+        "profile": main_profile_name,
         "model": getattr(cfg, "advisor_model", "") or cfg.model,
         "endpoint": getattr(cfg, "advisor_endpoint", "") or cfg.base_url,
         "context_size": cfg.context_size,
@@ -146,8 +155,8 @@ def build_model_role_runtime(
     client_factory: Callable[[Config, Any], Any],
 ) -> ModelRoleRuntime:
     """Validate all role profiles and attach lazy role routing to ``main_client``."""
-    main_profile_name = cfg.profile_name or cfg.model
     main_profile = getattr(main_client, "profile", None)
+    main_profile_name = _main_profile_name(cfg, main_profile)
 
     def profile_loader(name: str) -> Any:
         if name == main_profile_name and (
@@ -166,7 +175,9 @@ def build_model_role_runtime(
             api_key=cfg.api_key,
             context_size=cfg.context_size,
         ),
-        role_specs=_effective_role_specs(cfg),
+        role_specs=_effective_role_specs(
+            cfg, main_profile_name=main_profile_name
+        ),
         profile_loader=profile_loader,
     )
     _validate_advisor_profile(cfg, resolver)
@@ -241,7 +252,7 @@ def validate_model_role_profiles(
     profiles_dir: Path,
 ) -> None:
     """Eagerly validate configured role profiles for client-free startup paths."""
-    main_profile_name = cfg.profile_name or cfg.model
+    main_profile_name = _main_profile_name(cfg, main_profile)
 
     def profile_loader(name: str) -> Any:
         if name == main_profile_name and main_profile is not None:
@@ -258,7 +269,9 @@ def validate_model_role_profiles(
             api_key=cfg.api_key,
             context_size=cfg.context_size,
         ),
-        role_specs=_effective_role_specs(cfg),
+        role_specs=_effective_role_specs(
+            cfg, main_profile_name=main_profile_name
+        ),
         profile_loader=profile_loader,
     )
     _validate_advisor_profile(cfg, resolver)

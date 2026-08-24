@@ -157,6 +157,29 @@ def test_runtime_eagerly_validates_roles_and_routes_unset_role_to_main():
         )
 
 
+def test_runtime_keeps_exact_wire_model_id_separate_from_loaded_profile():
+    exact_model_id = "/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+    cfg = _runtime_config(
+        model=exact_model_id,
+        profile_name="",
+        model_roles={"weak": "", "editor": ""},
+    )
+    main = _FakeClient(cfg, load_profile("_base", FIXTURE_PROFILES))
+
+    runtime = build_model_role_runtime(
+        cfg=cfg,
+        main_client=main,
+        profiles_dir=FIXTURE_PROFILES,
+        client_factory=lambda role_cfg, role_profile: _FakeClient(
+            role_cfg, role_profile
+        ),
+    )
+
+    assert runtime.resolver.main.target.model == exact_model_id
+    assert runtime.resolver.main.target.profile_name == "_base"
+    assert runtime.resolver.main.profile.name == "_base"
+
+
 def test_handoff_uses_weak_client_and_metrics_split_every_response_once(
     tmp_path: Path,
 ):
