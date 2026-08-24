@@ -116,6 +116,15 @@ The replay run writes a new transcript. For each replayed turn, the input block
 holds `messages` and `tools` from before model-profile conversion. The output
 block copies the recorded model reply. Yuj flushes the file after each turn.
 
+An enabled stream rule can make one logical solver turn consume more than one
+transcript request/response pair. The interrupted output is valid JSON with an
+internal stream-rule marker, the assembled partial response, and the exact
+hidden-injection record. Replay raises the same typed interrupt, lets the
+harness append the same `<injected-fragment>`, and consumes the next recorded
+reply with the same 0-based logical `turn_number`. It does not re-evaluate the
+mutable rule file to reconstruct that retry. The fresh replay trace records
+`stream_rule_triggered` and `stream_rule_injection` again.
+
 After a handover, the live client adds HTTP request and response data to the
 same file. A replay-to-live transcript can therefore contain two input formats.
 

@@ -27,6 +27,7 @@ from ..._shared.telemetry_paths import ensure_telemetry_dir, trace_path
 from ..context_contract import build_context_contract
 from ..guardrails import build_guardrail_registry
 from ..injections import Injection, load_injections_with_metadata
+from ..stream_rules import StreamRule, load_stream_rules
 from ..project_instructions import (
     discover_project_instructions,
     find_project_root,
@@ -290,6 +291,21 @@ def load_session_injections(
         unreadable_paths=prompt_unreadable_paths,
     )
     return loaded.injections, loaded.prompt_import_tree
+
+
+def load_session_stream_rules(
+    cfg: Config,
+    work_dir: Path,
+) -> tuple[tuple[StreamRule, ...], tuple[dict[str, object], ...]]:
+    """Validate stream rules once at task startup, before any model call."""
+    if not cfg.stream_rules_enabled:
+        return (), ()
+    loaded = load_stream_rules(
+        work_dir / cfg.stream_rules_dir,
+        display_dir=cfg.stream_rules_dir,
+        allowed_root=work_dir,
+    )
+    return loaded.rules, loaded.files
 
 
 def thinking_trace_fields(cfg: Config, client) -> dict[str, object]:

@@ -104,6 +104,14 @@ rewind_max_per_session = 1
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
 length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
+# Mid-stream rules load once at task startup from the task repository. With
+# YUJ_STREAMING=1, an interrupt-worthy match closes the SSE response, injects
+# the rule, and retries the same logical turn. Non-streaming calls evaluate the
+# completed response and use only the non-interrupt reminder path.
+stream_rules_enabled = false
+stream_rules_dir = ".harness/stream_rules"
+stream_rules_context_mode = "discard"  # discard | keep; partial assistant text on interrupt
+stream_rules_repeat_gap = 10            # completed logical turns between after-gap injections
 duplicate_abort = 3         # abort session after N identical consecutive tool calls
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
 retry_backoff = [10]        # seconds between retries (index = attempt number)

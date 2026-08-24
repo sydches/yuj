@@ -18,6 +18,7 @@ import logging
 import re
 from pathlib import Path
 
+from ._streaming import StreamRuleInterrupt
 from .types import ToolCall, TurnResult, Usage
 
 log = logging.getLogger(__name__)
@@ -391,6 +392,8 @@ class ReplayClient:
         if body is None:
             raise ReplayDivergence(f"recording has no output for turn {turn_no}")
         resp = json.loads(body)
+        if "_stream_rule_interrupt" in resp:
+            raise StreamRuleInterrupt.from_transcript(resp)
         choices = resp.get("choices") or []
         if not choices:
             raise ReplayDivergence(f"recorded turn {turn_no} output has no choices")
@@ -467,13 +470,31 @@ class ReplayClient:
                               usage=Usage(0, 0))
         turn_no = self._turns[self._idx]
         # transcript is 1-based; stop_turn is trace numbering (0-based)
-        if self.stop_turn and (turn_no - 1) > self.stop_turn:
+        if self.stop_turn and int(turn) > self.stop_turn:
             self._log_census("stop_turn")
             return TurnResult(content=None, tool_calls=[],
                               finish_reason=REPLAY_FINISH_REASON_STOP_TURN,
                               usage=Usage(0, 0))
         self._check_tool_surface_fidelity(tools, turn_no)
-        result = self._turn_result(turn_no)
+        try:
+            result = self._turn_result(turn_no)
+        except StreamRuleInterrupt:
+            if self._transcript_file is not None:
+                self._transcript_call_n += 1
+                n = self._transcript_call_n
+                self._write_transcript(
+                    f"turn {n:03d} input",
+                    json.dumps({"messages": messages, "tools": tools}),
+                )
+                self._write_transcript(
+                    f"turn {n:03d} output",
+                    self._bodies.get((turn_no, "output"), ""),
+                )
+            # One transcript call was consumed, but no logical harness turn
+            # completed. chat_io catches the control signal, injects the
+            # recorded rule, and calls us again with the same trace turn.
+            self._idx += 1
+            raise
         if self._transcript_file is not None:
             self._transcript_call_n += 1
             n = self._transcript_call_n

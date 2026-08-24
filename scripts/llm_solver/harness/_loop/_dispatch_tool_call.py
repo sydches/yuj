@@ -51,22 +51,31 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
         session._final_text = str(
             tc.arguments.get("message") or state.content or ""
         )
-        session.context.add_tool_result(tc.id, "Session ended by model.", tool_name="done")
-        _emit_done(tc, state, "Session ended by model.")
+        result = session._decorate_stream_rule_tool_result(
+            tc.id, "Session ended by model.", turn=state.turn
+        )
+        session.context.add_tool_result(tc.id, result, tool_name="done")
+        _emit_done(tc, state, result)
         return TCOutcome(end=True, reason="model_done", done=True)
     if done_decision.action == Action.REWIND:
-        session.context.add_tool_result(
-            tc.id, done_decision.text, tool_name="done"
+        result = session._decorate_stream_rule_tool_result(
+            tc.id, done_decision.text, turn=state.turn
         )
-        _emit_done(tc, state, done_decision.text)
+        session.context.add_tool_result(
+            tc.id, result, tool_name="done"
+        )
+        _emit_done(tc, state, result)
         session.request_rewind(
             done_decision.target_turn,
             reason=done_decision.reason or "rewind_on_done_guard",
         )
         return TCOutcome(rewind=True)
     # BLOCK or END: store rejection text in trace; END terminates.
-    session.context.add_tool_result(tc.id, done_decision.text, tool_name="done")
-    _emit_done(tc, state, done_decision.text)
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, done_decision.text, turn=state.turn
+    )
+    session.context.add_tool_result(tc.id, result, tool_name="done")
+    _emit_done(tc, state, result)
     if done_decision.action == Action.END:
         state.log.info("done_guard ended session at turn %d (reason=%s)",
                        state.turn, done_decision.reason)
@@ -121,7 +130,10 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
     cfg = state.cfg
     trace_args_summary = _summarize_args(tc.arguments, cfg.trace_args_summary_chars)
     metadata = action_metadata(tc.name, tc.arguments)
-    session.context.add_tool_result(tc.id, decision.text,
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, decision.text, turn=state.turn
+    )
+    session.context.add_tool_result(tc.id, result,
                                     tool_name=tc.name, gate_blocked=True)
     session._emit(
         "tool_call",
@@ -133,7 +145,7 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
             session,
             tool_name=tc.name,
             args_summary=_truncate_for_trace(trace_args_summary, cfg.trace_args_summary_chars),
-            result=decision.text,
+            result=result,
             turn=state.turn,
             gate_blocked=True,
             metadata=metadata,
@@ -245,6 +257,10 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
 
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+
     trace_args = _truncate_for_trace(
         _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
         cfg.trace_args_summary_chars,
@@ -315,6 +331,10 @@ def _handle_inactive_tool(tc, state: "TurnState") -> TCOutcome:
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
 
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+
     trace_args = _truncate_for_trace(
         _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
         cfg.trace_args_summary_chars,
@@ -371,6 +391,10 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
+
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
 
     trace_args = _truncate_for_trace(
         _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
@@ -780,6 +804,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                     execution_metadata=execution_metadata,
                     bash_rewritten=bool(rewrite_log),
                 )
+                result = session._decorate_stream_rule_tool_result(
+                    tc.id, result, turn=turn
+                )
                 session.context.add_tool_result(tc.id, result, tool_name=tc.name,
                                                 cmd_signature="", gate_blocked=False)
                 # cmd_pre_rewrite preserves the model's original
@@ -939,6 +966,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         execution_metadata=execution_metadata,
         bash_rewritten=bool(rewrite_log),
     )
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=turn
+    )
 
     # 6f. Trace + record. cmd_pre_rewrite is added when bash_quirks
     # rewrites the model's cmd before execution. The
@@ -1016,6 +1046,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         and not path_injection_fired
         and focus_key
         and tc.name not in MUTATION_TOOLS
+        and tc.id not in session._stream_rule_decorated_call_ids
         and result
     ):
         import hashlib as _hashlib

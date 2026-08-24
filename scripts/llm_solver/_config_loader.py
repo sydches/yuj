@@ -261,6 +261,18 @@ def _extract_config_fields(d: dict) -> dict:
         "parallel_max_workers": d.get("loop", {}).get("parallel_max_workers", 4),
         "injections_enabled": d.get("injections", {}).get("enabled", False),
         "injections_dir": d.get("injections", {}).get("dir", ".harness/injections"),
+        "stream_rules_enabled": d.get("loop", {}).get(
+            "stream_rules_enabled", False
+        ),
+        "stream_rules_dir": d.get("loop", {}).get(
+            "stream_rules_dir", ".harness/stream_rules"
+        ),
+        "stream_rules_context_mode": d.get("loop", {}).get(
+            "stream_rules_context_mode", "discard"
+        ),
+        "stream_rules_repeat_gap": d.get("loop", {}).get(
+            "stream_rules_repeat_gap", 10
+        ),
         "injections_path_rules_enabled": d.get("injections", {}).get(
             "path_rules_enabled", False
         ),
@@ -848,6 +860,33 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: loop.length_continue_max must be a non-negative "
             "integer."
+        )
+    if not isinstance(cfg.stream_rules_enabled, bool):
+        raise ValueError(
+            "config error: loop.stream_rules_enabled must be a boolean."
+        )
+    if not isinstance(cfg.stream_rules_dir, str) or not cfg.stream_rules_dir.strip():
+        raise ValueError(
+            "config error: loop.stream_rules_dir must be a non-empty relative path."
+        )
+    stream_rules_path = Path(cfg.stream_rules_dir)
+    if stream_rules_path.is_absolute() or ".." in stream_rules_path.parts:
+        raise ValueError(
+            "config error: loop.stream_rules_dir must stay inside the task "
+            "repository (absolute paths and '..' are not allowed)."
+        )
+    if cfg.stream_rules_context_mode not in {"discard", "keep"}:
+        raise ValueError(
+            "config error: loop.stream_rules_context_mode must be 'discard' "
+            f"or 'keep', got {cfg.stream_rules_context_mode!r}."
+        )
+    if (
+        isinstance(cfg.stream_rules_repeat_gap, bool)
+        or not isinstance(cfg.stream_rules_repeat_gap, int)
+        or cfg.stream_rules_repeat_gap < 1
+    ):
+        raise ValueError(
+            "config error: loop.stream_rules_repeat_gap must be an integer >= 1."
         )
     if not isinstance(cfg.project_docs_enabled, bool):
         raise ValueError(

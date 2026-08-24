@@ -20,7 +20,8 @@ Schema (target of the projection, consumed by SolverStateContext):
                      "gate_blocked": bool, "write_like": bool,
                      "source_write_like": bool,
                      "source_write_paths": [str, ...]}, ...],
-      "gates":     [],
+      "gates":     [{"event": "stream_rule_triggered"|"stream_rule_injection",
+                      "session": int, "turn": int, ...}, ...],
       "evidence":  [{"step": int, "action": str, "result": str,
                      "verdict": "OK"|"FAIL", "gate_blocked": bool}, ...],
       "inference": [],
@@ -66,9 +67,10 @@ telemetry so bounded snippets do not need to preserve tail exit markers. The
 trace entries within a single (session, turn) share the same reasoning;
 renderers that care about deduplication group by turn.
 
-`gates` and `inference` stay empty: neither has a content-blind population
-rule today. They remain in the schema as protocol placeholders for the
-model to read.
+`gates` is a mechanical projection of stream-rule trigger and injection
+telemetry. It contains rule identifiers, scope/offset/path metadata, and
+delivery metadata, but never copies rule bodies. `inference` stays empty:
+there is no content-blind population rule for it today.
 
 Replay usage (offline, against any historical trace). ``resolve_trace_path``
 finds the trace whether the run wrote it beside the workspace (current) or
@@ -190,11 +192,9 @@ def _last_session(events: list[dict]) -> int | None:
 
 
 def _last_turn(events: list[dict]) -> int | None:
-    """Highest turn_number observed in any tool_call event, or None."""
+    """Highest turn_number observed in any event, or None."""
     best: int | None = None
     for ev in events:
-        if ev.get("event") != "tool_call":
-            continue
         tn = ev.get("turn_number")
         if isinstance(tn, int) and (best is None or tn > best):
             best = tn
@@ -540,6 +540,7 @@ def project(
     state: dict = {}
     todos: list[dict] = []
     trace: list[dict] = []
+    gates: list[dict] = []
     evidence: list[dict] = []
     current_session = _last_session(logical_events)
     current_turn = _last_turn_in_session(logical_events, current_session)
@@ -655,6 +656,27 @@ def project(
             if "hook_outcome" in ev:
                 last_compaction["hook_outcome"] = ev.get("hook_outcome")
             state["last_compaction"] = last_compaction
+        elif et == "stream_rule_triggered":
+            gates.append({
+                "event": et,
+                "session": ev.get("session_number"),
+                "turn": ev.get("turn_number"),
+                "rule": ev.get("rule"),
+                "scope": ev.get("scope"),
+                "offset": ev.get("offset"),
+                "path": ev.get("path") or "",
+                "tool_name": ev.get("tool_name") or "",
+                "interrupt": bool(ev.get("interrupt")),
+            })
+        elif et == "stream_rule_injection":
+            gates.append({
+                "event": et,
+                "session": ev.get("session_number"),
+                "turn": ev.get("turn_number"),
+                "rules": list(ev.get("rules") or []),
+                "delivery": ev.get("delivery") or "",
+                "context_mode": ev.get("context_mode") or "",
+            })
         elif et == "todos":
             # Model-authored planning content enters state only through this
             # explicit trace event. Each event replaces the whole list; no
@@ -748,7 +770,7 @@ def project(
         "todos": todos,
         "tools": tools,
         "trace": trace,
-        "gates": [],
+        "gates": gates,
         "evidence": evidence,
         "inference": [],
     }

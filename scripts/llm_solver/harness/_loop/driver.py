@@ -32,7 +32,8 @@ from . import (
 )
 from ._driver_setup import (
     compute_runtime_envelope_fields,
-    load_session_injections, load_system_prompt_and_provenance,
+    load_session_injections, load_session_stream_rules,
+    load_system_prompt_and_provenance,
     load_transforms_and_estimator,
     resolve_task_format, resolve_run_paths,
     setup_run_outputs, thinking_trace_fields,
@@ -211,6 +212,9 @@ def solve_task(
     )
     resolved_injections, injection_import_tree = load_session_injections(
         cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
+    )
+    resolved_stream_rules, stream_rule_files = load_session_stream_rules(
+        cfg, work_dir,
     )
     if injection_import_tree:
         prompt_metadata = replace(
@@ -550,6 +554,7 @@ def solve_task(
                 ),
                 **repo_map.trace_fields(),
                 **prompt_metadata.trace_fields(),
+                stream_rule_files=[dict(record) for record in stream_rule_files],
                 **thinking_fields,
                 **model_binding.trace_fields(),
                 **ignore_policy.trace_fields(),
@@ -586,6 +591,7 @@ def solve_task(
                 pretest_parsed=pretest_parsed_verdict,
                 checkpoint_store=checkpoint_store,
                 injections=resolved_injections,
+                stream_rules=resolved_stream_rules,
                 artifact_dir=artifact_dir,
                 adaptive_control_baseline_config_paths=tuple(
                     (run_metadata or {}).get("config_paths", ())
