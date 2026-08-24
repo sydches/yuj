@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from ..guardrails import Action, Decision, PASS
+from ..checkpoint_rewind import finalize_deferred_context_actions
 from ..action_metadata import action_metadata
 from ..approvals import approval_decision, approval_transport_available
 from .._tool_filters import resolve_tool_permission
@@ -80,11 +81,78 @@ def _defer_guard_end_during_active_watch(
     return True
 
 
-def _run_post_turn_hooks(session: "Session", turn: int) -> None:
-    """Run observation and adaptive hooks after executed or blocked turns."""
+def _run_post_turn_hooks(
+    session: "Session", turn: int, *, run_advisor: bool = True
+) -> None:
+    """Run observation, adaptive, rewind, and advisor post-turn hooks."""
+    from ..turn_snapshots import process_rewind_turn_boundary
+    # A guardrail rewind invalidates this turn. Restore its saved control
+    # state before adaptive observers can learn from the discarded branch.
+    if getattr(session, "_pending_rewind", None) is not None:
+        process_rewind_turn_boundary(session, turn)
+        return
     session._maybe_emit_harness_observation(turn)
     session._maybe_run_llm_hurdle_detector(turn)
     session._maybe_switch_adaptive_phase(turn)
+    rewound = process_rewind_turn_boundary(session, turn)
+    if run_advisor and not rewound:
+        session._maybe_run_advisor(turn)
+
+
+def _complete_turn_rewind(
+    session: "Session",
+    decision: Decision,
+    *,
+    turn: int,
+    content: str | None,
+    tool_calls: list,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    """Balance a pre-dispatch turn and queue its guardrail rewind."""
+    cfg = session.cfg
+    for tc in tool_calls:
+        args_summary = _summarize_args(
+            tc.arguments, cfg.trace_args_summary_chars
+        )
+        metadata = action_metadata(tc.name, tc.arguments)
+        result = session._decorate_stream_rule_tool_result(
+            tc.id, decision.text, turn=turn
+        )
+        session.context.add_tool_result(
+            tc.id,
+            result,
+            tool_name=tc.name,
+            gate_blocked=True,
+        )
+        session._emit(
+            "tool_call",
+            session_number=session._session_number,
+            turn_number=turn,
+            tool_name=tc.name,
+            args_summary=args_summary,
+            **build_tool_call_trace_fields(
+                session,
+                tool_name=tc.name,
+                args_summary=args_summary,
+                result=result,
+                turn=turn,
+                gate_blocked=True,
+                metadata=metadata,
+            ),
+            reasoning=_truncate_for_trace(
+                content or "", cfg.trace_reasoning_store_chars
+            ),
+            gate_blocked=True,
+            gate_reason=decision.reason,
+            **metadata,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    session.request_rewind(
+        decision.target_turn,
+        reason=decision.reason or "rewind_on_guardrail",
+    )
 
 
 def _preflight_estimate(session) -> int:
@@ -232,7 +300,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Inject keyword-triggered fragments (harness/injections.py)
         # against the latest user/tool content before the API call.
         # No-op when the subsystem is disabled or no fragments load.
-        session._apply_injections()
+        session._apply_injections(turn_number=turn)
+        session._inject_pending_advisor(turn)
         # ─── 0. GUARDRAIL: context fill (PRE-FLIGHT) ──────────────────
         # The post-flight check at the end of step 2 catches overflow
         # that develops during the response, but a tool result added
@@ -337,6 +406,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
             err_reason = getattr(session, "_last_chat_error_reason", None) or "error"
             return SessionResult(turn, err_reason, done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
         content = chat_result.content
+        session._last_assistant_content = (
+            content if isinstance(content, str) else ""
+        )
         tool_calls = chat_result.tool_calls
         reason = chat_result.finish_reason
         prompt_tokens = chat_result.usage.prompt_tokens
@@ -384,6 +456,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
         session.context.add_assistant(
             session.client.build_assistant_message(content, tool_calls)
         )
+        session.context.consume_injected_fragments()
+        session._capture_advisor_turn(turn, content, tool_calls)
 
         # ─── 2. GUARDRAIL: context fill (END tier) ───────────────────
         # Server-reported pt — accurate, no chars/4 underrun.
@@ -403,7 +477,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
             session._guards, cfg,
             turn=turn, content=content, tool_calls=tool_calls,
         ) if guards_armed else PASS
-        if intent_decision.action in (Action.BLOCK, Action.END):
+        if intent_decision.action in (
+            Action.BLOCK,
+            Action.END,
+            Action.REWIND,
+        ):
             session._record_pressure_event(True)
             log.info("Intent gate: rejecting silent tool call at turn %d "
                      "(block #%d, consecutive %d)", turn,
@@ -443,6 +521,15 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
+            if intent_decision.action == Action.REWIND:
+                session.request_rewind(
+                    intent_decision.target_turn,
+                    reason=(
+                        intent_decision.reason or "rewind_on_intent_gate"
+                    ),
+                )
+                _run_post_turn_hooks(session, turn)
+                continue
             if intent_decision.action == Action.END:
                 if not _defer_guard_end_during_active_watch(
                     session,
@@ -460,9 +547,20 @@ def run_session_loop(session: "Session") -> "SessionResult":
 
         # ─── 4. Stop check (natural exit) ────────────────────────────
         if not tool_calls:
+            from ..turn_snapshots import process_rewind_turn_boundary
+            if process_rewind_turn_boundary(session, turn):
+                continue
             if reason == "length":
+                session._maybe_run_advisor(turn)
                 log.info("Response truncated at turn %d (max_tokens hit), ending session", turn)
                 return SessionResult(turn, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+            advisor_intervened = session._maybe_run_advisor(turn)
+            if advisor_intervened:
+                log.info(
+                    "Advisor queued a note for the next model-facing turn %d",
+                    turn + 1,
+                )
+                continue
             # With implicit done enabled, `finish_reason="stop"` and no tool
             # calls count as success. Setting it to False
             # treats no-tool-calls as session end (`done=False`,
@@ -486,6 +584,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
         dup_decision = turn_pre["duplicate_guard"](
             session._guards, cfg, tool_calls_sig=sig
         ) if guards_armed else PASS
+        if dup_decision.action == Action.REWIND:
+            session._record_pressure_event(True)
+            _complete_turn_rewind(
+                session,
+                dup_decision,
+                turn=turn,
+                content=content,
+                tool_calls=tool_calls,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            _run_post_turn_hooks(session, turn)
+            continue
         if dup_decision.action == Action.END:
             if not _defer_guard_end_during_active_watch(
                 session,
@@ -508,6 +619,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
         loop_decision = turn_pre["loop_detect"](
             session._guards, cfg, tool_calls_sig=sig
         ) if guards_armed else PASS
+        if loop_decision.action == Action.REWIND:
+            session._record_pressure_event(True)
+            _complete_turn_rewind(
+                session,
+                loop_decision,
+                turn=turn,
+                content=content,
+                tool_calls=tool_calls,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            _run_post_turn_hooks(session, turn)
+            continue
         if loop_decision.action == Action.END:
             if not _defer_guard_end_during_active_watch(
                 session,
@@ -536,6 +660,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # read/glob/grep calls. Mutating tools (write/edit/bash)
         # always run sequentially — they never enter this path.
         preexecuted: dict[str, str] = {}
+        turn_active_tool_names = frozenset(session.active_tool_names)
+        inactive_tool_call_ids = frozenset(
+            tc.id
+            for tc in tool_calls
+            if session.is_hidden_tool(
+                tc.name, active_names=turn_active_tool_names
+            )
+        )
         schema_validations = {}
         if getattr(cfg, "tools_schema_validation", "off") == "reject":
             schema_validations = {
@@ -543,10 +675,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     tc.name, tc.arguments
                 )
                 for tc in tool_calls
+                if tc.id not in inactive_tool_call_ids
             }
         permission_resolutions = {}
         approval_available = approval_transport_available(session._trace_path)
+        advisor_intervened = False
         for tc in tool_calls:
+            if tc.id in inactive_tool_call_ids:
+                continue
             validation = schema_validations.get(tc.id)
             if validation is not None and not validation.valid:
                 continue
@@ -576,6 +712,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             phase_token_ms=_phase_token_ms,
             turn_t0=_turn_t0,
             preexecuted=preexecuted,
+            inactive_tool_call_ids=inactive_tool_call_ids,
             schema_validations=schema_validations,
             permission_resolutions=permission_resolutions,
             dispatch=dispatch,
@@ -588,6 +725,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         if (
             cfg.parallel_readonly_enabled
             and len(tool_calls) > 1
+            and not inactive_tool_call_ids
             and all(tc.name in _READONLY_TOOLS for tc in tool_calls)
             and all(
                 validation.valid
@@ -700,14 +838,29 @@ def run_session_loop(session: "Session") -> "SessionResult":
                             total_completion_tokens=total_completion,
                         )
             outcome = dispatch_one_tool_call(tc, state)
+            if outcome.rewind:
+                break
             if outcome.end:
+                if (
+                    outcome.done
+                    and len(tool_calls) == 1
+                    and session._maybe_run_advisor(turn)
+                ):
+                    advisor_intervened = True
+                    break
                 return SessionResult(
                     turn, outcome.reason, done=outcome.done,
                     total_prompt_tokens=total_prompt,
                     total_completion_tokens=total_completion,
                 )
+        # checkpoint/rewind handlers only schedule context work. Finalizing
+        # here guarantees the assistant message and every result from a
+        # multi-tool turn form a complete protocol boundary before any cut.
+        finalize_deferred_context_actions(session, turn)
         session._record_pressure_event(state.turn_had_pressure)
-        _run_post_turn_hooks(session, turn)
+        _run_post_turn_hooks(
+            session, turn, run_advisor=not advisor_intervened
+        )
     # ─── 7. GUARDRAIL: max_turns (hard cap, END tier) ────────────────
     return SessionResult(
         turn_start + cfg.max_turns,

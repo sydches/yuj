@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "openai",
     "orjson",
+    "PyYAML>=6.0",
     "requests",
     "transformers",
     "tree-sitter>=0.25.2",

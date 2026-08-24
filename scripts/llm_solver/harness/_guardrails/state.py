@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Any, Callable
 
 
@@ -11,6 +12,7 @@ class Action(Enum):
     PASS = "pass"
     WARN = "warn"
     BLOCK = "block"
+    REWIND = "rewind"
     END = "end"
 
 
@@ -19,6 +21,7 @@ class Decision:
     action: Action
     text: str = ""
     reason: str = ""
+    target_turn: int | None = None
 
     @classmethod
     def pass_(cls) -> "Decision":
@@ -36,8 +39,40 @@ class Decision:
     def end(cls, reason: str) -> "Decision":
         return cls(Action.END, reason=reason)
 
+    @classmethod
+    def rewind(
+        cls,
+        *,
+        target_turn: int | None = None,
+        reason: str,
+        text: str = "Rewinding to the last safe turn.",
+    ) -> "Decision":
+        return cls(
+            Action.REWIND,
+            text=text,
+            reason=reason,
+            target_turn=target_turn,
+        )
+
 
 PASS = Decision.pass_()
+
+
+def rewind_on(
+    guardrail_class: str,
+    *,
+    target_turn: int | None = None,
+    text: str = "Rewinding to the last safe turn.",
+) -> Decision:
+    """Build the public ``rewind_on_<class>`` guardrail action."""
+    normalized = re.sub(r"[^a-z0-9]+", "_", guardrail_class.lower()).strip("_")
+    if not normalized:
+        raise ValueError("guardrail_class must contain a name")
+    return Decision.rewind(
+        target_turn=target_turn,
+        reason=f"rewind_on_{normalized}",
+        text=text,
+    )
 
 
 @dataclass(frozen=True)
@@ -111,6 +146,10 @@ class GuardrailState:
     intent_first_block_turn: int | None = None
     consecutive_intent_rejections: int = 0
     non_write_calls_since_write: int = 0
+    # Consecutive successfully executed think calls. Any different action
+    # resets this narrow scratchpad-rumination signal.
+    think_streak: int = 0
+    think_streak_nudge_emitted: bool = False
     same_target_key: str = ""
     same_target_display: str = ""
     same_target_count: int = 0

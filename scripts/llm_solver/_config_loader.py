@@ -89,11 +89,30 @@ def _extract_config_fields(d: dict) -> dict:
         "model_fallback_revert": d.get("models", {}).get(
             "fallback_revert", "never"
         ),
+        "advisor_enabled": d.get("advisor", {}).get("enabled", False),
+        "advisor_model": d.get("advisor", {}).get("model", ""),
+        "advisor_endpoint": d.get("advisor", {}).get("endpoint", ""),
+        "advisor_every_n_turns": d.get("advisor", {}).get(
+            "every_n_turns", 5
+        ),
+        "advisor_immune_turns": d.get("advisor", {}).get("immune_turns", 3),
+        "advisor_max_note_chars": d.get("advisor", {}).get(
+            "max_note_chars", 1200
+        ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
+        "rewind_enabled": bool(
+            d.get("loop", {}).get("rewind_enabled", False)
+        ),
+        "rewind_max_per_session": d.get("loop", {}).get(
+            "rewind_max_per_session", 1
+        ),
         "duplicate_abort": _require(d, "loop", "duplicate_abort"),
         "error_nudge_threshold": _require(d, "loop", "error_nudge_threshold"),
         "rumination_nudge_threshold": _require(d, "loop", "rumination_nudge_threshold"),
+        "think_streak_nudge_after": d.get("loop", {}).get(
+            "think_streak_nudge_after", 3
+        ),
         "rumination_gate_max_blocks": d.get("loop", {}).get("rumination_gate_max_blocks", 0),
         "rumination_gate_arm_threshold": d.get("loop", {}).get("rumination_gate_arm_threshold", 0),
         "rumination_gate_arm_threshold_abs": d.get("loop", {}).get("rumination_gate_arm_threshold_abs", 0),
@@ -125,17 +144,36 @@ def _extract_config_fields(d: dict) -> dict:
         "post_edit_check_enabled": d.get("post_edit_check", {}).get("enabled", False),
         "post_edit_check_timeout": d.get("post_edit_check", {}).get("timeout", 10),
         "post_edit_checks": list(d.get("post_edit_check", {}).get("checks", [])),
+        "tools_lazy_loading_enabled": d.get("tools", {}).get(
+            "lazy_loading_enabled", False
+        ),
+        "tools_active_default": _string_tuple(
+            d.get("tools", {}).get(
+                "active_default",
+                ["bash", "read", "edit", "glob", "grep", "done"],
+            ),
+            path="tools.active_default",
+        ),
         "tools_run_tests_enabled": d.get("tools", {}).get("run_tests", {}).get("enabled", False),
         "tools_run_tests_timeout": int(d.get("tools", {}).get("run_tests", {}).get("timeout", 240)),
         "tools_run_tests_structured_output": bool(d.get("tools", {}).get("run_tests", {}).get("structured_output", True)),
         "tools_run_tests_assertion_context_lines": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5)),
         "tools_run_tests_assertion_context_max": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3)),
+        "tools_think_enabled": d.get("tools", {}).get(
+            "think_enabled", False
+        ),
+        "tools_think_keep_turns": d.get("tools", {}).get(
+            "think_keep_turns", 4
+        ),
         "tools_list_definitions_enabled": bool(d.get("tools", {}).get("list_definitions", {}).get("enabled", False)),
         "tools_ast_search_enabled": bool(
             d.get("tools", {}).get("ast_search_enabled", False)
         ),
         "tools_ast_search_max_rows": d.get("tools", {}).get(
             "ast_search_max_rows", 1000
+        ),
+        "tools_checkpoint_enabled": d.get("tools", {}).get(
+            "checkpoint_enabled", False
         ),
         "tools_file_checkpoints_enabled": bool(
             d.get("tools", {}).get("file_checkpoints_enabled", False)
@@ -165,6 +203,12 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_constrained_decoding": d.get("tools", {}).get(
             "constrained_decoding", "off"
         ),
+        "tools_todos_enabled": d.get("tools", {}).get(
+            "todos_enabled", False
+        ),
+        "tools_todos_max_items": d.get("tools", {}).get(
+            "todos_max_items", 20
+        ),
         "tools_background_enabled": d.get("tools", {}).get(
             "background_enabled", False
         ),
@@ -174,6 +218,21 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_background_poll_timeout": d.get("tools", {}).get(
             "background_poll_timeout", 300.0
         ),
+        "tools_task_enabled": d.get("tools", {}).get(
+            "task_enabled", False
+        ),
+        "tools_subagent_depth": d.get("tools", {}).get(
+            "subagent_depth", 1
+        ),
+        "tools_subagent_max_turns": d.get("tools", {}).get(
+            "subagent_max_turns", 20
+        ),
+        "tools_exec_cell_enabled": d.get("tools", {}).get(
+            "exec_cell_enabled", False
+        ),
+        "tools_exec_cell_timeout": d.get("tools", {}).get(
+            "exec_cell_timeout", 30
+        ),
         "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
         "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
         "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
@@ -182,10 +241,15 @@ def _extract_config_fields(d: dict) -> dict:
         "lsp_min_severity": d.get("lsp", {}).get("min_severity", "error"),
         "lsp_tool_enabled": bool(d.get("lsp", {}).get("tool_enabled", False)),
         "tools_apply_patch_enabled": bool(d.get("tools", {}).get("apply_patch", {}).get("enabled", False)),
+        "tools_edit_format": d.get("tools", {}).get("edit_format", ""),
+        "effective_edit_format": "",
         "tools_unified_envelope_enabled": bool(d.get("tools", {}).get("unified_envelope", {}).get("enabled", False)),
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
         "context_ignore_state": d.get("state", {}).get("context_ignore", False),
         "state_imperative_projection_enabled": d.get("state", {}).get("imperative_projection_enabled", False),
+        "state_todos_char_budget": d.get("state", {}).get(
+            "todos_char_budget", 2000
+        ),
         "state_ignore_file_enabled": d.get("state", {}).get(
             "ignore_file_enabled", True
         ),
@@ -208,6 +272,12 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "stream_rules_repeat_gap": d.get("loop", {}).get(
             "stream_rules_repeat_gap", 10
+        ),
+        "injections_path_rules_enabled": d.get("injections", {}).get(
+            "path_rules_enabled", False
+        ),
+        "injections_path_rule_repeat": d.get("injections", {}).get(
+            "path_rule_repeat", False
         ),
         "loop_detect_enabled": d.get("loop", {}).get("loop_detect_enabled", False),
         "turn_snapshots_enabled": d.get("loop", {}).get("turn_snapshots_enabled", False),
@@ -372,7 +442,10 @@ def _extract_config_fields(d: dict) -> dict:
         "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
+        "repo_map_tokens": d.get("context", {}).get("repo_map_tokens", 0),
+        "repo_map_refresh": d.get("context", {}).get("repo_map_refresh", "auto"),
         "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
+        "compaction_hook": d.get("context", {}).get("compaction_hook", ""),
         "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
         "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
         "handoff_summary_enabled": d.get("loop", {}).get("handoff_summary_enabled", False),
@@ -446,6 +519,25 @@ def _extract_config_fields(d: dict) -> dict:
         "imports_max_depth": d.get("prompts", {}).get(
             "imports_max_depth", 5
         ),
+        "skills_enabled": d.get("prompts", {}).get(
+            "skills_enabled", False
+        ),
+        "skills_dirs": _string_tuple(
+            d.get("prompts", {}).get(
+                "skills_dirs",
+                [
+                    "~/.pi/agent/skills",
+                    "~/.agents/skills",
+                    ".pi/skills",
+                    ".agents/skills",
+                ],
+            ),
+            path="prompts.skills_dirs",
+        ),
+        "skill_paths": _string_tuple(
+            d.get("prompts", {}).get("skill_paths", []),
+            path="prompts.skill_paths",
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -458,19 +550,19 @@ def _extract_config_fields(d: dict) -> dict:
             "prompts", {}
         ).get(
             "rumination_gate_grace_prefix",
-            "[HARNESS: Gate armed. Next call must be write or edit — all else blocked.]",
+            "[HARNESS: Gate armed. Next call must mutate a file — all else blocked.]",
         ),
         "pre_mutation_gate": d.get(
             "prompts", {}
         ).get(
             "pre_mutation_gate",
-            "[HARNESS: {turn_number} read-only turns elapsed without a write or edit; the next tool call must be write / edit / str_replace / apply_patch, a bash command that mutates a source file, or done(). This call was not executed.]",
+            "[HARNESS: {turn_number} read-only turns elapsed without a file mutation; the next tool call must use the selected file-edit tool, run a bash command that mutates a source file, or call done(). This call was not executed.]",
         ),
         "rumination_same_target_nudge": d.get(
             "prompts", {}
         ).get(
             "rumination_same_target_nudge",
-            "[HARNESS: same target hit {count} times without a write/edit ({target}). Stop rereading it; either edit, verify, or move to a different target.]",
+            "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]",
         ),
         "rumination_outside_cwd_nudge": d.get(
             "prompts", {}
@@ -488,19 +580,19 @@ def _extract_config_fields(d: dict) -> dict:
             "prompts", {}
         ).get(
             "contract_commit_warn",
-            "[HARNESS: source file {source} is already in view. Choose a concrete next move: edit/write, read a test file, or run verification. Do not continue broad inspection.]",
+            "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]",
         ),
         "contract_commit_block": d.get(
             "prompts", {}
         ).get(
             "contract_commit_block",
-            "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit/write, read a test file, or run verification.]",
+            "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]",
         ),
         "contract_recovery_block": d.get(
             "prompts", {}
         ).get(
             "contract_recovery_block",
-            "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, edit/write, or run verification.]",
+            "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, mutate a file, or run verification.]",
         ),
         "mutation_repeat_warn": d.get(
             "prompts", {}
@@ -586,6 +678,17 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
+    from ._shared.edit_formats import validate_edit_format
+    validate_edit_format(
+        cfg.tools_edit_format,
+        field="config error: tools.edit_format",
+        allow_inherit=True,
+    )
+    if cfg.effective_edit_format:
+        validate_edit_format(
+            cfg.effective_edit_format,
+            field="config error: effective_edit_format",
+        )
     if cfg.tools_stale_guard_mode not in {"off", "warn", "block"}:
         raise ValueError(
             "config error: tools.stale_guard_mode must be 'off', 'warn', "
@@ -601,6 +704,73 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    if not isinstance(cfg.tools_think_enabled, bool):
+        raise ValueError(
+            "config error: tools.think_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_think_keep_turns, bool)
+        or not isinstance(cfg.tools_think_keep_turns, int)
+        or cfg.tools_think_keep_turns < 0
+    ):
+        raise ValueError(
+            "config error: tools.think_keep_turns must be a non-negative "
+            "integer."
+        )
+    if (
+        isinstance(cfg.think_streak_nudge_after, bool)
+        or not isinstance(cfg.think_streak_nudge_after, int)
+        or cfg.think_streak_nudge_after < 0
+    ):
+        raise ValueError(
+            "config error: loop.think_streak_nudge_after must be a "
+            "non-negative integer."
+        )
+    if not isinstance(cfg.tools_todos_enabled, bool):
+        raise ValueError(
+            "config error: tools.todos_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_todos_max_items, bool)
+        or not isinstance(cfg.tools_todos_max_items, int)
+        or cfg.tools_todos_max_items < 1
+    ):
+        raise ValueError(
+            "config error: tools.todos_max_items must be an integer >= 1."
+        )
+    if (
+        isinstance(cfg.state_todos_char_budget, bool)
+        or not isinstance(cfg.state_todos_char_budget, int)
+        or cfg.state_todos_char_budget < 1
+    ):
+        raise ValueError(
+            "config error: state.todos_char_budget must be an integer >= 1."
+        )
+    if not isinstance(cfg.tools_lazy_loading_enabled, bool):
+        raise ValueError(
+            "config error: tools.lazy_loading_enabled must be a boolean."
+        )
+    if any(not name.strip() for name in cfg.tools_active_default):
+        raise ValueError(
+            "config error: tools.active_default entries must be non-empty strings."
+        )
+    if len(cfg.tools_active_default) != len(set(cfg.tools_active_default)):
+        raise ValueError(
+            "config error: tools.active_default must not contain duplicates."
+        )
+    from .harness.tool_specs import ACTIVE_TOOL_NAMES
+    unknown_active_tools = sorted(
+        set(cfg.tools_active_default) - set(ACTIVE_TOOL_NAMES)
+    )
+    if unknown_active_tools:
+        raise ValueError(
+            "config error: tools.active_default contains unknown tool names: "
+            + ", ".join(unknown_active_tools)
+        )
+    if not isinstance(cfg.tools_checkpoint_enabled, bool):
+        raise ValueError(
+            "config error: tools.checkpoint_enabled must be a boolean."
+        )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,
@@ -628,6 +798,44 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.background_poll_timeout must be a finite "
             "number >= 0."
+        )
+    if not isinstance(cfg.tools_task_enabled, bool):
+        raise ValueError(
+            "config error: tools.task_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_subagent_depth, bool)
+        or not isinstance(cfg.tools_subagent_depth, int)
+        or cfg.tools_subagent_depth < 0
+    ):
+        raise ValueError(
+            "config error: tools.subagent_depth must be a non-negative "
+            "integer."
+        )
+    if (
+        isinstance(cfg.tools_subagent_max_turns, bool)
+        or not isinstance(cfg.tools_subagent_max_turns, int)
+        or cfg.tools_subagent_max_turns < 1
+    ):
+        raise ValueError(
+            "config error: tools.subagent_max_turns must be an integer >= 1."
+        )
+    if not isinstance(cfg.tools_exec_cell_enabled, bool):
+        raise ValueError(
+            "config error: tools.exec_cell_enabled must be a boolean."
+        )
+    if cfg.tools_lazy_loading_enabled and cfg.tools_exec_cell_enabled:
+        raise ValueError(
+            "config error: tools.lazy_loading_enabled and "
+            "tools.exec_cell_enabled cannot be enabled together."
+        )
+    if (
+        isinstance(cfg.tools_exec_cell_timeout, bool)
+        or not isinstance(cfg.tools_exec_cell_timeout, int)
+        or cfg.tools_exec_cell_timeout < 1
+    ):
+        raise ValueError(
+            "config error: tools.exec_cell_timeout must be an integer >= 1."
         )
     if cfg.sandbox_backend not in {"bwrap", "container"}:
         raise ValueError(
@@ -707,6 +915,36 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
             "config error: prompts.imports_max_depth must be a non-negative "
             "integer."
         )
+    from .harness.skills import validate_skill_settings
+    try:
+        validate_skill_settings(
+            cfg.skills_enabled,
+            cfg.skills_dirs,
+            cfg.skill_paths,
+        )
+    except ValueError as exc:
+        raise ValueError(f"config error: prompts.{exc}") from exc
+    if not isinstance(cfg.injections_enabled, bool):
+        raise ValueError(
+            "config error: injections.enabled must be a boolean."
+        )
+    if not isinstance(cfg.injections_dir, str) or not cfg.injections_dir.strip():
+        raise ValueError(
+            "config error: injections.dir must be a non-empty string."
+        )
+    if not isinstance(cfg.injections_path_rules_enabled, bool):
+        raise ValueError(
+            "config error: injections.path_rules_enabled must be a boolean."
+        )
+    if not isinstance(cfg.injections_path_rule_repeat, bool):
+        raise ValueError(
+            "config error: injections.path_rule_repeat must be a boolean."
+        )
+    if cfg.injections_path_rules_enabled and not cfg.injections_enabled:
+        raise ValueError(
+            "config error: injections.path_rules_enabled requires "
+            "injections.enabled=true."
+        )
     from .harness.project_instructions import (
         validate_project_instruction_settings,
     )
@@ -783,6 +1021,61 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     validate_role_specs(cfg.model_roles)
     validate_fallback_chains(cfg.model_fallback_chain)
     normalize_fallback_revert(cfg.model_fallback_revert)
+    if not isinstance(cfg.advisor_enabled, bool):
+        raise ValueError("config error: advisor.enabled must be a boolean.")
+    if not isinstance(cfg.advisor_model, str):
+        raise ValueError("config error: advisor.model must be a string.")
+    if not isinstance(cfg.advisor_endpoint, str):
+        raise ValueError("config error: advisor.endpoint must be a string.")
+    for field_name, value, minimum in (
+        ("every_n_turns", cfg.advisor_every_n_turns, 1),
+        ("immune_turns", cfg.advisor_immune_turns, 0),
+        ("max_note_chars", cfg.advisor_max_note_chars, 1),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < minimum
+        ):
+            raise ValueError(
+                f"config error: advisor.{field_name} must be an integer >= {minimum}."
+            )
+    if cfg.advisor_enabled or cfg.advisor_model or cfg.advisor_endpoint:
+        from .harness._loop.model_roles import parse_model_target
+
+        target: dict[str, object] = {
+            "profile": cfg.profile_name or cfg.model,
+            "endpoint": cfg.advisor_endpoint,
+        }
+        if cfg.advisor_model:
+            target["model"] = cfg.advisor_model
+        parse_model_target(target, field="advisor")
+    if (
+        isinstance(cfg.rewind_max_per_session, bool)
+        or not isinstance(cfg.rewind_max_per_session, int)
+        or cfg.rewind_max_per_session < 1
+    ):
+        raise ValueError(
+            "config error: loop.rewind_max_per_session must be an integer >= 1."
+        )
+    if cfg.rewind_enabled and not cfg.tools_file_checkpoints_enabled:
+        raise ValueError(
+            "config error: loop.rewind_enabled requires "
+            "tools.file_checkpoints_enabled = true."
+        )
+    if (
+        isinstance(cfg.repo_map_tokens, bool)
+        or not isinstance(cfg.repo_map_tokens, int)
+        or cfg.repo_map_tokens < 0
+    ):
+        raise ValueError(
+            "config error: context.repo_map_tokens must be a non-negative "
+            "integer."
+        )
+    from .harness.repo_map import normalize_repo_map_refresh
+    normalize_repo_map_refresh(cfg.repo_map_refresh)
+    from .harness.compaction_hooks import resolve_compaction_hook
+    resolve_compaction_hook(cfg.compaction_hook)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

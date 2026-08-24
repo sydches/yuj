@@ -11,6 +11,7 @@ import pytest
 from scripts.llm_solver.config import load_config
 from scripts.llm_solver.harness._loop._driver_setup import load_session_stream_rules
 from scripts.llm_solver.harness.context import FullTranscript
+from scripts.llm_solver.harness.injections import Injection
 from scripts.llm_solver.harness.loop import Session
 from scripts.llm_solver.harness.state_writer import project
 from scripts.llm_solver.harness.stream_rules import StreamRuleError, parse_stream_rule
@@ -303,6 +304,132 @@ def test_noninterrupt_tool_match_prepends_reminder_in_real_dispatch(tmp_path):
         row for row in rows if row["event"] == "stream_rule_injection"
     )
     assert injection["delivery"] == "tool_result"
+
+
+def test_stream_reminder_and_path_injection_share_the_exact_tool_result(tmp_path):
+    target = tmp_path / "src" / "main.py"
+    target.parent.mkdir()
+    target.write_text("VALUE = 1\n")
+    cfg = make_config(
+        stream_rules_enabled=True,
+        injections_enabled=True,
+        injections_path_rules_enabled=True,
+        max_turns=2,
+    )
+    client = _SequenceClient([
+        TurnResult(
+            None,
+            [ToolCall("read-1", "read", {"path": "src/main.py"})],
+            "tool_calls",
+            Usage(2, 1),
+        ),
+        TurnResult("finished", [], "stop", Usage(3, 1)),
+    ])
+    trace = io.StringIO()
+    session = Session(
+        cfg,
+        client,
+        "system",
+        "task",
+        str(tmp_path),
+        context_manager=FullTranscript(),
+        trace_file=trace,
+        stream_rules=[
+            _rule(
+                condition="src/main[.]py",
+                scope="tool:read",
+                interrupt_mode="never",
+            )
+        ],
+        injections=[Injection(
+            name="python-path",
+            trigger="path",
+            keywords=(),
+            fire_once=True,
+            body="Use the repository's Python conventions.",
+            source_path=".harness/injections/python-path.md",
+            paths=("src/*.py",),
+        )],
+    )
+    session._get_server_ctx = lambda: cfg.context_size
+
+    result = session.run()
+
+    assert result.finish_reason == "stop"
+    tool_result = next(
+        message["content"]
+        for message in client.requests[1]
+        if message["role"] == "tool"
+    )
+    assert tool_result.startswith('<system-reminder reason="rule_violation"')
+    assert '<injected-fragment rule="python-path" trigger="path"' in tool_result
+    assert tool_result.index("</system-reminder>") < tool_result.index(
+        '<injected-fragment rule="python-path"'
+    )
+    rows = _trace_rows(trace)
+    assert any(
+        row.get("event") == "stream_rule_injection"
+        and row.get("delivery") == "tool_result"
+        for row in rows
+    )
+    assert any(
+        row.get("event") == "injection"
+        and row.get("trigger") == "path"
+        for row in rows
+    )
+
+
+def test_noninterrupt_rule_decorates_inactive_tool_rejection(tmp_path):
+    cfg = make_config(
+        stream_rules_enabled=True,
+        tools_lazy_loading_enabled=True,
+        tools_active_default=("bash", "read", "glob", "grep", "done"),
+        tools_edit_format="whole",
+        error_nudge_threshold=99,
+        max_turns=2,
+    )
+    client = _SequenceClient([
+        TurnResult(
+            None,
+            [ToolCall(
+                "write-1",
+                "write",
+                {"path": "created.txt", "content": "not executed\n"},
+            )],
+            "tool_calls",
+            Usage(2, 1),
+        ),
+        TurnResult("finished", [], "stop", Usage(3, 1)),
+    ])
+    session = Session(
+        cfg,
+        client,
+        "system",
+        "task",
+        str(tmp_path),
+        context_manager=FullTranscript(),
+        trace_file=io.StringIO(),
+        stream_rules=[
+            _rule(
+                condition="not executed",
+                scope="tool:write",
+                interrupt_mode="never",
+            )
+        ],
+    )
+    session._get_server_ctx = lambda: cfg.context_size
+
+    result = session.run()
+
+    assert result.finish_reason == "stop"
+    assert not (tmp_path / "created.txt").exists()
+    tool_result = next(
+        message["content"]
+        for message in client.requests[1]
+        if message["role"] == "tool"
+    )
+    assert tool_result.startswith('<system-reminder reason="rule_violation"')
+    assert '"type":"tool_not_active"' in tool_result
 
 
 def test_config_knobs_load_and_invalid_values_fail_clearly(tmp_path):

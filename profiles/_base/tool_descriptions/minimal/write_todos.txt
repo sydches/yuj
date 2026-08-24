@@ -1,0 +1,1 @@
+Replace the session's entire todo list. Pass every item on each call with a non-empty description and status pending, in_progress, completed, cancelled, or blocked. Use at most the configured tools.todos_max_items entries and at most one in_progress entry. This records model-authored planning content in the trace; the harness alone projects it into .solver/state.json.

@@ -25,6 +25,18 @@ main = []    # opt-in entries use "<profile>@<endpoint>" or an inline target
 weak = []
 editor = []
 
+# ---------------------------------------------------------------------------
+# Passive advisor / second-opinion model
+# ---------------------------------------------------------------------------
+
+[advisor]
+enabled = false       # opt in to passive review of bounded primary-turn deltas
+model = ""            # served model ID; empty reuses [model].name
+endpoint = ""         # OpenAI-compatible base URL; empty reuses [server].base_url
+every_n_turns = 5     # sparse review cadence; 1 reviews every completed primary turn
+immune_turns = 3      # completed primary turns skipped after an advisory is emitted
+max_note_chars = 1200 # reject, rather than truncate, an over-limit advisory
+
 [models.aliases]
 # Local models (llm_solver via llama-server)
 "qwen3-vl" = "qwen3-vl-8b"
@@ -85,6 +97,10 @@ thinking_level = "off"        # off | minimal | low | medium | high | xhigh | ma
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
+# Conversation + workspace rewind. Rewind snapshots are harness-owned and
+# require [tools].file_checkpoints_enabled so messages and files move together.
+rewind_enabled = false
+rewind_max_per_session = 1
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
 length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
@@ -105,23 +121,26 @@ bash_quirks_forbidden_enabled = true  # bash_quirks/forbidden.toml layer — ref
 turn_snapshots_enabled = false  # invisible per-turn git snapshots (dangling commits, private index) after each source-write turn; turn->sha map in telemetry dir. Enables rewind/branch at any turn. See harness/turn_snapshots.py.
 preflight_reclip_enabled = true  # Pre-flight overflow backstop: instead of ending the session when the projected prompt exceeds context_fill_ratio, re-clip the single largest oversized message in token space (head+tail with a visible notice, targeting ctx/2 tokens for that message) and re-project once; only if the projection STILL exceeds the window does the session end context_full. Anomalies land in the per-run system_log.jsonl.
 pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls after N orientation turns if no mutation has occurred. 0 = disabled (default). Opt in via configs/toggles/orientation-cap-15.toml.
-# Symmetric to error_nudge: after N consecutive NON-write tool calls (no
-# write/edit between them), append a strong directive and activate the
-# rumination gate that rejects non-write tool calls until a successful
-# write/edit clears it. Also pauses duplicate_abort while armed so the
+# Symmetric to error_nudge: after N consecutive non-mutation tool calls,
+# append a strong directive and activate the rumination gate that rejects
+# non-mutation calls until a successful mutation clears it. Also pauses
+# duplicate_abort while armed so the
 # two protections don't fight.
 #
 # Value is a PERCENTAGE of max_turns (e.g. 20 = 20%). Derived to an
 # absolute turn count at session init: threshold = max_turns * N / 100.
-# At max_turns=50 and threshold=20, the gate arms after 10 non-write
+# At max_turns=50 and threshold=20, the gate arms after 10 non-mutation
 # calls. At max_turns=200 it arms after 40. Scales automatically.
 rumination_nudge_threshold = 20
+# A consecutive think-only streak reuses the rumination nudge before the
+# broader non-write budget is exhausted. 0 disables this dedicated nudge.
+think_streak_nudge_after = 3
 # After this many consecutive gate-blocked calls, end the session.
 # The model's current code becomes the final patch. Prevents both
 # infinite blocking and forced-write regressions. 0 = disabled.
 rumination_gate_max_blocks = 5
 # Optional same-target rumination path. Detects repeated inspection of the
-# same file or normalized bash target before the broad non-write threshold
+# same file or normalized bash target before the broad non-mutation threshold
 # triggers. 0 keeps the path disabled.
 rumination_same_target_warn_count = 0
 rumination_same_target_arm_count = 0
@@ -229,6 +248,7 @@ pretest_tail_chars = 1500
 # performs no model side request. Checkpoint asks the active model for a
 # structured summary and mechanically falls back to digest on any failure.
 compaction_method = "digest"            # "digest" | "checkpoint"
+compaction_hook = ""                    # trusted synchronous module:function; empty keeps built-in behavior
 checkpoint_keep_recent_tokens = 0       # 0 = max(4096, floor(20% of live context))
 checkpoint_max_summary_tokens = 4000    # hard-capped at 4000 by the runtime
 # The compaction threshold is derived, not configured directly:
@@ -242,6 +262,14 @@ checkpoint_max_summary_tokens = 4000    # hard-capped at 4000 by the runtime
 digest_compaction_safety_margin = 0.05
 digest_keep_recent_turns = 8
 digest_compaction_gate_min_mutations = 0
+# Append a deterministic ranked file/symbol map to the first task message.
+# Zero keeps the existing prompt byte-for-byte unchanged.  Enabled maps use
+# the configured local tokenizer, active profile estimator, or documented
+# chars/4 fallback as a hard incremental token budget.
+repo_map_tokens = 0
+# auto: reuse a cache while source paths/sizes/mtimes match; always: rebuild;
+# files: content-hash source files before reuse; manual: reuse any valid cache.
+repo_map_refresh = "auto"  # auto | always | files | manual
 
 [harness_observation]
 # Live prefix-only mechanical concern packets. First implementation is
@@ -268,6 +296,21 @@ prompt_version = "llm_hurdle_detector_prompt_v2"
 [tools]
 bash_timeout = 120          # seconds before a bash tool call is killed
 grep_timeout = 30           # seconds before a grep tool call is killed
+# Optional side-effect-free scratchpad tool. The call remains in raw trace;
+# context projections remove its argument after this many subsequent turns.
+think_enabled = false
+think_keep_turns = 4
+# Empty inherits `[profile].edit_format` from the selected model profile.
+# Set exact | apply_patch | udiff | whole to override it for one settings layer.
+edit_format = ""
+# Keep the historical fixed tool surface unless a run opts into deferred
+# loading. When enabled, only active_default plus load_tools and done are sent
+# at the start of each harness session. load_tools activation is additive.
+lazy_loading_enabled = false
+active_default = ["bash", "read", "edit", "glob", "grep", "done"]
+# Conversation-only exploration checkpoints. Enabling this one switch exposes
+# both checkpoint(goal) and rewind(report); rewind never restores task files.
+checkpoint_enabled = false
 # Independent shadow-Git workspace checkpoints. The repository lives outside
 # the task cwd, is masked from model commands, and is never exposed as a tool.
 file_checkpoints_enabled = false
@@ -292,11 +335,27 @@ ast_search_max_rows = 1000
 # profile capability and otherwise fall back to runtime validation.
 schema_validation = "off"       # off | reject
 constrained_decoding = "off"    # off | json_schema | grammar
+# Session-scoped model-authored task list. Disabled means the schema is not
+# sent to the model. A successful call replaces the whole list and emits a
+# trace event; only the harness projects that event into state.json.
+todos_enabled = false
+todos_max_items = 20
 # Session-scoped asynchronous shell commands. Polls are the only model-facing
 # output channel; every live child is terminated when the session ends.
 background_enabled = false
 background_max_procs = 4
 background_poll_timeout = 300  # seconds; caps each bash_poll wait
+# Sequential named subagents. Enabling task adds the model-facing tool; each
+# agents/<name>.toml descriptor supplies its profile, allowlist, prompt, and
+# smaller per-agent turn limit. Children never run in the background.
+task_enabled = false
+subagent_depth = 1
+subagent_max_turns = 20
+# Python code mode. When enabled, send a compact meta-tool surface instead of
+# the full native schema catalog. Cells always fail closed unless they can run
+# inside the selected shell sandbox.
+exec_cell_enabled = false
+exec_cell_timeout = 30  # seconds; bounds the whole cell and all inner calls
 # Paginated search envelopes. When enabled, grep and glob wrap their
 # output in <search_result .../> with total/shown/page/next_page
 # attributes so the agent can check discovery scope and request
@@ -386,13 +445,13 @@ assertion_context_max = 3
 # Post-edit validation (harness hook; L5 invocation + declared policy)
 # ---------------------------------------------------------------------------
 # Declarative check list. Each [[post_edit_check.checks]] entry runs
-# after an edit/write that matches its trigger and when-predicate.
+# after a selected edit-dialect mutation that matches its trigger and predicate.
 # Empty by default — the harness has zero opinion about what "success"
 # means. Populate in config.local.toml or via configs/toggles/...
 #
 # Schema per check:
 #   name     — identifier used on the savings ledger (ctx.check)
-#   trigger  — "edit" | "write" | "edit|write"
+#   trigger  — "edit" | "write" | "apply_patch" | "udiff" | combinations
 #   when     — safe-eval predicate over {path, ext}; "" (empty) = always
 #              allowed:  == != in not in and or not,  str.startswith /
 #              endswith / lower / upper,  constants
@@ -403,7 +462,7 @@ assertion_context_max = 3
 #              block  — edit reverted, tool call returns ERROR
 [post_edit_check]
 enabled = false              # master off-switch
-timeout = 10                 # seconds; runs per edit/write
+timeout = 10                 # seconds; runs per matching mutation
 checks = []                  # no shipped defaults — user declares policy
 
 # ---------------------------------------------------------------------------
@@ -426,13 +485,16 @@ tool_enabled = false
 # Injection subsystem (harness/injections.py)
 # ---------------------------------------------------------------------------
 # When enabled, the harness loads every *.md in `dir` at session
-# start. Each file is a <injected-fragment> block that fires either
-# always (once per session) or on keyword match against the most
-# recent user / tool-result message. See harness/injections.py for
-# the file format and LEAKAGE_RULES constraints on fragment content.
+# start. Each file is a <injected-fragment> block that fires always,
+# on a keyword match against the most recent user / tool-result message,
+# or after an executed file tool targets a matching project-relative path.
+# See harness/injections.py for the strict TOML-frontmatter format and
+# LEAKAGE_RULES constraints on fragment content.
 [injections]
 enabled = false
 dir = ".harness/injections"
+path_rules_enabled = false  # opt in to paths= glob matching for read/edit/write/apply_patch and single-file bash reads
+path_rule_repeat = false    # default false fires each path rule once per session; per-rule repeat overrides it
 
 # ---------------------------------------------------------------------------
 # Declarative per-tool permission policy. Empty rules preserve allow-by-default
@@ -486,11 +548,22 @@ project_doc_global_dir = "~/.config/yuj"
 # behavior. Set false to treat every standalone @path line literally.
 imports_enabled = true
 imports_max_depth = 5
+# Agent Skills are opt-in so existing runs keep byte-identical prompts. When
+# enabled, explicit skill_paths are considered first, followed by skills_dirs
+# in declaration order; the first valid skill for a repeated name wins.
+skills_enabled = false
+skills_dirs = [
+  "~/.pi/agent/skills",
+  "~/.agents/skills",
+  ".pi/skills",
+  ".agents/skills",
+]
+skill_paths = []
 # Harness system header. It follows an optional --system-prompt arm file and
 # optional project-instruction blocks. Task-agnostic — names no benchmark,
 # test framework, or tool invocation convention.
 system_header = """\
-You are a software engineering solver. Work in the current directory. Use tools to read, write, edit, search, and run commands."""
+You are a software engineering solver. Work in the current directory. Use the available tools to inspect, change, search, and verify the project."""
 
 # Suffix injected at the end of every stateful-context user message.
 # Reminds the model that the harness maintains state on its behalf.
@@ -512,20 +585,20 @@ resume_base = "Continue. Review prior actions, do the next step."
 error_nudge = "[harness: {count} errors. Re-read the file.]"
 
 # Appended to tool result when rumination_nudge_threshold is crossed.
-# {count} is replaced with the non-write call count at runtime.
-rumination_nudge = "[HARNESS: {count} non-write calls. One more and all tools except write/edit are blocked. Write or edit now.]"
+# {count} is replaced with the non-mutation call count at runtime.
+rumination_nudge = "[HARNESS: {count} non-mutation calls. One more and all tools except file-mutation tools are blocked. Mutate a file now.]"
 
-# Returned as the tool result when the rumination gate blocks a non-write call.
-rumination_gate = "NOT EXECUTED. Only write/edit accepted. Blocked until a write or edit succeeds. Each blocked call wastes a turn."
+# Returned when the rumination gate blocks a non-mutation call.
+rumination_gate = "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked until a file mutation succeeds. Each blocked call wastes a turn."
 
 # Appended to tool result when the same file / normalized command target has
-# been inspected repeatedly without a write/edit.
-rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a write/edit ({target}). Stop rereading it; either edit, verify, or move to a different target.]"
+# been inspected repeatedly without a file mutation.
+rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]"
 rumination_outside_cwd_nudge = "[HARNESS: repeated inspection is anchored outside the repo root ({target}). The working directory is already correct; search and read relative to it.]"
 test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]"
-contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: edit/write, read a test file, or run verification. Do not continue broad inspection.]"
-contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit/write, read a test file, or run verification.]"
-contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, edit/write, or run verification.]"
+contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]"
+contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]"
+contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, mutate a file, or run verification.]"
 
 # Appended to read() tool result when the caller's `limit` capped the
 # output (the file is larger than what was returned). Format
@@ -578,6 +651,10 @@ resume_last_n_actions = 3
 # leaving harness/scorer access unchanged. Earlier file names take precedence.
 ignore_file_enabled = true
 ignore_file_names = [".yujignore"]
+# Character budget for the complete `=== Todos ===` block rendered beside the
+# normal state-context suffix. This bounds model-authored descriptions without
+# changing the canonical list stored in the trace/state projection.
+todos_char_budget = 2000
 
 # Optional host paths to hide inside bwrap. Patterns may be absolute and may
 # contain `**`. Prefix a pattern with `optional:` when absence is acceptable.

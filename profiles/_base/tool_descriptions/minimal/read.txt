@@ -1,1 +1,1 @@
-Read a file; returns contents with line numbers. Optional `offset` (0-based, skip first N lines) and `limit` (max lines returned; 0 = no limit). Errors on directories — use glob to list directory contents.
+Read a file; returns contents with line numbers. Paths normally stay inside cwd; absolute paths under enabled external Agent Skill directories are also readable, while those external directories remain non-writable. Optional `offset` (0-based, skip first N lines) and `limit` (max lines returned; 0 = no limit). Errors on directories — use glob to list directory contents.

@@ -1,0 +1,1 @@
+Record a bounded scratchpad thought without executing it. The thought is logged as the ordinary think tool call, has no filesystem or process effect, and returns an empty success envelope. Old thoughts leave model context after tools.think_keep_turns turns. Repeated think calls count as non-progress; use another tool when the plan is ready.

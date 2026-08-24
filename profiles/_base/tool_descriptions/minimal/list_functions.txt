@@ -1,0 +1,1 @@
+List the Python function names available inside an exec_cell. Returns names only; use get_function_details for input schemas.

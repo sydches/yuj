@@ -40,7 +40,7 @@ def test_build_context_contract_records_mode_order_and_budgets():
 
     contract = build_context_contract(CompoundSelectiveContext, cfg)
 
-    assert contract["version"] == 1
+    assert contract["version"] == 2
     assert contract["mode"] == "compound_selective"
     assert contract["section_order"] == [
         "task",
@@ -49,6 +49,7 @@ def test_build_context_contract_records_mode_order_and_budgets():
         "trace",
         "evidence",
         "tool_results",
+        "todos",
         "continuation_suffix",
     ]
     assert contract["state_source"] == ".solver/state.json"
@@ -60,6 +61,8 @@ def test_build_context_contract_records_mode_order_and_budgets():
     ]
     assert contract["budgets"]["compound_selective_trace_lines"] == 7
     assert contract["budgets"]["compound_selective_recent_tool_results_chars"] == 1234
+    assert contract["budgets"]["state_todos_char_budget"] == 2000
+    assert contract["section_labels"]["todos"] == "=== Todos ==="
 
 
 def test_halflife_contract_excludes_stateful_suffix():
@@ -72,6 +75,7 @@ def test_halflife_contract_excludes_stateful_suffix():
     assert contract["suffix_present"] is False
     assert "continuation_suffix" not in contract["section_order"]
     assert "<state_context_suffix>" not in contract["section_labels"].values()
+    assert "state_todos_char_budget" not in contract["budgets"]
 
 
 def test_every_context_mode_declares_source_boundary():

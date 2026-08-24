@@ -270,8 +270,13 @@ class ReplayClient:
         # not the rendered request (windowing/compaction state-dependent)
         self._trace_events: dict[int, dict] = {}
         self.process_events: list[dict] = []
-        if source_trace_path is not None and Path(source_trace_path).is_file():
-            for line in Path(source_trace_path).read_text().splitlines():
+        self.subagent_events: list[dict] = []
+        self.source_trace_path = (
+            Path(source_trace_path) if source_trace_path is not None else None
+        )
+        self._rewind_events: dict[tuple[int, int], list[dict]] = {}
+        if self.source_trace_path is not None and self.source_trace_path.is_file():
+            for line in self.source_trace_path.read_text().splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -283,6 +288,17 @@ class ReplayClient:
                     self._trace_events[int(ev.get("turn_number", -1) or -1)] = ev
                 elif ev.get("event") in {"proc_start", "proc_poll", "proc_kill"}:
                     self.process_events.append(ev)
+                elif ev.get("event") == "subagent":
+                    self.subagent_events.append(ev)
+                elif (
+                    ev.get("event") == "rewind"
+                    and ev.get("delivery") == "in_session"
+                ):
+                    key = (
+                        int(ev.get("session_number", 0) or 0),
+                        int(ev.get("from_turn", -1)),
+                    )
+                    self._rewind_events.setdefault(key, []).append(ev)
 
     # -- helpers -------------------------------------------------------------
 
@@ -295,6 +311,55 @@ class ReplayClient:
         except json.JSONDecodeError:
             return None
         return _tool_tail(msgs)
+
+    def _recorded_request_tool_names(
+        self, turn_no: int
+    ) -> tuple[str, ...] | None:
+        """Return the exact recorded request tool order when available."""
+        body = self._bodies.get((turn_no, "input"))
+        if not body:
+            return None
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if "tools" not in payload:
+            return None
+        tools = payload.get("tools")
+        if not isinstance(tools, list):
+            return None
+        return tuple(
+            str(tool.get("function", {}).get("name", ""))
+            for tool in tools
+        )
+
+    def _check_tool_surface_fidelity(
+        self, live_tools: list[dict], turn_no: int
+    ) -> None:
+        """Stop when deferred activation diverges from the recording."""
+        recorded = self._recorded_request_tool_names(turn_no)
+        if recorded is None:
+            return
+        live = tuple(
+            str(tool.get("function", {}).get("name", ""))
+            for tool in live_tools
+        )
+        if live == recorded:
+            return
+        self.divergence = {
+            "turn": turn_no,
+            "field": "tools",
+            "live_tools": list(live),
+            "recorded_tools": list(recorded),
+        }
+        msg = (
+            f"replay divergence at recorded turn {turn_no}: request tool "
+            f"surface differs (live={list(live)!r}, "
+            f"recorded={list(recorded)!r})"
+        )
+        if self.strict_fidelity:
+            raise ReplayDivergence(msg)
+        log.warning("%s (continuing: strict_fidelity=false)", msg)
 
     def _check_fidelity(self, live_messages: list[dict], turn_no: int) -> None:
         """Compare the live trailing tool results against the recording's
@@ -410,6 +475,7 @@ class ReplayClient:
             return TurnResult(content=None, tool_calls=[],
                               finish_reason=REPLAY_FINISH_REASON_STOP_TURN,
                               usage=Usage(0, 0))
+        self._check_tool_surface_fidelity(tools, turn_no)
         try:
             result = self._turn_result(turn_no)
         except StreamRuleInterrupt:
@@ -538,6 +604,39 @@ class ReplayClient:
                 raise ReplayDivergence(msg)
             log.warning("%s (continuing: strict_fidelity=false)", msg)
             return
+
+    def rewinds_at(self, session_number: int, turn_number: int) -> list[dict]:
+        """Return recorded in-session rewinds at one completed boundary."""
+        return list(self._rewind_events.get(
+            (int(session_number), int(turn_number)), ()
+        ))
+
+    def verify_rewind_event(self, live_event: dict) -> None:
+        """Require a reproduced rewind to match the recorded semantics."""
+        key = (
+            int(live_event.get("session_number", 0) or 0),
+            int(live_event.get("from_turn", -1)),
+        )
+        recorded = self._rewind_events.get(key) or []
+        if not recorded:
+            raise ReplayDivergence(
+                f"unexpected replay rewind at session {key[0]} turn {key[1]}"
+            )
+        source = recorded.pop(0)
+        if not recorded:
+            self._rewind_events.pop(key, None)
+        for field in ("from_turn", "to_turn", "reason", "delivery"):
+            if live_event.get(field) != source.get(field):
+                self.divergence = {
+                    "turn": key[1],
+                    "field": field,
+                    "live": live_event.get(field),
+                    "recorded": source.get(field),
+                }
+                raise ReplayDivergence(
+                    f"replay divergence at recorded rewind turn {key[1]}: "
+                    f"{field} differs from recording"
+                )
 
     def build_assistant_message(self, content: str | None,
                                 tool_calls: list[ToolCall]) -> dict:

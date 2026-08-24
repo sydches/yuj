@@ -22,6 +22,7 @@ import time
 
 from ..action_metadata import action_metadata
 from ..guardrails import Action
+from ..tool_loading import inactive_tool_error
 from ..._shared.classification import is_error_result
 from .._guardrails.extractors import MUTATION_TOOLS
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
@@ -47,12 +48,28 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     )
     if done_decision.action == Action.PASS:
         state.log.info("Model called done() at turn %d", state.turn)
+        session._final_text = str(
+            tc.arguments.get("message") or state.content or ""
+        )
         result = session._decorate_stream_rule_tool_result(
             tc.id, "Session ended by model.", turn=state.turn
         )
         session.context.add_tool_result(tc.id, result, tool_name="done")
         _emit_done(tc, state, result)
         return TCOutcome(end=True, reason="model_done", done=True)
+    if done_decision.action == Action.REWIND:
+        result = session._decorate_stream_rule_tool_result(
+            tc.id, done_decision.text, turn=state.turn
+        )
+        session.context.add_tool_result(
+            tc.id, result, tool_name="done"
+        )
+        _emit_done(tc, state, result)
+        session.request_rewind(
+            done_decision.target_turn,
+            reason=done_decision.reason or "rewind_on_done_guard",
+        )
+        return TCOutcome(rewind=True)
     # BLOCK or END: store rejection text in trace; END terminates.
     result = session._decorate_stream_rule_tool_result(
         tc.id, done_decision.text, turn=state.turn
@@ -142,6 +159,17 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
     )
 
 
+def _handle_pre_rewind(tc, decision, state: "TurnState") -> TCOutcome:
+    """Complete the current call and defer rewind to the turn boundary."""
+    state.turn_had_pressure = True
+    _emit_gate_block(tc, decision, state, "")
+    state.session.request_rewind(
+        decision.target_turn,
+        reason=decision.reason or "rewind_on_guardrail",
+    )
+    return TCOutcome(rewind=True)
+
+
 def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> None:
     """Capture one host-side workspace checkpoint after an executed call."""
     store = getattr(state.session, "_checkpoint_store", None)
@@ -158,21 +186,40 @@ def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> 
     )
 
 
+def _emit_todos_event(tc, state: "TurnState", execution_metadata: dict) -> None:
+    """Persist one successful whole-list replacement as raw trace content."""
+    if tc.name != "write_todos" or "todos" not in execution_metadata:
+        return
+    state.session._emit(
+        "todos",
+        session_number=state.session._session_number,
+        turn_number=state.turn,
+        tool_call_id=tc.id,
+        todos=execution_metadata["todos"],
+    )
+
+
 def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
-    """Run automatic diagnostics after a successful edit or write."""
-    if tc.name not in {"edit", "write"} or is_error_result(result):
+    """Run automatic diagnostics after a successful edit-dialect call."""
+    from ..._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
+    if tc.name not in EDIT_FORMAT_TOOL_NAMES or is_error_result(result):
         return result
     manager = getattr(state.session, "_lsp_manager", None)
     if manager is None:
         return result
-    report = manager.after_edit(str(tc.arguments.get("path", "")))
+    from ..edit_operations import edit_operations
     from ..lsp_support import append_diagnostics_to_tool_result
-    return append_diagnostics_to_tool_result(
-        result,
-        report,
-        max_output_chars=state.cfg.max_output_chars,
-        tool_name=tc.name,
-    )
+    for kind, path in edit_operations(tc.name, tc.arguments):
+        if kind == "delete":
+            continue
+        report = manager.after_edit(path)
+        result = append_diagnostics_to_tool_result(
+            result,
+            report,
+            max_output_chars=state.cfg.max_output_chars,
+            tool_name=tc.name,
+        )
+    return result
 
 
 def _run_rejection_error_ladder(tc, state: "TurnState", result: str):
@@ -265,6 +312,73 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
             reason=error_decision.reason,
             done=False,
         )
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
+    return TCOutcome(end=False)
+
+
+def _handle_inactive_tool(tc, state: "TurnState") -> TCOutcome:
+    """Reject a hidden registered tool before policy or execution."""
+    session = state.session
+    cfg = state.cfg
+    result = inactive_tool_error(tc.name)
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = action_metadata(tc.name, tc.arguments)
+    session.context.add_tool_result(
+        tc.id, result, tool_name=tc.name, gate_blocked=True
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="tool_not_active",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
     return TCOutcome(end=False)
 
 
@@ -329,6 +443,12 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     )
     if error_decision.action == Action.END:
         return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)
 
 
@@ -366,6 +486,69 @@ def _record_tool_finished(tc, state: "TurnState") -> None:
         raise RuntimeError(
             f"tool call {tc.id!r} finished without a pending tool_start"
         )
+
+
+def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) -> dict:
+    """Emit cell children once and return exact outer-cell trace fields."""
+    if tc.name != "exec_cell":
+        return {}
+    cell = execution_metadata.get("exec_cell")
+    if not isinstance(cell, dict):
+        return {"cell_source": str(tc.arguments.get("source", ""))}
+    if not execution_metadata.get("_exec_cell_children_emitted"):
+        for raw_call in cell.get("inner_calls", ()):
+            if not isinstance(raw_call, dict):
+                continue
+            name = str(raw_call.get("name") or "")
+            arguments = raw_call.get("arguments")
+            if not name or not isinstance(arguments, dict):
+                continue
+            inner_execution = raw_call.get("execution_metadata")
+            if not isinstance(inner_execution, dict):
+                inner_execution = {}
+            args_summary = _truncate_for_trace(
+                _summarize_args(
+                    arguments, state.cfg.trace_args_summary_chars
+                ),
+                state.cfg.trace_args_summary_chars,
+            )
+            result = str(raw_call.get("result") or "")
+            metadata = action_metadata(name, arguments)
+            gate_blocked = bool(inner_execution.get("gate_blocked", False))
+            index = int(raw_call.get("index") or 0)
+            state.session._emit(
+                "tool_call",
+                tool_call_id=f"{tc.id}:cell:{index}",
+                parent_tool_call_id=tc.id,
+                cell_inner_index=index,
+                session_number=state.session._session_number,
+                turn_number=state.turn,
+                tool_name=name,
+                args_summary=args_summary,
+                **build_tool_call_trace_fields(
+                    state.session,
+                    tool_name=name,
+                    args_summary=args_summary,
+                    result=result,
+                    turn=state.turn,
+                    gate_blocked=gate_blocked,
+                    metadata=metadata,
+                    execution_metadata=inner_execution,
+                ),
+                reasoning="",
+                gate_blocked=gate_blocked,
+                **metadata,
+                prompt_tokens=0,
+                completion_tokens=0,
+                tool_dispatch_ms=float(raw_call.get("duration_ms") or 0.0),
+            )
+        execution_metadata["_exec_cell_children_emitted"] = True
+    return {
+        "cell_source": str(cell.get("source") or tc.arguments.get("source", "")),
+        "combined_output_chars": int(cell.get("combined_output_chars") or 0),
+        "combined_output_bytes": int(cell.get("combined_output_bytes") or 0),
+        "inner_call_count": len(cell.get("inner_calls", ())),
+    }
 
 
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
@@ -417,6 +600,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     rewrite_log: list = []
     dispatch_started = tc.id in state.preexecuted
 
+    if tc.id in state.inactive_tool_call_ids:
+        return _handle_inactive_tool(tc, state)
+
     if getattr(cfg, "tools_schema_validation", "off") == "reject":
         validation = state.schema_validations.get(tc.id)
         if validation is None:
@@ -445,12 +631,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     mutation_warn_text = ""
     gate_blocked_flag = False
     gate_intercepted = False
+    path_injection_fired = False
     result: str = ""
     execution_metadata: dict = {}
     if mutation_decision.action == Action.END:
         state.turn_had_pressure = True
         _emit_gate_block(tc, mutation_decision, state, args_summary)
         return TCOutcome(end=True, reason=mutation_decision.reason, done=False)
+    if mutation_decision.action == Action.REWIND:
+        return _handle_pre_rewind(tc, mutation_decision, state)
     if mutation_decision.action == Action.BLOCK:
         state.turn_had_pressure = True
         log.info("Mutation repeat guard blocked %s", tc.name)
@@ -475,6 +664,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             state.turn_had_pressure = True
             _emit_gate_block(tc, contract_decision, state, args_summary)
             return TCOutcome(end=True, reason=contract_decision.reason, done=False)
+        if contract_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, contract_decision, state)
         if contract_decision.action == Action.BLOCK:
             state.turn_had_pressure = True
             log.info("Contract gate blocked %s", tc.name)
@@ -504,6 +695,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                      tc.name, turn, cfg.pre_mutation_turn_cap)
             _emit_gate_block(tc, pre_mut_decision, state, args_summary)
             return TCOutcome(end=False)
+        if pre_mut_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, pre_mut_decision, state)
 
         # 6d. rumination_gate — grace (WARN+dispatch) / BLOCK / END.
         gate_decision = tool_pre["rumination_gate"](
@@ -515,6 +708,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                      session._guards.gate_block_count)
             _emit_gate_block(tc, gate_decision, state, args_summary)
             return TCOutcome(end=True, reason=gate_decision.reason, done=False)
+        if gate_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, gate_decision, state)
         if gate_decision.action == Action.BLOCK:
             state.turn_had_pressure = True
             log.info("Rumination gate blocked %s", tc.name)
@@ -596,10 +791,19 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 state.turn_had_pressure = True
                 log.info("Tool error: %s consecutive=%d",
                          tc.name, session._guards.consecutive_errors.get(tc.name, 0))
-            if err_decision.action == Action.END:
+            if err_decision.action in {Action.END, Action.REWIND}:
                 state.turn_had_pressure = True
                 log.warning("Error abort: %s consecutive=%d", tc.name,
                             session._guards.consecutive_errors.get(tc.name, 0))
+                result, _ = session._apply_path_injections(
+                    result,
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    turn_number=turn,
+                    executed=bool(execution_metadata.get("executed", True)),
+                    execution_metadata=execution_metadata,
+                    bash_rewritten=bool(rewrite_log),
+                )
                 result = session._decorate_stream_rule_tool_result(
                     tc.id, result, turn=turn
                 )
@@ -628,6 +832,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                         metadata=metadata,
                         execution_metadata=execution_metadata,
                     ),
+                    **_exec_cell_trace_fields(tc, state, execution_metadata),
                     reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
                     gate_blocked=False,
                     **metadata,
@@ -641,6 +846,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 )
                 if dispatch_started:
                     _record_tool_finished(tc, state)
+                if err_decision.action == Action.REWIND:
+                    session.request_rewind(
+                        err_decision.target_turn,
+                        reason=(
+                            err_decision.reason
+                            or "rewind_on_error_ladder"
+                        ),
+                    )
+                    return TCOutcome(rewind=True)
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
@@ -692,12 +906,20 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     )
     if rum_decision.action == Action.WARN:
         result += "\n\n" + rum_decision.text
+    post_rewind = next(
+        (
+            decision
+            for decision in (test_read_decision, rum_decision)
+            if decision.action == Action.REWIND
+        ),
+        None,
+    )
 
     # Context-side dedup reset on a successful write/edit. The
     # guardrail state is reset inside rumination_ladder; this is
     # the context's own signal (separate concern — stateful
     # compaction, not thrash control).
-    if (tc.name in ("write", "edit")
+    if (tc.name in MUTATION_TOOLS
             and not is_error_result(result)
             and hasattr(session.context, "reset_dedup_counts")):
         session.context.reset_dedup_counts()
@@ -731,6 +953,19 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if state.turn_warn_text:
         result += "\n\n" + state.turn_warn_text
 
+    path_call_executed = (
+        not gate_blocked_flag
+        and bool(execution_metadata.get("executed", True))
+    )
+    result, path_injection_fired = session._apply_path_injections(
+        result,
+        tool_name=tc.name,
+        arguments=tc.arguments,
+        turn_number=turn,
+        executed=path_call_executed,
+        execution_metadata=execution_metadata,
+        bash_rewritten=bool(rewrite_log),
+    )
     result = session._decorate_stream_rule_tool_result(
         tc.id, result, turn=turn
     )
@@ -772,6 +1007,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             metadata=metadata,
             execution_metadata=execution_metadata,
         ),
+        **_exec_cell_trace_fields(tc, state, execution_metadata),
         **({"snapshot_sha": _snapshot_sha} if _snapshot_sha else {}),
         reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
         gate_blocked=gate_blocked_flag,
@@ -786,6 +1022,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         **({"cmd_pre_rewrite": _truncate_for_trace(_pre, cfg.trace_args_summary_chars)} if _pre else {}),
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
     )
+    if call_executed:
+        _emit_todos_event(tc, state, execution_metadata)
     _capture_workspace_checkpoint(
         tc, state, executed=call_executed,
     )
@@ -805,6 +1043,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if (
         cfg.tools_output_dedup_enabled
         and not gate_blocked_flag
+        and not path_injection_fired
         and focus_key
         and tc.name not in MUTATION_TOOLS
         and tc.id not in session._stream_rule_decorated_call_ids
@@ -866,4 +1105,10 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         result=result,
         gate_blocked=gate_blocked_flag,
     )
+    if post_rewind is not None:
+        session.request_rewind(
+            post_rewind.target_turn,
+            reason=post_rewind.reason or "rewind_on_guardrail",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)
