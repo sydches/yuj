@@ -42,6 +42,14 @@ def test_session_compact_summary_reports_successful_edit_dialects(tmp_path: Path
             "args_summary": "path='.solver/plan.md'",
             "result_summary": "OK",
         },
+        {
+            "event": "tool_call",
+            "tool_name": "run_tests",
+            "args_summary": "path='tests/test_calc.py'",
+            "action_summary": "run_tests(path='tests/test_calc.py')",
+            "result_summary": '<test_results status="passed">1 passed</test_results>',
+            "pass_fail": "pass",
+        },
     ]
     (tmp_path / ".trace.jsonl").write_text(
         "".join(json.dumps(event) + "\n" for event in events)
@@ -50,6 +58,8 @@ def test_session_compact_summary_reports_successful_edit_dialects(tmp_path: Path
     summary = session_compact_summary(tmp_path)
 
     assert summary["changed_files"] == ["calc.py", ".solver/plan.md"]
+    assert summary["last_test_cmd"] == "run_tests(path='tests/test_calc.py')"
+    assert summary["last_test_result"] == "pass"
 
 
 def test_session_store_round_trip(tmp_path: Path):

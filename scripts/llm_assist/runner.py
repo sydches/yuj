@@ -645,7 +645,17 @@ def session_compact_summary(artifact_dir: Path) -> dict[str, object]:
                     changed_seen.add(file_path)
                     changed_files.append(file_path)
 
-        if tool_name == "bash":
+        if tool_name == "run_tests":
+            last_test_cmd = str(
+                ev.get("action_summary") or f"run_tests({args_summary})"
+            )
+            traced_verdict = str(ev.get("pass_fail") or "").lower()
+            last_test_result = (
+                traced_verdict
+                if traced_verdict in {"pass", "fail"}
+                else _classify_test_outcome(result_summary)
+            )
+        elif tool_name == "bash":
             cmd = _extract_shell_cmd(args_summary)
             if cmd and _looks_like_test_command(cmd):
                 last_test_cmd = cmd
