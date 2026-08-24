@@ -5,6 +5,7 @@ import pytest
 
 from scripts.llm_assist import __main__ as cli
 from scripts.llm_assist import store
+from scripts.llm_assist.startup import preflight_assistant_startup
 from scripts.llm_solver import runtime_resources as runtime_resource_module
 from scripts.llm_solver._shared import paths
 from scripts.llm_solver._shared.paths import package_data_path, resource_origin
@@ -124,6 +125,26 @@ def test_code_dry_run_stops_before_network_and_creates_no_session(
     assert "Runner: pytest" in output
     assert "Model network: not contacted" in output
     assert not assist_home.exists()
+
+
+def test_preflight_accepts_disabled_optional_bash_layers(tmp_path):
+    task = tmp_path / "task"
+    task.mkdir()
+
+    report = preflight_assistant_startup(
+        config_paths=(),
+        cwd=task,
+        context_mode="full",
+        config_overrides={
+            "sandbox_bash": False,
+            "sandbox_required": False,
+            "bash_transforms_universal_enabled": False,
+            "bash_quirks_forbidden_enabled": False,
+        },
+    )
+
+    assert report.network_contacted is False
+    assert report.detected_runner == "pytest"
 
 
 def test_normal_code_runs_local_preflight_before_model_discovery(

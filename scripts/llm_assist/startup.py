@@ -136,8 +136,29 @@ def preflight_assistant_startup(
 
     cfg = resolve_task_format(cfg, target)
     transforms = _load_bash_transforms(cfg)
-    if any(transform is None for transform in transforms[1:5]):
-        raise RuntimeError("required bash rule resources did not load")
+    missing_transforms = [
+        name
+        for name, required, transform in (
+            (
+                "universal rewrites",
+                cfg.bash_transforms_universal_enabled,
+                transforms[1],
+            ),
+            (
+                "forbidden rules",
+                cfg.bash_quirks_forbidden_enabled,
+                transforms[2],
+            ),
+            ("redirect rules", True, transforms[3]),
+            ("redactions", True, transforms[4]),
+        )
+        if required and transform is None
+    ]
+    if missing_transforms:
+        raise RuntimeError(
+            "required bash rule resources did not load: "
+            + ", ".join(missing_transforms)
+        )
     environment = compute_runtime_envelope_fields(cfg, target)
     if (
         getattr(cfg, "sandbox_required", False)
