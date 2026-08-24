@@ -712,6 +712,11 @@ def project(
                         "goal": ev["goal"],
                         "report": ev["report"],
                     }
+        elif et == "advisor_note":
+            # Control metadata and the private note transcript are deliberately
+            # outside the mechanical model-state projection.
+            continue
+        # Other session_start rows do not mutate projected task state.
 
     state.setdefault("current_attempt", "")
     state.setdefault("last_verify", "")

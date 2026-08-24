@@ -174,6 +174,7 @@ class CompactTranscript(ContextManager):
         self._recent_results_meta: deque[dict] = deque()
         self._recent_results_chars: int = recent_results_chars
         self._all_messages: list[dict] = []  # raw log (fallback for turns 0-1)
+        self._injected_fragments: list[str] = []
         self._turn_count: int = 0
         self._last_assistant_msg: dict | None = None  # buffer between add_assistant and first add_tool_result
         self._prev_assistant_msg: dict | None = None  # retained for multi-tool lookups within same turn
@@ -197,6 +198,16 @@ class CompactTranscript(ContextManager):
         self._all_messages.append({"role": "user", "content": content})
         self._msg_cache = None
         self._tok_cache = None
+
+    def add_injected_fragment(self, content: str) -> None:
+        self.add_user(content)
+        self._injected_fragments.append(content)
+
+    def consume_injected_fragments(self) -> None:
+        if self._injected_fragments:
+            self._injected_fragments.clear()
+            self._msg_cache = None
+            self._tok_cache = None
 
     def add_assistant(self, message: dict) -> None:
         self._all_messages.append(message)
@@ -526,6 +537,8 @@ class CompactTranscript(ContextManager):
             parts.append(
                 f"Last {len(kept_rev)} tool results (full, newest last):\n{results}"
             )
+
+        parts.extend(self._injected_fragments)
 
         parts.append(f"Turn: {self._turn_count}")
 

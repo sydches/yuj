@@ -90,6 +90,11 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "advisor_note",
+        frozenset({"session_number", "turn", "severity", "chars"}),
+        frozenset({"turn_number", "ordinal", "note_sha256"}),
+    ),
+    TraceEventSpec(
         "model_fallback",
         frozenset({
             "session_number",

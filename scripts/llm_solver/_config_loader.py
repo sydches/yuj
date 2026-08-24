@@ -89,6 +89,16 @@ def _extract_config_fields(d: dict) -> dict:
         "model_fallback_revert": d.get("models", {}).get(
             "fallback_revert", "never"
         ),
+        "advisor_enabled": d.get("advisor", {}).get("enabled", False),
+        "advisor_model": d.get("advisor", {}).get("model", ""),
+        "advisor_endpoint": d.get("advisor", {}).get("endpoint", ""),
+        "advisor_every_n_turns": d.get("advisor", {}).get(
+            "every_n_turns", 5
+        ),
+        "advisor_immune_turns": d.get("advisor", {}).get("immune_turns", 3),
+        "advisor_max_note_chars": d.get("advisor", {}).get(
+            "max_note_chars", 1200
+        ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
         "rewind_enabled": bool(
@@ -942,6 +952,35 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     validate_role_specs(cfg.model_roles)
     validate_fallback_chains(cfg.model_fallback_chain)
     normalize_fallback_revert(cfg.model_fallback_revert)
+    if not isinstance(cfg.advisor_enabled, bool):
+        raise ValueError("config error: advisor.enabled must be a boolean.")
+    if not isinstance(cfg.advisor_model, str):
+        raise ValueError("config error: advisor.model must be a string.")
+    if not isinstance(cfg.advisor_endpoint, str):
+        raise ValueError("config error: advisor.endpoint must be a string.")
+    for field_name, value, minimum in (
+        ("every_n_turns", cfg.advisor_every_n_turns, 1),
+        ("immune_turns", cfg.advisor_immune_turns, 0),
+        ("max_note_chars", cfg.advisor_max_note_chars, 1),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < minimum
+        ):
+            raise ValueError(
+                f"config error: advisor.{field_name} must be an integer >= {minimum}."
+            )
+    if cfg.advisor_enabled or cfg.advisor_model or cfg.advisor_endpoint:
+        from .harness._loop.model_roles import parse_model_target
+
+        target: dict[str, object] = {
+            "profile": cfg.profile_name or cfg.model,
+            "endpoint": cfg.advisor_endpoint,
+        }
+        if cfg.advisor_model:
+            target["model"] = cfg.advisor_model
+        parse_model_target(target, field="advisor")
     if (
         isinstance(cfg.rewind_max_per_session, bool)
         or not isinstance(cfg.rewind_max_per_session, int)

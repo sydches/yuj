@@ -277,6 +277,10 @@ class Session:
         self._trace_file = trace_file
         self._trace_path = trace_path
         self._state_path = state_path
+        self._artifact_dir = Path(
+            artifact_dir
+            or (trace_path.parent if trace_path is not None else cwd)
+        )
         self.output_control = output_control
         self.universal_rewrites = universal_rewrites
         self.forbidden_rules = forbidden_rules
@@ -747,6 +751,14 @@ class Session:
                     cwd, cfg, self._ignore_policy,
                 ),
             )
+        self._advisor = None
+        if (
+            bool(getattr(cfg, "advisor_enabled", False))
+            and not bool(getattr(client, "is_replay", False))
+        ):
+            from .advisor import AdvisorRuntime
+
+            self._advisor = AdvisorRuntime(self, self._artifact_dir)
 
     @property
     def active_tool_names(self) -> frozenset[str]:
@@ -843,7 +855,10 @@ class Session:
         )
         for inj in fired:
             block = inj.format_block()
-            self.context.add_user(block)
+            add_fragment = getattr(
+                self.context, "add_injected_fragment", self.context.add_user
+            )
+            add_fragment(block)
             record_fire(
                 inj.name,
                 body_chars=len(block),
@@ -910,6 +925,29 @@ class Session:
                 turn_number=turn_number,
             )
         return result, bool(fired)
+
+    def _capture_advisor_turn(
+        self, turn: int, content: str | None, tool_calls: list
+    ) -> None:
+        """Give the advisor only this completed primary response delta."""
+        if self._advisor is not None:
+            self._advisor.capture_turn(
+                turn=turn, content=content, tool_calls=tool_calls
+            )
+
+    def _maybe_run_advisor(self, turn: int) -> bool:
+        """Run an eligible passive review without failing the primary task."""
+        return bool(
+            self._advisor is not None
+            and self._advisor.review_turn(turn)
+        )
+
+    def _inject_pending_advisor(self, turn: int) -> bool:
+        """Inject a queued advisory at the next model-request boundary."""
+        return bool(
+            self._advisor is not None
+            and self._advisor.inject_pending(turn)
+        )
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx

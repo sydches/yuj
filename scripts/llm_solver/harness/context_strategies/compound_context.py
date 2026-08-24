@@ -200,6 +200,8 @@ class CompoundContext(SolverStateContext):
         if tool_results:
             parts.append(tool_results)
 
+        parts.extend(self._injected_fragments)
+
         suffix = self._render_state_suffix(files)
         if suffix:
             parts.append(suffix)

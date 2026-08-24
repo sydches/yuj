@@ -1260,6 +1260,8 @@ class SalienceContext(CompoundSelectiveContext):
         if tool_results:
             parts.append(tool_results)
 
+        parts.extend(self._injected_fragments)
+
         if suffix_text:
             parts.append(suffix_text)
         return parts

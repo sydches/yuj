@@ -546,6 +546,14 @@ class Config:
         default_factory=dict
     )
     model_fallback_revert: str = "never"
+    # Passive second-opinion model. The empty target fields reuse the main
+    # profile/model endpoint while retaining an isolated advisor conversation.
+    advisor_enabled: bool = False
+    advisor_model: str = ""
+    advisor_endpoint: str = ""
+    advisor_every_n_turns: int = 5
+    advisor_immune_turns: int = 3
+    advisor_max_note_chars: int = 1200
     # edit() match policy. Strict is the default (database-of-
     # primitives principle: no silent relaxation). Cascade restores
     # the optional auto-apply behavior.

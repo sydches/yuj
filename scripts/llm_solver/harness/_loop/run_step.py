@@ -81,8 +81,10 @@ def _defer_guard_end_during_active_watch(
     return True
 
 
-def _run_post_turn_hooks(session: "Session", turn: int) -> None:
-    """Run observation and adaptive hooks after executed or blocked turns."""
+def _run_post_turn_hooks(
+    session: "Session", turn: int, *, run_advisor: bool = True
+) -> None:
+    """Run observation, adaptive, rewind, and advisor post-turn hooks."""
     from ..turn_snapshots import process_rewind_turn_boundary
     # A guardrail rewind invalidates this turn. Restore its saved control
     # state before adaptive observers can learn from the discarded branch.
@@ -92,7 +94,9 @@ def _run_post_turn_hooks(session: "Session", turn: int) -> None:
     session._maybe_emit_harness_observation(turn)
     session._maybe_run_llm_hurdle_detector(turn)
     session._maybe_switch_adaptive_phase(turn)
-    process_rewind_turn_boundary(session, turn)
+    rewound = process_rewind_turn_boundary(session, turn)
+    if run_advisor and not rewound:
+        session._maybe_run_advisor(turn)
 
 
 def _complete_turn_rewind(
@@ -290,6 +294,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # against the latest user/tool content before the API call.
         # No-op when the subsystem is disabled or no fragments load.
         session._apply_injections(turn_number=turn)
+        session._inject_pending_advisor(turn)
         # ─── 0. GUARDRAIL: context fill (PRE-FLIGHT) ──────────────────
         # The post-flight check at the end of step 2 catches overflow
         # that develops during the response, but a tool result added
@@ -441,6 +446,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
         session.context.add_assistant(
             session.client.build_assistant_message(content, tool_calls)
         )
+        session.context.consume_injected_fragments()
+        session._capture_advisor_turn(turn, content, tool_calls)
 
         # ─── 2. GUARDRAIL: context fill (END tier) ───────────────────
         # Server-reported pt — accurate, no chars/4 underrun.
@@ -531,8 +538,16 @@ def run_session_loop(session: "Session") -> "SessionResult":
             if process_rewind_turn_boundary(session, turn):
                 continue
             if reason == "length":
+                session._maybe_run_advisor(turn)
                 log.info("Response truncated at turn %d (max_tokens hit), ending session", turn)
                 return SessionResult(turn, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+            advisor_intervened = session._maybe_run_advisor(turn)
+            if advisor_intervened:
+                log.info(
+                    "Advisor queued a note for the next model-facing turn %d",
+                    turn + 1,
+                )
+                continue
             # With implicit done enabled, `finish_reason="stop"` and no tool
             # calls count as success. Setting it to False
             # treats no-tool-calls as session end (`done=False`,
@@ -651,6 +666,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             }
         permission_resolutions = {}
         approval_available = approval_transport_available(session._trace_path)
+        advisor_intervened = False
         for tc in tool_calls:
             if tc.id in inactive_tool_call_ids:
                 continue
@@ -806,6 +822,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
             if outcome.rewind:
                 break
             if outcome.end:
+                if (
+                    outcome.done
+                    and len(tool_calls) == 1
+                    and session._maybe_run_advisor(turn)
+                ):
+                    advisor_intervened = True
+                    break
                 return SessionResult(
                     turn, outcome.reason, done=outcome.done,
                     total_prompt_tokens=total_prompt,
@@ -816,7 +839,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # multi-tool turn form a complete protocol boundary before any cut.
         finalize_deferred_context_actions(session, turn)
         session._record_pressure_event(state.turn_had_pressure)
-        _run_post_turn_hooks(session, turn)
+        _run_post_turn_hooks(
+            session, turn, run_advisor=not advisor_intervened
+        )
     # ─── 7. GUARDRAIL: max_turns (hard cap, END tier) ────────────────
     return SessionResult(
         turn_start + cfg.max_turns,
