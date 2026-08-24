@@ -62,6 +62,23 @@ def test_session_compact_summary_reports_successful_edit_dialects(tmp_path: Path
     assert summary["last_test_result"] == "pass"
 
 
+def test_session_compact_summary_uses_traced_shell_test_verdict(tmp_path: Path):
+    event = {
+        "event": "tool_call",
+        "tool_name": "bash",
+        "args_summary": "cmd='python3 -m pytest -q tests/test_answer.py'",
+        "result_summary": ". [100%]",
+        "outcome": "ok",
+        "pass_fail": "pass",
+    }
+    (tmp_path / ".trace.jsonl").write_text(json.dumps(event) + "\n")
+
+    summary = session_compact_summary(tmp_path)
+
+    assert summary["last_test_cmd"] == "python3 -m pytest -q tests/test_answer.py"
+    assert summary["last_test_result"] == "pass"
+
+
 def test_session_store_round_trip(tmp_path: Path):
     store = SessionStore(tmp_path)
 

@@ -659,7 +659,12 @@ def session_compact_summary(artifact_dir: Path) -> dict[str, object]:
             cmd = _extract_shell_cmd(args_summary)
             if cmd and _looks_like_test_command(cmd):
                 last_test_cmd = cmd
-                last_test_result = _classify_test_outcome(result_summary)
+                traced_verdict = str(ev.get("pass_fail") or "").lower()
+                last_test_result = (
+                    traced_verdict
+                    if traced_verdict in {"pass", "fail"}
+                    else _classify_test_outcome(result_summary)
+                )
 
     cache_metrics: dict = {}
     try:
