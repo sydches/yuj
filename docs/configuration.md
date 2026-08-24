@@ -96,6 +96,7 @@ order in the
 | `[server].cache_miss_warn_ratio` | Warn after the first turn when observed prefix reuse falls below this ratio. |
 | `[model].name` | Set the exact model ID that the service accepts. |
 | `[model].profile_name` | Use settings for a model's message and tool-call format. |
+| `[tools].edit_format` | Override the selected model profile's edit dialect with `exact`, `apply_patch`, `udiff`, or `whole`. Leave it empty to inherit. |
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
 | `[model].thinking_level` | Select the requested per-run reasoning effort. |
@@ -151,7 +152,7 @@ order in the
 | `[injections].path_rule_repeat` | Let path rules without a per-rule `repeat` value fire on every matching tool result. False means once per session. |
 | `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
 | `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
-| `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
+| `[lsp].enabled` | Start a configured language server lazily after the selected edit tool changes a matching file, and return diagnostics. Off by default. |
 | `[lsp].servers` | Declare language-server commands, file extensions, project-root markers, and optional initialization data. |
 | `[lsp].diagnostics_timeout_s` | Limit how long an edit waits for a diagnostics publication. |
 | `[lsp].min_severity` | Choose the least-severe diagnostic shown to the model: `error`, `warning`, `information`, or `hint`. |
@@ -165,6 +166,41 @@ Read [Model tools](model-tools.html) for optional tool settings. Read
 [Run a local model](serving_overlay.html) for runtime files and profiles.
 Read [Extend Yuj with TOML files](extending-yuj.html) before you add or change
 a model, language, or tool descriptor.
+
+### Select the model's edit format
+
+For a profile that supports tool calls, Yuj retains exactly one file-edit
+dialect in the model-facing tool surface. The selected model profile owns the
+normal choice through inherited `[profile].edit_format`. The shipped `_base`
+profile selects `exact`.
+
+| Value | Model-facing tool | Input shape |
+| --- | --- | --- |
+| `exact` | `edit` | `path`, exact `old_str`, and `new_str` |
+| `apply_patch` | `apply_patch` | Codex V4A `*** Begin Patch` text in `patch` |
+| `udiff` | `udiff` | Standard `---`/`+++` unified-diff text in `patch` |
+| `whole` | `write` | `path` and complete replacement `content` |
+
+Override the profile for one settings layer with the canonical public knob:
+
+```toml
+[tools]
+edit_format = "udiff"
+```
+
+The checked-in `config.toml` uses an empty string, which means inherit the
+profile. Resolution order is `--edit-format` when supplied, the merged
+`[tools].edit_format` value when non-empty, the legacy
+`[tools.apply_patch].enabled = true` compatibility selector, then the effective
+profile. A non-empty canonical setting wins over the legacy selector. New
+settings files should use only `[tools].edit_format`.
+
+Yuj validates profile and settings values before a run. It filters the tool
+schemas before schema simplification and the profile tool-count cap, so the
+request never contains another edit dialect alongside the selected one.
+With deferred tool loading, the registry also excludes the unselected
+dialects, and an edit-dialect entry in `[tools].active_default` resolves to the
+selected tool.
 
 ### Select a shell sandbox backend
 
@@ -285,8 +321,8 @@ isolate task copies should leave this setting off.
 ### Save restorable file checkpoints
 
 Set `[tools].file_checkpoints_enabled = true` to create one independent
-shadow-Git commit after every executed `bash`, `write`, `edit`, or
-`apply_patch` call. A nonzero or timed-out shell call is still checkpointed
+shadow-Git commit after every executed `bash` or edit-dialect mutation. A
+nonzero or timed-out shell call is still checkpointed
 because it may have changed files before it stopped. Calls rejected before
 execution are not checkpointed.
 
@@ -373,7 +409,7 @@ operation occurred.
 Language-server support is off until `[lsp].enabled` is true and at least one
 entry exists under `[lsp.servers]`. Each server entry needs `command` and
 `extensions`; `root_markers` and `initialization` are optional. Yuj starts a
-matching server only after an `edit` or `write` touches one of its extensions.
+matching server only after the selected edit tool touches one of its extensions.
 The server runs as a session child inside the shell sandbox with networking
 disabled, and Yuj stops it when the run segment ends.
 
@@ -401,8 +437,8 @@ error class `stale_file`, so repeated hits participate in the normal error
 ladder.
 
 A successful `read` records the file's size, modification time, and content
-hash. A successful `write`, `edit`, or `apply_patch` refreshes the affected
-paths; a patch deletion removes its path from the ledger. A successful
+hash. A successful `write`, `edit`, `apply_patch`, or `udiff` refreshes the
+affected paths; a patch deletion removes its path from the ledger. A successful
 single-file `cat`, `head`, `tail`, `sed -n`, `grep`, or `rg` shell command also
 earns read credit. No-match exit status 1 from `grep` or `rg` still earns
 credit because the file was read. Compounds, pipelines, redirects,
@@ -572,9 +608,9 @@ entry can set a baseline which a later exact-tool entry overrides.
 
 Each tool has one canonical match value. `bash` uses `cmd`; `read`, `write`,
 `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, and `lsp` use `path`
-(`glob` and `grep` default it to `.`); `apply_patch` uses `patch`; `done` uses
-`message`; and `bash_poll`/`bash_kill` use `proc_id`. Calls without a dedicated
-field use a canonical sorted JSON argument object.
+(`glob` and `grep` default it to `.`); `apply_patch` and `udiff` use `patch`;
+`done` uses `message`; and `bash_poll`/`bash_kill` use `proc_id`. Calls without
+a dedicated field use a canonical sorted JSON argument object.
 
 In assistant mode, `ask` writes `approval_request.json`, pauses, and can be
 continued with `yuj approve` or refused with `yuj reject`. `--always` stores a

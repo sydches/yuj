@@ -198,6 +198,18 @@ def _last_turn(events: list[dict]) -> int | None:
     return best
 
 
+def _latest_edit_format(events: list[dict]) -> str:
+    """Return the latest raw session-start dialect for state provenance."""
+    value = ""
+    for event in events:
+        if event.get("event") != "session_start":
+            continue
+        candidate = event.get("edit_format")
+        if isinstance(candidate, str) and candidate:
+            value = candidate
+    return value
+
+
 def _event_turn(event: dict) -> int | None:
     """Return an event's turn across the two public trace field spellings."""
     value = event.get("turn_number", event.get("turn"))
@@ -664,6 +676,7 @@ def project(events: list[dict], *, max_result_chars: int,
         "event_count": len(raw_events),
         "last_session": _last_session(logical_events),
         "last_turn": _last_turn(logical_events),
+        "edit_format": _latest_edit_format(raw_events),
     }
     if any(event.get("event") == "rewind" for event in raw_events):
         meta["projected_event_count"] = len(logical_events)

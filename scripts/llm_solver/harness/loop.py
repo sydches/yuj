@@ -118,7 +118,9 @@ _TRANSIENT_ERRORS = (openai.APIConnectionError, openai.APITimeoutError)
 
 from ._loop import (  # noqa: F401
     _apply_profile_preamble, _apply_profile_schema_simplify,
-    _apply_profile_tool_cap, apply_profile_to_schemas, build_tool_surface,
+    _apply_profile_tool_cap, apply_profile_to_schemas,
+    bind_effective_edit_format, resolve_effective_edit_format,
+    build_tool_surface,
     _auto_commit, _canon_focus_path,
     _dedup_signature, _encode_focus_path, _encode_focus_target,
     _extract_bash_focus_target, _extract_test_target_from_command,
@@ -234,6 +236,7 @@ class Session:
         allow_login_shell: bool | None = None,
         local_tokenizer=None,
     ):
+        cfg = bind_effective_edit_format(cfg, client)
         self.cfg = cfg
         from .compaction_hooks import resolve_compaction_hook
         self._compaction_hook_reference = str(

@@ -70,8 +70,7 @@ Yuj offers these tools to the model:
 | --- | --- | --- |
 | Read files and find code | `read`, `glob`, `grep` | On |
 | List names in a Python file | `list_definitions` | Off |
-| Change files | `write`, `edit` | On |
-| Apply a patch | `apply_patch` | Off |
+| Change files | One of `edit`, `apply_patch`, `udiff`, or `write` | Profile-selected; `_base` uses `edit`. |
 | Run shell commands | `bash` | On |
 | Run tests | `run_tests` | Off |
 | Finish the task | `done` | On |
@@ -85,11 +84,11 @@ Turn on an optional tool in a TOML file:
 [tools.list_definitions]
 enabled = true
 
-[tools.apply_patch]
-enabled = true
-
 [tools.run_tests]
 enabled = true
+
+[tools]
+edit_format = "apply_patch"
 ```
 
 A model profile can limit the number of enabled tools that Yuj sends to the
@@ -135,6 +134,7 @@ Yuj calls the starting group of settings a base.
 | `--prompt-file PATH` | Read the task from this file. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
+| `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--provider NAME` | Use `local`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
@@ -147,8 +147,9 @@ Yuj calls the starting group of settings a base.
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
 
-`--provider`, `--base-url`, `--api-key-env`, and `--thinking` change only the
-new session. Yuj saves these settings in the session's `provider.toml`.
+`--provider`, `--base-url`, `--api-key-env`, `--thinking`, and `--edit-format`
+change only the new session. Yuj saves these settings in the session's
+`provider.toml`.
 
 When you use `--api-key-env`, `provider.toml` stores the variable name. It
 does not store the key.
@@ -290,6 +291,7 @@ The command prints the throwaway path and keeps it after the check.
 | `--root PATH` | Use this throwaway directory instead of a new temporary directory. Yuj writes `calc.py` and `tests/test_calc.py` there. |
 | `--assist-home PATH` | Save the smoke session under this session root. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
+| `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--provider NAME` | Use a model service setting. |
 | `--base-url URL` | Use this API base address. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |

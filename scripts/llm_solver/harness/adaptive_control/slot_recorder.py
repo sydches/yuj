@@ -20,7 +20,7 @@ import shlex
 try:  # real harness constants in production
     from .._guardrails.extractors import MUTATION_TOOLS as _MUTATION_TOOLS
 except Exception:  # noqa: BLE001 - keep import-safe under the stub-parent test harness
-    _MUTATION_TOOLS = frozenset({"write", "edit", "str_replace", "create", "apply_patch", "insert"})
+    _MUTATION_TOOLS = frozenset({"write", "edit", "str_replace", "create", "apply_patch", "udiff", "insert"})
 
 try:
     from ..._shared.classification import is_error_result as _is_error_result
@@ -33,7 +33,7 @@ _OP_KIND = {
     "read": "READ", "cat": "READ",
     "grep": "SEARCH", "glob": "SEARCH", "search": "SEARCH",
     "edit": "EDIT", "write": "EDIT", "str_replace": "EDIT", "create": "EDIT",
-    "apply_patch": "EDIT", "insert": "EDIT",
+    "apply_patch": "EDIT", "udiff": "EDIT", "insert": "EDIT",
     "done": "SUBMIT", "submit": "SUBMIT",
 }
 _TEST_NEEDLES = ("pytest", "tox", "unittest", "npm test", "cargo test", "go test", "mvn test", "test_")

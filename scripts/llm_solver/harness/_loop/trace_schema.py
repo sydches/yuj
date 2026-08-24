@@ -44,7 +44,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "session_start", frozenset({
             "session_number", "thinking_level", "sandbox_backend",
             "container_runtime", "container_image_digest",
-            "ignore_file_hash", "sandbox_env_names",
+            "ignore_file_hash", "sandbox_env_names", "edit_format",
             "repo_map_tokens",
         }), frozenset({
             "worktree_path", "worktree_branch", "worktree_base_commit",

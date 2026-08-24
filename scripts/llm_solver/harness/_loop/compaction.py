@@ -7,6 +7,7 @@ import logging
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from ..tool_specs import GUARDRAIL_MUTATION_TOOL_NAMES
 from ..compaction_hooks import (
     Cancel,
     Compaction,
@@ -474,7 +475,8 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         return messages
     mutation_count = sum(1 for ev in session._trace_events
                          if ev.get("event") == "tool_call"
-                         and str(ev.get("tool_name", "")) in ("write", "edit", "str_replace", "create"))
+                         and str(ev.get("tool_name", ""))
+                         in GUARDRAIL_MUTATION_TOOL_NAMES)
     if mutation_count < gate_min_mut:
         return messages
 

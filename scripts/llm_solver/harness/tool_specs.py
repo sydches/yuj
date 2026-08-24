@@ -80,18 +80,18 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "lsp",
         profile_gate_attr="lsp_tool_enabled",
-        schema_order=13,
+        schema_order=14,
     ),
     ToolSpec(
         "load_tools",
         profile_gate_attr="tools_lazy_loading_enabled",
         cap_immune=True,
-        schema_order=14,
+        schema_order=15,
     ),
     ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=15,
+        schema_order=16,
         schema_surface="both",
     ),
     ToolSpec(
@@ -110,9 +110,14 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "apply_patch",
         guardrail_mutation=True,
         action_write_like=True,
-        profile_gate_attr="tools_apply_patch_enabled",
         native_envelope_prefix="<apply_patch",
         schema_order=12,
+    ),
+    ToolSpec(
+        "udiff",
+        guardrail_mutation=True,
+        action_write_like=True,
+        schema_order=13,
     ),
     ToolSpec(
         "list_functions",

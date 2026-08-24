@@ -32,6 +32,8 @@ from ..context import ContextManager, chars_div_4
 from ..checkpoint_rewind import preserve_rewind_reports
 from .._shell_patterns import TEST_COMMAND_RE as _TEST_COMMAND_RE
 from ..._shared.classification import classify_outcome as _classify_outcome
+from ..edit_operations import edit_operations
+from ..tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 from ._working_set import WorkingSet, GateSlot
 from ._working_set_baseline_helpers import (  # noqa: F401
     _clean_reasoning, _cmd_display, _cmd_text, _extract_action_target,
@@ -49,7 +51,7 @@ from . import _working_set_baseline_state as _S
 
 _PATH_KEYS = ("path", "file_path")
 _READ_TOOLS = frozenset({"read"})
-_WRITE_TOOLS = frozenset({"edit", "write"})
+_WRITE_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES
 _BASH_READ_RE = re.compile(
     r"^\s*(cat|head|tail|less|more|file)\s+([^\s|;&<>`$()]+)\s*$"
 )
@@ -223,9 +225,13 @@ class WorkingSetBaselineContext(ContextManager):
                 self._ws.record_artifact(tool_name, args_summary, content,
                                          self._turn_count)
         elif tool_name in _WRITE_TOOLS:
-            path = _pick_path(tool_args)
-            if path and outcome == "OK":
-                self._ws.record_mutation(path, self._turn_count)
+            operations = edit_operations(tool_name, tool_args)
+            if operations and outcome == "OK":
+                for kind, path in operations:
+                    if kind == "delete":
+                        self._ws.forget_file(path)
+                    else:
+                        self._ws.record_mutation(path, self._turn_count)
             else:
                 self._ws.record_artifact(tool_name, args_summary, content,
                                          self._turn_count)

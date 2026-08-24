@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from _config_helpers import make_config
+from scripts.llm_solver._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
 from scripts.llm_solver._shared.telemetry_paths import trace_path
 from scripts.llm_solver.harness.loop import Session, solve_task
 from scripts.llm_solver.server.types import TurnResult, Usage
@@ -48,8 +49,9 @@ def test_metrics_trace_and_state_report_default_tool_block(
     assert loading["default_active_tools"] == [
         "bash", "read", "edit", "glob", "grep", "load_tools", "done"
     ]
-    assert "write" in loading["registered_tools"]
-    assert "write" not in loading["default_active_tools"]
+    assert set(loading["registered_tools"]) & EDIT_FORMAT_TOOL_NAMES == {
+        "edit"
+    }
     assert isinstance(loading["default_tool_block_tokens"], int)
     assert loading["default_tool_block_tokens"] > 0
     assert loading["token_count_method"] == "chars_div_4"

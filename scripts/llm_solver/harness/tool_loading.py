@@ -10,6 +10,8 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from .._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
+
 
 LOADER_TOOL_NAME = "load_tools"
 TOOL_LOADING_ERROR_VERSION = 1
@@ -66,6 +68,15 @@ class ToolSurface:
         self._registered_name_set = frozenset(names)
 
         configured = tuple(dict.fromkeys(str(name) for name in active_default))
+        registered_edit_tools = tuple(
+            name for name in names if name in EDIT_FORMAT_TOOL_NAMES
+        )
+        if len(registered_edit_tools) == 1:
+            selected_edit_tool = registered_edit_tools[0]
+            configured = tuple(dict.fromkeys(
+                selected_edit_tool if name in EDIT_FORMAT_TOOL_NAMES else name
+                for name in configured
+            ))
         if self.lazy_loading_enabled and LOADER_TOOL_NAME not in self._registered_name_set:
             raise ValueError(
                 "lazy tool loading requires the load_tools schema and handler"

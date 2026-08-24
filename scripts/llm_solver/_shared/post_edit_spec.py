@@ -9,6 +9,7 @@ VALID_POST_EDIT_TRIGGERS: frozenset[str] = frozenset({
     "edit",
     "write",
     "apply_patch",
+    "udiff",
 })
 VALID_POST_EDIT_ON_FAIL: frozenset[str] = frozenset({
     "append",

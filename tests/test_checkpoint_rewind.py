@@ -157,6 +157,7 @@ def _run_scripted_session(
     cfg = make_config(
         max_turns=6,
         tools_checkpoint_enabled=True,
+        tools_edit_format="whole",
         tools_schema_validation="reject",
         state_writer_enabled=True,
         min_turns_before_context=0,

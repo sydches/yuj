@@ -56,7 +56,7 @@ def _defaults() -> dict:
         max_transient_retries=3, retry_backoff=(1, 4, 16),
         system_header=(
             "You are a software engineering solver. Work in the current directory.\n"
-            "Use tools to read, write, edit code, search files, and run commands."
+            "Use the available tools to inspect, change, search, and verify the project."
         ),
         state_context_suffix=(
             "Continue working. Your progress is tracked in .solver/state.json — "
@@ -71,21 +71,16 @@ def _defaults() -> dict:
         resume_base="Continue working on the task. Review your previous actions and do the next unit of work.",
         error_nudge="[harness: {count} consecutive errors, consider re-reading the file]",
         rumination_nudge=(
-            "[harness: {count} non-write tool calls since your last write/edit. "
-            "Your next tool call must be write or edit. Further non-write tool "
-            "calls will be rejected by the harness until you make a code change.]"
+            "[HARNESS: {count} non-mutation calls. One more and all tools "
+            "except file-mutation tools are blocked. Mutate a file now.]"
         ),
         rumination_gate=(
-            "[harness gate] This tool call was NOT executed. The harness is "
-            "blocking non-write tool calls until you make a write or edit call. "
-            "You have enough information to produce code — work from what you "
-            "already know. Your next tool call must be write or edit; any other "
-            "tool will be rejected with this same message until you make a code "
-            "change."
+            "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked until "
+            "a file mutation succeeds. Each blocked call wastes a turn."
         ),
         rumination_same_target_nudge=(
-            "[HARNESS: same target hit {count} times without a write/edit "
-            "({target}). Stop rereading it; either edit, verify, or move to a "
+            "[HARNESS: same target hit {count} times without a file mutation "
+            "({target}). Stop rereading it; mutate, verify, or move to a "
             "different target.]"
         ),
         rumination_outside_cwd_nudge=(
@@ -99,18 +94,18 @@ def _defaults() -> dict:
         ),
         contract_commit_warn=(
             "[HARNESS: source file {source} is already in view. Choose a "
-            "concrete next move: edit/write, read a test file, or run "
+            "concrete next move: mutate a file, read a test file, or run "
             "verification. Do not continue broad inspection.]"
         ),
         contract_commit_block=(
             "[HARNESS: commit contract active from {source}. This tool call "
-            "was not executed. Allowed next moves: edit/write, read a test "
+            "was not executed. Allowed next moves: mutate a file, read a test "
             "file, or run verification.]"
         ),
         contract_recovery_block=(
             "[HARNESS: recovery mode for {reason} ({target}). This tool call "
             "was not executed. Allowed next moves: read a concrete file, "
-            "edit/write, or run verification.]"
+            "mutate a file, or run verification.]"
         ),
         mutation_repeat_warn=(
             "[HARNESS: the same mutation was already applied to {target}. Do "

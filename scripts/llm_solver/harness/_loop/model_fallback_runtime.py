@@ -14,7 +14,11 @@ from .model_roles import (
     ResolvedRoleClient,
     check_context_window,
 )
-from .profile_resolution import _resolve_token_estimator, build_tool_surface
+from .profile_resolution import (
+    _resolve_token_estimator,
+    bind_effective_edit_format,
+    build_tool_surface,
+)
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +138,9 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             except TypeError:
                 setattr(routed.client.cfg, "skills_readable_dirs", skill_roots)
         _apply_context_size(routed.client, live_context)
+        routed.client.cfg = bind_effective_edit_format(
+            routed.client.cfg, routed.client
+        )
         effective_resolution = resolution_with_client_context(routed)
         routed = ResolvedRoleClient(routed.client, effective_resolution)
         transition = replace(

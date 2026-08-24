@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 
+from ..._shared.edit_formats import (
+    EDIT_FORMAT_TOOL_NAMES,
+    EDIT_FORMAT_TO_TOOL,
+    validate_edit_format,
+)
 from ..tool_specs import CAP_IMMUNE_TOOL_NAMES, PROFILE_GATE_ATTRS
 
 log = logging.getLogger(__name__)
@@ -21,6 +27,37 @@ def _resolve_token_estimator(client) -> Callable[[list[dict]], int] | None:
 def _resolve_profile(client):
     """Return the profile object only when explicitly present on the client."""
     return getattr(client, "__dict__", {}).get("profile")
+
+
+def resolve_effective_edit_format(cfg, client) -> str:
+    """Resolve CLI/config override, legacy selector, then profile default."""
+    configured = str(getattr(cfg, "tools_edit_format", "") or "")
+    if configured:
+        return validate_edit_format(
+            configured, field="config error: tools.edit_format"
+        )
+
+    # Compatibility for existing overlays. The old boolean now selects the
+    # apply_patch dialect instead of exposing it beside another edit tool.
+    if bool(getattr(cfg, "tools_apply_patch_enabled", False)):
+        return "apply_patch"
+
+    profile = _resolve_profile(client)
+    inherited = str(getattr(profile, "edit_format", "") or "")
+    if inherited:
+        return validate_edit_format(
+            inherited,
+            field=f"profile {getattr(profile, 'name', '<unknown>')!r} edit_format",
+        )
+    return "exact"
+
+
+def bind_effective_edit_format(cfg, client):
+    """Return a Config carrying the profile-resolved runtime dialect."""
+    effective = resolve_effective_edit_format(cfg, client)
+    if getattr(cfg, "effective_edit_format", "") == effective:
+        return cfg
+    return replace(cfg, effective_edit_format=effective)
 
 
 # Tools that must always be present in the schema list regardless of
@@ -118,6 +155,24 @@ def _filter_disabled_tools(tool_schemas: list[dict], cfg) -> list[dict]:
     return out
 
 
+def _filter_edit_format_tools(
+    tool_schemas: list[dict], cfg, client,
+) -> list[dict]:
+    """Keep exactly one model-facing mutation dialect."""
+    selected_tool = EDIT_FORMAT_TO_TOOL[
+        resolve_effective_edit_format(cfg, client)
+    ]
+    return [
+        schema
+        for schema in tool_schemas
+        if (
+            schema.get("function", {}).get("name", "")
+            not in EDIT_FORMAT_TOOL_NAMES
+            or schema.get("function", {}).get("name", "") == selected_tool
+        )
+    ]
+
+
 def _simplify_tool_schema(schema: dict) -> dict:
     """Return a schema copy with description-like fields removed recursively."""
     if isinstance(schema, dict):
@@ -162,17 +217,20 @@ def _require_skills_read(tool_schemas: list[dict], *, skills_active: bool) -> No
 
 
 def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict]:
-    """Apply the full profile-shaping triple-stack to tool schemas.
+    """Apply the full profile-shaping pipeline to tool schemas.
 
-    Composition order: filter disabled → simplify (strip descriptions)
-    → cap (preserve cap-immune tools at head). Single source of truth
-    for both Session.__init__ and _record_session_start_costs. The same
-    composition was once open-coded in two places and could drift.
+    Composition order: filter disabled → select edit dialect → simplify
+    (strip descriptions) → cap (preserve cap-immune tools at head). This is
+    the single source of truth for both Session.__init__ and
+    _record_session_start_costs. The same composition was once open-coded in
+    two places and could drift.
     """
     skills_active = _skills_active(cfg)
     output = _apply_profile_tool_cap(
         _apply_profile_schema_simplify(
-            _filter_disabled_tools(tool_schemas, cfg),
+            _filter_edit_format_tools(
+                _filter_disabled_tools(tool_schemas, cfg), cfg, client,
+            ),
             client,
         ),
         client,
@@ -185,7 +243,7 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
 def _build_registered_tool_schemas(
     cfg, client, tool_schemas: list[dict] | None = None
 ) -> list[dict]:
-    """Apply gates and schema shape without erasing the lazy registry."""
+    """Apply gates, edit selection, and schema shape to the lazy registry."""
     if tool_schemas is None:
         from ..schemas import get_tool_schemas
 
@@ -197,7 +255,9 @@ def _build_registered_tool_schemas(
         )
 
     return _apply_profile_schema_simplify(
-        _filter_disabled_tools(tool_schemas, cfg),
+        _filter_edit_format_tools(
+            _filter_disabled_tools(tool_schemas, cfg), cfg, client,
+        ),
         client,
     )
 

@@ -113,7 +113,8 @@ def test_hidden_call_is_rejected_then_loader_changes_next_request(
     cfg = make_config(
         max_turns=3,
         tools_lazy_loading_enabled=True,
-        tools_active_default=("bash", "read", "edit", "glob", "grep", "done"),
+        tools_active_default=("bash", "read", "glob", "grep", "done"),
+        tools_edit_format="whole",
         tools_schema_validation="reject",
         error_nudge_threshold=99,
     )
@@ -140,6 +141,8 @@ def test_hidden_call_is_rejected_then_loader_changes_next_request(
             container_image_digest=None,
             ignore_file_hash=None,
             sandbox_env_names=[],
+            edit_format="whole",
+            repo_map_tokens=0,
             tool_lazy_loading_enabled=True,
             registered_tools=list(session._tool_surface.registered_names),
             active_tools=list(session._tool_surface.default_active_names),
@@ -233,7 +236,8 @@ def test_replay_restores_the_active_surface_at_the_recorded_turn(
     cfg = make_config(
         max_turns=2,
         tools_lazy_loading_enabled=True,
-        tools_active_default=("bash", "read", "edit", "glob", "grep", "done"),
+        tools_active_default=("bash", "read", "glob", "grep", "done"),
+        tools_edit_format="whole",
         error_nudge_threshold=99,
     )
     surface = build_tool_surface(cfg, object())
@@ -285,7 +289,8 @@ def test_replay_rejects_a_missing_activation_on_its_following_turn(
 ) -> None:
     cfg = make_config(
         tools_lazy_loading_enabled=True,
-        tools_active_default=("bash", "read", "edit", "glob", "grep", "done"),
+        tools_active_default=("bash", "read", "glob", "grep", "done"),
+        tools_edit_format="whole",
     )
     surface = build_tool_surface(cfg, object())
     default_tools = surface.active_schemas

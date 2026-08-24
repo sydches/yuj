@@ -46,6 +46,7 @@ class TestProjectEmpty:
                 "event_count": 0,
                 "last_session": None,
                 "last_turn": None,
+                "edit_format": "",
             },
             "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
             "tools": {
