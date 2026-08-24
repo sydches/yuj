@@ -29,6 +29,7 @@ _READONLY_TOOLS = PARALLEL_READ_SAFE_TOOL_NAMES
 from .injections import (
     InjectionState,
     fire_candidates,
+    fire_path_candidates,
     load_injections,
     record_fire,
 )
@@ -49,7 +50,8 @@ from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
-    ToolRegistry, _bash_unreadable_paths, admit_tool_output,
+    ToolRegistry, _bash_readable_paths, _bash_unreadable_paths,
+    admit_tool_output,
     _effective_command_environment, build_tool_registry, dispatch,
     validate_tool_handlers,
 )
@@ -216,8 +218,16 @@ class Session:
         ignore_policy: IgnorePolicy | None = None,
         effective_env: Mapping[str, str] | None = None,
         allow_login_shell: bool | None = None,
+        local_tokenizer=None,
     ):
         self.cfg = cfg
+        from .compaction_hooks import resolve_compaction_hook
+        self._compaction_hook_reference = str(
+            getattr(cfg, "compaction_hook", "") or ""
+        ).strip()
+        self._compaction_hook = resolve_compaction_hook(
+            self._compaction_hook_reference
+        )
         self._permission_policy = PermissionPolicy.from_rule_tables(
             getattr(cfg, "permissions_rules", {})
         )
@@ -323,6 +333,7 @@ class Session:
                 unreadable_paths=_bash_unreadable_paths(
                     cwd, cfg, self._ignore_policy,
                 ),
+                readable_paths=_bash_readable_paths(cfg),
                 sandbox_required=getattr(cfg, "sandbox_required", False),
                 sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                 sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -545,6 +556,7 @@ class Session:
                     unreadable_paths=_bash_unreadable_paths(
                         cwd, cfg, self._ignore_policy,
                     ),
+                    readable_paths=_bash_readable_paths(cfg),
                     sandbox_required=getattr(cfg, "sandbox_required", False),
                     sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                     sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -602,8 +614,13 @@ class Session:
         # _maybe_compact_messages. None when cfg.tokenizer_id is unset
         # — caller falls back to chars_div_4 estimate.
         from .local_tokenizer import load as _load_tokenizer
-        self._tokenizer = _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
-        if self._tokenizer is not None:
+        tokenizer_was_preloaded = local_tokenizer is not None
+        self._tokenizer = (
+            local_tokenizer
+            if tokenizer_was_preloaded
+            else _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
+        )
+        if self._tokenizer is not None and not tokenizer_was_preloaded:
             synced = self._tokenizer.sync_chat_template(
                 getattr(cfg, "base_url", "") or "")
             log.info("local tokenizer loaded: %s (server template %s)",
@@ -678,7 +695,27 @@ class Session:
         """Last known context fill ratio (0.0–1.0)."""
         return self._last_fill
 
-    def _apply_injections(self) -> None:
+    def _emit_injection_event(
+        self, *, rule: str, trigger: str, path: str, turn_number: int | None,
+    ) -> None:
+        """Write raw conditional-fire metadata without projecting it."""
+        emitter = getattr(self, "_emit", None)
+        if not callable(emitter):
+            return
+        emitter(
+            "injection",
+            session_number=getattr(self, "_session_number", 0),
+            turn_number=(
+                int(turn_number)
+                if turn_number is not None
+                else int(getattr(self, "_current_turn", 0))
+            ),
+            rule=rule,
+            trigger=trigger,
+            path=path,
+        )
+
+    def _apply_injections(self, *, turn_number: int | None = None) -> None:
         """Fire matching injections against the latest user/tool text.
 
         No-op when the subsystem is disabled or no fragments loaded.
@@ -704,8 +741,71 @@ class Session:
             block = inj.format_block()
             self.context.add_user(block)
             record_fire(
-                inj.name, body_chars=len(block), match_mode=inj.trigger,
+                inj.name,
+                body_chars=len(block),
+                match_mode="keyword" if inj.keywords else "always",
             )
+            if inj.keywords:
+                emit_injection = getattr(self, "_emit_injection_event", None)
+                if callable(emit_injection):
+                    emit_injection(
+                        rule=inj.name,
+                        trigger="keyword",
+                        path="",
+                        turn_number=turn_number,
+                    )
+
+    def _apply_path_injections(
+        self,
+        result: str,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        turn_number: int,
+        executed: bool,
+        execution_metadata: Mapping[str, object] | None = None,
+        bash_rewritten: bool = False,
+    ) -> tuple[str, bool]:
+        """Append matching path fragments to one executed tool result."""
+        if (
+            not executed
+            or not getattr(self.cfg, "injections_path_rules_enabled", False)
+            or not self._injections
+        ):
+            return result, False
+        metadata = execution_metadata or {}
+        operations = metadata.get("applied_operations", ())
+        if not isinstance(operations, (list, tuple)):
+            operations = ()
+        fired = fire_path_candidates(
+            self._injections,
+            tool_name=tool_name,
+            arguments=arguments,
+            cwd=self.cwd,
+            state=self._injection_state,
+            path_rule_repeat=bool(getattr(
+                self.cfg, "injections_path_rule_repeat", False,
+            )),
+            applied_operations=operations,
+            bash_rewritten=bash_rewritten,
+        )
+        for fire in fired:
+            block = fire.injection.format_block(
+                trigger="path", path=fire.path,
+            )
+            result += ("\n\n" if result else "") + block
+            record_fire(
+                fire.injection.name,
+                body_chars=len(block),
+                match_mode="path",
+            )
+            self._emit_injection_event(
+                rule=fire.injection.name,
+                trigger="path",
+                path=fire.path,
+                turn_number=turn_number,
+            )
+        return result, bool(fired)
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx

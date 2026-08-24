@@ -121,5 +121,13 @@ def build_context_contract(
             "filesystem_restore": False,
         },
         "suffix_present": _suffix_present(metadata, cfg),
+        "repo_map": {
+            "enabled": int(_get(cfg, "repo_map_tokens")) > 0,
+            "token_budget": int(_get(cfg, "repo_map_tokens")),
+            "refresh": str(_get(cfg, "repo_map_refresh")),
+            "placement": "task_message_suffix",
+            "stable_for_session": True,
+            "source": "live_workspace_structural_index",
+        },
         "budgets": _budget_snapshot(metadata, cfg),
     }

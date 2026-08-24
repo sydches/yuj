@@ -487,7 +487,7 @@ def project(events: list[dict], *, max_result_chars: int,
         elif et == "compaction":
             # Mechanical trace projection only. The model-authored summary
             # stays in the conversation and is never copied into state.json.
-            state["last_compaction"] = {
+            last_compaction = {
                 "session_number": ev.get("session_number"),
                 "turn_number": ev.get("turn_number"),
                 "tokens_before": ev.get("tokens_before"),
@@ -496,6 +496,13 @@ def project(events: list[dict], *, max_result_chars: int,
                 "method": ev.get("method"),
                 "fallback": ev.get("fallback"),
             }
+            # Preserve compatibility with trace prefixes written before the
+            # hook fields existed while projecting both fields from new rows.
+            if "hook" in ev:
+                last_compaction["hook"] = ev.get("hook")
+            if "hook_outcome" in ev:
+                last_compaction["hook_outcome"] = ev.get("hook_outcome")
+            state["last_compaction"] = last_compaction
         elif et == "rewind":
             state["last_rewind"] = {
                 "session_number": ev.get("session_number"),

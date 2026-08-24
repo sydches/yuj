@@ -121,6 +121,19 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             next_reason = "context_window_unavailable"
             continue
 
+        skill_roots = tuple(
+            getattr(session.cfg, "skills_readable_dirs", ()) or ()
+        )
+        if skill_roots != tuple(
+            getattr(routed.client.cfg, "skills_readable_dirs", ()) or ()
+        ):
+            try:
+                routed.client.cfg = replace(
+                    routed.client.cfg,
+                    skills_readable_dirs=skill_roots,
+                )
+            except TypeError:
+                setattr(routed.client.cfg, "skills_readable_dirs", skill_roots)
         _apply_context_size(routed.client, live_context)
         effective_resolution = resolution_with_client_context(routed)
         routed = ResolvedRoleClient(routed.client, effective_resolution)

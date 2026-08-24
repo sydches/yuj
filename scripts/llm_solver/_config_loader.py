@@ -200,6 +200,12 @@ def _extract_config_fields(d: dict) -> dict:
         "parallel_max_workers": d.get("loop", {}).get("parallel_max_workers", 4),
         "injections_enabled": d.get("injections", {}).get("enabled", False),
         "injections_dir": d.get("injections", {}).get("dir", ".harness/injections"),
+        "injections_path_rules_enabled": d.get("injections", {}).get(
+            "path_rules_enabled", False
+        ),
+        "injections_path_rule_repeat": d.get("injections", {}).get(
+            "path_rule_repeat", False
+        ),
         "loop_detect_enabled": d.get("loop", {}).get("loop_detect_enabled", False),
         "turn_snapshots_enabled": d.get("loop", {}).get("turn_snapshots_enabled", False),
         "loop_detect_threshold": d.get("loop", {}).get("loop_detect_threshold", 5),
@@ -363,7 +369,10 @@ def _extract_config_fields(d: dict) -> dict:
         "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
+        "repo_map_tokens": d.get("context", {}).get("repo_map_tokens", 0),
+        "repo_map_refresh": d.get("context", {}).get("repo_map_refresh", "auto"),
         "compaction_method": d.get("context", {}).get("compaction_method", "digest"),
+        "compaction_hook": d.get("context", {}).get("compaction_hook", ""),
         "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
         "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
         "handoff_summary_enabled": d.get("loop", {}).get("handoff_summary_enabled", False),
@@ -436,6 +445,25 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "imports_max_depth": d.get("prompts", {}).get(
             "imports_max_depth", 5
+        ),
+        "skills_enabled": d.get("prompts", {}).get(
+            "skills_enabled", False
+        ),
+        "skills_dirs": _string_tuple(
+            d.get("prompts", {}).get(
+                "skills_dirs",
+                [
+                    "~/.pi/agent/skills",
+                    "~/.agents/skills",
+                    ".pi/skills",
+                    ".agents/skills",
+                ],
+            ),
+            path="prompts.skills_dirs",
+        ),
+        "skill_paths": _string_tuple(
+            d.get("prompts", {}).get("skill_paths", []),
+            path="prompts.skill_paths",
         ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
@@ -675,6 +703,36 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
             "config error: prompts.imports_max_depth must be a non-negative "
             "integer."
         )
+    from .harness.skills import validate_skill_settings
+    try:
+        validate_skill_settings(
+            cfg.skills_enabled,
+            cfg.skills_dirs,
+            cfg.skill_paths,
+        )
+    except ValueError as exc:
+        raise ValueError(f"config error: prompts.{exc}") from exc
+    if not isinstance(cfg.injections_enabled, bool):
+        raise ValueError(
+            "config error: injections.enabled must be a boolean."
+        )
+    if not isinstance(cfg.injections_dir, str) or not cfg.injections_dir.strip():
+        raise ValueError(
+            "config error: injections.dir must be a non-empty string."
+        )
+    if not isinstance(cfg.injections_path_rules_enabled, bool):
+        raise ValueError(
+            "config error: injections.path_rules_enabled must be a boolean."
+        )
+    if not isinstance(cfg.injections_path_rule_repeat, bool):
+        raise ValueError(
+            "config error: injections.path_rule_repeat must be a boolean."
+        )
+    if cfg.injections_path_rules_enabled and not cfg.injections_enabled:
+        raise ValueError(
+            "config error: injections.path_rules_enabled requires "
+            "injections.enabled=true."
+        )
     from .harness.project_instructions import (
         validate_project_instruction_settings,
     )
@@ -751,6 +809,19 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     validate_role_specs(cfg.model_roles)
     validate_fallback_chains(cfg.model_fallback_chain)
     normalize_fallback_revert(cfg.model_fallback_revert)
+    if (
+        isinstance(cfg.repo_map_tokens, bool)
+        or not isinstance(cfg.repo_map_tokens, int)
+        or cfg.repo_map_tokens < 0
+    ):
+        raise ValueError(
+            "config error: context.repo_map_tokens must be a non-negative "
+            "integer."
+        )
+    from .harness.repo_map import normalize_repo_map_refresh
+    normalize_repo_map_refresh(cfg.repo_map_refresh)
+    from .harness.compaction_hooks import resolve_compaction_hook
+    resolve_compaction_hook(cfg.compaction_hook)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

@@ -88,6 +88,8 @@ continue through more than one run segment.
 - You can inspect, pause, approve, reject, and resume a session.
 - Yuj can shorten old command output when the model nears its input limit.
 - Yuj can suggest a next step when the model repeats a known failed step.
+- Yuj can disclose validated Agent Skills metadata and let the model read the
+  matching instructions on demand.
 - A Yuj quirk is a TOML rule that users can read, share, and measure.
 - Yuj saves the settings, model-message records, tool calls, and final status.
 - After most run segments, Yuj tries to stage all uncommitted changes in the
@@ -154,6 +156,7 @@ Read the [treatment guide](docs/treatment.md) for the runtime rules. Read the
 | [Treatment](docs/treatment.md) | The default base, the plain base, and the paper boundary |
 | [Configuration](docs/configuration.md) | Setting order, model services, context modes, and environment variables |
 | [Extend Yuj with TOML files](docs/extending-yuj.md) | Model runtime files, profiles, test runners, tool rules, and their code limits |
+| [Compaction hooks](docs/compaction.md) | Trusted Python hook input, return, validation, and trace contract |
 | [Sandbox](docs/sandbox.md) | `bwrap`, container modes, path access, and how to turn the sandbox off |
 | [Saved files](docs/harness_artifacts.md) | Each saved file, its source, and its allowed uses |
 | [Measurements](docs/measurement.md) | Run one task or an externally prepared task set with fixed settings |
