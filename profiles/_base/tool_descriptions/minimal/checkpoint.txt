@@ -1,0 +1,1 @@
+Mark the current conversation boundary before exploration. Give the goal that the later report must address. The mark becomes active after this complete tool-call turn.

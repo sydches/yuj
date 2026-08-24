@@ -9,6 +9,7 @@ visible at one read-site. Names patched by tests are late-bound through the
 public ``loop`` module rather than imported directly.
 """
 from __future__ import annotations
+import hashlib
 import logging
 import os
 import time
@@ -17,6 +18,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from ..._shared.telemetry_paths import telemetry_dir
 from ...config import Config
 from ...server.request_controls import CacheUsageAccumulator
 from ..context import ContextManager
@@ -39,8 +41,10 @@ from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
 from .interrupted_turn import RecoveryPlan, recover_interrupted_trace
 from . import model_role_runtime
+from .profile_resolution import build_tool_surface, resolve_effective_edit_format
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
+from ..tool_loading import estimate_tool_block_tokens
 
 if TYPE_CHECKING:
     from ..loop import SessionResult, TaskSpec
@@ -83,6 +87,41 @@ def solve_task(
         from ..subagents import SubagentRuntime
 
         subagent_runtime = SubagentRuntime(trace_path.parent)
+    # The cache is a run artifact, never repository content.  Measurement
+    # traces already live in the masked telemetry sibling; assistant traces
+    # use their session artifact directory.  Add the exact cache directory to
+    # command masks as a second, explicit boundary in both layouts.
+    recorded_run_dir = str((run_metadata or {}).get("run_dir") or "")
+    if artifacts_dir is not None:
+        repo_map_cache_root = artifact_dir / ".repo_map_cache"
+        repo_map_cache_dir = repo_map_cache_root
+    elif recorded_run_dir:
+        repo_map_cache_root = Path(recorded_run_dir) / ".repo_map_cache"
+        task_cache_key = hashlib.sha256(
+            str(work_dir.resolve()).encode("utf-8", errors="surrogateescape")
+        ).hexdigest()[:16]
+        repo_map_cache_dir = repo_map_cache_root / task_cache_key
+    else:
+        repo_map_cache_root = telemetry_dir(work_dir) / ".repo_map_cache"
+        repo_map_cache_dir = repo_map_cache_root
+    try:
+        repo_map_cache_root.resolve().relative_to(work_dir.resolve())
+    except ValueError:
+        pass
+    else:
+        # File tools are cwd-confined but do not consume host unreadable-path
+        # masks.  Never place the cache under cwd, even when a caller supplied
+        # an unusual in-repository run/artifact directory.
+        repo_map_cache_root = telemetry_dir(work_dir) / ".repo_map_cache"
+        repo_map_cache_dir = repo_map_cache_root
+    if int(getattr(cfg, "repo_map_tokens", 0) or 0) > 0:
+        cfg = replace(
+            cfg,
+            unreadable_paths=tuple(dict.fromkeys((
+                *tuple(cfg.unreadable_paths),
+                f"optional:{repo_map_cache_root}",
+            ))),
+        )
     checkpoint_store = None
     if getattr(cfg, "tools_file_checkpoints_enabled", False):
         from ..workspace_checkpoints import (
@@ -106,6 +145,19 @@ def solve_task(
             unreadable_paths=tuple(cfg.unreadable_paths)
             + checkpoint_store.sandbox_unreadable_paths,
         )
+    if getattr(cfg, "rewind_enabled", False):
+        if checkpoint_store is None:
+            raise RuntimeError(
+                "conversation rewind requires workspace checkpoints"
+            )
+        from ..turn_snapshots import rewind_snapshot_dir
+        rewind_dir = rewind_snapshot_dir(work_dir, artifact_dir)
+        rewind_dir.mkdir(parents=True, exist_ok=True)
+        rewind_dir.chmod(0o700)
+        cfg = replace(
+            cfg,
+            unreadable_paths=tuple(cfg.unreadable_paths) + (str(rewind_dir),),
+        )
     from ..tools import _effective_command_environment
     resolved_env, allow_login_shell = _effective_command_environment(cfg)
     # One immutable snapshot is shared by every session and command surface;
@@ -126,6 +178,18 @@ def solve_task(
         *tuple(cfg.unreadable_paths),
         *ignore_policy.sandbox_unreadable_paths(),
     )))
+    from ..skills import discover_skills
+    skill_catalog = discover_skills(
+        work_dir,
+        enabled=getattr(cfg, "skills_enabled", False),
+        skills_dirs=getattr(cfg, "skills_dirs", ()),
+        skill_paths=getattr(cfg, "skill_paths", ()),
+        root_markers=cfg.project_root_markers,
+        unreadable_paths=prompt_unreadable_paths,
+    )
+    # Freeze only validated, first-wins skill directories into the run config.
+    # File mutation tools retain their cwd-only resolver.
+    cfg = replace(cfg, skills_readable_dirs=skill_catalog.readable_dirs)
     prompt_file = artifact_dir / "prompt.txt"
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
@@ -143,6 +207,7 @@ def solve_task(
         cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
         context_class,
         unreadable_paths=prompt_unreadable_paths,
+        skill_catalog=skill_catalog,
     )
     resolved_injections, injection_import_tree = load_session_injections(
         cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
@@ -174,6 +239,9 @@ def solve_task(
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
     agg_length_continuations = 0
+    agg_tool_activation_events = 0
+    agg_activated_tools: set[str] = set()
+    tool_loading_metrics: dict[str, object] | None = None
     cache_usage = CacheUsageAccumulator()
     role_usage = model_role_runtime.role_token_ledger(client)
     done_loop_aborted = False
@@ -411,7 +479,51 @@ def solve_task(
             log.info("[session %d/%d] %s", session_num, end_session_num, work_dir.name)
             model_binding = model_role_runtime.begin_model_session(client, cfg)
             session_client, session_cfg = model_binding.client, model_binding.config
+            # Transport clients retain their endpoint-specific Config object.
+            # Reapply the run-fixed skill roots after model-role binding so
+            # tool dispatch cannot fall back to the client's pre-discovery
+            # config.
+            session_cfg = replace(
+                session_cfg,
+                skills_readable_dirs=cfg.skills_readable_dirs,
+            )
             thinking_fields = thinking_trace_fields(session_cfg, session_client)
+            session_start_tool_surface = build_tool_surface(
+                session_cfg, session_client
+            )
+            local_tokenizer = None
+            if int(getattr(session_cfg, "repo_map_tokens", 0) or 0) > 0:
+                from ..local_tokenizer import load as load_local_tokenizer
+
+                local_tokenizer = load_local_tokenizer(
+                    getattr(session_cfg, "tokenizer_id", "") or ""
+                )
+                if local_tokenizer is not None:
+                    synced = local_tokenizer.sync_chat_template(
+                        getattr(session_cfg, "base_url", "") or ""
+                    )
+                    log.info(
+                        "local tokenizer loaded for repo map: %s "
+                        "(server template %s)",
+                        local_tokenizer.id,
+                        "synced" if synced else "NOT synced — counts approximate",
+                    )
+            from ..repo_map import append_repo_map, build_repo_map
+
+            repo_map = build_repo_map(
+                work_dir,
+                task_message=initial,
+                ranking_text=task_prompt,
+                token_budget=int(getattr(session_cfg, "repo_map_tokens", 0) or 0),
+                refresh=str(getattr(session_cfg, "repo_map_refresh", "auto")),
+                cache_dir=repo_map_cache_dir,
+                unreadable_paths=prompt_unreadable_paths,
+                tokenizer=local_tokenizer,
+                token_estimator=(
+                    model_binding.token_estimator or token_estimator
+                ),
+            )
+            session_initial = append_repo_map(initial, repo_map)
             # Trace: session start
             _emit_trace_event(
                 trace_file, "session_start",
@@ -421,6 +533,22 @@ def solve_task(
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
                 sandbox_env_names=list(effective_env),
+                edit_format=resolve_effective_edit_format(
+                    session_cfg, session_client
+                ),
+                tool_lazy_loading_enabled=(
+                    session_start_tool_surface.lazy_loading_enabled
+                ),
+                tool_active_limit=(
+                    session_start_tool_surface.max_active_tools
+                ),
+                registered_tools=list(
+                    session_start_tool_surface.registered_names
+                ),
+                active_tools=list(
+                    session_start_tool_surface.default_active_names
+                ),
+                **repo_map.trace_fields(),
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),
@@ -431,18 +559,22 @@ def solve_task(
                 ),
             )
             if state_path is not None:
-                write_state_from_trace(trace_path, state_path,
-                                       max_result_chars=session_cfg.max_output_chars)
+                write_state_from_trace(
+                    trace_path,
+                    state_path,
+                    max_result_chars=session_cfg.max_output_chars,
+                    think_keep_turns=session_cfg.tools_think_keep_turns,
+                )
 
             ctx = build_context_manager(
-                context_class, session_cfg, work_dir, initial, session_num,
+                context_class, session_cfg, work_dir, session_initial, session_num,
                 model_binding.token_estimator or token_estimator,
             )
             if getattr(cfg, "turn_snapshots_enabled", False):
                 from ..turn_snapshots import ensure_snapshot_setup
                 ensure_snapshot_setup(work_dir)
             session = Session(
-                session_cfg, session_client, system_prompt, initial, str(work_dir),
+                session_cfg, session_client, system_prompt, session_initial, str(work_dir),
                 context_manager=ctx, trace_file=trace_file, session_number=session_num,
                 trace_path=trace_path, state_path=state_path,
                 output_control=output_control,
@@ -463,16 +595,41 @@ def solve_task(
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,
                 subagent_runtime=subagent_runtime,
+                local_tokenizer=local_tokenizer,
             )
+            if tool_loading_metrics is None:
+                default_tokens, count_method = estimate_tool_block_tokens(
+                    session._tool_schemas,
+                    tokenizer=getattr(session, "_tokenizer", None),
+                )
+                tool_loading_metrics = {
+                    "lazy_loading_enabled": bool(
+                        session._tool_surface.lazy_loading_enabled
+                    ),
+                    "active_tool_limit": session._tool_surface.max_active_tools,
+                    "registered_tools": list(
+                        session._tool_surface.registered_names
+                    ),
+                    "default_active_tools": list(
+                        session._tool_surface.default_active_names
+                    ),
+                    "default_tool_block_tokens": default_tokens,
+                    "token_count_method": count_method,
+                }
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(
                 session, session_client, role_usage,
             )
+            if resume_from_artifacts and getattr(
+                session_cfg, "rewind_enabled", False
+            ):
+                from ..turn_snapshots import apply_pending_rewind_resume
+                apply_pending_rewind_resume(session)
             if session_num == start_session_num and resume_path is not None:
                 inject_resume_messages(
                     session,
                     resume_path,
-                    initial,
+                    session_initial,
                     recovery=recovery_plan,
                 )
             # Emit resolved thresholds so trace replay across config changes
@@ -514,6 +671,12 @@ def solve_task(
             agg_length_continuations += int(
                 getattr(session, "_length_continuation_count", 0) or 0
             )
+            agg_tool_activation_events += int(
+                getattr(session, "_tool_activation_events", 0) or 0
+            )
+            agg_activated_tools.update(
+                getattr(session, "_activated_tool_names", set()) or set()
+            )
             _guards = getattr(session, "_guards", None)
             if _guards is not None:
                 agg_done_blocked += getattr(_guards, "done_blocked_count", 0)
@@ -539,8 +702,12 @@ def solve_task(
                 total_prompt_tokens=result.total_prompt_tokens,
             )
             if state_path is not None:
-                write_state_from_trace(trace_path, state_path,
-                                       max_result_chars=cfg.max_output_chars)
+                write_state_from_trace(
+                    trace_path,
+                    state_path,
+                    max_result_chars=cfg.max_output_chars,
+                    think_keep_turns=session.cfg.tools_think_keep_turns,
+                )
 
             if result.done:
                 _auto_commit(work_dir, session_num, result.finish_reason)
@@ -645,6 +812,26 @@ def solve_task(
             "total_tokens": 0,
         }
     )
+    if tool_loading_metrics is None:
+        fallback_surface = build_tool_surface(cfg, client)
+        default_tokens, count_method = estimate_tool_block_tokens(
+            fallback_surface.active_schemas
+        )
+        tool_loading_metrics = {
+            "lazy_loading_enabled": fallback_surface.lazy_loading_enabled,
+            "active_tool_limit": fallback_surface.max_active_tools,
+            "registered_tools": list(fallback_surface.registered_names),
+            "default_active_tools": list(
+                fallback_surface.default_active_names
+            ),
+            "default_tool_block_tokens": default_tokens,
+            "token_count_method": count_method,
+        }
+    tool_loading_metrics.update({
+        "activation_events": agg_tool_activation_events,
+        "activated_tools": sorted(agg_activated_tools),
+    })
+    metrics["tool_loading"] = tool_loading_metrics
     metrics["file_checkpoints"] = (
         checkpoint_store.metrics_payload()
         if checkpoint_store is not None

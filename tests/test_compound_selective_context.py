@@ -275,7 +275,7 @@ def test_salience_pressure_surfaces_no_mutation_test_and_repeats(tmp_path: Path)
 
     user_text = ctx.get_messages()[1]["content"]
     assert "=== Salience Pressure ===" in user_text
-    assert "No write/edit/create-like action" in user_text
+    assert "No file-mutation action" in user_text
     assert "No test/verification-like command" in user_text
     assert "Newest action repeated 3 consecutive times" in user_text
 
@@ -308,9 +308,9 @@ def test_salience_classifies_double_quoted_bash_actions(tmp_path: Path):
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "No write/edit/create-like action" not in user_text
+    assert "No file-mutation action" not in user_text
     assert "No test/verification-like command" not in user_text
-    assert "29 steps since the last write/edit/create-like action." in user_text
+    assert "29 steps since the last file mutation." in user_text
     assert "28 steps since the last test/verification-like command." in user_text
     assert "sed -i" in user_text
     assert "python -m pytest tests/test_mod.py" in user_text

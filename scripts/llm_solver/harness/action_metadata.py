@@ -12,7 +12,10 @@ from typing import Any
 from .bash_write_classification import (
     classify_bash_write,
     extract_source_write_paths,
+    is_source_path,
+    normalize_trace_path,
 )
+from .edit_operations import edit_operation_paths
 from .tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 
 
@@ -46,7 +49,15 @@ def action_metadata(tool_name: str, arguments: dict[str, Any] | None) -> dict[st
     else:
         text = " ".join(str(v) for v in arguments.values())
 
-    paths = list(extract_source_write_paths(text)) if write_like else []
+    paths = []
+    if write_like:
+        paths = [
+            normalize_trace_path(path)
+            for path in edit_operation_paths(tool_name, arguments)
+        ]
+        paths = [path for path in paths if is_source_path(path)]
+        if not paths:
+            paths = list(extract_source_write_paths(text))
     return {
         "write_like": write_like,
         "source_write_like": bool(write_like and paths),

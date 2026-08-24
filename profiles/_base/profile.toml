@@ -5,6 +5,7 @@ name = "_base"
 family = "_base"
 quant = ""
 inherits = ""
+edit_format = "exact"
 
 [model]
 context_size = 40960

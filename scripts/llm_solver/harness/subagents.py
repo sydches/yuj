@@ -30,6 +30,8 @@ _READ_ONLY_FORBIDDEN_TOOLS = frozenset({
     "write",
     "edit",
     "apply_patch",
+    "udiff",
+    "exec_cell",
     "run_tests",
     "bash_poll",
     "bash_kill",

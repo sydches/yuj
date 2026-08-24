@@ -14,8 +14,10 @@ saved tool calls again on a fresh copy of the task. It writes a new run. For a
 source with one run segment, it can stop after a chosen trace turn.
 
 A replay that finishes does not yet prove an exact match. The current code
-does not compare full model requests. It can miss some tool calls. It cannot
-safely align turns from a source with more than one run segment. Read
+compares the exact ordered tool names when the saved input contains a `tools`
+array, but it does not compare full model requests. It can miss some tool
+calls. It cannot safely align turns from a source with more than one run
+segment. Read
 [Current fidelity limits](#current-fidelity-limits) before you report a replay
 result.
 
@@ -47,7 +49,7 @@ Each saved file has one role:
 | --- | --- |
 | `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls, and saved tool results. |
 | `subagents/<id>/.trace.jsonl` | The exact terminal result and accounting for the matching parent `subagent` event. |
-| Transcript | The saved model reply from each `=== turn NNN output ===` block. |
+| Transcript | The saved pre-profile request tool array from each input block, when present, and the saved model reply from each `=== turn NNN output ===` block. |
 | `.solver/state.json` | Nothing directly. This file is a view built from `.trace.jsonl`. |
 | `session.json` | The current replay loader reads the model, config paths, and context mode. It ignores the other settings in this file. |
 
@@ -61,16 +63,39 @@ Replay joins the parts and gives their turns one continuous order.
 
 ## What happens on each turn
 
-1. The replay client returns the saved model reply.
-2. Yuj sends each saved tool call through the normal tool code and sandbox,
-   except for the recorded child-model execution described below.
-3. Yuj updates the normal guard counters.
-4. Yuj writes a fresh trace.
-5. When `state.writer_enabled` is true, Yuj writes `.solver/state.json`.
-6. Yuj runs the tool-call fidelity check that the current run loop calls.
+1. When the saved input has a `tools` array, the replay client compares its
+   ordered tool names with the current request's ordered tool names.
+2. The replay client returns the saved model reply.
+3. Yuj sends each saved tool call through the normal tool code and sandbox,
+   except for the recorded execution exceptions described below.
+4. Yuj updates the normal guard counters.
+5. Yuj writes a fresh trace.
+6. When `state.writer_enabled` is true, Yuj writes `.solver/state.json`.
+7. Yuj runs the tool-call fidelity check that the current run loop calls.
 
 Replay does not restore a saved working tree. It runs the saved actions again
 on the fresh task copy.
+
+An enabled in-session conversation/workspace `rewind` is part of that action
+stream. At the recorded
+`from_turn` boundary, replay saves the fresh run's own conversation/checkpoint
+pair, calls the normal rewind path with the recorded target and reason, and
+continues from the restored messages and tree. It compares `from_turn`,
+`to_turn`, reason, and delivery mode. It does not compare the shadow-Git commit
+hash because a fresh replay creates new Git objects. Assistant-shell
+`delivery=next_session` rewind remains subject to the multi-segment replay
+limits below.
+
+When `[tools].checkpoint_enabled` was active, replay also executes the saved
+model-facing `checkpoint` and `rewind(report)` calls through the normal session
+handlers. The
+checkpoint becomes active only after its complete tool-call turn; rewind then
+rebuilds the model-facing conversation from that prefix plus the retained
+user-role report. The replay trace remains append-only, and replay does not
+restore files changed during the abandoned conversation interval. Focused
+tests compare every model-facing message in such a source/replay pair. The
+general runtime request-comparison limit below still applies: replay does not
+yet enforce full-request equality as a fidelity gate for arbitrary runs.
 
 Background process lifecycle is the exception to command re-execution:
 `proc_start`, `proc_poll`, and `proc_kill` rows form an ordered auxiliary
@@ -96,15 +121,22 @@ same file. A replay-to-live transcript can therefore contain two input formats.
 
 ## How Yuj checks a replay
 
-The replay contract requires two checks:
+The replay contract requires two complete checks. The current implementation
+also makes one narrower request check:
 
 | Check | Required rule |
 | --- | --- |
 | Model request | Compare the request that Yuj builds with the saved request for the same turn. Run the comparison after the same model-profile conversion. |
+| Ordered tool surface (implemented subset) | When the saved pre-profile input contains `tools`, compare every function name and its order with the current pre-profile tool array before returning the saved reply. |
 | Tool call and result | Compare the tool, action, and result after Yuj runs the tool through the normal path. |
 
-The current run loop calls only the tool-call and result check. For each tool
-call that reaches this check, Yuj applies these rules in order:
+The replay client performs the ordered-tool-surface check. This makes a saved
+`load_tools` call replay through the normal loader and proves that its expanded
+active set appears on the same following request. A missing recorded `tools`
+array skips this check; Yuj does not infer it from `tools_activated` trace rows.
+
+The current run loop separately calls the tool-call and result check. For each
+tool call that reaches this check, Yuj applies these rules in order:
 
 | Field | Current rule |
 | --- | --- |
@@ -126,9 +158,11 @@ divergence. Yuj still records the divergence.
 
 The current code has five important limits:
 
-- The current code has no full request comparison. An unused helper compares
-  only the trailing tool-result messages. It does not compare the full request,
-  tools, model, token fields, or model-profile conversion.
+- The current code has no full request comparison. It compares ordered tool
+  names when the source input contains `tools`, but not their schema bodies or
+  descriptions. An unused helper compares only the trailing tool-result
+  messages. The code does not compare all messages, model and token fields, or
+  model-profile conversion.
 - The tool-call check does not check trace turn `0`. Current turn-number
   handling treats `0` as a missing value.
 - The source trace loader keeps only one tool-call row for each turn number.
@@ -222,8 +256,9 @@ model input. Supply the same input manually, and record what you supplied.
 
 Use `--replay-extra-config PATH` only for measurement code that does not change
 what the model sees. Repeat the option to add more than one file. A
-later tool-call check may find a model-visible change. The current code cannot
-prove parity because it does not run the request fidelity check.
+tool-surface check detects a changed active tool-name set or order when the
+source transcript recorded `tools`, and a later tool-call check may find other
+model-visible changes. The current code still cannot prove full request parity.
 
 The parser uses `full` as both the normal context default and the sign that the
 user omitted `--context`. As a result, replay can treat an explicit

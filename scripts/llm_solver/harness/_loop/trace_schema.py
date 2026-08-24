@@ -44,7 +44,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "session_start", frozenset({
             "session_number", "thinking_level", "sandbox_backend",
             "container_runtime", "container_image_digest",
-            "ignore_file_hash", "sandbox_env_names",
+            "ignore_file_hash", "sandbox_env_names", "edit_format",
+            "repo_map_tokens",
         }), frozenset({
             "worktree_path", "worktree_branch", "worktree_base_commit",
             "project_instruction_files", "project_instruction_bytes",
@@ -52,6 +53,11 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instruction_resolved_bytes",
             "project_instructions_truncated", "prompt_import_tree",
             "ignore_file_names",
+            "tool_lazy_loading_enabled", "tool_active_limit", "registered_tools",
+            "active_tools",
+            "loaded_skills",
+            "repo_map_refresh", "repo_map_files", "repo_map_symbols",
+            "repo_map_cache_hit", "repo_map_sha256",
         })
     ),
     TraceEventSpec("session_end", frozenset({"session_number", "finish_reason"})),
@@ -66,6 +72,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "method",
             "fallback",
             "role",
+            "hook",
+            "hook_outcome",
         }),
     ),
     TraceEventSpec(
@@ -105,6 +113,11 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "advisor_note",
+        frozenset({"session_number", "turn", "severity", "chars"}),
+        frozenset({"turn_number", "ordinal", "note_sha256"}),
+    ),
+    TraceEventSpec(
         "model_fallback",
         frozenset({
             "session_number",
@@ -124,12 +137,47 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
+        frozenset({
+            "parent_tool_call_id", "cell_inner_index", "cell_source",
+            "combined_output_chars", "combined_output_bytes",
+            "inner_call_count",
+        }),
+    ),
+    TraceEventSpec(
+        "tools_activated",
+        frozenset({
+            "session_number", "turn_number", "requested", "activated",
+            "active_tools",
+        }),
+        frozenset({"already_active"}),
+    ),
+    TraceEventSpec(
+        "todos",
+        frozenset({"session_number", "turn_number", "todos"}),
+        frozenset({"tool_call_id"}),
     ),
     TraceEventSpec(
         "checkpoint",
         frozenset({
             "session_number", "turn", "commit", "duration_ms",
             "file_count", "byte_count",
+        }),
+    ),
+    TraceEventSpec(
+        "rewind",
+        frozenset({
+            "session_number", "turn_number", "from_turn", "to_turn",
+        }),
+        frozenset({
+            "reason", "commit", "rewind_count", "rewind_id", "delivery",
+            "report_chars", "checkpoint_message_count", "goal", "report",
+        }),
+    ),
+    TraceEventSpec(
+        "rewind_resume",
+        frozenset({
+            "session_number", "rewind_id", "target_session_number",
+            "to_turn", "commit",
         }),
     ),
     TraceEventSpec(
@@ -188,6 +236,12 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
         "schema_reject",
         frozenset({"session_number", "turn_number", "tool", "errors"}),
+    ),
+    TraceEventSpec(
+        "injection",
+        frozenset({
+            "session_number", "turn_number", "rule", "trigger", "path",
+        }),
     ),
     TraceEventSpec(
         "proc_start",
@@ -271,8 +325,20 @@ def _validate_event(event_type: str, fields_keys) -> None:
     if event_type not in KNOWN_TRACE_EVENT_TYPES:
         log.warning("trace: unknown event_type %r — emitted with reduced validation", event_type)
         return
+    field_names = set(fields_keys)
     required = TRACE_EVENT_REQUIRED_FIELDS.get(event_type, frozenset())
-    missing = required - set(fields_keys)
+    if event_type == "rewind":
+        workspace_fields = frozenset({
+            "reason", "commit", "rewind_count", "rewind_id", "delivery",
+        })
+        report_fields = frozenset({"report_chars"})
+        if field_names & workspace_fields:
+            required = required | workspace_fields
+        elif field_names & frozenset({
+            "report_chars", "checkpoint_message_count", "goal", "report",
+        }):
+            required = required | report_fields
+    missing = required - field_names
     if missing:
         log.warning("trace: %s event missing required fields: %s",
                     event_type, sorted(missing))
@@ -298,7 +364,10 @@ def write_trace(session, entry: dict) -> None:
     recording, and the replay-stop capture fires when the stop turn's event
     is written (docs/replay_mode_spec.md).
     """
-    if entry.get("event") == "tool_call":
+    if (
+        entry.get("event") == "tool_call"
+        and not entry.get("parent_tool_call_id")
+    ):
         _verify = getattr(getattr(session, "client", None), "verify_executed_turn", None)
         if _verify is not None:
             _verify(entry)

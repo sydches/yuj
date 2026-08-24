@@ -211,14 +211,51 @@ def test_agent_descriptor_is_read_only_by_default_and_fail_closed(tmp_path):
     descriptor.write_text(descriptor.read_text().replace("read_only = true\n", ""))
     assert load_agent_spec("probe", agents).read_only is True
 
-    _write_agent(agents, name="unsafe", tools=("read", "write"))
-    with pytest.raises(AgentConfigError, match="read-only agent cannot allow"):
-        load_agent_spec("unsafe", agents)
+    for name, mutation_tool in (
+        ("unsafe-write", "write"),
+        ("unsafe-udiff", "udiff"),
+        ("unsafe-cell", "exec_cell"),
+    ):
+        _write_agent(agents, name=name, tools=("read", mutation_tool))
+        with pytest.raises(
+            AgentConfigError, match="read-only agent cannot allow"
+        ):
+            load_agent_spec(name, agents)
     with pytest.raises(AgentConfigError, match="agent must start"):
         load_agent_spec("../probe", agents)
     assert prepare_readonly_bash("pwd") == ("command -p pwd", "")
     assert prepare_readonly_bash("touch changed.txt")[0] is None
     assert prepare_readonly_bash("file -C")[0] is None
+
+
+def test_subagent_allowlist_survives_deferred_tool_loading(tmp_path):
+    cfg = _task_cfg(
+        tools_lazy_loading_enabled=True,
+        tools_active_default=("read", "done"),
+    )
+    session = Session(
+        cfg,
+        ScriptedClient([]),
+        "system",
+        "child task",
+        str(tmp_path),
+        tool_allowlist=frozenset({"read", "load_tools", "done"}),
+        subagent_level=1,
+    )
+
+    assert set(session._tool_surface.registered_names) == {
+        "read", "load_tools", "done",
+    }
+    assert "write" not in session.active_tool_names
+    result = dispatch(
+        "load_tools",
+        {"names": ["write"]},
+        cwd=str(tmp_path),
+        cfg=cfg,
+        tool_registry=session._tool_registry,
+    )
+    assert "unavailable in the current config/profile: write" in result
+    assert "write" not in session.active_tool_names
 
 
 def test_child_trace_parent_summary_and_token_accounting(tmp_path):
