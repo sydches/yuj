@@ -10,16 +10,23 @@ code reads remain visible across the 2-3 turns it takes to go from "read
 the file" to "edit the file" — otherwise the model would see a 200-char
 stub of its own read by the next decision turn.
 """
+import copy
 import json
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
 from ..context import ContextManager, chars_div_4
+from ..checkpoint_rewind import preserve_rewind_reports
 
 
 from ._solver_state_dedup import apply_dedup
-from ._solver_state_format import format_list, format_state, format_trace
+from ._solver_state_format import (
+    format_list,
+    format_state,
+    format_todo_section,
+    format_trace,
+)
 # Re-exports so existing imports `from .solver_state_context import _TEST_PREFIXES`
 # / `_classify_cmd` / `_dedup_message` / `_extract_error_snippet` keep working.
 from ._solver_state_helpers import (
@@ -28,6 +35,7 @@ from ._solver_state_helpers import (
 )
 from ._solver_state_io import prepopulate_from_trace as _prepopulate_from_trace
 from ._metadata import (
+    STATEFUL_BUDGET_CONFIG_ATTRS,
     STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
     STATEFUL_SECTION_LABELS,
     STATEFUL_SECTION_ORDER,
@@ -60,6 +68,7 @@ class SolverStateContext(ContextManager):
         trace_stub_chars: int,
         min_turns: int,
         suffix: str,
+        todos_char_budget: int = 2000,
         ignore_state: bool = False,
         token_estimator: Callable[[list[dict]], int] = chars_div_4,
     ):
@@ -73,6 +82,7 @@ class SolverStateContext(ContextManager):
         self._trace_stub_chars = trace_stub_chars
         self._min_turns = min_turns
         self._suffix = suffix
+        self._todos_char_budget = todos_char_budget
         self._ignore_state = ignore_state
 
         # Internal state
@@ -186,7 +196,15 @@ class SolverStateContext(ContextManager):
         # against them — the tool was never executed, the content is a
         # gate message, not real output.
         entry_epoch = -1 if gate_blocked else self._dedup_epoch
-        msg = {"role": "tool", "tool_call_id": tool_call_id, "content": content, "_cmd_sig": cmd_signature, "_epoch": entry_epoch}
+        msg = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+            "_cmd_sig": cmd_signature,
+            "_epoch": entry_epoch,
+            "_tool_name": tool_name,
+            "_turn": self._turn_count,
+        }
         self._all_messages.append(msg)
         self._recent_tool_results.append(msg)
         self._file_cache = None  # tool execution may have written to .solver/state.json
@@ -196,6 +214,7 @@ class SolverStateContext(ContextManager):
 
     def get_messages(self) -> list[dict]:
         """Build messages from .solver/state.json if available, else fall back to full list."""
+        self._prune_expired_thought_results()
         if self._msg_cache is not None:
             return self._msg_cache
         solver_dir = self._cwd / ".solver"
@@ -204,7 +223,9 @@ class SolverStateContext(ContextManager):
             or not (solver_dir / "state.json").is_file()
             or self._turn_count < self._min_turns
         ):
-            self._msg_cache = self._all_messages
+            self._msg_cache = self._filter_expired_thought_messages(
+                self._all_messages
+            )
         else:
             self._msg_cache = self._build_from_solver(solver_dir)
             # Token accounting: solver-state projection vs. full append log.
@@ -221,6 +242,9 @@ class SolverStateContext(ContextManager):
                 ctx={"turn_count": self._turn_count,
                      "messages": len(self._msg_cache)},
             )
+        self._msg_cache = preserve_rewind_reports(
+            self._msg_cache, self._all_messages
+        )
         return self._msg_cache
 
     def estimate_tokens(self) -> int:
@@ -242,13 +266,64 @@ class SolverStateContext(ContextManager):
         self._tok_cache = None
         return True
 
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the raw append log rather than the state projection."""
+        return copy.deepcopy(self._all_messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Restore raw history and rebuild every recent-result dependency."""
+        self._all_messages = copy.deepcopy(list(new_messages))
+        self._system_content = next(
+            (
+                str(message.get("content") or "")
+                for message in self._all_messages
+                if message.get("role") == "system"
+            ),
+            "",
+        )
+        self._recent_tool_results = deque(
+            message
+            for message in self._all_messages
+            if message.get("role") == "tool"
+        )
+        self._turn_count = sum(
+            message.get("role") == "assistant"
+            for message in self._all_messages
+        )
+        self._dedup_counts.clear()
+        self._dedup_epoch = 0
+        self._file_cache = None
+        self._raw_state_cache = None
+        self._msg_cache = None
+        self._tok_cache = None
+        return True
+
     # ── Internal ──────────────────────────────────────────
 
     _EMPTY_SECTIONS = {
         "state": "",
         "trace": "",
         "evidence": "",
+        "todos": "",
     }
+
+    def _prune_expired_thought_results(self) -> None:
+        """Remove old empty think results from the rolling prompt window."""
+        if self._think_keep_turns is None:
+            return
+        kept = deque(
+            result
+            for result in self._recent_tool_results
+            if not (
+                result.get("_tool_name") == "think"
+                and self._thought_turn_expired(result.get("_turn"))
+            )
+        )
+        if len(kept) == len(self._recent_tool_results):
+            return
+        self._recent_tool_results = kept
+        self._msg_cache = None
+        self._tok_cache = None
 
     def _get_solver_files(self, solver_dir: Path) -> dict[str, str]:
         """Read .solver/state.json and format each section as text.
@@ -267,19 +342,25 @@ class SolverStateContext(ContextManager):
 
         state_path = solver_dir / "state.json"
         if not state_path.is_file():
+            self._raw_state_cache = {}
             self._file_cache = dict(self._EMPTY_SECTIONS)
             return self._file_cache
 
         raw = state_path.read_text().strip()
         if not raw:
+            self._raw_state_cache = {}
             self._file_cache = dict(self._EMPTY_SECTIONS)
             return self._file_cache
 
-        data = json.loads(raw)
+        data = self._redact_expired_thought_state(json.loads(raw))
+        self._raw_state_cache = data
         self._file_cache = {
             "state": format_state(data.get("state")),
             "trace": format_trace(data.get("trace", []), self._trace_lines, self._trace_stub_chars),
             "evidence": format_list(data.get("evidence", []), self._evidence_lines),
+            "todos": format_todo_section(
+                data.get("todos", []), self._todos_char_budget
+            ),
         }
         return self._file_cache
 
@@ -291,6 +372,11 @@ class SolverStateContext(ContextManager):
 
     def _format_list(self, items, max_items: int) -> str:
         return format_list(items, max_items)
+
+    def _render_state_suffix(self, files: dict[str, str]) -> str:
+        # `files["todos"]` is already bounded including its section header.
+        parts = [files.get("todos", ""), self._suffix]
+        return "\n\n".join(part for part in parts if part)
 
     def prepopulate_from_trace(self) -> int:
         return _prepopulate_from_trace(
@@ -309,6 +395,7 @@ class SolverStateContext(ContextManager):
         in this turn's window is evicted permanently so the memory
         footprint stays bounded across long runs.
         """
+        self._prune_expired_thought_results()
         if not self._recent_tool_results:
             return ""
         # Walk newest to oldest, keep within char budget.
@@ -358,8 +445,9 @@ class SolverStateContext(ContextManager):
 
         parts.extend(self._injected_fragments)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        suffix = self._render_state_suffix(files)
+        if suffix:
+            parts.append(suffix)
 
         return [
             {"role": "system", "content": self._system_content},
@@ -384,5 +472,6 @@ CONTEXT_METADATA = ContextModeMetadata(
     file_freshness="snapshot",
     injection_support="buried_in_projection",
     state_ignored_when_context_ignore_state=True,
+    budget_config_attrs=STATEFUL_BUDGET_CONFIG_ATTRS,
     constructor_config_attrs=STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
 )

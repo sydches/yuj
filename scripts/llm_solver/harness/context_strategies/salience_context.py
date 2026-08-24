@@ -35,7 +35,10 @@ from ._metadata import (
 class SalienceContext(CompoundSelectiveContext):
     """Compound-selective renderer with stronger recency/salience pressure."""
 
-    _MUTATION_PREFIXES = ("edit(", "write(", "str_replace(", "create(")
+    _MUTATION_PREFIXES = (
+        "edit(", "write(", "str_replace(", "create(", "apply_patch(",
+        "udiff(",
+    )
     _BASH_MUTATION_RE = BASH_LEGACY_MUTATION_RE
     _BASH_PYTHON_WRITE_RE = BASH_LEGACY_PYTHON_WRITE_RE
     _BASH_READ_ONLY_RE = re.compile(
@@ -1065,7 +1068,7 @@ class SalienceContext(CompoundSelectiveContext):
         lines: list[str] = []
         if not mutation_indices:
             lines.append(
-                f"No write/edit/create-like action has succeeded across {len(actions)} steps."
+                f"No file-mutation action has succeeded across {len(actions)} steps."
             )
             lines.append(
                 "Calling done now would submit an empty patch; do not call done to describe a pending edit."
@@ -1074,13 +1077,13 @@ class SalienceContext(CompoundSelectiveContext):
             since_mutation = len(actions) - mutation_indices[-1] - 1
             if since_mutation >= 20:
                 lines.append(
-                    f"{since_mutation} steps since the last write/edit/create-like action."
+                    f"{since_mutation} steps since the last file mutation."
                 )
 
         if failed_mutation_indices:
             failed_item = trace[failed_mutation_indices[-1]]
             lines.append(
-                "Latest write/edit-like command failed: "
+                "Latest file-mutation command failed: "
                 + self._compact_text(self._item_action_text(failed_item), 240)
             )
 
@@ -1205,6 +1208,7 @@ class SalienceContext(CompoundSelectiveContext):
         self,
         *,
         state_text: str,
+        suffix_text: str,
         trace: list,
         evidence: list,
         trace_limit: int,
@@ -1258,8 +1262,8 @@ class SalienceContext(CompoundSelectiveContext):
 
         parts.extend(self._injected_fragments)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        if suffix_text:
+            parts.append(suffix_text)
         return parts
 
     def _messages_from_parts(self, parts: list[str]) -> list[dict]:
@@ -1272,6 +1276,7 @@ class SalienceContext(CompoundSelectiveContext):
         self,
         *,
         state_text: str,
+        suffix_text: str,
         trace: list,
         evidence: list,
     ) -> list[dict]:
@@ -1283,6 +1288,7 @@ class SalienceContext(CompoundSelectiveContext):
         while True:
             messages = self._messages_from_parts(self._build_parts(
                 state_text=state_text,
+                suffix_text=suffix_text,
                 trace=trace,
                 evidence=evidence,
                 trace_limit=trace_limit,
@@ -1323,6 +1329,7 @@ class SalienceContext(CompoundSelectiveContext):
 
         return self._bounded_projection(
             state_text=files["state"],
+            suffix_text=self._render_state_suffix(files),
             trace=raw_trace,
             evidence=raw_evidence,
         )

@@ -113,14 +113,17 @@ def assemble_system_prompt(
     *,
     resolved_arm: str | None = None,
     project_instructions: str = "",
+    skills: str = "",
 ) -> str:
-    """Assemble resolved arm, project instructions, then harness header."""
+    """Assemble resolved arm, project instructions, header, then skills."""
     parts: list[str] = []
     if resolved_arm is not None:
         parts.append(resolved_arm.rstrip())
     if project_instructions.strip():
         parts.append(project_instructions.rstrip())
     parts.append(header)
+    if skills.strip():
+        parts.append(skills.rstrip())
     return "\n\n".join(parts)
 
 
@@ -129,6 +132,7 @@ def build_system_prompt(
     system_prompt_file: Path | None = None,
     *,
     project_instructions: str = "",
+    skills: str = "",
 ) -> str:
     """Assemble system prompt: optional file, project documents, and header.
 
@@ -148,6 +152,7 @@ def build_system_prompt(
         header,
         resolved_arm=resolve_system_prompt_file(system_prompt_file),
         project_instructions=project_instructions,
+        skills=skills,
     )
 
 

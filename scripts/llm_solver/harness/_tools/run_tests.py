@@ -100,6 +100,7 @@ def run_tests(
     from ..sandbox.env_policy import active_environment
     from ..tools import (
         _bash_unreadable_paths,
+        _bash_readable_paths,
         _effective_command_environment,
         _run_in_sandbox,
     )
@@ -111,6 +112,7 @@ def run_tests(
         sandbox=cfg.sandbox_bash, bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
         unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        readable_paths=_bash_readable_paths(cfg),
         sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
         container_runtime=getattr(
             cfg, "sandbox_container_runtime", "docker"

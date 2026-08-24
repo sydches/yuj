@@ -82,6 +82,7 @@ STATE_WRITER_MUTATION_PREFIXES = (
     "str_replace(",
     "create(",
     "apply_patch(",
+    "udiff(",
 )
 
 

@@ -370,6 +370,11 @@ class WorkspaceCheckpointStore:
             raise CheckpointNotFoundError(f"no workspace checkpoint for turn {turn}")
         return commit
 
+    def checkpoint_for_turn(self, turn: int) -> str:
+        """Return the exact checkpoint commit bound to ``turn``."""
+        with self._lock:
+            return self._resolve_turn(turn)
+
     def _tree_entries(self, commit: str) -> dict[str, _TreeEntry]:
         output = self._git(["ls-tree", "-rz", commit]).stdout
         entries: dict[str, _TreeEntry] = {}
