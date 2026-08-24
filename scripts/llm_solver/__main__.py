@@ -43,6 +43,20 @@ log = logging.getLogger(__name__)
 _harden_process()
 
 
+def _model_log_tag(value: str | None) -> str:
+    """Return a bounded filename component without changing the wire model ID."""
+    raw = str(value or "default")
+    leaf = raw.rsplit("/", 1)[-1] or "model"
+    safe = "".join(
+        char if char.isalnum() or char in "._-" else "-"
+        for char in leaf
+    ).strip(".-_") or "model"
+    if safe == raw and len(safe) <= 80:
+        return safe
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"{safe[:64]}-{digest}"
+
+
 def _build_client(cfg, profile):
     if os.environ.get("YUJ_CODEX_HEADLESS") == "1":
         from .analysis.codex_yuj_client import CodexHeadlessYujClient
@@ -183,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_dir = args.run_dir.resolve()
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_tag = args.model or "default"
+    model_tag = _model_log_tag(args.model)
     log_path = run_dir / f"harness_{model_tag}_{ts}.log"
     run_dir.mkdir(parents=True, exist_ok=True)
     fh = logging.FileHandler(log_path)

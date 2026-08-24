@@ -19,7 +19,21 @@ from llm_solver.harness.state_writer import project
 from llm_solver.server.types import TurnResult, Usage
 from scripts.llm_assist.__main__ import main as assist_main
 from scripts.llm_assist.store import SessionStore
-from scripts.llm_solver.__main__ import main as measurement_main
+from scripts.llm_solver.__main__ import (
+    _model_log_tag,
+    main as measurement_main,
+)
+
+
+def test_measurement_log_tag_keeps_exact_model_paths_out_of_filenames() -> None:
+    exact_model = "/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+
+    tag = _model_log_tag(exact_model)
+
+    assert "/" not in tag
+    assert tag.startswith("Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf-")
+    assert len(tag) <= 77
+    assert _model_log_tag("qwen3.6-35b-a3b") == "qwen3.6-35b-a3b"
 
 
 def test_session_start_and_state_project_effective_profile_format(
