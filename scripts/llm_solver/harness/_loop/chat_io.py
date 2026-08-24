@@ -86,6 +86,7 @@ def _chat_with_length_continuation(
         supports_prefill=client.profile.supports_prefill,
         call_model=call_model,
         normalize=client.profile.normalize,
+        context_size=session.cfg.context_size,
     )
     for attempt in result.attempts:
         session._emit(

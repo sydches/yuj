@@ -1415,6 +1415,14 @@ raw piece, including streamed pieces, is joined before the profile normalize
 pipeline runs once. Only the final canonical assistant message enters model
 context.
 
+When a provider exposes a length-cut function call as structured
+`tool_calls` instead of assistant text, its chat template may be unable to
+render the incomplete argument as a prefill. For that shape only, each bounded
+follow-up receives a cumulative generation cap so a deterministic server can
+reproduce the exact structured prefix and extend it; the cap never exceeds the
+remaining configured context room reported by the prior call. A complete
+argument object is then promoted to the normal `tool_calls` finish path.
+
 If the bounded attempts still do not yield a complete normalized tool call,
 the logical response remains `length`; the existing fresh-session rollover
 and `[prompts].resume_length` message apply. Raw trace rows named

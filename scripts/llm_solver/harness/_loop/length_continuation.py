@@ -14,6 +14,7 @@ and applies the two template controls needed to continue the final message.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -171,6 +172,7 @@ def continue_length_response(
     supports_prefill: bool,
     call_model: ContinuationCall,
     normalize: NormalizeCall,
+    context_size: int | None = None,
 ) -> LengthContinuationResult:
     """Join bounded raw continuations, then invoke ``normalize`` once.
 
@@ -192,6 +194,15 @@ def continue_length_response(
         raise TypeError("call_model must be callable")
     if not callable(normalize):
         raise TypeError("normalize must be callable")
+    if (
+        context_size is not None
+        and (
+            isinstance(context_size, bool)
+            or not isinstance(context_size, int)
+            or context_size <= 0
+        )
+    ):
+        raise ValueError("context_size must be a positive integer or None")
 
     current = _copy_response(initial_response, field="initial_response")
     initial_reason = _finish_reason(current)
@@ -212,6 +223,24 @@ def continue_length_response(
                     base_request,
                     joined_content,
                 )
+                if _has_structured_tool_calls(current):
+                    base_max_tokens = request.get("max_tokens")
+                    if (
+                        isinstance(base_max_tokens, int)
+                        and not isinstance(base_max_tokens, bool)
+                        and base_max_tokens > 0
+                    ):
+                        grown_max_tokens = base_max_tokens * (
+                            attempt_number + 1
+                        )
+                        if context_size is not None:
+                            prior_prompt_tokens, _ = _usage_tokens(current)
+                            if prior_prompt_tokens > 0:
+                                grown_max_tokens = min(
+                                    grown_max_tokens,
+                                    max(1, context_size - prior_prompt_tokens - 1),
+                                )
+                        request["max_tokens"] = grown_max_tokens
                 received = _copy_response(
                     call_model(request),
                     field=f"continuation response {attempt_number}",
@@ -246,9 +275,11 @@ def continue_length_response(
 
     exhausted = False
     if initial_reason == LENGTH_FINISH_REASON:
-        has_complete_tool_call = bool(normalized.get("tool_calls"))
+        has_complete_tool_call = _has_complete_tool_calls(normalized)
         if has_complete_tool_call:
             fallback_reason = None
+            if _finish_reason(normalized) == LENGTH_FINISH_REASON:
+                normalized["finish_reason"] = "tool_calls"
         elif attempts and _finish_reason(current) == LENGTH_FINISH_REASON:
             fallback_reason = FALLBACK_ATTEMPT_LIMIT
             exhausted = len(attempts) >= max_attempts
@@ -277,6 +308,37 @@ def _copy_response(response: RawResponse, *, field: str) -> dict[str, Any]:
     _content(copied)
     _finish_reason(copied)
     return copied
+
+
+def _has_structured_tool_calls(response: Mapping[str, Any]) -> bool:
+    calls = response.get("tool_calls")
+    return isinstance(calls, list) and bool(calls)
+
+
+def _has_complete_tool_calls(response: Mapping[str, Any]) -> bool:
+    calls = response.get("tool_calls")
+    if not isinstance(calls, list) or not calls:
+        return False
+    for call in calls:
+        if not isinstance(call, Mapping):
+            return False
+        function = call.get("function")
+        if not isinstance(function, Mapping):
+            return False
+        if not str(function.get("name") or ""):
+            return False
+        raw_arguments = function.get("arguments")
+        try:
+            arguments = (
+                dict(raw_arguments)
+                if isinstance(raw_arguments, Mapping)
+                else json.loads(str(raw_arguments or ""))
+            )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return False
+        if not isinstance(arguments, dict):
+            return False
+    return True
 
 
 def _content(response: Mapping[str, Any]) -> str | None:
