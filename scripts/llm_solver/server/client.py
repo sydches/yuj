@@ -16,7 +16,7 @@ from ..config import Config
 if TYPE_CHECKING:
     from .profile_loader import Profile
 
-from ._streaming import assemble_stream
+from ._streaming import StreamRuleInterrupt, assemble_stream
 from . import request_controls
 from .types import SideRequestResult, ToolCall, TurnResult, Usage
 
@@ -88,6 +88,11 @@ class LlamaClient:
         self._session_id: str = ""
         self._thinking_resolution = None
         self._thinking_signature = None
+        # Bound by chat_io for one logical solver response.  Keeping the
+        # observer out of the request payload preserves provider/profile
+        # behavior while exposing SSE deltas to the owning harness layer.
+        self._stream_observer = None
+        self._last_call_streamed = False
         _ = self.thinking_resolution
 
     @property
@@ -191,6 +196,7 @@ class LlamaClient:
                 json.dumps(payload, default=str),
             )
         if _streaming_enabled():
+            self._last_call_streamed = True
             stream_payload = dict(payload)
             stream_payload["stream"] = True
             # include_usage on the final chunk gives us prompt_tokens
@@ -200,7 +206,18 @@ class LlamaClient:
             stream_payload["stream_options"] = {"include_usage": True}
             try:
                 stream = self.client.chat.completions.create(**stream_payload)
-                resp = assemble_stream(stream)
+                resp = assemble_stream(
+                    stream, observer=getattr(self, "_stream_observer", None)
+                )
+            except StreamRuleInterrupt as e:
+                # This is an intentional, replayable response outcome, not a
+                # transport failure.  Store valid JSON under the ordinary
+                # output marker so ReplayClient can reproduce the retry.
+                if record_transcript:
+                    self._write_transcript(
+                        f"turn {n:03d} output", e.model_dump_json()
+                    )
+                raise
             except Exception as e:
                 if record_transcript:
                     self._write_transcript(
@@ -211,6 +228,7 @@ class LlamaClient:
             if record_transcript:
                 self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
             return resp
+        self._last_call_streamed = False
         try:
             resp = self.client.chat.completions.create(**payload)
         except Exception as e:
@@ -256,6 +274,58 @@ class LlamaClient:
             content=content,
             usage=request_controls.usage_from_response(response),
         )
+
+    def complete_tool_side_request(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        turn: int = 0,
+    ) -> TurnResult:
+        """Run an isolated harness-owned tool conversation step.
+
+        Unlike a primary solver turn, this request never writes the primary
+        transcript and always applies side-request cache/thinking controls.
+        Callers must still enforce their own tool allowlist before dispatch.
+        """
+        if not isinstance(messages, list):
+            raise ValueError("tool side-request messages must be a list")
+        if not isinstance(tools, list):
+            raise ValueError("tool side-request tools must be a list")
+
+        if self.profile is not None:
+            request: dict = {
+                "model": self.cfg.model,
+                "messages": self.profile.denormalize_messages(messages),
+                "max_tokens": self.cfg.max_tokens,
+            }
+            if self.profile.supports_tool_calls:
+                request["tools"] = tools
+                request["tool_choice"] = "auto"
+            request = self._attach_request_controls(request, side_request=True)
+            raw_response = self._call_raw_profile_request(
+                request, record_transcript=False
+            )
+            normalized = self.profile.normalize(dict(raw_response))
+            return self._turn_result_from_normalized(
+                normalized,
+                raw_response["usage"],
+                turn,
+                fallback_finish_reason=raw_response["finish_reason"],
+            )
+
+        request = self._attach_request_controls(
+            {
+                "model": self.cfg.model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto",
+                "max_tokens": self.cfg.max_tokens,
+            },
+            side_request=True,
+        )
+        response = self._call_api(request, record_transcript=False)
+        return self._legacy_turn_result_from_response(response, turn)
 
     def health_check(self) -> list[str]:
         """Verify server is reachable via /v1/models. Raises on connection failure."""
@@ -419,9 +489,11 @@ class LlamaClient:
             )
         return attach_constrained_decoding(request, resolution)
 
-    def _call_raw_profile_request(self, request: dict) -> dict:
+    def _call_raw_profile_request(
+        self, request: dict, *, record_transcript: bool = True
+    ) -> dict:
         """Make one profile request and return its pre-normalize response."""
-        resp = self._call_api(request)
+        resp = self._call_api(request, record_transcript=record_transcript)
         choices = _member(resp, "choices", ()) or ()
         if not choices:
             raise ValueError("model response contains no choices")
@@ -518,6 +590,10 @@ class LlamaClient:
             "max_tokens": self.cfg.max_tokens,
         }, side_request=False)
         resp = self._call_api(payload)
+        return self._legacy_turn_result_from_response(resp, turn)
+
+    def _legacy_turn_result_from_response(self, resp, turn: int) -> TurnResult:
+        """Normalize one legacy response without making or recording a call."""
 
         msg = resp.choices[0].message
         reason = resp.choices[0].finish_reason or "stop"

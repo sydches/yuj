@@ -34,13 +34,18 @@ Do not pass a descriptor file with `--config`.
 | --- | --- | --- | --- |
 | One coding session | A small settings file | `yuj code --config FILE.toml` | No, for an existing setting. |
 | A model and local server | `configs/runtime/*.toml` | The config loader reads `[model]`. `scripts/serve.sh` reads `[launch]`. | No, for a supported server and field. |
-| A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
+| A model's message, tool-call, or edit format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
+| A named subagent | `agents/NAME.toml` and its Markdown prompt | The optional `task` tool loads the descriptor by agent name. | No, for the current descriptor format. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
+| On-demand task instructions and resources | An [Agent Skills](https://agentskills.io/) directory containing `SKILL.md` | `[prompts].skills_dirs` discovers skill collections; `[prompts].skill_paths` names exact skills. | No. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
 | A prompt-injection scan rule | `security/patterns.toml` or another reviewed registry | The dispatcher and imported-instruction loader apply `[security]` settings. | No, for the current pattern shape. |
+| A trusted command at a harness lifecycle event | A small settings file under `[hooks]`, plus an independently installed executable | The config loader validates the handler and the harness sends it JSON on standard input. | No, for the supported lifecycle effects. |
+| A repository-specific live response correction | `.harness/stream_rules/*.md` in the task repository | The harness validates the enabled rule directory at task startup. | No, for the current rule fields and supported structural languages. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
+| Threshold-triggered context compaction | A settings overlay with `[context].compaction_hook` plus a trusted Python module | The config loader resolves `module:function` at startup. | Yes. The function uses the bounded compaction-hook contract. |
 | A new tool or server type | Python and its data files | The dispatcher or server launcher must know the new type. | Yes. |
 
 ## Share an extension
@@ -55,13 +60,21 @@ files. It stores language, shell, and tool quirks in the matching directories.
 | --- | --- | --- |
 | Model server setup | One `configs/runtime/*.toml` file | Copy it to a private path. Replace local model and template paths. Pass it to `scripts/serve.sh` and `--config`. |
 | Model message and tool-call format | One `profiles/NAME/` directory | Copy the directory under `profiles/`. Review every Python module before use. |
+| Named subagent | One `agents/NAME.toml` file and its prompt | Copy both under `agents/`. Review the model profile, complete tool allowlist, prompt, turn limit, and read-only setting. |
 | Test runner or language | One `language_quirks/NAME.toml` file | Copy it under `scripts/llm_solver/language_quirks/`. Give it a unique `detection_priority`. |
 | Shell rewrite, refusal, redirect, or redaction | One or more TOML rule entries | Review and merge the entries into the matching fixed file under `bash_quirks/`. The current loader ignores other TOML files in that directory. |
+| Lifecycle hook | A small settings overlay and the separately distributed executable | Review both. Replace machine-specific executable paths locally, then pass the overlay with `--config`. Do not copy an executable from an untrusted task repository. |
+| Mid-stream response rule | One `.harness/stream_rules/*.md` file | Review it, copy it below the task repository, and enable `[loop].stream_rules_enabled`. |
 | `glob` refusal text | The changed entries from `tool_quirks/glob.toml` | Review and merge them into that fixed file. The current loader does not scan extra tool-quirk files. |
 | Tool description mode | One complete `tool_descriptions/MODE/` directory | Copy the directory under `profiles/_base/tool_descriptions/`. Include one `.txt` file for every tool. |
+| Agent Skill | One directory containing `SKILL.md` and any referenced resources | Review the directory, then name its parent collection in `[prompts].skills_dirs` or its exact directory/file in `[prompts].skill_paths`. |
 
 Do not share an API key, private host name, or private filesystem path. Keep
 those values in `config.local.toml` or in a private runtime copy.
+
+Agent Skills can contain instructions and executable scripts. Review the whole
+directory before enabling it. See [Configuration](configuration.html#load-agent-skills-on-demand)
+for discovery, validation, collision, prompt, trace, and sandbox behavior.
 
 Test a shared extension before you use it on a real repository. The sections
 below give the test command for each extension type.
@@ -143,11 +156,13 @@ The public data files have separate jobs.
 | `configs/runtime/` | Define one model and one local server setup. |
 | `configs/paper/` | Fix the layer order and detector limits for released paper comparisons. |
 | `configs/treatment/` | Supply the released detector data and response overlays. |
+| `agents/` | Define named agents for the optional sequential `task` tool. |
 | `profiles/` | Adapt model messages, tool schemas, and replies. |
 | `scripts/llm_solver/language_quirks/` | Describe test runners and their output. |
 | `scripts/llm_solver/bash_quirks/` | Describe shell rewrites, refusals, and redactions. |
 | `security/patterns.toml` | Define prompt-injection scan rules and finding classes. |
 | `scripts/llm_solver/tool_quirks/` | Describe supported result changes for non-shell tools. |
+| `<task repository>/.harness/stream_rules/` | Describe repository-specific model-output corrections. |
 
 Do not mix these jobs in one file.
 
@@ -265,6 +280,7 @@ canonical_version = "openai-v1"
 name = "my-model"
 family = "my-model-family"
 inherits = "_base"
+edit_format = "exact"
 
 [model]
 supports_tool_calls = true
@@ -287,16 +303,23 @@ Yuj first looks for an exact profile directory. It next looks for one profile
 with the requested `[profile].family`. It uses `_base` when neither exists.
 More than one family match is an error.
 
+A child profile inherits `edit_format` when it omits the field. `exact` sends
+the `edit` schema, `apply_patch` sends the Codex V4A patch schema, `udiff`
+sends the standard unified-diff schema, and `whole` sends the `write` schema.
+The loader rejects any other value. Use `[tools].edit_format` or
+`--edit-format` for a run-specific override instead of copying a model profile.
+
 Use these profile fields for these active jobs:
 
 | Profile field | Active job |
 | --- | --- |
 | `[profile].inherits` | Load a parent profile first. |
+| `[profile].edit_format` | Select `exact`, `apply_patch`, `udiff`, or `whole` and expose only its matching edit tool. |
 | `[model].supports_tool_calls` | Send or omit the tool schema list. |
 | `[model].supports_system_role` | Keep or fold the system message. |
 | `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
 | `[capacity].preamble` | Add text before the system prompt. |
-| `[capacity].max_tools` | Limit the number of enabled tools sent to the model. |
+| `[capacity].max_tools` | Limit the fixed tool surface, or the active count when deferred loading is enabled. |
 | `[capacity].simplify_schemas` | Remove descriptions from tool schemas. |
 | `[normalize].rules` | Apply supported rules to a model reply. |
 | `[denormalize].rules` | Choose how Yuj sends the system message. |
@@ -324,10 +347,37 @@ Load the profile without starting a model:
 
 ```bash
 .venv/bin/python -c \
-  'from pathlib import Path; from scripts.llm_solver.server import load_profile; p = load_profile("my-model", Path("profiles")); print(p.name, p.family, p.max_tools)'
+  'from pathlib import Path; from scripts.llm_solver.server import load_profile; p = load_profile("my-model", Path("profiles")); print(p.name, p.family, p.edit_format, p.max_tools)'
 ```
 
 Run the full tests after you add profile rules or modules.
+
+## Add a named agent
+
+Named agents are descriptors for the optional `task` tool. Add
+`agents/my-agent.toml` and keep its system prompt under `agents/`:
+
+```toml
+[agent]
+model_profile = "_base"
+tools = ["read", "glob", "grep", "bash", "done"]
+system_prompt_file = "prompts/my-agent.md"
+max_turns = 12
+read_only = true
+```
+
+The descriptor must contain exactly one `[agent]` table. `model_profile`
+selects a profile name or family under `profiles/`; `tools` is the complete
+model-facing allowlist. The prompt must be an existing Markdown file below
+`agents/`.
+Agents default to read-only, which rejects mutation tools and limits `bash` to
+a small inspection-command allowlist. Set `read_only = false` only when the
+agent is deliberately allowed to modify the task directory.
+
+Enable the caller with `[tools].task_enabled = true`. The public depth and turn
+caps remain authoritative over descriptor values. See
+[`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
+for the complete validation rules.
 
 ## Add a language or test runner
 
@@ -412,6 +462,73 @@ Run the language and tool tests:
   tests/test_composability.py
 ```
 
+## Add a mid-stream rule
+
+A stream-rule file is Markdown with TOML frontmatter between `+++` fences.
+The Markdown body is the correction Yuj sends back to the model:
+
+```markdown
++++
+name = "avoid-recursive-delete"
+condition = '''\brm\s+-rf\b'''
+scope = "tool:bash"
+interruptMode = "tool-only"
+repeatMode = "once"
++++
+Do not use a recursive forced delete. Choose a bounded operation and name its
+exact target.
+```
+
+`name` may be omitted; the filename stem then owns the name. Each file needs
+`condition`, `astCondition`, or both. `condition` is a Python regular
+expression. A string or array of strings is accepted; any matching condition
+triggers the rule.
+
+`scope` accepts a comma-separated string or an array made from `text`,
+`thinking`, `tool`, and `tool:<name>(<glob>)`. `toolcall` is accepted as an
+alias for `tool`. The default is `text` plus `tool`. A scoped tool glob is
+matched against path-like tool arguments. Top-level `globs` adds a path gate
+to every scope in that rule. Repository globs support `*`, `?`, character
+classes, and `**`; `**/*.py` includes a Python file at the repository root.
+
+`astCondition` provides a structural pattern for `edit` and `write` content.
+It runs only when a path selects one of Yuj's installed Python,
+JavaScript/TypeScript, Go, Rust, or Java parsers. Uppercase placeholders such
+as `$ARG` match one syntax node; repeated uses of the same placeholder must
+have identical source text. Structural matching is local and never downloads
+a grammar.
+
+`interruptMode` is `never`, `prose-only`, `tool-only`, or `always`; the default
+is `always`. `repeatMode` is `once` or `after-gap`; the default is `once`.
+An `after-gap` rule may set an integer `repeatGap >= 1`, otherwise it uses
+`[loop].stream_rules_repeat_gap`.
+
+Yuj loads files in filename order and rejects an invalid file or duplicate
+rule name before the first model request. Use a prefix such as `10-` when
+review order matters. Rules are trusted prompt material: review their regular
+expressions, path gates, and Markdown bodies before enabling them.
+
+Enable the directory and streaming interrupt path with a settings overlay:
+
+```toml
+[loop]
+stream_rules_enabled = true
+stream_rules_dir = ".harness/stream_rules"
+stream_rules_context_mode = "discard"
+```
+
+```bash
+YUJ_STREAMING=1 yuj code --config stream-rules.toml "Fix the issue."
+```
+
+Run the focused loader and runtime tests after changing the rule format:
+
+```bash
+.venv/bin/python -m pytest -q \
+  tests/test_stream_rules.py \
+  tests/test_stream_rules_integration.py
+```
+
 ## Change tool behavior
 
 ### Change an existing tool setting
@@ -420,6 +537,8 @@ Use a settings overlay for an existing switch or limit:
 
 ```toml
 [tools]
+lazy_loading_enabled = false
+active_default = ["bash", "read", "edit", "glob", "grep", "done"]
 glob_max_matches_per_page = 40
 glob_max_listed_paths = 100
 glob_refuse_unscoped_recursive = true
@@ -430,6 +549,33 @@ timeout = 300
 ```
 
 Read [Model tools](model-tools.html) for every public tool and input.
+
+### Run a command at a lifecycle event
+
+Use `[hooks]` when a trusted host program must inspect, reject, rewrite, or
+annotate an event without becoming a model-callable tool. The public events
+are `session_start`, `pre_model`, `pre_tool`, `post_tool`, `done`, and
+`session_end`. Keep the executable outside the task repository, pass its path
+as `command`, and enable the group explicitly:
+
+```toml
+[hooks]
+enabled = true
+
+[[hooks.post_tool]]
+matcher = "bash"
+command = ["/opt/yuj-hooks/audit-result"]
+timeout_s = 3
+```
+
+This is a trusted-code extension seam, not a plugin installer or another
+shell-quirk rule. Yuj runs it as the harness account outside the model-command
+sandbox. The task can cause configured events and influence their JSON input,
+so the program must parse that input defensively. Read
+[Configuration](configuration.html#run-trusted-lifecycle-hooks) for payloads,
+effects, ordering, trace, and replay behavior, and read
+[Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task) before enabling
+one on an untrusted repository.
 
 ### Add a shell rule
 
@@ -501,10 +647,17 @@ Run the schema tests after either change:
 .venv/bin/python -m pytest -q \
   tests/test_composability.py \
   tests/test_harness_pipeline_session.py \
-  tests/test_run_tests_tool.py
+  tests/test_run_tests_tool.py \
+  tests/test_tool_specs_lazy_loading.py
 ```
 
 ## Know when TOML is not enough
+
+The custom compaction hook is the narrow public Python extension point for
+context compaction. Configure it with `context.compaction_hook`; do not fork
+`harness/_loop/compaction.py`. Read [Compaction hooks](compaction.html) before
+enabling one. Hook modules are trusted in-process code, and an invalid import
+stops startup.
 
 | Change | Why Python is needed |
 | --- | --- |

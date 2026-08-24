@@ -7,7 +7,6 @@ from dataclasses import replace
 from typing import Any
 
 from ..context import chars_div_4
-from ..schemas import get_tool_schemas
 from ..tool_validation import ToolSchemaSet
 from .model_role_runtime import resolution_with_client_context
 from .model_roles import (
@@ -15,7 +14,12 @@ from .model_roles import (
     ResolvedRoleClient,
     check_context_window,
 )
-from .profile_resolution import _resolve_token_estimator, apply_profile_to_schemas
+from .profile_resolution import (
+    _resolve_token_estimator,
+    bind_effective_edit_format,
+    build_plan_mode_schemas,
+    build_tool_surface,
+)
 
 log = logging.getLogger(__name__)
 
@@ -121,23 +125,63 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             next_reason = "context_window_unavailable"
             continue
 
+        skill_roots = tuple(
+            getattr(session.cfg, "skills_readable_dirs", ()) or ()
+        )
+        if skill_roots != tuple(
+            getattr(routed.client.cfg, "skills_readable_dirs", ()) or ()
+        ):
+            try:
+                routed.client.cfg = replace(
+                    routed.client.cfg,
+                    skills_readable_dirs=skill_roots,
+                )
+            except TypeError:
+                setattr(routed.client.cfg, "skills_readable_dirs", skill_roots)
         _apply_context_size(routed.client, live_context)
+        routed.client.cfg = bind_effective_edit_format(
+            routed.client.cfg, routed.client
+        )
         effective_resolution = resolution_with_client_context(routed)
         routed = ResolvedRoleClient(routed.client, effective_resolution)
         transition = replace(
             switched.transition,
             to_resolution=effective_resolution,
         )
-        candidate_schemas = apply_profile_to_schemas(
-            get_tool_schemas(routed.client.cfg.tool_desc),
-            routed.client.cfg,
-            routed.client,
+        initial_surface = build_tool_surface(
+            routed.client.cfg, routed.client
         )
+        from ..tool_loading import replace_tool_surface
+        candidate_surface = replace_tool_surface(
+            session._tool_surface,
+            initial_surface.registered_schemas,
+            lazy_loading_enabled=getattr(
+                routed.client.cfg, "tools_lazy_loading_enabled", False
+            ),
+            active_default=getattr(
+                routed.client.cfg, "tools_active_default", ()
+            ),
+            max_active_tools=initial_surface.max_active_tools,
+        )
+        candidate_schemas = candidate_surface.active_schemas
         candidate_schema_set = ToolSchemaSet.from_openai_tools(
             candidate_schemas
         )
+        candidate_plan_schemas = (
+            build_plan_mode_schemas(routed.client.cfg, routed.client)
+            if bool(getattr(routed.client.cfg, "plan_mode_enabled", False))
+            else []
+        )
+        candidate_plan_schema_set = ToolSchemaSet.from_openai_tools(
+            candidate_plan_schemas or candidate_schemas
+        )
+        request_schemas = (
+            candidate_plan_schemas
+            if bool(getattr(session._plan_mode, "active", False))
+            else candidate_schemas
+        )
         prompt_tokens, estimator = _candidate_prompt_tokens(
-            session, routed, candidate_schemas,
+            session, routed, request_schemas,
         )
         window = check_context_window(
             prompt_tokens,
@@ -159,10 +203,14 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
         # have all succeeded. Canonical context messages remain untouched.
         session.client = routed.client
         session.cfg = routed.client.cfg
+        session._plan_mode.cfg = session.cfg
         session._active_model_resolution = effective_resolution
         session._active_model_role = effective_resolution.effective_role
+        session._tool_surface = candidate_surface
         session._tool_schemas = candidate_schemas
         session._tool_schema_set = candidate_schema_set
+        session._plan_tool_schemas = candidate_plan_schemas
+        session._plan_tool_schema_set = candidate_plan_schema_set
         session.context.set_token_estimator(estimator)
         session._tokenizer = None
         session._server_ctx_cache = live_context

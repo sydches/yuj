@@ -118,12 +118,12 @@ def slot_next_action_text(ctx: "WorkingSetBaselineContext") -> str:
         return f"run verification on {changed} or refine it"
     if candidate_test and ctx._needs_test_read():
         if candidate_source:
-            return f"read {candidate_test} or edit {candidate_source}"
+            return f"read {candidate_test} or change {candidate_source}"
         return f"read {candidate_test} or run verification"
     if candidate_source:
         if candidate_test:
-            return f"edit {candidate_source}, read {candidate_test}, or run verification"
-        return f"edit {candidate_source} or run verification"
+            return f"change {candidate_source}, read {candidate_test}, or run verification"
+        return f"change {candidate_source} or run verification"
     if candidate_test:
         return f"read {candidate_test} or run verification"
-    return "read one concrete file, edit/write, or run verification"
+    return "read one concrete file, mutate a file, or run verification"

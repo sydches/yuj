@@ -21,7 +21,8 @@ from __future__ import annotations
 import time
 
 from ..action_metadata import action_metadata
-from ..guardrails import Action
+from ..guardrails import PASS, Action
+from ..tool_loading import inactive_tool_error
 from ..._shared.classification import is_error_result
 from .._guardrails.extractors import MUTATION_TOOLS
 from ..security_scan import security_block_stage
@@ -35,6 +36,30 @@ __all__ = [
 ]
 
 
+def _append_hook_context(result: str, *blocks: str) -> str:
+    present = [block for block in blocks if block]
+    if not present:
+        return result
+    return result + "\n\n" + "\n\n".join(present)
+
+
+def _tool_action_metadata(tc, session) -> dict:
+    """Return trace metadata with the plan artifact kept non-mutating."""
+    if session._plan_mode.is_plan_write(tc.name, tc.arguments):
+        return {
+            "write_like": False,
+            "source_write_like": False,
+            "source_write_paths": [],
+            "plan_artifact": True,
+        }
+    return action_metadata(tc.name, tc.arguments)
+
+
+def _pre_tool_context(tc, state: "TurnState") -> str:
+    effect = state.pre_tool_hooks.get(tc.id)
+    return effect.context_block() if effect is not None else ""
+
+
 def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     """Resolve the ``done`` tool call's pre-dispatch gate.
 
@@ -43,17 +68,67 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     END   → session ends with done=False (done_loop).
     """
     session = state.session
+    pre_context = _pre_tool_context(tc, state)
     done_decision = state.tool_pre["done_guard"](
         session._guards, state.cfg, tc_name=tc.name, cwd=session.cwd,
     )
     if done_decision.action == Action.PASS:
+        hook_effect = session._run_hook(
+            "done",
+            tool_call_id=tc.id,
+            tool_name="done",
+            tool_args=dict(tc.arguments),
+            implicit=False,
+        )
+        if hook_effect.blocked:
+            result = f"ERROR: done hook blocked completion: {hook_effect.reason}"
+            result = session._decorate_stream_rule_tool_result(
+                tc.id, result, turn=state.turn
+            )
+            result = _append_hook_context(
+                result, pre_context, hook_effect.context_block()
+            )
+            session.context.add_tool_result(
+                tc.id, result, tool_name="done", gate_blocked=True
+            )
+            _emit_done(
+                tc, state, result, gate_blocked=True, gate_reason="hook_block"
+            )
+            return TCOutcome(end=False)
         state.log.info("Model called done() at turn %d", state.turn)
-        session.context.add_tool_result(tc.id, "Session ended by model.", tool_name="done")
-        _emit_done(tc, state, "Session ended by model.")
+        session._final_text = str(
+            tc.arguments.get("message") or state.content or ""
+        )
+        result = session._decorate_stream_rule_tool_result(
+            tc.id, "Session ended by model.", turn=state.turn
+        )
+        result = _append_hook_context(
+            result, pre_context, hook_effect.context_block()
+        )
+        session.context.add_tool_result(tc.id, result, tool_name="done")
+        _emit_done(tc, state, result)
         return TCOutcome(end=True, reason="model_done", done=True)
+    if done_decision.action == Action.REWIND:
+        result = session._decorate_stream_rule_tool_result(
+            tc.id, done_decision.text, turn=state.turn
+        )
+        result = _append_hook_context(result, pre_context)
+        session.context.add_tool_result(
+            tc.id, result, tool_name="done"
+        )
+        _emit_done(tc, state, result)
+        session.request_rewind(
+            done_decision.target_turn,
+            reason=done_decision.reason or "rewind_on_done_guard",
+        )
+        return TCOutcome(rewind=True)
     # BLOCK or END: store rejection text in trace; END terminates.
-    session.context.add_tool_result(tc.id, done_decision.text, tool_name="done")
-    _emit_done(tc, state, done_decision.text)
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, done_decision.text, turn=state.turn
+    )
+    result = _append_hook_context(result, pre_context)
+    session.context.add_tool_result(tc.id, result, tool_name="done")
+    _emit_done(tc, state, result)
     if done_decision.action == Action.END:
         state.log.info("done_guard ended session at turn %d (reason=%s)",
                        state.turn, done_decision.reason)
@@ -61,13 +136,20 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     return TCOutcome(end=False)
 
 
-def _emit_done(tc, state: "TurnState", result_summary: str) -> None:
+def _emit_done(
+    tc,
+    state: "TurnState",
+    result_summary: str,
+    *,
+    gate_blocked: bool = False,
+    gate_reason: str = "",
+) -> None:
     """Emit a tool_call event for the ``done`` short-circuit branches.
 
     Shared by the PASS (accept) and BLOCK/END branches. ``done`` differs
     from other tool calls: args_summary is the model's user-facing
-    ``message``, and ``gate_blocked`` is False even on reject (the
-    reject text is the result, not a gate block).
+    ``message``. Ordinary done-guard rejection remains a result rather than
+    a gate block; a lifecycle-hook rejection is explicitly gate-blocked.
     """
     session = state.session
     cfg = state.cfg
@@ -87,10 +169,11 @@ def _emit_done(tc, state: "TurnState", result_summary: str) -> None:
             args_summary=args_summary,
             result=result_summary,
             turn=state.turn,
-            gate_blocked=False,
+            gate_blocked=gate_blocked,
         ),
         reasoning=_truncate_for_trace(state.content or "", cfg.trace_reasoning_store_chars),
-        gate_blocked=False,
+        gate_blocked=gate_blocked,
+        **({"gate_reason": gate_reason} if gate_reason else {}),
         prompt_tokens=state.prompt_tokens,
         completion_tokens=state.completion_tokens,
     )
@@ -107,8 +190,12 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
     session = state.session
     cfg = state.cfg
     trace_args_summary = _summarize_args(tc.arguments, cfg.trace_args_summary_chars)
-    metadata = action_metadata(tc.name, tc.arguments)
-    session.context.add_tool_result(tc.id, decision.text,
+    metadata = _tool_action_metadata(tc, session)
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, decision.text, turn=state.turn
+    )
+    result = _append_hook_context(result, _pre_tool_context(tc, state))
+    session.context.add_tool_result(tc.id, result,
                                     tool_name=tc.name, gate_blocked=True)
     session._emit(
         "tool_call",
@@ -120,7 +207,7 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
             session,
             tool_name=tc.name,
             args_summary=_truncate_for_trace(trace_args_summary, cfg.trace_args_summary_chars),
-            result=decision.text,
+            result=result,
             turn=state.turn,
             gate_blocked=True,
             metadata=metadata,
@@ -132,6 +219,17 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
         prompt_tokens=state.prompt_tokens,
         completion_tokens=state.completion_tokens,
     )
+
+
+def _handle_pre_rewind(tc, decision, state: "TurnState") -> TCOutcome:
+    """Complete the current call and defer rewind to the turn boundary."""
+    state.turn_had_pressure = True
+    _emit_gate_block(tc, decision, state, "")
+    state.session.request_rewind(
+        decision.target_turn,
+        reason=decision.reason or "rewind_on_guardrail",
+    )
+    return TCOutcome(rewind=True)
 
 
 def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> None:
@@ -150,21 +248,40 @@ def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> 
     )
 
 
+def _emit_todos_event(tc, state: "TurnState", execution_metadata: dict) -> None:
+    """Persist one successful whole-list replacement as raw trace content."""
+    if tc.name != "write_todos" or "todos" not in execution_metadata:
+        return
+    state.session._emit(
+        "todos",
+        session_number=state.session._session_number,
+        turn_number=state.turn,
+        tool_call_id=tc.id,
+        todos=execution_metadata["todos"],
+    )
+
+
 def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
-    """Run automatic diagnostics after a successful edit or write."""
-    if tc.name not in {"edit", "write"} or is_error_result(result):
+    """Run automatic diagnostics after a successful edit-dialect call."""
+    from ..._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
+    if tc.name not in EDIT_FORMAT_TOOL_NAMES or is_error_result(result):
         return result
     manager = getattr(state.session, "_lsp_manager", None)
     if manager is None:
         return result
-    report = manager.after_edit(str(tc.arguments.get("path", "")))
+    from ..edit_operations import edit_operations
     from ..lsp_support import append_diagnostics_to_tool_result
-    return append_diagnostics_to_tool_result(
-        result,
-        report,
-        max_output_chars=state.cfg.max_output_chars,
-        tool_name=tc.name,
-    )
+    for kind, path in edit_operations(tc.name, tc.arguments):
+        if kind == "delete":
+            continue
+        report = manager.after_edit(path)
+        result = append_diagnostics_to_tool_result(
+            result,
+            report,
+            max_output_chars=state.cfg.max_output_chars,
+            tool_name=tc.name,
+        )
+    return result
 
 
 def _run_rejection_error_ladder(tc, state: "TurnState", result: str):
@@ -201,12 +318,16 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+    result = _append_hook_context(result, _pre_tool_context(tc, state))
 
     trace_args = _truncate_for_trace(
         _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
         cfg.trace_args_summary_chars,
     )
-    metadata = action_metadata(tc.name, tc.arguments)
+    metadata = _tool_action_metadata(tc, session)
     session.context.add_tool_result(
         tc.id,
         result,
@@ -253,6 +374,74 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
             reason=error_decision.reason,
             done=False,
         )
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
+    return TCOutcome(end=False)
+
+
+def _handle_inactive_tool(tc, state: "TurnState") -> TCOutcome:
+    """Reject a hidden registered tool before policy or execution."""
+    session = state.session
+    cfg = state.cfg
+    result = inactive_tool_error(tc.name)
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+    result = _append_hook_context(result, _pre_tool_context(tc, state))
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = _tool_action_metadata(tc, session)
+    session.context.add_tool_result(
+        tc.id, result, tool_name=tc.name, gate_blocked=True
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="tool_not_active",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
     return TCOutcome(end=False)
 
 
@@ -265,12 +454,16 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
         result += "\n\n" + error_decision.text
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+    result = _append_hook_context(result, _pre_tool_context(tc, state))
 
     trace_args = _truncate_for_trace(
         _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
         cfg.trace_args_summary_chars,
     )
-    metadata = action_metadata(tc.name, tc.arguments)
+    metadata = _tool_action_metadata(tc, session)
     session.context.add_tool_result(
         tc.id,
         result,
@@ -313,7 +506,177 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     )
     if error_decision.action == Action.END:
         return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)
+
+
+def _handle_plan_mode_reject(tc, state: "TurnState", message: str) -> TCOutcome:
+    """Record an engine-enforced plan-phase rejection as a unified error."""
+    session = state.session
+    cfg = state.cfg
+    from ..plan_mode import render_plan_mode_error
+
+    result = render_plan_mode_error(tc.name, message, cfg.max_output_chars)
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+    result = _append_hook_context(result, _pre_tool_context(tc, state))
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = _tool_action_metadata(tc, session)
+    session.context.add_tool_result(
+        tc.id, result, tool_name=tc.name, gate_blocked=True,
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="plan_mode",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
+    return TCOutcome(end=False)
+
+
+def _handle_pre_tool_hook_block(tc, state: "TurnState", effect) -> TCOutcome:
+    """Record an exit-2/deny pre-tool outcome without entering the handler."""
+    session = state.session
+    cfg = state.cfg
+    from ..tools import admit_tool_output
+
+    result = admit_tool_output(
+        tc.name,
+        f"ERROR: pre_tool hook blocked this call: {effect.reason}",
+        arguments=tc.arguments,
+        cfg=cfg,
+        redactions=session.redactions,
+        filter_shell_output=False,
+    )
+    error_decision = _run_rejection_error_ladder(tc, state, result)
+    state.turn_had_pressure = True
+    if error_decision.action == Action.WARN:
+        result += "\n\n" + error_decision.text
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+    result = _append_hook_context(result, effect.context_block())
+
+    trace_args = _truncate_for_trace(
+        _summarize_args(tc.arguments, cfg.trace_args_summary_chars),
+        cfg.trace_args_summary_chars,
+    )
+    metadata = _tool_action_metadata(tc, session)
+    session.context.add_tool_result(
+        tc.id, result, tool_name=tc.name, gate_blocked=True
+    )
+    session._emit(
+        "tool_call",
+        tool_call_id=tc.id,
+        session_number=session._session_number,
+        turn_number=state.turn,
+        tool_name=tc.name,
+        args_summary=trace_args,
+        **build_tool_call_trace_fields(
+            session,
+            tool_name=tc.name,
+            args_summary=trace_args,
+            result=result,
+            turn=state.turn,
+            gate_blocked=True,
+            metadata=metadata,
+            execution_metadata={"executed": False},
+        ),
+        reasoning=_truncate_for_trace(
+            state.content or "", cfg.trace_reasoning_store_chars
+        ),
+        gate_blocked=True,
+        gate_reason="hook_block",
+        **metadata,
+        prompt_tokens=state.prompt_tokens,
+        completion_tokens=state.completion_tokens,
+        tool_dispatch_ms=0.0,
+    )
+    session._observe_harness_tool_result(
+        turn=state.turn,
+        tool_name=tc.name,
+        tool_args=tc.arguments,
+        result=result,
+        gate_blocked=True,
+    )
+    if error_decision.action == Action.END:
+        return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    return TCOutcome(end=False)
+
+
+def _apply_tool_hook_effects(
+    tc, state: "TurnState", result: str
+) -> tuple[str, str]:
+    """Run post_tool after a real handler and return its context annotation."""
+    session = state.session
+    effect = session._run_hook(
+        "post_tool",
+        tool_call_id=tc.id,
+        tool_name=tc.name,
+        tool_args=dict(tc.arguments),
+        result=result,
+    )
+    if effect.blocked:
+        from ..tools import admit_tool_output
+
+        result = admit_tool_output(
+            tc.name,
+            f"ERROR: post_tool hook blocked this result: {effect.reason}",
+            arguments=tc.arguments,
+            cfg=state.cfg,
+            redactions=session.redactions,
+            filter_shell_output=False,
+        )
+    return result, effect.context_block()
 
 
 def record_tool_start(tc, state: "TurnState") -> None:
@@ -363,12 +726,29 @@ def _finish_error_abort(
     rewrite_log: list,
     dispatch_started: bool,
     tool_dispatch_ms: float,
-    reason: str,
+    decision,
+    hook_context: str,
+    plan_artifact: bool,
     gate_blocked: bool = False,
 ) -> TCOutcome:
     """Record the dispatched error that ended the ordinary error ladder."""
     session = state.session
     cfg = state.cfg
+    call_executed = bool(execution_metadata.get("executed", True))
+    if not plan_artifact:
+        result, _ = session._apply_path_injections(
+            result,
+            tool_name=tc.name,
+            arguments=tc.arguments,
+            turn_number=state.turn,
+            executed=call_executed,
+            execution_metadata=execution_metadata,
+            bash_rewritten=bool(rewrite_log),
+        )
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=state.turn
+    )
+    result = _append_hook_context(result, hook_context)
     trace_args = _truncate_for_trace(
         trace_args_summary, cfg.trace_args_summary_chars
     )
@@ -396,6 +776,7 @@ def _finish_error_abort(
             metadata=metadata,
             execution_metadata=execution_metadata,
         ),
+        **_exec_cell_trace_fields(tc, state, execution_metadata),
         reasoning=_truncate_for_trace(
             state.content or "", cfg.trace_reasoning_store_chars
         ),
@@ -416,22 +797,92 @@ def _finish_error_abort(
             else {}
         ),
     )
-    _capture_workspace_checkpoint(
-        tc,
-        state,
-        executed=bool(execution_metadata.get("executed", True)),
-    )
+    if not plan_artifact:
+        _capture_workspace_checkpoint(
+            tc,
+            state,
+            executed=call_executed,
+        )
     if dispatch_started:
         _record_tool_finished(tc, state)
-    return TCOutcome(end=True, reason=reason, done=False)
+    if decision.action == Action.REWIND:
+        session.request_rewind(
+            decision.target_turn,
+            reason=decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
+    return TCOutcome(end=True, reason=decision.reason, done=False)
+
+
+def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) -> dict:
+    """Emit cell children once and return exact outer-cell trace fields."""
+    if tc.name != "exec_cell":
+        return {}
+    cell = execution_metadata.get("exec_cell")
+    if not isinstance(cell, dict):
+        return {"cell_source": str(tc.arguments.get("source", ""))}
+    if not execution_metadata.get("_exec_cell_children_emitted"):
+        for raw_call in cell.get("inner_calls", ()):
+            if not isinstance(raw_call, dict):
+                continue
+            name = str(raw_call.get("name") or "")
+            arguments = raw_call.get("arguments")
+            if not name or not isinstance(arguments, dict):
+                continue
+            inner_execution = raw_call.get("execution_metadata")
+            if not isinstance(inner_execution, dict):
+                inner_execution = {}
+            args_summary = _truncate_for_trace(
+                _summarize_args(
+                    arguments, state.cfg.trace_args_summary_chars
+                ),
+                state.cfg.trace_args_summary_chars,
+            )
+            result = str(raw_call.get("result") or "")
+            metadata = action_metadata(name, arguments)
+            gate_blocked = bool(inner_execution.get("gate_blocked", False))
+            index = int(raw_call.get("index") or 0)
+            state.session._emit(
+                "tool_call",
+                tool_call_id=f"{tc.id}:cell:{index}",
+                parent_tool_call_id=tc.id,
+                cell_inner_index=index,
+                session_number=state.session._session_number,
+                turn_number=state.turn,
+                tool_name=name,
+                args_summary=args_summary,
+                **build_tool_call_trace_fields(
+                    state.session,
+                    tool_name=name,
+                    args_summary=args_summary,
+                    result=result,
+                    turn=state.turn,
+                    gate_blocked=gate_blocked,
+                    metadata=metadata,
+                    execution_metadata=inner_execution,
+                ),
+                reasoning="",
+                gate_blocked=gate_blocked,
+                **metadata,
+                prompt_tokens=0,
+                completion_tokens=0,
+                tool_dispatch_ms=float(raw_call.get("duration_ms") or 0.0),
+            )
+        execution_metadata["_exec_cell_children_emitted"] = True
+    return {
+        "cell_source": str(cell.get("source") or tc.arguments.get("source", "")),
+        "combined_output_chars": int(cell.get("combined_output_chars") or 0),
+        "combined_output_bytes": int(cell.get("combined_output_bytes") or 0),
+        "inner_call_count": len(cell.get("inner_calls", ())),
+    }
 
 
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
     Sub-phases (in fixed order):
-      6a. schema validation    — reject before every handler and guard
-      6b. permission policy    — deny before every handler and quirk
+      6a. plan_mode            — reject disallowed phase actions uniformly
+      6b. lifecycle/schema/permission gates
       6c. done_guard           — accept→END(done), BLOCK→next tc, END→END
       6d. mutation_repeat      — END / BLOCK / WARN
       6d. contract_gate        — END / BLOCK / WARN
@@ -461,7 +912,19 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     _tc_dispatch_ms = 0.0
     args_summary = _summarize_args(tc.arguments, cfg.args_summary_chars)
     trace_args_summary = _summarize_args(tc.arguments, cfg.trace_args_summary_chars)
-    metadata = action_metadata(tc.name, tc.arguments)
+    metadata = _tool_action_metadata(tc, session)
+    plan_artifact = bool(metadata.get("plan_artifact"))
+    # Pin the phase for the whole model response. A successful exit can alter
+    # the next turn's surface, but must not unlock a mutating sibling call.
+    plan_phase_call = state.plan_mode_active
+    plan_policy_call = (
+        plan_phase_call or plan_artifact or tc.name == "exit_plan_mode"
+    )
+    plan_decision = session._plan_mode.check(
+        tc.name, tc.arguments, turn=turn, active=plan_phase_call,
+    )
+    if not plan_decision.allowed:
+        return _handle_plan_mode_reject(tc, state, plan_decision.message)
     from .focus_dedup import _focus_signature
     focus_key, focus_display = _focus_signature(tc, args_summary, session.cwd)
     log.info("turn=%d pt=%d %s(%s)", turn, prompt_tokens, tc.name, args_summary)
@@ -475,10 +938,19 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     rewrite_log: list = []
     dispatch_started = tc.id in state.preexecuted
 
+    pre_tool_hook = state.pre_tool_hooks.get(tc.id)
+    if pre_tool_hook is not None and pre_tool_hook.blocked:
+        return _handle_pre_tool_hook_block(tc, state, pre_tool_hook)
+    hook_context = _pre_tool_context(tc, state)
+    if tc.id in state.inactive_tool_call_ids:
+        return _handle_inactive_tool(tc, state)
+
     if getattr(cfg, "tools_schema_validation", "off") == "reject":
         validation = state.schema_validations.get(tc.id)
         if validation is None:
-            validation = session._tool_schema_set.validate(
+            validation = session.tool_schema_set_for_phase(
+                plan_mode_active=plan_phase_call
+            ).validate(
                 tc.name, tc.arguments
             )
         if not validation.valid:
@@ -494,7 +966,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         return _handle_done_tool(tc, state)
 
     # 6b. mutation_repeat_guard — stop repeated identical edits.
-    mutation_decision = tool_pre["mutation_repeat_guard"](
+    mutation_decision = PASS if plan_policy_call else tool_pre["mutation_repeat_guard"](
         session._guards, cfg,
         tc_name=tc.name,
         tc_args=tc.arguments,
@@ -503,12 +975,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     mutation_warn_text = ""
     gate_blocked_flag = False
     gate_intercepted = False
+    path_injection_fired = False
     result: str = ""
     execution_metadata: dict = {}
     if mutation_decision.action == Action.END:
         state.turn_had_pressure = True
         _emit_gate_block(tc, mutation_decision, state, args_summary)
         return TCOutcome(end=True, reason=mutation_decision.reason, done=False)
+    if mutation_decision.action == Action.REWIND:
+        return _handle_pre_rewind(tc, mutation_decision, state)
     if mutation_decision.action == Action.BLOCK:
         state.turn_had_pressure = True
         log.info("Mutation repeat guard blocked %s", tc.name)
@@ -522,7 +997,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # tighter commit/recovery contract is active.
     contract_warn_text = ""
     if not gate_blocked_flag:
-        contract_decision = tool_pre["contract_gate"](
+        contract_decision = PASS if plan_policy_call else tool_pre["contract_gate"](
             session._guards, cfg,
             tc_name=tc.name,
             tc_args=tc.arguments,
@@ -533,6 +1008,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             state.turn_had_pressure = True
             _emit_gate_block(tc, contract_decision, state, args_summary)
             return TCOutcome(end=True, reason=contract_decision.reason, done=False)
+        if contract_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, contract_decision, state)
         if contract_decision.action == Action.BLOCK:
             state.turn_had_pressure = True
             log.info("Contract gate blocked %s", tc.name)
@@ -550,7 +1027,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
 
         # 6c.5 pre_mutation_gate — orientation budget. Block
         # non-write tool calls past the cap until a mutation happens.
-        pre_mut_decision = tool_pre["pre_mutation_gate"](
+        pre_mut_decision = PASS if plan_policy_call else tool_pre["pre_mutation_gate"](
             session._guards, cfg,
             tc_name=tc.name,
             tc_args=tc.arguments,
@@ -562,9 +1039,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                      tc.name, turn, cfg.pre_mutation_turn_cap)
             _emit_gate_block(tc, pre_mut_decision, state, args_summary)
             return TCOutcome(end=False)
+        if pre_mut_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, pre_mut_decision, state)
 
         # 6d. rumination_gate — grace (WARN+dispatch) / BLOCK / END.
-        gate_decision = tool_pre["rumination_gate"](
+        gate_decision = PASS if plan_policy_call else tool_pre["rumination_gate"](
             session._guards, cfg, tc_name=tc.name, tc_args=tc.arguments
         )
         if gate_decision.action == Action.END:
@@ -573,6 +1052,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                      session._guards.gate_block_count)
             _emit_gate_block(tc, gate_decision, state, args_summary)
             return TCOutcome(end=True, reason=gate_decision.reason, done=False)
+        if gate_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, gate_decision, state)
         if gate_decision.action == Action.BLOCK:
             state.turn_had_pressure = True
             log.info("Rumination gate blocked %s", tc.name)
@@ -601,7 +1082,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   redirect_rules=getattr(session, "redirect_rules", None),
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
-                                  stale_guard=session._stale_guard,
+                                  stale_guard=(
+                                      None if plan_artifact else session._stale_guard
+                                  ),
                                   active_tools=getattr(session, "active_tool_names", ()),
                                   redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                                   security_event_sink=getattr(session, "_security_event_sink", None),
@@ -617,13 +1100,23 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 gate_intercepted = True
                 state.turn_had_pressure = True
                 execution_metadata.setdefault("executed", False)
-            result = _append_lsp_diagnostics(tc, state, result)
+            if not plan_artifact and blocked_stage != "args":
+                result = _append_lsp_diagnostics(tc, state, result)
+            if blocked_stage != "args":
+                result, post_context = _apply_tool_hook_effects(
+                    tc, state, result
+                )
+                hook_context = "\n\n".join(
+                    block for block in (hook_context, post_context) if block
+                )
             if blocked_stage is not None:
                 security_error_decision = _run_rejection_error_ladder(
                     tc, state, result
                 )
                 state.turn_had_pressure = True
-                if security_error_decision.action == Action.END:
+                if security_error_decision.action in {
+                    Action.END, Action.REWIND,
+                }:
                     return _finish_error_abort(
                         tc,
                         state,
@@ -634,7 +1127,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                         rewrite_log=rewrite_log,
                         dispatch_started=dispatch_started,
                         tool_dispatch_ms=_tc_dispatch_ms,
-                        reason=security_error_decision.reason,
+                        decision=security_error_decision,
+                        hook_context=hook_context,
+                        plan_artifact=plan_artifact,
                         gate_blocked=gate_blocked_flag,
                     )
                 if security_error_decision.action == Action.WARN:
@@ -661,7 +1156,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   redirect_rules=getattr(session, "redirect_rules", None),
                                   redactions=session.redactions,
                                   tool_registry=session._tool_registry,
-                                  stale_guard=session._stale_guard,
+                                  stale_guard=(
+                                      None if plan_artifact else session._stale_guard
+                                  ),
                                   active_tools=getattr(session, "active_tool_names", ()),
                                   redirect_event_sink=getattr(session, "_redirect_event_sink", None),
                                   security_event_sink=getattr(session, "_security_event_sink", None),
@@ -677,7 +1174,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 gate_intercepted = True
                 state.turn_had_pressure = True
                 execution_metadata.setdefault("executed", False)
-            result = _append_lsp_diagnostics(tc, state, result)
+            if not plan_artifact and blocked_stage != "args":
+                result = _append_lsp_diagnostics(tc, state, result)
+            if blocked_stage != "args":
+                result, post_context = _apply_tool_hook_effects(
+                    tc, state, result
+                )
+                hook_context = "\n\n".join(
+                    block for block in (hook_context, post_context) if block
+                )
             if tc.name == "bash" and not is_error_result(result):
                 session._observe_test_signal(tc.arguments.get("cmd", ""), result)
             # 6e. error_ladder (WARN / END tiers). Log every error
@@ -689,23 +1194,75 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 state.turn_had_pressure = True
                 log.info("Tool error: %s consecutive=%d",
                          tc.name, session._guards.consecutive_errors.get(tc.name, 0))
-            if err_decision.action == Action.END:
+            if err_decision.action in {Action.END, Action.REWIND}:
                 state.turn_had_pressure = True
                 log.warning("Error abort: %s consecutive=%d", tc.name,
                             session._guards.consecutive_errors.get(tc.name, 0))
-                return _finish_error_abort(
-                    tc,
-                    state,
-                    result=result,
-                    trace_args_summary=trace_args_summary,
-                    metadata=metadata,
-                    execution_metadata=execution_metadata,
-                    rewrite_log=rewrite_log,
-                    dispatch_started=dispatch_started,
-                    tool_dispatch_ms=_tc_dispatch_ms,
-                    reason=err_decision.reason,
-                    gate_blocked=gate_blocked_flag,
+                if not plan_artifact:
+                    result, _ = session._apply_path_injections(
+                        result,
+                        tool_name=tc.name,
+                        arguments=tc.arguments,
+                        turn_number=turn,
+                        executed=bool(execution_metadata.get("executed", True)),
+                        execution_metadata=execution_metadata,
+                        bash_rewritten=bool(rewrite_log),
+                    )
+                result = session._decorate_stream_rule_tool_result(
+                    tc.id, result, turn=turn
                 )
+                result = _append_hook_context(result, hook_context)
+                session.context.add_tool_result(tc.id, result, tool_name=tc.name,
+                                                cmd_signature="", gate_blocked=gate_blocked_flag)
+                # cmd_pre_rewrite preserves the model's original
+                # bash cmd when bash_quirks rewrote it before
+                # execution. The field is
+                # only added when a rewrite actually fired —
+                # rewrite_log stays empty when the cmd was
+                # passed through verbatim.
+                session._emit(
+                    "tool_call",
+                    tool_call_id=tc.id,
+                    session_number=session._session_number,
+                    turn_number=turn,
+                    tool_name=tc.name,
+                    args_summary=_truncate_for_trace(trace_args_summary, cfg.trace_args_summary_chars),
+                    **build_tool_call_trace_fields(
+                        session,
+                        tool_name=tc.name,
+                        args_summary=_truncate_for_trace(trace_args_summary, cfg.trace_args_summary_chars),
+                        result=result,
+                        turn=turn,
+                        gate_blocked=gate_blocked_flag,
+                        metadata=metadata,
+                        execution_metadata=execution_metadata,
+                    ),
+                    **_exec_cell_trace_fields(tc, state, execution_metadata),
+                    reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
+                    gate_blocked=gate_blocked_flag,
+                    **({"gate_reason": "security_block"} if gate_blocked_flag else {}),
+                    **metadata,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    **({"cmd_pre_rewrite": _truncate_for_trace(rewrite_log[0]["original"], cfg.trace_args_summary_chars)} if rewrite_log else {}),
+                )
+                if not plan_artifact:
+                    _capture_workspace_checkpoint(
+                        tc, state,
+                        executed=bool(execution_metadata.get("executed", True)),
+                    )
+                if dispatch_started:
+                    _record_tool_finished(tc, state)
+                if err_decision.action == Action.REWIND:
+                    session.request_rewind(
+                        err_decision.target_turn,
+                        reason=(
+                            err_decision.reason
+                            or "rewind_on_error_ladder"
+                        ),
+                    )
+                    return TCOutcome(rewind=True)
+                return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
 
@@ -736,7 +1293,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # it owns the counter increment, nudge emission, and gate
     # arming. When the gate already intercepted this call, the
     # ladder skips the counter bump to avoid double-counting.
-    test_read_decision = tool_post["test_read_ladder"](
+    test_read_decision = PASS if plan_policy_call else tool_post["test_read_ladder"](
         session._guards, cfg,
         tc_name=tc.name, result=result,
         gate_blocked=gate_blocked_flag,
@@ -745,7 +1302,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if test_read_decision.action == Action.WARN:
         result += "\n\n" + test_read_decision.text
 
-    rum_decision = tool_post["rumination_ladder"](
+    rum_decision = PASS if plan_policy_call else tool_post["rumination_ladder"](
         session._guards, cfg,
         tc_name=tc.name, result=result,
         gate_blocked=gate_blocked_flag,
@@ -756,44 +1313,78 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     )
     if rum_decision.action == Action.WARN:
         result += "\n\n" + rum_decision.text
+    post_rewind = next(
+        (
+            decision
+            for decision in (test_read_decision, rum_decision)
+            if decision.action == Action.REWIND
+        ),
+        None,
+    )
 
     # Context-side dedup reset on a successful write/edit. The
     # guardrail state is reset inside rumination_ladder; this is
     # the context's own signal (separate concern — stateful
     # compaction, not thrash control).
-    if (tc.name in ("write", "edit")
+    if (tc.name in MUTATION_TOOLS
+            and not plan_artifact
             and not is_error_result(result)
             and hasattr(session.context, "reset_dedup_counts")):
         session.context.reset_dedup_counts()
 
     # Content-blind "verified since mutation" signal for the
     # done guard.
-    observers["mark_bash_verified"](
-        session._guards, cfg,
-        tc_name=tc.name, result=result,
-        gate_blocked=gate_blocked_flag,
-    )
-    observers["observe_test_file_read"](
-        session._guards, cfg,
-        tc_name=tc.name, result=result,
-        gate_blocked=gate_blocked_flag,
-        tc_args=tc.arguments,
-        focus_key=focus_key,
-        focus_display=focus_display,
-    )
-    observers["observe_contract_state"](
-        session._guards, cfg,
-        tc_name=tc.name, result=result,
-        gate_blocked=gate_blocked_flag,
-        tc_args=tc.arguments,
-        focus_key=focus_key,
-        focus_display=focus_display,
-    )
+    if not plan_policy_call:
+        observers["mark_bash_verified"](
+            session._guards, cfg,
+            tc_name=tc.name, result=result,
+            gate_blocked=gate_blocked_flag,
+        )
+        observers["observe_test_file_read"](
+            session._guards, cfg,
+            tc_name=tc.name, result=result,
+            gate_blocked=gate_blocked_flag,
+            tc_args=tc.arguments,
+            focus_key=focus_key,
+            focus_display=focus_display,
+        )
+        observers["observe_contract_state"](
+            session._guards, cfg,
+            tc_name=tc.name, result=result,
+            gate_blocked=gate_blocked_flag,
+            tc_args=tc.arguments,
+            focus_key=focus_key,
+            focus_display=focus_display,
+        )
 
     # Append turn-level WARN (from duplicate ladder) after all
     # tc-level appends so it reads last.
     if state.turn_warn_text:
         result += "\n\n" + state.turn_warn_text
+
+    path_call_executed = (
+        not gate_blocked_flag
+        and bool(execution_metadata.get("executed", True))
+    )
+    if not plan_artifact:
+        result, path_injection_fired = session._apply_path_injections(
+            result,
+            tool_name=tc.name,
+            arguments=tc.arguments,
+            turn_number=turn,
+            executed=path_call_executed,
+            execution_metadata=execution_metadata,
+            bash_rewritten=bool(rewrite_log),
+        )
+    result = session._decorate_stream_rule_tool_result(
+        tc.id, result, turn=turn
+    )
+
+    # Hook annotations are context, not tool output. Append them only after
+    # output projection and content-blind guardrail observation so they cannot
+    # perturb parsing, pass/fail classification, path rules, stream rules, or
+    # tool-state counters.
+    result = _append_hook_context(result, hook_context)
 
     # 6f. Trace + record. cmd_pre_rewrite is added when bash_quirks
     # rewrites the model's cmd before execution. The
@@ -832,6 +1423,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             metadata=metadata,
             execution_metadata=execution_metadata,
         ),
+        **_exec_cell_trace_fields(tc, state, execution_metadata),
         **({"snapshot_sha": _snapshot_sha} if _snapshot_sha else {}),
         reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
         gate_blocked=gate_blocked_flag,
@@ -846,9 +1438,12 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         **({"cmd_pre_rewrite": _truncate_for_trace(_pre, cfg.trace_args_summary_chars)} if _pre else {}),
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
     )
-    _capture_workspace_checkpoint(
-        tc, state, executed=call_executed,
-    )
+    if call_executed:
+        _emit_todos_event(tc, state, execution_metadata)
+    if not plan_artifact:
+        _capture_workspace_checkpoint(
+            tc, state, executed=call_executed,
+        )
     if dispatch_started:
         _record_tool_finished(tc, state)
 
@@ -865,9 +1460,12 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if (
         cfg.tools_output_dedup_enabled
         and not gate_blocked_flag
+        and not path_injection_fired
         and focus_key
         and tc.name not in MUTATION_TOOLS
+        and tc.id not in session._stream_rule_decorated_call_ids
         and result
+        and not hook_context
     ):
         import hashlib as _hashlib
         digest = _hashlib.sha1(result.encode("utf-8", errors="ignore")).hexdigest()[:12]
@@ -901,6 +1499,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # pre-mutation bytes.
     if (
         tc.name in MUTATION_TOOLS
+        and not plan_artifact
         and not is_error_result(result)
         and not gate_blocked_flag
     ):
@@ -918,11 +1517,18 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     session.context.add_tool_result(tc.id, result, tool_name=tc.name,
                                     cmd_signature=cmd_sig,
                                     gate_blocked=gate_blocked_flag)
-    session._observe_harness_tool_result(
-        turn=turn,
-        tool_name=tc.name,
-        tool_args=tc.arguments,
-        result=result,
-        gate_blocked=gate_blocked_flag,
-    )
+    if not plan_artifact:
+        session._observe_harness_tool_result(
+            turn=turn,
+            tool_name=tc.name,
+            tool_args=tc.arguments,
+            result=result,
+            gate_blocked=gate_blocked_flag,
+        )
+    if post_rewind is not None:
+        session.request_rewind(
+            post_rewind.target_turn,
+            reason=post_rewind.reason or "rewind_on_guardrail",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)

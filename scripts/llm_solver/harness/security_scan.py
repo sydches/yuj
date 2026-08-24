@@ -26,6 +26,8 @@ _SECURITY_BLOCK_STAGE_RE = re.compile(
     r'^<tool_result\b[^>]*\berror_kind="security_block"'
     r'[^>]*\bsecurity_stage="(?P<stage>args|result)"'
 )
+
+
 class SecurityPatternError(ValueError):
     """A security registry or security knob is invalid."""
 

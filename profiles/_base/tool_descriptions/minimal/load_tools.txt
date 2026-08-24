@@ -1,0 +1,1 @@
+Activate hidden registered tools by name for later requests. Activations are additive. Pass names as an array of exact tool names.

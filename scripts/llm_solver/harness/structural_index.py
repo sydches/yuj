@@ -520,6 +520,47 @@ class StructuralIndex:
                     candidates.append(path)
         return tuple(candidates)
 
+    def fingerprint(self, *, contents: bool) -> str:
+        """Return a deterministic fingerprint of readable source candidates.
+
+        ``contents=False`` is the inexpensive session-start policy: relative
+        path, detected language, byte size, and nanosecond mtime are framed
+        into the digest. ``contents=True`` hashes the source bytes instead and
+        detects edits whose metadata was deliberately restored.  Both paths
+        use the exact candidate and language filters consumed by :meth:`scan`.
+        """
+        mode = b"contents" if contents else b"metadata"
+        digest = hashlib.sha256(b"yuj-structural-fingerprint-v1\x00" + mode)
+        for path in self._candidate_paths():
+            language = self.extractor.detect_language(path)
+            if not language:
+                continue
+            display_path = path.relative_to(self.root).as_posix()
+            path_bytes = display_path.encode("utf-8", errors="surrogateescape")
+            language_bytes = language.encode("utf-8", errors="surrogateescape")
+            digest.update(len(path_bytes).to_bytes(8, "big"))
+            digest.update(path_bytes)
+            digest.update(len(language_bytes).to_bytes(8, "big"))
+            digest.update(language_bytes)
+            try:
+                if contents:
+                    payload = hashlib.sha256(path.read_bytes()).digest()
+                else:
+                    stat = path.stat()
+                    payload = (
+                        int(stat.st_size).to_bytes(8, "big", signed=False)
+                        + int(stat.st_mtime_ns).to_bytes(8, "big", signed=False)
+                    )
+            except OSError as exc:
+                # A stable, path-free error marker makes the fingerprint
+                # change when an inaccessible file becomes readable again.
+                marker = type(exc).__name__.encode("ascii", errors="replace")
+                errno = int(exc.errno or 0).to_bytes(8, "big", signed=True)
+                payload = b"ERROR\x00" + marker + b"\x00" + errno
+            digest.update(len(payload).to_bytes(8, "big"))
+            digest.update(payload)
+        return digest.hexdigest()
+
     def scan(self) -> IndexSnapshot:
         rows: list[StructuralRow] = []
         diagnostics: list[IndexDiagnostic] = []

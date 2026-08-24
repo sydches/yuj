@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import load_config, PROJECT_ROOT, require_runtime_mode
+from ._shared.edit_formats import EDIT_FORMATS
 from .harness import collect_pending, solve_task
 from .harness.context_strategies import (
     list_context_modes,
@@ -91,6 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--thinking", choices=THINKING_LEVELS,
         help="per-request reasoning effort",
+    )
+    parser.add_argument(
+        "--plan-mode", choices=("off", "required"),
+        help="require an explicit .solver/plan.md before implementation",
+    )
+    parser.add_argument(
+        "--edit-format", choices=EDIT_FORMATS,
+        help="override the selected model profile's edit dialect",
     )
     parser.add_argument("--port", "-p", type=int, help="use this model-server port")
     parser.add_argument("--config", "-c", type=Path, action="append", default=[],
@@ -189,9 +198,17 @@ def main(argv: list[str] | None = None) -> int:
     _replay_prov = None
     if args.replay_from is not None:
         from .server.replay_client import load_replay_provenance
-        if args.config or args.model or args.thinking is not None:
+        if (
+            args.config
+            or args.model
+            or args.thinking is not None
+            or args.plan_mode is not None
+            or args.edit_format is not None
+        ):
             parser.error("--replay-from adopts the recording's config; "
-                         "--config/--model/--thinking are not allowed in replay mode")
+                         "--config/--model/--thinking/--plan-mode/"
+                         "--edit-format are not "
+                         "allowed in replay mode")
         try:
             _replay_prov = load_replay_provenance(args.replay_from)
         except (OSError, ValueError) as e:
@@ -217,6 +234,10 @@ def main(argv: list[str] | None = None) -> int:
         overrides["model"] = resolve_model(args.model)
     if args.thinking is not None:
         overrides["thinking_level"] = args.thinking
+    if args.plan_mode is not None:
+        overrides["plan_mode"] = args.plan_mode
+    if args.edit_format is not None:
+        overrides["tools_edit_format"] = args.edit_format
     if args.port:
         # Reuse scheme+host from [server] base_url; only the port changes.
         from urllib.parse import urlparse, urlunparse
@@ -246,9 +267,10 @@ def main(argv: list[str] | None = None) -> int:
     # Echo resolved config for every run (not just --dry-run): reproducibility.
     log.info(
         "Config: model=%s ctx=%d max_turns=%d max_sessions=%d tool_desc=%s "
-        "variant=%s",
+        "edit_format=%s variant=%s",
         cfg.model, cfg.context_size, cfg.max_turns, cfg.max_sessions,
-        cfg.tool_desc, cfg.variant_name or "(none)",
+        cfg.tool_desc, cfg.tools_edit_format or "profile",
+        cfg.variant_name or "(none)",
     )
 
     # Capture a preliminary run envelope before dry-run can return. Real

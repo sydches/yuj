@@ -34,13 +34,25 @@ VALID_ARGUMENTS = {
     },
     "glob": {"pattern": "**/*.py", "path": "src", "page": 1},
     "grep": {"pattern": "value", "path": "src", "glob": "*.py", "page": 2},
+    "write_todos": {
+        "todos": [{"description": "Run focused tests", "status": "in_progress"}],
+    },
+    "checkpoint": {"goal": "Inspect the implementation."},
+    "rewind": {"report": "The implementation uses a safe boundary."},
     "lsp": {
         "kind": "definition", "path": "src/app.py",
         "line": 4, "character": 2,
     },
+    "exit_plan_mode": {},
+    "think": {"thought": "Plan the next narrow step."},
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
+    "task": {"agent": "research", "prompt": "Find the config owner."},
+    "udiff": {
+        "patch": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new"
+    },
+    "load_tools": {"names": ["write", "run_tests"]},
     "done": {"message": "All checks pass."},
 }
 
@@ -69,11 +81,29 @@ INVALID_ARGUMENTS = (
     ("glob", {"pattern": "*.py", "page": "one"}, "$.page", "type"),
     ("grep", {}, "$.pattern", "required"),
     ("grep", {"pattern": "x", "path": 3}, "$.path", "type"),
+    ("think", {}, "$.thought", "required"),
+    ("think", {"thought": ["plan"]}, "$.thought", "type"),
+    (
+        "write_todos",
+        {"todos": [{"description": "x", "status": "unknown"}]},
+        "$.todos[0].status",
+        "enum",
+    ),
+    ("checkpoint", {}, "$.goal", "required"),
+    ("checkpoint", {"goal": 7}, "$.goal", "type"),
+    ("rewind", {}, "$.report", "required"),
+    ("rewind", {"report": 7}, "$.report", "type"),
     ("run_tests", {"last_failed": "false"}, "$.last_failed", "type"),
     ("list_definitions", {}, "$.path", "required"),
     ("list_definitions", {"path": None}, "$.path", "type"),
     ("apply_patch", {}, "$.patch", "required"),
     ("apply_patch", {"patch": {"text": "patch"}}, "$.patch", "type"),
+    ("task", {"agent": "research"}, "$.prompt", "required"),
+    ("task", {"agent": 7, "prompt": "find it"}, "$.agent", "type"),
+    ("udiff", {}, "$.patch", "required"),
+    ("udiff", {"patch": {"text": "patch"}}, "$.patch", "type"),
+    ("load_tools", {}, "$.names", "required"),
+    ("load_tools", {"names": "write"}, "$.names", "type"),
     ("done", {"message": 1}, "$.message", "type"),
 )
 

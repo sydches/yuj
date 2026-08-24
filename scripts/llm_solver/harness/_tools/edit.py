@@ -1,6 +1,11 @@
 """edit tool: replace first occurrence of old_str with new_str in a file."""
 from ...config import Config
-from ._common import _path_hint, _resolve, _xml_attr
+from ._common import (
+    _is_external_readonly_path,
+    _path_hint,
+    _resolve,
+    _xml_attr,
+)
 
 
 def _whitespace_normalized_match(text: str, old_str: str) -> tuple[int, int] | None:
@@ -40,32 +45,8 @@ def _format_candidates_block(text: str, candidates, path: str) -> str:
     the candidate's (start, end) offsets — the agent can copy it
     verbatim into a retry.
     """
-    if not candidates:
-        return ""
-    # cause hint: the strategy of the top-ranked candidate
-    top = candidates[0]
-    cause_map = {
-        "whitespace_normalized": "whitespace_drift",
-        "line_trimmed": "trailing_whitespace",
-        "indentation_flexible": "indent_drift",
-        "escape_normalized": "escape_artifact",
-        "trimmed_boundary": "boundary_whitespace",
-        "block_anchor": "interior_drift",
-    }
-    cause = cause_map.get(top.strategy, top.strategy)
-    lines = [
-        f'<candidates total="{len(candidates)}" cause_hint="{cause}" path="{_xml_attr(path)}">'
-    ]
-    for rank, c in enumerate(candidates, start=1):
-        snippet = text[c.start:c.end]
-        lines.append(
-            f'  <candidate rank="{rank}" strategy="{c.strategy}" '
-            f'similarity="{c.similarity:.2f}" line="{c.line_number}">'
-        )
-        lines.append(snippet)
-        lines.append('  </candidate>')
-    lines.append('</candidates>')
-    return "\n".join(lines)
+    from ..edit_replacers import format_candidates_block
+    return format_candidates_block(text, candidates, path)
 
 
 def edit(path: str, old_str: str, new_str: str, *, cwd: str,
@@ -89,11 +70,19 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
     from ..post_edit import run_post_edit_checks
     if "\n" in path or "\x00" in path:
         return f"ERROR: path contains forbidden character (newline or NUL)"
+    if cfg is not None and _is_external_readonly_path(
+        cwd,
+        path,
+        readonly_roots=tuple(
+            getattr(cfg, "skills_readable_dirs", ()) or ()
+        ),
+    ):
+        return f"ERROR: skill path is read-only: {path}"
     if old_str == "":
         return (
             "ERROR: old_str must be non-empty — an empty old_str would "
-            "silently prepend new_str to the file. Use `write` to "
-            "create or replace whole-file content."
+            "silently prepend new_str to the file. Choose a non-empty "
+            "exact span from the existing file."
         )
     try:
         target = _resolve(cwd, path)
@@ -106,8 +95,8 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
         except UnicodeDecodeError:
             return (
                 f"ERROR: cannot edit {path}: file is not valid UTF-8 "
-                "(likely a binary file). Use `write` to overwrite or "
-                "`apply_patch` for byte-level changes."
+                "(likely a binary file). The exact edit dialect supports "
+                "UTF-8 text only."
             )
         # Detect CRLF style so we can preserve it on write. read_bytes
         # gives us exact bytes; .decode normalises nothing. We work in

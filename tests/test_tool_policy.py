@@ -324,7 +324,7 @@ def test_allow_dispatches_handler_once_and_pairs_trace_decision():
 
 def test_unknown_tool_rules_match_a_stable_canonical_arguments_object():
     field, rendered = permission_match_argument(
-        "task", {"z": 1, "a": "two"}
+        "future_tool", {"z": 1, "a": "two"}
     )
     assert field == "arguments"
     assert rendered == '{"a":"two","z":1}'

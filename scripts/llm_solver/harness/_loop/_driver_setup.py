@@ -27,6 +27,7 @@ from ..._shared.telemetry_paths import ensure_telemetry_dir, trace_path
 from ..context_contract import build_context_contract
 from ..guardrails import build_guardrail_registry
 from ..injections import Injection, load_injections_with_metadata
+from ..stream_rules import StreamRule, load_stream_rules
 from ..project_instructions import (
     discover_project_instructions,
     find_project_root,
@@ -67,6 +68,8 @@ class PromptAssemblyMetadata:
     prompt_import_tree: tuple[dict[str, object], ...] = ()
     security_findings: tuple[SecurityFinding, ...] = ()
     security_blocked: bool = False
+    loaded_skills: tuple[dict[str, object], ...] = ()
+    skills_catalog_chars: int = 0
 
     def trace_fields(self) -> dict[str, object]:
         return {
@@ -85,6 +88,9 @@ class PromptAssemblyMetadata:
             ),
             "prompt_import_tree": [
                 dict(record) for record in self.prompt_import_tree
+            ],
+            "loaded_skills": [
+                dict(record) for record in self.loaded_skills
             ],
         }
 
@@ -145,6 +151,7 @@ def load_system_prompt_and_provenance(
     context_class,
     *,
     unreadable_paths: tuple[str, ...] | None = None,
+    skill_catalog=None,
 ) -> tuple[str, dict, dict, PromptAssemblyMetadata]:
     """Build system_prompt, provenance, and context_contract.
 
@@ -215,11 +222,24 @@ def load_system_prompt_and_provenance(
                 diagnostic.error_kind,
                 diagnostic.message,
             )
+    if skill_catalog is None:
+        from ..skills import discover_skills
+        skill_catalog = discover_skills(
+            work_dir,
+            enabled=getattr(cfg, "skills_enabled", False),
+            skills_dirs=getattr(cfg, "skills_dirs", ()),
+            skill_paths=getattr(cfg, "skill_paths", ()),
+            root_markers=cfg.project_root_markers,
+            unreadable_paths=prompt_unreadable_paths,
+        )
+    skills_block = skill_catalog.format_prompt_block()
+
     scanner = SecurityScanner.from_config(cfg)
     prompt_security_findings: list[SecurityFinding] = []
     prompt_security_blocked = False
     arm_chars = len(resolved_arm.rstrip()) if resolved_arm is not None else 0
     project_instruction_chars = len(project_content)
+    skills_catalog_chars = len(skills_block)
     if resolved_arm is not None:
         arm_scan = scanner.scan_text(resolved_arm, stage="result")
         prompt_security_findings.extend(arm_scan.findings)
@@ -236,6 +256,15 @@ def load_system_prompt_and_provenance(
         project_content = prepend_finding_markers(
             project_content, project_scan.findings
         )
+    if skills_block:
+        skills_scan = scanner.scan_text(skills_block, stage="result")
+        prompt_security_findings.extend(skills_scan.findings)
+        prompt_security_blocked = (
+            prompt_security_blocked or skills_scan.blocked
+        )
+        skills_block = prepend_finding_markers(
+            skills_block, skills_scan.findings
+        )
     prompt_metadata = PromptAssemblyMetadata(
         arm_label=(
             arm.source if arm is not None else None
@@ -250,12 +279,15 @@ def load_system_prompt_and_provenance(
         prompt_import_tree=tuple(prompt_import_tree),
         security_findings=tuple(prompt_security_findings),
         security_blocked=prompt_security_blocked,
+        loaded_skills=tuple(skill_catalog.trace_records()),
+        skills_catalog_chars=skills_catalog_chars,
     )
     system_prompt = _apply_profile_preamble(
         assemble_system_prompt(
             cfg.system_header,
             resolved_arm=resolved_arm,
             project_instructions=project_content,
+            skills=skills_block,
         ),
         client,
     )
@@ -323,6 +355,45 @@ def scan_session_injections(
                 body=prepend_finding_markers(
                     injection.body, outcome.findings
                 ),
+            )
+        )
+    return tuple(admitted), tuple(findings), blocked
+
+
+def load_session_stream_rules(
+    cfg: Config,
+    work_dir: Path,
+) -> tuple[tuple[StreamRule, ...], tuple[dict[str, object], ...]]:
+    """Validate stream rules once at task startup, before any model call."""
+    if not cfg.stream_rules_enabled:
+        return (), ()
+    loaded = load_stream_rules(
+        work_dir / cfg.stream_rules_dir,
+        display_dir=cfg.stream_rules_dir,
+        allowed_root=work_dir,
+    )
+    return loaded.rules, loaded.files
+
+
+def scan_session_stream_rules(
+    cfg: Config,
+    rules: tuple[StreamRule, ...],
+) -> tuple[tuple[StreamRule, ...], tuple[SecurityFinding, ...], bool]:
+    """Scan resolved stream-rule instruction bodies at task startup."""
+    from dataclasses import replace
+
+    scanner = SecurityScanner.from_config(cfg)
+    admitted: list[StreamRule] = []
+    findings: list[SecurityFinding] = []
+    blocked = False
+    for rule in rules:
+        outcome = scanner.scan_text(rule.body, stage="result")
+        findings.extend(outcome.findings)
+        blocked = blocked or outcome.blocked
+        admitted.append(
+            replace(
+                rule,
+                body=prepend_finding_markers(rule.body, outcome.findings),
             )
         )
     return tuple(admitted), tuple(findings), blocked

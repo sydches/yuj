@@ -46,8 +46,17 @@ class TestProjectEmpty:
                 "event_count": 0,
                 "last_session": None,
                 "last_turn": None,
+                "edit_format": "",
             },
             "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
+            "todos": [],
+            "tools": {
+                "lazy_loading_enabled": False,
+                "active_limit": None,
+                "registered": [],
+                "active": [],
+                "activations": [],
+            },
             "trace": [],
             "gates": [],
             "evidence": [],
@@ -458,6 +467,24 @@ class TestProjectImperativeProcess:
         assert out["meta"]["schema_version"] == 1
         assert "process" not in out
 
+    def test_raw_injection_event_is_not_projected_into_model_state(self):
+        out = _project([{
+            "event": "injection",
+            "session_number": 1,
+            "turn_number": 3,
+            "rule": "python-rule",
+            "trigger": "path",
+            "path": "src/main.py",
+        }])
+        assert out["trace"] == []
+        assert out["evidence"] == []
+        assert out["state"] == {
+            "current_attempt": "",
+            "last_verify": "",
+            "next_action": "",
+        }
+        assert out["meta"]["event_count"] == 1
+
 
 class TestProjectTruncation:
     def test_long_args_summary_is_truncated(self):
@@ -593,7 +620,16 @@ class TestWriteStateFromTrace:
         _write_state_from_trace(trace, state_path)
         data = json.loads(state_path.read_text())
         # The output includes the top-level meta block.
-        assert set(data.keys()) == {"meta", "state", "trace", "gates", "evidence", "inference"}
+        assert set(data.keys()) == {
+            "meta",
+            "state",
+            "todos",
+            "tools",
+            "trace",
+            "gates",
+            "evidence",
+            "inference",
+        }
         assert set(data["state"].keys()) >= {"current_attempt", "last_verify", "next_action"}
         for entry in data["trace"]:
             assert {"step", "action", "result", "next"} <= set(entry.keys())

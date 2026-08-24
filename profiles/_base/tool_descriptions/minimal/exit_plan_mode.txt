@@ -1,0 +1,1 @@
+Exit the required planning phase. This succeeds only after .solver/plan.md exists and contains non-whitespace text. It unlocks implementation tools for the rest of the task.

@@ -1,0 +1,6 @@
+[agent]
+model_profile = "_base"
+tools = ["read", "glob", "grep", "bash", "done"]
+system_prompt_file = "prompts/research.md"
+max_turns = 12
+read_only = true

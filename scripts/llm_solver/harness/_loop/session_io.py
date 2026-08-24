@@ -16,6 +16,8 @@ from .profile_resolution import (
     _apply_profile_tool_cap,
     _filter_disabled_tools,
     apply_profile_to_schemas,
+    build_plan_mode_schemas,
+    build_tool_surface,
 )
 
 if TYPE_CHECKING:
@@ -161,6 +163,7 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                               tool_desc mode.
       protocol_commandments — tokens paid by resolved --system-prompt content.
       project_instructions  — tokens paid by resolved project-document blocks.
+      skills_catalog        — tokens paid by startup skill metadata only.
       profile_behavioral    — tokens paid by the profile's behavioral
                               suffix (probe: run denormalize on a
                               minimal Commandments-tagged message and
@@ -188,7 +191,11 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
     try:
         # Use one helper for the filter→simplify→cap composition so both
         # call sites cannot drift.
-        schemas = apply_profile_to_schemas(get_tool_schemas(cfg.tool_desc), cfg, client)
+        schemas = (
+            build_plan_mode_schemas(cfg, client)
+            if bool(getattr(cfg, "plan_mode_enabled", False))
+            else build_tool_surface(cfg, client).active_schemas
+        )
         schema_chars = sum(len(json.dumps(s, default=str)) for s in schemas)
         ledger.record(
             bucket="tool_surface",
@@ -272,6 +279,29 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                         prompt_metadata, "project_instructions_truncated", False
                     )
                 ),
+            },
+        )
+
+    skills_chars = int(
+        getattr(prompt_metadata, "skills_catalog_chars", 0) or 0
+    )
+    if skills_chars:
+        records = tuple(
+            getattr(prompt_metadata, "loaded_skills", ()) or ()
+        )
+        ledger.record(
+            bucket="skills_catalog",
+            layer="L4_protocol",
+            mechanism="agent_skills_metadata",
+            input_chars=0,
+            output_chars=skills_chars,
+            measure_type="exact",
+            ctx={
+                "skills": [
+                    str(record.get("name", ""))
+                    for record in records
+                    if not bool(record.get("disable_model_invocation", False))
+                ],
             },
         )
 

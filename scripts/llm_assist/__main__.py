@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from ..llm_solver.config import PROJECT_ROOT, get_server_base_url, load_config
+from ..llm_solver._shared.edit_formats import EDIT_FORMATS
 from ..llm_solver.server.request_controls import THINKING_LEVELS
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
@@ -27,6 +28,7 @@ from .runner import (
     load_interrupt_marker,
     mark_session_interrupted,
     prepare_smoke_repo,
+    rewind_session,
     resolve_served_model,
     resolve_smoke_model,
     run_session,
@@ -96,6 +98,14 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "--thinking", choices=THINKING_LEVELS,
             help="per-request reasoning effort",
+        )
+        p.add_argument(
+            "--plan-mode", choices=("off", "required"),
+            help="require an explicit .solver/plan.md before implementation",
+        )
+        p.add_argument(
+            "--edit-format", choices=EDIT_FORMATS,
+            help="override the selected model profile's edit dialect",
         )
         p.add_argument(
             "--provider",
@@ -179,6 +189,14 @@ def main(argv: list[str] | None = None) -> int:
         help="per-request reasoning effort",
     )
     smoke_parser.add_argument(
+        "--plan-mode", choices=("off", "required"),
+        help="require an explicit .solver/plan.md before implementation",
+    )
+    smoke_parser.add_argument(
+        "--edit-format", choices=EDIT_FORMATS,
+        help="override the selected model profile's edit dialect",
+    )
+    smoke_parser.add_argument(
         "--provider",
         choices=sorted(_PROVIDER_PRESETS),
         help="model service: local, openai, anthropic, zai, openrouter, or custom",
@@ -216,6 +234,22 @@ def main(argv: list[str] | None = None) -> int:
         help="coding-session ID or 'latest' (default: latest incomplete session)",
     )
     resume_parser.set_defaults(func=cmd_resume)
+
+    rewind_parser = sub.add_parser(
+        "rewind",
+        help="restore a saved session to an earlier conversation and tree turn",
+    )
+    rewind_parser.add_argument(
+        "session_id",
+        help="coding-session ID or unique session reference",
+    )
+    rewind_parser.add_argument("turn", type=int, help="completed turn to restore")
+    rewind_parser.add_argument(
+        "--reason",
+        default="operator_cli",
+        help="reason recorded in the append-only trace",
+    )
+    rewind_parser.set_defaults(func=cmd_rewind)
 
     approve_parser = sub.add_parser("approve", help="allow a pending shell action")
     approve_parser.add_argument(
@@ -471,6 +505,31 @@ def cmd_resume(args) -> int:
     refreshed = store.get_session(record.session_id)
     _print_session_result(refreshed or record, success, finish_reason)
     return 0 if success else 1
+
+
+def cmd_rewind(args) -> int:
+    store = SessionStore()
+    record = _resolve_session_record(
+        store, args.session_id, selector="latest"
+    )
+    try:
+        with _session_lock(store, record):
+            event = rewind_session(
+                store,
+                record,
+                turn=args.turn,
+                reason=args.reason,
+            )
+    except (RuntimeError, WorktreeRuntimeError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"rewound: {record.session_id}")
+    print(f"session_ref: {record.short_id}")
+    print(f"from_turn: {event['from_turn']}")
+    print(f"to_turn: {event['to_turn']}")
+    print(f"commit: {event['commit']}")
+    print(f"reason: {event['reason']}")
+    print(f"resume with: {CLI_NAME} resume {record.short_id}")
+    return 0
 
 
 def cmd_setup(args) -> int:
@@ -948,7 +1007,16 @@ def _transport_overrides_from_args(args) -> dict:
     base_url = getattr(args, "base_url", None)
     api_key_env = getattr(args, "api_key_env", None)
     thinking_level = getattr(args, "thinking", None)
-    if not provider and not base_url and not api_key_env and not thinking_level:
+    plan_mode = getattr(args, "plan_mode", None)
+    edit_format = getattr(args, "edit_format", None)
+    if (
+        not provider
+        and not base_url
+        and not api_key_env
+        and not thinking_level
+        and not plan_mode
+        and not edit_format
+    ):
         return {}
     if provider == "custom" and not base_url:
         raise SystemExit("--provider custom requires --base-url")
@@ -970,6 +1038,10 @@ def _transport_overrides_from_args(args) -> dict:
             )
     if thinking_level:
         overrides["thinking_level"] = thinking_level
+    if plan_mode:
+        overrides["plan_mode"] = plan_mode
+    if edit_format:
+        overrides["tools_edit_format"] = edit_format
     return overrides
 
 
@@ -1004,6 +1076,16 @@ def _render_provider_overlay(overrides: dict) -> str:
             lines.append("")
         value = str(overrides["thinking_level"])
         lines.extend(["[model]", f'thinking_level = "{value}"'])
+    if overrides.get("plan_mode") is not None:
+        if lines:
+            lines.append("")
+        value = str(overrides["plan_mode"])
+        lines.extend(["[loop]", f'plan_mode = "{value}"'])
+    if overrides.get("tools_edit_format") is not None:
+        if lines:
+            lines.append("")
+        value = str(overrides["tools_edit_format"])
+        lines.extend(["[tools]", f'edit_format = "{value}"'])
     return "\n".join(lines) + "\n"
 
 

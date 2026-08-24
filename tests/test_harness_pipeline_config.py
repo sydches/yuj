@@ -80,6 +80,48 @@ class TestConfig:
         cfg = load_config(user_config=cfg_path)
         assert cfg.pre_mutation_gate == "CUSTOM PRE MUTATION {turn_number}"
 
+    def test_conditional_path_rule_defaults_and_overlay(self, tmp_path):
+        default = load_config()
+        assert default.injections_path_rules_enabled is False
+        assert default.injections_path_rule_repeat is False
+
+        cfg_path = tmp_path / "path-rules.toml"
+        cfg_path.write_text(
+            "[injections]\n"
+            "enabled = true\n"
+            "path_rules_enabled = true\n"
+            "path_rule_repeat = true\n",
+            encoding="utf-8",
+        )
+        cfg = load_config(user_config=cfg_path)
+        assert cfg.injections_enabled is True
+        assert cfg.injections_path_rules_enabled is True
+        assert cfg.injections_path_rule_repeat is True
+
+    def test_path_rules_require_injection_master_switch(self, tmp_path):
+        cfg_path = tmp_path / "invalid-path-rules.toml"
+        cfg_path.write_text(
+            "[injections]\npath_rules_enabled = true\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="requires injections.enabled"):
+            load_config(user_config=cfg_path)
+
+    @pytest.mark.parametrize(
+        "field",
+        ["path_rules_enabled", "path_rule_repeat"],
+    )
+    def test_path_rule_knobs_require_booleans(self, tmp_path, field):
+        cfg_path = tmp_path / f"invalid-{field}.toml"
+        cfg_path.write_text(
+            "[injections]\n"
+            "enabled = true\n"
+            f'{field} = "yes"\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match=field):
+            load_config(user_config=cfg_path)
+
     def test_get_sdk_config(self):
         sdk = get_sdk_config()
         assert "tools" in sdk or "default_model" in sdk

@@ -37,7 +37,7 @@ _EXIT_MARKER_TAIL_RE = re.compile(
 )
 
 _INSPECT_TOOLS = {"read", "grep", "glob", "list_definitions"}
-_WRITE_TOOLS = {"write", "edit", "apply_patch"}
+_WRITE_TOOLS = {"write", "edit", "apply_patch", "udiff"}
 
 
 def build_tool_call_trace_fields(
