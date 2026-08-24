@@ -83,6 +83,63 @@ A paper comparison does not rely on the CLI defaults alone. Follow the exact
 order in the
 [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md).
 
+## Inspect the resolved settings
+
+Run a configuration preflight before model work:
+
+```bash
+yuj config
+```
+
+The command applies and validates the same layers, in the same order, as a new
+`yuj code` session. It prints every resolved setting with the layer that won.
+This includes nested tables and values that still come from `config.toml`.
+The preflight loads and validates model profiles, configured model roles and
+fallbacks, and enabled named-agent descriptors. Use `--agent NAME` to validate
+another named agent even when the `task` tool is off.
+
+The command does not contact a model service, start a process, create a coding
+session, or write run artifacts. It returns a nonzero status for a missing or
+malformed file, a missing environment variable, profile, or named agent, an
+invalid value, or an incompatible group of settings.
+
+Use the same base, overlay, and command-line choices that you plan to run:
+
+```bash
+yuj config --no-treatment \
+  --config first.toml --config second.toml \
+  --provider openai --model YOUR_MODEL_ID
+```
+
+`--config` remains repeatable and applies left-to-right. The command also
+accepts the `code` settings `--treatment`/`--no-treatment`, `--context`,
+`--model`, `--thinking`, `--plan-mode`, `--edit-format`, `--provider`,
+`--base-url`, and `--api-key-env`.
+
+Use JSON for automation:
+
+```bash
+yuj config --json
+```
+
+The stable JSON document has schema name `yuj.config-inspection` and
+`schema_version` `1`. Its top-level fields are `status`, `success`, `layers`,
+`selection`, `settings`, `references`, and `diagnostics`, together with the
+schema fields. `layers` is the ordered low-to-high layer list. Each member of
+`settings` contains a TOML-style `path`, `path_components`, the effective
+`value`, its `source_layer`, a `redacted` boolean, and
+`redaction_reasons`. Environment-backed entries also name the environment
+variable. Arrays and object keys have deterministic order, so the same inputs
+produce the same JSON bytes.
+
+Yuj never prints resolved credential values. The policy redacts API keys,
+tokens, passwords, authorization and cookie values, request headers and extra
+request bodies, fixed sandbox environment values, future key-like paths, and
+every environment-derived value. An exact string in the form `$ENV:NAME` is
+resolved by the shared runtime loader. Inspection may show `NAME`, but never
+the variable's value. The same redaction policy also applies to validation
+diagnostics.
+
 ## Find a setting
 
 Start from what you want to change. Each linked section gives the small TOML

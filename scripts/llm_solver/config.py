@@ -3,7 +3,8 @@
 Layered config resolution:
   1. config.toml        (project root, checked into git)
   2. config.local.toml  (same directory, gitignored, optional)
-  3. CLI overrides       (highest priority)
+  3. selected base and user overlays (in caller order)
+  4. CLI overrides      (highest priority)
 
 Project root is located by walking up from this file until config.toml is found,
 or via the YUJ_CONFIG env var pointing directly to config.toml.
@@ -13,9 +14,20 @@ import os
 import copy
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Sequence
 
 from ._shared.post_edit_spec import validate_post_edit_check_dict
 from ._shared.toml_compat import tomllib
+from ._config_layers import (
+    ConfigLayerSpec,
+    ConfigResolutionError,
+    ConfigSource,
+    ConfigValuePath,
+    SettingPath,
+    apply_resolved_value,
+    expand_environment_references,
+    resolve_toml_layers,
+)
 
 VALID_RUNTIME_MODES = ("measurement", "assistant")
 
@@ -27,7 +39,7 @@ def _find_project_root() -> Path:
         p = Path(env)
         if p.is_file():
             return p.parent
-        raise FileNotFoundError(f"YUJ_CONFIG={env} does not exist")
+        raise FileNotFoundError("YUJ_CONFIG does not name an existing file")
 
     d = Path(__file__).resolve().parent
     for _ in range(10):
@@ -84,8 +96,13 @@ def _build_model_map(data: dict) -> dict[str, str]:
     return dict(data.get("models", {}).get("aliases", {}))
 
 
-# Eagerly loaded so importers can do: from scripts.llm_solver.config import MODEL_MAP
-_LAYERED = _load_layered()
+# Legacy accessors below retain an import snapshot. Keep import viable when a
+# malformed defaults/local file needs to be diagnosed by the public config
+# preflight; the authoritative runtime path parses it again with safe labels.
+try:
+    _LAYERED = _load_layered()
+except (OSError, tomllib.TOMLDecodeError):
+    _LAYERED = {}
 MODEL_MAP: dict[str, str] = _build_model_map(_LAYERED)
 
 
@@ -793,14 +810,172 @@ _REQUIRED_SECTIONS = (
 
 
 
-from ._config_loader import _extract_config_fields, _require, _validate_coupling
+from ._config_loader import (
+    _extract_config_fields,
+    _require,
+    _validate_config_field_types,
+    _validate_coupling,
+)
+
+
+@dataclass(frozen=True)
+class ResolvedConfig:
+    """One validated configuration plus its real merged-tree provenance."""
+
+    config: Config
+    data: dict[str, object]
+    provenance: dict[SettingPath, ConfigSource]
+    environment_references: dict[ConfigValuePath, str]
+    layers: tuple[ConfigSource, ...]
+
+
+# Flat Config fields are retained for runtime callers. This mapping is only
+# the set of fields that an entrypoint may override after TOML merging; it lets
+# those real overrides update the owning TOML leaf and provenance before field
+# extraction instead of being guessed after the fact.
+_OVERRIDE_SETTING_PATHS: dict[str, SettingPath] = {
+    "api_key": ("server", "api_key"),
+    "base_url": ("server", "base_url"),
+    "duplicate_abort": ("loop", "duplicate_abort"),
+    "max_sessions": ("loop", "max_sessions"),
+    "model": ("model", "name"),
+    "plan_mode": ("loop", "plan_mode"),
+    "profile_name": ("model", "profile_name"),
+    "prompt_addendum": ("experiment", "prompt_addendum"),
+    "provider": ("server", "provider"),
+    "require_intent": ("loop", "require_intent"),
+    "rumination_nudge_threshold": ("loop", "rumination_nudge_threshold"),
+    "runtime_mode": ("runtime", "mode"),
+    "thinking_level": ("model", "thinking_level"),
+    "tool_desc": ("experiment", "tool_desc"),
+    "tools_edit_format": ("tools", "edit_format"),
+    "variant_name": ("experiment", "variant_name"),
+}
+
+
+def _user_paths(
+    user_config: Path | str | list[Path] | list[str] | None,
+) -> list[Path]:
+    if user_config is None:
+        return []
+    if isinstance(user_config, (str, Path)):
+        return [Path(user_config)]
+    return [Path(path) for path in user_config]
+
+
+def resolve_config(
+    user_config: Path | list[Path] | None = None,
+    overrides: dict | None = None,
+    strict_dial_gates: bool = False,
+    *,
+    layer_specs: Sequence[ConfigLayerSpec] | None = None,
+) -> ResolvedConfig:
+    """Resolve, validate, and retain the exact source of every setting leaf."""
+    paths = _user_paths(user_config)
+    if layer_specs is None:
+        specs = [
+            ConfigLayerSpec(
+                path=path,
+                layer_id=f"overlay-{index}",
+                kind="overlay",
+                label=f"--config[{index}]",
+            )
+            for index, path in enumerate(paths, 1)
+        ]
+    else:
+        specs = list(layer_specs)
+        if [Path(spec.path) for spec in specs] != paths:
+            raise ValueError("layer_specs paths must match user_config in order")
+
+    layered = resolve_toml_layers(
+        defaults_path=_DEFAULT_CONFIG,
+        local_path=_LOCAL_CONFIG,
+        user_layers=specs,
+    )
+    data = layered.data
+    provenance = layered.provenance
+    effective_overrides = {
+        key: value
+        for key, value in (overrides or {}).items()
+        if value is not None
+    }
+    command_line_source = ConfigSource(
+        "command-line",
+        "command-line",
+        "command line",
+        len(layered.layers),
+        bool(effective_overrides),
+    )
+    for field_name, value in effective_overrides.items():
+        path = _OVERRIDE_SETTING_PATHS.get(field_name)
+        if path is not None:
+            apply_resolved_value(
+                data,
+                provenance,
+                path,
+                value,
+                source=command_line_source,
+            )
+
+    expanded, environment_references = expand_environment_references(data)
+    try:
+        flat = _extract_config_fields(expanded)
+        for field_name, value in effective_overrides.items():
+            if field_name in _OVERRIDE_SETTING_PATHS:
+                continue
+            if field_name in flat:
+                flat[field_name] = type(flat[field_name])(value)
+
+        cfg = Config(**flat)
+        try:
+            _validate_coupling(
+                cfg,
+                strict_dial_gates=strict_dial_gates,
+                user_set_keys=layered.user_set_keys,
+            )
+        except TypeError:
+            # Some range/coupling checks necessarily operate before the final
+            # complete type pass. Convert a wrong TOML type into a field-level
+            # configuration error instead of exposing a Python operator error.
+            _validate_config_field_types(cfg)
+            raise
+        _validate_post_edit_checks(cfg)
+    except Exception as exc:
+        from ._config_redaction import (
+            environment_string_values,
+            redact_sensitive_text,
+            sensitive_string_values,
+        )
+
+        safe_message = redact_sensitive_text(
+            exc,
+            sensitive_values=sensitive_string_values(
+                expanded,
+                environment_references=environment_references,
+            ),
+            unquoted_values=environment_string_values(
+                expanded,
+                environment_references=environment_references,
+            ),
+        )
+        if safe_message != str(exc):
+            raise ConfigResolutionError(safe_message) from exc
+        raise
+    return ResolvedConfig(
+        config=cfg,
+        data=expanded,
+        provenance=provenance,
+        environment_references=environment_references,
+        layers=(*layered.layers, command_line_source),
+    )
+
 
 def load_config(
     user_config: Path | list[Path] | None = None,
     overrides: dict | None = None,
     strict_dial_gates: bool = False,
 ) -> Config:
-    """Load layered config, merge optional extra user TOML(s), apply CLI overrides.
+    """Return the runtime Config from the shared resolved representation.
 
     user_config: a single path OR a list of paths. When a list, overlays
                  layer in the given order — later entries win on conflict.
@@ -809,39 +984,11 @@ def load_config(
                  without pre-baking every combination.
     overrides:   flat dict of CLI flag overrides (highest priority)
     """
-    base = copy.deepcopy(_LAYERED)  # start from already-merged base + local
-    user_set_keys: set[str] = set()
-
-    if user_config is not None:
-        paths: list[Path] = (
-            [user_config] if isinstance(user_config, (str, Path))
-            else list(user_config)
-        )
-        for p in paths:
-            layer = _load_toml(Path(p))
-            _collect_leaf_keys(layer, user_set_keys)
-            _deep_merge(base, layer)
-
-    flat = _extract_config_fields(base)
-
-    if overrides:
-        for k, v in overrides.items():
-            if v is not None and k in flat:
-                flat[k] = type(flat[k])(v)
-
-    cfg = Config(**flat)
-    _validate_coupling(cfg, strict_dial_gates=strict_dial_gates,
-                       user_set_keys=frozenset(user_set_keys))
-    _validate_post_edit_checks(cfg)
-    return cfg
-
-
-def _collect_leaf_keys(d: dict, out: set) -> None:
-    for k, v in d.items():
-        if isinstance(v, dict):
-            _collect_leaf_keys(v, out)
-        else:
-            out.add(k)
+    return resolve_config(
+        user_config=user_config,
+        overrides=overrides,
+        strict_dial_gates=strict_dial_gates,
+    ).config
 
 
 def _validate_post_edit_checks(cfg: Config) -> None:
@@ -864,28 +1011,7 @@ def require_runtime_mode(cfg: Config, *, expected: str, caller: str) -> None:
 def dump_config(cfg: Config) -> dict:
     """Return a serializable snapshot of a resolved Config for run metadata."""
     from dataclasses import asdict
-    d = asdict(cfg)
+    from ._config_redaction import redact_config_value
 
-    def _redact_target_keys(value):
-        if isinstance(value, dict):
-            return {
-                key: ("<redacted>" if key == "api_key" else _redact_target_keys(child))
-                for key, child in value.items()
-            }
-        if isinstance(value, (list, tuple)):
-            return [_redact_target_keys(child) for child in value]
-        return value
-
-    # Role/fallback targets may carry endpoint-local credentials. They are
-    # needed at runtime but never belong in metrics provenance or config hashes.
-    d["api_key"] = "<redacted>"
-    d["model_roles"] = _redact_target_keys(d["model_roles"])
-    d["model_fallback_chain"] = _redact_target_keys(d["model_fallback_chain"])
-    # Fixed environment values can themselves be credentials. Preserve only
-    # the names in public run metadata/config hashes.
-    d["sandbox_env_set"] = {
-        name: "<redacted>" for name in sorted(cfg.sandbox_env_set)
-    }
-    # retry_backoff is a tuple; convert for JSON
-    d["retry_backoff"] = list(cfg.retry_backoff)
-    return d
+    redacted, _changed, _reasons = redact_config_value(asdict(cfg))
+    return redacted  # type: ignore[return-value]

@@ -222,7 +222,12 @@ def _load_code_module(
     return mod.apply
 
 
-def _resolve_profile_dir(name: str, profiles_dir: Path) -> Path:
+def _resolve_profile_dir(
+    name: str,
+    profiles_dir: Path,
+    *,
+    allow_base_fallback: bool = True,
+) -> Path:
     """Resolve profile name to directory via fallback chain.
 
     exact name → family scan → _base
@@ -256,13 +261,19 @@ def _resolve_profile_dir(name: str, profiles_dir: Path) -> Path:
         log.info("No profile for '%s', falling back to family match '%s'", name, candidate.name)
         return candidate
 
-    # _base fallback
+    # _base fallback is only for an unprofiled wire model. Explicit profile,
+    # role, and named-agent references use ``allow_base_fallback=False`` so a
+    # typo cannot silently select a different behavior contract.
     base = profiles_dir / "_base"
-    if base.is_dir():
+    if allow_base_fallback and base.is_dir():
         log.info("No profile for '%s', falling back to _base", name)
         return base
 
-    raise FileNotFoundError(f"No profile found for '{name}' and no _base profile exists")
+    if allow_base_fallback:
+        raise FileNotFoundError(
+            f"No profile found for '{name}' and no _base profile exists"
+        )
+    raise FileNotFoundError(f"No profile or profile family found for '{name}'")
 
 
 def _load_profile_data(profile_dir: Path) -> dict:
@@ -301,12 +312,21 @@ def _collect_profile_chain(profile_dir: Path, profiles_dir: Path) -> list[Path]:
     return chain
 
 
-def load_profile(name: str, profiles_dir: Path) -> Profile:
+def load_profile(
+    name: str,
+    profiles_dir: Path,
+    *,
+    allow_base_fallback: bool = True,
+) -> Profile:
     """Load a profile by name with full inheritance resolution.
 
     Returns a Profile with ready-to-call normalize/denormalize pipelines.
     """
-    profile_dir = _resolve_profile_dir(name, profiles_dir)
+    profile_dir = _resolve_profile_dir(
+        name,
+        profiles_dir,
+        allow_base_fallback=allow_base_fallback,
+    )
     chain = _collect_profile_chain(profile_dir, profiles_dir)
 
     # Resolve inheritance chain

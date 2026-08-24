@@ -3,7 +3,9 @@
 # Layered config:
 #   1. config.toml        (this file, checked into git)
 #   2. config.local.toml  (user overrides, gitignored)
-#   3. CLI flags           (highest priority)
+#   3. treatment/plain base selected by the installed CLI
+#   4. repeatable --config overlays, applied left to right
+#   5. CLI model/service overrides (highest priority)
 #
 # User-local values (model paths, server endpoints, GPU settings) belong in
 # config.local.toml.  Experiment parameters (temperature, max_tokens, tool
@@ -73,6 +75,7 @@ tools = "Bash,Read,Edit,Write,Glob,Grep"
 # ---------------------------------------------------------------------------
 
 [server]
+provider = "openai-compatible"          # request transport used by the installed CLI
 base_url = "http://localhost:8080/v1"  # OpenAI-compatible endpoint (llama-server, vllm, etc.)
 api_key = "local"                      # API key sent in Authorization header; "local" for llama-server
 timeout_connect = 10                   # seconds to wait for TCP connection to model server
@@ -88,6 +91,7 @@ cache_miss_warn_ratio = 0.0            # warn after the first turn below this hi
 
 [model]
 name = "qwen3-vl-8b"       # model identifier sent to the server; must match --model or alias
+profile_name = "_base"      # exact profile or unique family; _base is the public compatibility profile
 context_size = 40960        # FALLBACK ONLY. The harness queries llama-server's /props at session start and overwrites this with the live n_ctx_per_slot. Used only when /props is unreachable (e.g. tests, dry-run).
 context_fill_ratio = 0.95   # fail-safe upper bound for end-of-turn pt vs context_size. With server-reported pt now driving the gate (no chars/4 undershoot), 0.95 leaves a small margin to avoid 400 errors. Primary mechanism is digest compaction in Session._maybe_compact_messages, which fires at 0.85 — well below this fail-safe.
 max_tokens_fraction = 0.25  # generation cap as a fraction of context_size. At ctx=65,536 → max_tokens=16,384 (preserves prior default). Scales correctly when context_size changes — a 32k server gets 8k generation cap, a 128k server gets 32k. Replaces the hardcoded max_tokens=16384 which was wrong-shape at any ctx ≠ 65,536.

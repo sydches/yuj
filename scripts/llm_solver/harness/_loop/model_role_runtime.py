@@ -250,6 +250,7 @@ def validate_model_role_profiles(
     cfg: Config,
     main_profile: Any,
     profiles_dir: Path,
+    strict_references: bool = False,
 ) -> None:
     """Eagerly validate configured role profiles for client-free startup paths."""
     main_profile_name = _main_profile_name(cfg, main_profile)
@@ -259,7 +260,11 @@ def validate_model_role_profiles(
             return main_profile
         if name == main_profile_name and not (profiles_dir / name / "profile.toml").is_file():
             return None
-        return load_profile(name, profiles_dir)
+        return load_profile(
+            name,
+            profiles_dir,
+            allow_base_fallback=not strict_references,
+        )
 
     resolver = ModelRoleResolver(
         main_target=ModelTarget(

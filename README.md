@@ -106,6 +106,7 @@ own repository.
 | Command | What it does |
 | --- | --- |
 | `yuj setup` | Save settings for an online model service or a local model server. |
+| `yuj config` | Validate and explain every resolved setting without contacting a model. |
 | `yuj doctor` | Check the settings, model connection, Git, and `bwrap`. |
 | `yuj models` | List the models that the selected service offers. |
 | `yuj code "task"` | Start a coding session. |

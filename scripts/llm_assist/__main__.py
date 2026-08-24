@@ -9,8 +9,23 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..llm_solver.config import PROJECT_ROOT, get_server_base_url, load_config
+from ..llm_solver.config import (
+    PROJECT_ROOT,
+    ConfigLayerSpec,
+    get_server_base_url,
+    load_config,
+    resolve_config,
+)
+from ..llm_solver.config_inspection import (
+    build_error_document,
+    build_inspection_document,
+    render_inspection_human,
+    render_inspection_json,
+    sanitize_diagnostic_message,
+    validate_configuration_references,
+)
 from ..llm_solver._shared.edit_formats import EDIT_FORMATS
+from ..llm_solver.models import resolve_model
 from ..llm_solver.server.request_controls import THINKING_LEVELS
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
@@ -145,6 +160,69 @@ def main(argv: list[str] | None = None) -> int:
         help="start a new coding session (same as run)",
     )
     _attach_run_args(code_parser)
+
+    config_parser = sub.add_parser(
+        "config",
+        help="validate and explain the resolved configuration without model work",
+    )
+    config_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="write stable machine-readable JSON",
+    )
+    config_parser.add_argument("--model", "-m", help="model name or short alias")
+    config_parser.add_argument(
+        "--thinking",
+        choices=THINKING_LEVELS,
+        help="per-request reasoning effort",
+    )
+    config_parser.add_argument(
+        "--plan-mode",
+        choices=("off", "required"),
+        help="planning-phase setting to validate",
+    )
+    config_parser.add_argument(
+        "--edit-format",
+        choices=EDIT_FORMATS,
+        help="model edit dialect to validate",
+    )
+    config_parser.add_argument(
+        "--provider",
+        choices=sorted(_PROVIDER_PRESETS),
+        help="model service setting to validate",
+    )
+    config_parser.add_argument("--base-url", help="model API base URL override")
+    config_parser.add_argument(
+        "--api-key-env",
+        help="environment variable containing the API key",
+    )
+    config_parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        action="append",
+        default=[],
+        help="extra TOML settings file; repeat to apply more files",
+    )
+    config_parser.add_argument(
+        "--treatment",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="inspect the treatment package (default: enabled)",
+    )
+    config_parser.add_argument(
+        "--context",
+        default=None,
+        help="context mode to validate (base default when omitted)",
+    )
+    config_parser.add_argument(
+        "--agent",
+        action="append",
+        default=[],
+        help="named agent descriptor to validate; repeat for more agents",
+    )
+    config_parser.set_defaults(func=cmd_config)
 
     setup_parser = sub.add_parser("setup", help="save model settings for this machine")
     setup_parser.add_argument(
@@ -387,6 +465,81 @@ def cmd_run(args) -> int:
     refreshed = store.get_session(record.session_id)
     _print_session_result(refreshed or record, success, finish_reason)
     return 0 if success else 1
+
+
+def cmd_config(args) -> int:
+    """Validate and explain assistant startup settings without side effects."""
+    resolved = None
+    try:
+        config_paths, context_mode = _effective_run_settings(args)
+        from ..llm_solver.harness.context_strategies import resolve_context_class
+
+        resolve_context_class(context_mode)
+        transport_overrides = _transport_overrides_from_args(args)
+        overrides = {
+            "runtime_mode": "assistant",
+            "max_sessions": 1,
+            **transport_overrides,
+        }
+        if args.model:
+            overrides["model"] = resolve_model(args.model)
+        base_label = "treatment" if args.treatment else "plain"
+        layer_specs = [
+            ConfigLayerSpec(
+                path=config_paths[0],
+                layer_id="base",
+                kind="base",
+                label=base_label,
+            ),
+            *[
+                ConfigLayerSpec(
+                    path=path,
+                    layer_id=f"overlay-{index}",
+                    kind="overlay",
+                    label=f"--config[{index}]",
+                )
+                for index, path in enumerate(config_paths[1:], 1)
+            ],
+        ]
+        resolved = resolve_config(
+            user_config=config_paths,
+            overrides=overrides,
+            layer_specs=layer_specs,
+        )
+        references = validate_configuration_references(
+            resolved.config,
+            named_agents=args.agent,
+        )
+        document = build_inspection_document(
+            resolved,
+            success=True,
+            selection={
+                "base": base_label,
+                "treatment": bool(args.treatment),
+                "context_mode": context_mode,
+                "context_source": "command-line" if args.context else "base",
+            },
+            references=references,
+        )
+    except (Exception, SystemExit) as exc:
+        detail = exc.code if isinstance(exc, SystemExit) else exc
+        message = sanitize_diagnostic_message(detail, resolved=resolved)
+        document = build_error_document(message)
+        output = (
+            render_inspection_json(document)
+            if args.json_output
+            else render_inspection_human(document)
+        )
+        sys.stdout.write(output)
+        return 1
+
+    output = (
+        render_inspection_json(document)
+        if args.json_output
+        else render_inspection_human(document)
+    )
+    sys.stdout.write(output)
+    return 0
 
 
 def cmd_smoke(args) -> int:

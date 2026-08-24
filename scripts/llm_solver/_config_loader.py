@@ -6,14 +6,80 @@ import copy
 import logging
 import math
 import os
-from dataclasses import dataclass, field
+import types
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any, Union, get_args, get_origin
 
 from ._shared.toml_compat import tomllib
-
-
-
 from .config import Config, _REQUIRED_SECTIONS
+
+
+def _matches_annotation(value: object, annotation: object) -> bool:
+    """Return whether a TOML-derived value matches one Config annotation."""
+    if annotation in {Any, object}:
+        return True
+    origin = get_origin(annotation)
+    if origin in {types.UnionType, Union}:
+        return any(
+            _matches_annotation(value, item) for item in get_args(annotation)
+        )
+    if origin is list:
+        if not isinstance(value, list):
+            return False
+        arguments = get_args(annotation)
+        return not arguments or all(
+            _matches_annotation(item, arguments[0]) for item in value
+        )
+    if origin is tuple:
+        if not isinstance(value, tuple):
+            return False
+        arguments = get_args(annotation)
+        if not arguments:
+            return True
+        if len(arguments) == 2 and arguments[1] is Ellipsis:
+            return all(_matches_annotation(item, arguments[0]) for item in value)
+        return len(value) == len(arguments) and all(
+            _matches_annotation(item, expected)
+            for item, expected in zip(value, arguments)
+        )
+    if origin is dict:
+        if not isinstance(value, dict):
+            return False
+        arguments = get_args(annotation)
+        if not arguments:
+            return True
+        key_type, value_type = arguments
+        return all(
+            _matches_annotation(key, key_type)
+            and _matches_annotation(child, value_type)
+            for key, child in value.items()
+        )
+    if annotation is bool:
+        return isinstance(value, bool)
+    if annotation is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if annotation is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if annotation in {str, list, tuple, dict}:
+        return isinstance(value, annotation)
+    return True
+
+
+def _validate_config_field_types(cfg: Config) -> None:
+    """Reject TOML values that dataclasses otherwise accept without checks."""
+    for config_field in fields(cfg):
+        value = getattr(cfg, config_field.name)
+        if _matches_annotation(value, config_field.type):
+            continue
+        expected = (
+            str(config_field.type).replace("<class '", "").replace("'>", "")
+        )
+        raise ValueError(
+            f"config error: resolved field {config_field.name} must be "
+            f"{expected}, got {type(value).__name__}."
+        )
 
 
 def _string_tuple(value: object, *, path: str) -> tuple[str, ...]:
@@ -23,6 +89,27 @@ def _string_tuple(value: object, *, path: str) -> tuple[str, ...]:
     ):
         raise ValueError(f"config error: {path} must be an array of strings.")
     return tuple(value)
+
+
+def _integer_tuple(value: object, *, path: str) -> tuple[int, ...]:
+    if not isinstance(value, (list, tuple)) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in value
+    ):
+        raise ValueError(f"config error: {path} must be an array of integers.")
+    return tuple(value)
+
+
+def _mapping_copy(value: object, *, path: str) -> dict:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"config error: {path} must be a table/mapping.")
+    return copy.deepcopy(dict(value))
+
+
+def _list_copy(value: object, *, path: str) -> list:
+    if not isinstance(value, list):
+        raise ValueError(f"config error: {path} must be an array.")
+    return copy.deepcopy(value)
+
 
 def _require(data: dict, section: str, key: str) -> object:
     if section not in data:
@@ -55,6 +142,7 @@ def _extract_config_fields(d: dict) -> dict:
         # complete configs that do not yet carry [sandbox.env].
         sandbox_env_raw = {"set": dict(DEFAULT_FIXED_ENVIRONMENT)}
     sandbox_env = EnvironmentPolicy.from_mapping(sandbox_env_raw)
+    hooks_section = _mapping_copy(d.get("hooks", {}), path="hooks")
     return {
         "base_url": _require(d, "server", "base_url"),
         "api_key": _require(d, "server", "api_key"),
@@ -65,7 +153,10 @@ def _extract_config_fields(d: dict) -> dict:
         "health_timeout": _require(d, "server", "health_timeout"),
         "launch_timeout": _require(d, "server", "launch_timeout"),
         "stop_settle": _require(d, "server", "stop_settle"),
-        "server_request_extra": dict(d.get("server", {}).get("request_extra", {})),
+        "server_request_extra": _mapping_copy(
+            d.get("server", {}).get("request_extra", {}),
+            path="server.request_extra",
+        ),
         "cache_affinity": d.get("server", {}).get("cache_affinity", False),
         "cache_retention": d.get("server", {}).get("cache_retention", "off"),
         "cache_miss_warn_ratio": d.get("server", {}).get("cache_miss_warn_ratio", 0.0),
@@ -84,7 +175,10 @@ def _extract_config_fields(d: dict) -> dict:
         # _maybe_compact_messages. Empty string falls back to chars_div_4.
         "tokenizer_id": d.get("model", {}).get("tokenizer_id", ""),
         "thinking_level": d.get("model", {}).get("thinking_level", "off"),
-        "model_roles": dict(d.get("models", {}).get("roles", {})),
+        "model_roles": _mapping_copy(
+            d.get("models", {}).get("roles", {}),
+            path="models.roles",
+        ),
         "model_fallback_chain": d.get("models", {}).get("fallback_chain", {}),
         "model_fallback_revert": d.get("models", {}).get(
             "fallback_revert", "never"
@@ -101,9 +195,7 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
-        "rewind_enabled": bool(
-            d.get("loop", {}).get("rewind_enabled", False)
-        ),
+        "rewind_enabled": d.get("loop", {}).get("rewind_enabled", False),
         "rewind_max_per_session": d.get("loop", {}).get(
             "rewind_max_per_session", 1
         ),
@@ -143,7 +235,10 @@ def _extract_config_fields(d: dict) -> dict:
         "duplicate_guard_enabled": d.get("loop", {}).get("duplicate_guard_enabled", True),
         "post_edit_check_enabled": d.get("post_edit_check", {}).get("enabled", False),
         "post_edit_check_timeout": d.get("post_edit_check", {}).get("timeout", 10),
-        "post_edit_checks": list(d.get("post_edit_check", {}).get("checks", [])),
+        "post_edit_checks": _list_copy(
+            d.get("post_edit_check", {}).get("checks", []),
+            path="post_edit_check.checks",
+        ),
         "tools_lazy_loading_enabled": d.get("tools", {}).get(
             "lazy_loading_enabled", False
         ),
@@ -155,19 +250,19 @@ def _extract_config_fields(d: dict) -> dict:
             path="tools.active_default",
         ),
         "tools_run_tests_enabled": d.get("tools", {}).get("run_tests", {}).get("enabled", False),
-        "tools_run_tests_timeout": int(d.get("tools", {}).get("run_tests", {}).get("timeout", 240)),
-        "tools_run_tests_structured_output": bool(d.get("tools", {}).get("run_tests", {}).get("structured_output", True)),
-        "tools_run_tests_assertion_context_lines": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5)),
-        "tools_run_tests_assertion_context_max": int(d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3)),
+        "tools_run_tests_timeout": d.get("tools", {}).get("run_tests", {}).get("timeout", 240),
+        "tools_run_tests_structured_output": d.get("tools", {}).get("run_tests", {}).get("structured_output", True),
+        "tools_run_tests_assertion_context_lines": d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5),
+        "tools_run_tests_assertion_context_max": d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3),
         "tools_think_enabled": d.get("tools", {}).get(
             "think_enabled", False
         ),
         "tools_think_keep_turns": d.get("tools", {}).get(
             "think_keep_turns", 4
         ),
-        "tools_list_definitions_enabled": bool(d.get("tools", {}).get("list_definitions", {}).get("enabled", False)),
-        "tools_ast_search_enabled": bool(
-            d.get("tools", {}).get("ast_search_enabled", False)
+        "tools_list_definitions_enabled": d.get("tools", {}).get("list_definitions", {}).get("enabled", False),
+        "tools_ast_search_enabled": d.get("tools", {}).get(
+            "ast_search_enabled", False
         ),
         "tools_ast_search_max_rows": d.get("tools", {}).get(
             "ast_search_max_rows", 1000
@@ -175,8 +270,8 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_checkpoint_enabled": d.get("tools", {}).get(
             "checkpoint_enabled", False
         ),
-        "tools_file_checkpoints_enabled": bool(
-            d.get("tools", {}).get("file_checkpoints_enabled", False)
+        "tools_file_checkpoints_enabled": d.get("tools", {}).get(
+            "file_checkpoints_enabled", False
         ),
         "tools_file_checkpoints_exclude": _string_tuple(
             d.get("tools", {}).get(
@@ -233,17 +328,20 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_exec_cell_timeout": d.get("tools", {}).get(
             "exec_cell_timeout", 30
         ),
-        "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
-        "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
+        "lsp_enabled": d.get("lsp", {}).get("enabled", False),
+        "lsp_servers": _mapping_copy(
+            d.get("lsp", {}).get("servers", {}),
+            path="lsp.servers",
+        ),
         "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
             "diagnostics_timeout_s", 2.0
         ),
         "lsp_min_severity": d.get("lsp", {}).get("min_severity", "error"),
-        "lsp_tool_enabled": bool(d.get("lsp", {}).get("tool_enabled", False)),
-        "tools_apply_patch_enabled": bool(d.get("tools", {}).get("apply_patch", {}).get("enabled", False)),
+        "lsp_tool_enabled": d.get("lsp", {}).get("tool_enabled", False),
+        "tools_apply_patch_enabled": d.get("tools", {}).get("apply_patch", {}).get("enabled", False),
         "tools_edit_format": d.get("tools", {}).get("edit_format", ""),
         "effective_edit_format": "",
-        "tools_unified_envelope_enabled": bool(d.get("tools", {}).get("unified_envelope", {}).get("enabled", False)),
+        "tools_unified_envelope_enabled": d.get("tools", {}).get("unified_envelope", {}).get("enabled", False),
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
         "context_ignore_state": d.get("state", {}).get("context_ignore", False),
         "state_imperative_projection_enabled": d.get("state", {}).get("imperative_projection_enabled", False),
@@ -323,11 +421,17 @@ def _extract_config_fields(d: dict) -> dict:
         "adaptive_control_target_hurdle_mode": d.get("adaptive_control", {}).get("target_hurdle_mode", ""),
         "adaptive_control_source_hindsight_hurdle_mode": d.get("adaptive_control", {}).get("source_hindsight_hurdle_mode", ""),
         "adaptive_control_online_signal_id": d.get("adaptive_control", {}).get("online_signal_id", ""),
-        "adaptive_control_online_signal_ids": tuple(d.get("adaptive_control", {}).get("online_signal_ids", []) or ()),
+        "adaptive_control_online_signal_ids": _string_tuple(
+            d.get("adaptive_control", {}).get("online_signal_ids", []) or (),
+            path="adaptive_control.online_signal_ids",
+        ),
         "adaptive_control_intervention_target": d.get("adaptive_control", {}).get("intervention_target", ""),
         "adaptive_control_candidate_medicine_knob": d.get("adaptive_control", {}).get("candidate_medicine_knob", ""),
         "adaptive_control_candidate_config_path": d.get("adaptive_control", {}).get("candidate_config_path", ""),
-        "adaptive_control_baseline_config_paths": tuple(d.get("adaptive_control", {}).get("baseline_config_paths", []) or ()),
+        "adaptive_control_baseline_config_paths": _string_tuple(
+            d.get("adaptive_control", {}).get("baseline_config_paths", []) or (),
+            path="adaptive_control.baseline_config_paths",
+        ),
         "adaptive_control_source_static_cell_id": d.get("adaptive_control", {}).get("source_static_cell_id", ""),
         "adaptive_control_source_instance_id": d.get("adaptive_control", {}).get("source_instance_id", ""),
         "adaptive_control_source_wave_id": d.get("adaptive_control", {}).get("source_wave_id", ""),
@@ -363,27 +467,28 @@ def _extract_config_fields(d: dict) -> dict:
         "adaptive_control_branch_bundle_source_run_id": d.get("adaptive_control", {}).get("branch_bundle_source_run_id", ""),
         "adaptive_control_branch_bundle_max_per_attempt": d.get("adaptive_control", {}).get("branch_bundle_max_per_attempt", 1),
         "adaptive_control_branch_watch_policy_id": d.get("adaptive_control", {}).get("branch_watch_policy_id", "prefix_rewind_watch_v1"),
-        "harness_observation_enabled": bool(d.get("harness_observation", {}).get("enabled", False)),
-        "harness_observation_grace_activity_turns": int(d.get("harness_observation", {}).get("grace_activity_turns", 2)),
-        "harness_observation_cadence_turns": int(d.get("harness_observation", {}).get("cadence_turns", 10)),
-        "harness_observation_packet_char_budget": int(d.get("harness_observation", {}).get("packet_char_budget", 1200)),
-        "harness_observation_evidence_lines": int(d.get("harness_observation", {}).get("evidence_lines", 3)),
-        "llm_hurdle_detector_enabled": bool(d.get("llm_hurdle_detector", {}).get("enabled", False)),
-        "llm_hurdle_detector_cadence_turns": int(d.get("llm_hurdle_detector", {}).get("cadence_turns", 1)),
+        "harness_observation_enabled": d.get("harness_observation", {}).get("enabled", False),
+        "harness_observation_grace_activity_turns": d.get("harness_observation", {}).get("grace_activity_turns", 2),
+        "harness_observation_cadence_turns": d.get("harness_observation", {}).get("cadence_turns", 10),
+        "harness_observation_packet_char_budget": d.get("harness_observation", {}).get("packet_char_budget", 1200),
+        "harness_observation_evidence_lines": d.get("harness_observation", {}).get("evidence_lines", 3),
+        "llm_hurdle_detector_enabled": d.get("llm_hurdle_detector", {}).get("enabled", False),
+        "llm_hurdle_detector_cadence_turns": d.get("llm_hurdle_detector", {}).get("cadence_turns", 1),
         "llm_hurdle_detector_atlas_dictionary_path": d.get("llm_hurdle_detector", {}).get("atlas_dictionary_path", ""),
         "llm_hurdle_detector_input_contract_path": d.get("llm_hurdle_detector", {}).get("input_contract_path", ""),
         "llm_hurdle_detector_backend": d.get("adaptive_control", {}).get("detector_backend", "llm"),
         "llm_hurdle_detector_log_path": d.get("llm_hurdle_detector", {}).get("log_path", ""),
-        "llm_hurdle_detector_max_trace_events": int(d.get("llm_hurdle_detector", {}).get("max_trace_events", 80)),
-        "llm_hurdle_detector_max_field_chars": int(d.get("llm_hurdle_detector", {}).get("max_field_chars", 800)),
-        "llm_hurdle_detector_max_state_snapshots": int(d.get("llm_hurdle_detector", {}).get("max_state_snapshots", 24)),
+        "llm_hurdle_detector_max_trace_events": d.get("llm_hurdle_detector", {}).get("max_trace_events", 80),
+        "llm_hurdle_detector_max_field_chars": d.get("llm_hurdle_detector", {}).get("max_field_chars", 800),
+        "llm_hurdle_detector_max_state_snapshots": d.get("llm_hurdle_detector", {}).get("max_state_snapshots", 24),
         "llm_hurdle_detector_prompt_version": d.get(
             "llm_hurdle_detector", {}).get("prompt_version", "llm_hurdle_detector_prompt_v4"),
         # trace_nets thresholds live under [llm_hurdle_detector.trace_nets].
         # An omitted key uses the dataclass default.
         **{
-            f"trace_nets_{k}": int(
-                d.get("llm_hurdle_detector", {}).get("trace_nets", {}).get(k, _dflt))
+            f"trace_nets_{k}": d.get("llm_hurdle_detector", {}).get(
+                "trace_nets", {}
+            ).get(k, _dflt)
             for k, _dflt in (
                 ("fail_min_streak", 4), ("pass_lookback", 20),
                 ("pass_min_prior", 2), ("pass_min_gap", 2),
@@ -464,8 +569,9 @@ def _extract_config_fields(d: dict) -> dict:
         "collapse_similar_lines": _require(d, "tools", "collapse_similar_lines"),
         "bwrap_bin": _require(d, "tools", "bwrap_bin"),
         "sandbox_required": d.get("tools", {}).get("sandbox_required", False),
-        "unreadable_paths": tuple(
-            d.get("sandbox", {}).get("unreadable_paths", []) or []
+        "unreadable_paths": _string_tuple(
+            d.get("sandbox", {}).get("unreadable_paths", []) or (),
+            path="sandbox.unreadable_paths",
         ),
         "sandbox_backend": d.get("sandbox", {}).get("backend", "bwrap"),
         "sandbox_container_runtime": d.get("sandbox", {}).get(
@@ -486,14 +592,17 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "sandbox_env_allow_login_shell": sandbox_env.allow_login_shell,
         "runtime_worktree": d.get("runtime", {}).get("worktree", "off"),
-        "hooks_enabled": d.get("hooks", {}).get("enabled", False),
+        "hooks_enabled": hooks_section.get("enabled", False),
         "hooks": {
             name: copy.deepcopy(value)
-            for name, value in d.get("hooks", {}).items()
+            for name, value in hooks_section.items()
             if name != "enabled"
         },
         "max_transient_retries": _require(d, "loop", "max_transient_retries"),
-        "retry_backoff": tuple(_require(d, "loop", "retry_backoff")),
+        "retry_backoff": _integer_tuple(
+            _require(d, "loop", "retry_backoff"),
+            path="loop.retry_backoff",
+        ),
         "interrupted_turn_mode": d.get("loop", {}).get(
             "interrupted_turn_mode", "mechanical"
         ),
@@ -677,6 +786,54 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         falls back to the heuristic otherwise; a warning makes the
         silent downgrade visible.
     """
+    if not isinstance(cfg.provider, str) or cfg.provider not in {
+        "openai-compatible",
+        "anthropic",
+    }:
+        raise ValueError(
+            "config error: server.provider must be 'openai-compatible' or "
+            "'anthropic'."
+        )
+    for field_name, value in (
+        ("loop.max_turns", cfg.max_turns),
+        ("loop.max_sessions", cfg.max_sessions),
+        ("model.context_size", cfg.context_size),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                f"config error: {field_name} must be an integer >= 1."
+            )
+    for field_name, value in (
+        ("model.context_fill_ratio", cfg.context_fill_ratio),
+        ("model.max_tokens_fraction", cfg.max_tokens_fraction),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0 < float(value) <= 1
+        ):
+            raise ValueError(
+                f"config error: {field_name} must be a finite number in (0, 1]."
+            )
+    if (
+        isinstance(cfg.max_transient_retries, bool)
+        or not isinstance(cfg.max_transient_retries, int)
+        or cfg.max_transient_retries < 0
+    ):
+        raise ValueError(
+            "config error: loop.max_transient_retries must be a non-negative "
+            "integer."
+        )
+    if any(
+        isinstance(delay, bool) or not isinstance(delay, int) or delay < 0
+        for delay in cfg.retry_backoff
+    ):
+        raise ValueError(
+            "config error: loop.retry_backoff must contain only non-negative "
+            "integers."
+        )
+
     from .server.request_controls import (
         normalize_cache_affinity,
         normalize_cache_retention,
@@ -1176,3 +1333,6 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
             "config error: adaptive phase2 structured output requires "
             "adaptive_phase2_bash_task_format_enabled = true."
         )
+    # Keep this complete type backstop after path-specific validators so their
+    # established, actionable TOML-path diagnostics remain the public errors.
+    _validate_config_field_types(cfg)

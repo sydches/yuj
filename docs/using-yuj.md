@@ -29,6 +29,7 @@ Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
 | Command | What it does |
 | --- | --- |
 | `yuj setup` | Save the model connection settings for this machine. |
+| `yuj config` | Validate and explain the resolved settings without model work. |
 | `yuj models` | List models from the selected service. |
 | `yuj doctor` | Check the settings, model connection, Git, and `bwrap`. |
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
@@ -46,6 +47,42 @@ Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
 
 When you run `yuj` with no command, Yuj normally prints its help. On the first
 interactive run with no local settings file, Yuj starts interactive setup.
+
+## Inspect settings
+
+### `yuj config`
+
+Validate the complete configuration before starting a coding session:
+
+```bash
+yuj config
+yuj config --json
+```
+
+Human output shows each effective value and its winning source layer. JSON
+output uses the stable `yuj.config-inspection` schema version 1. Secret and
+environment-derived values are redacted in both modes. The command performs
+no model request and writes no session artifacts.
+
+| Option | What it does |
+| --- | --- |
+| `--json` | Write deterministic machine-readable JSON. |
+| `--config PATH`, `-c PATH` | Apply this TOML file. Repeat from left to right. |
+| `--treatment`, `--no-treatment` | Inspect the treatment or plain base. |
+| `--context NAME` | Validate this context mode. |
+| `--model NAME`, `-m NAME` | Apply this model override last. |
+| `--thinking LEVEL` | Apply this reasoning-effort override last. |
+| `--plan-mode MODE` | Apply this planning-mode override last. |
+| `--edit-format FORMAT` | Apply this profile edit-format override last. |
+| `--provider NAME` | Apply this model-service choice last. |
+| `--base-url URL` | Apply this service address last. |
+| `--api-key-env NAME` | Read the key from this variable and redact its value. |
+| `--agent NAME` | Validate this named-agent descriptor; repeat for more agents. |
+
+The command returns `0` only when resolution and validation succeed. It
+returns `1` and an actionable diagnostic otherwise. Read
+[Configuration](configuration.html#inspect-the-resolved-settings) for layer
+order, validation coverage, the JSON fields, and the redaction boundary.
 
 ## Start a task
 
