@@ -41,6 +41,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "checkpoint": ("goal", ""),
         "done": ("message", ""),
         "edit": ("path", ""),
+        "exit_plan_mode": ("message", ""),
         "exec_cell": ("source", ""),
         "get_function_details": ("names", []),
         "glob": ("path", "."),

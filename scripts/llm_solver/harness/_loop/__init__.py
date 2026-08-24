@@ -26,6 +26,7 @@ from .profile_resolution import (
     _simplify_tool_schema,
     apply_profile_to_schemas,
     bind_effective_edit_format,
+    build_plan_mode_schemas,
     resolve_effective_edit_format,
     build_tool_surface,
 )

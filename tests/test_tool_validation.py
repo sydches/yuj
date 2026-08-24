@@ -43,6 +43,7 @@ VALID_ARGUMENTS = {
         "kind": "definition", "path": "src/app.py",
         "line": 4, "character": 2,
     },
+    "exit_plan_mode": {},
     "think": {"thought": "Plan the next narrow step."},
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},

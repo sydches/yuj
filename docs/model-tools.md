@@ -36,6 +36,7 @@ person types into a terminal.
 | `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
 | `exec_cell` | `source` | None | In code mode, run Python inside the shell sandbox and return printed text. |
 | `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Present only when deferred loading is enabled. |
+| `exit_plan_mode` | None | None | Validate `.solver/plan.md` and unlock implementation tools during a required planning phase. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -51,6 +52,7 @@ schema, description, or result rule.
 | `edit` | Selected by the shipped profile's `exact` edit format. |
 | `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
+| `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `task` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
@@ -104,7 +106,30 @@ files or state directly.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
 The `done` tool is not removed by that limit. When deferred loading is on,
-`load_tools` is also not removed.
+`load_tools` is also not removed. During a required planning phase,
+`exit_plan_mode` and the exact plan-file `write` remain available regardless
+of that limit, so the phase cannot deadlock.
+
+## Required planning phase
+
+When `[loop].plan_mode = "required"`, Yuj starts with only the enabled
+inspection tools, `bash`, `write`, and `exit_plan_mode` in the model-facing
+surface. This phase surface temporarily takes precedence over edit-format,
+deferred-loading, and code-mode surfaces. The engine still checks every
+received call. `bash` must match a conservative read-only command
+classification, and `write` must target exactly `.solver/plan.md`; `edit`,
+`apply_patch`, `udiff`, other writes, unclassified or mutating shell commands,
+subagents, code cells, tool activation, and `done` are rejected without
+execution.
+
+`exit_plan_mode` has no inputs. It succeeds only when `.solver/plan.md` exists
+and contains non-whitespace text. A missing or empty file returns a unified
+plan-mode error and keeps the phase active. A successful exit records the plan
+length in the raw trace and restores the normal profile-filtered tool surface,
+including its selected edit dialect and deferred active set. The plan file does
+not count as an implementation mutation for the done guard. See
+[Configuration](configuration.html#require-a-plan-before-implementation) for
+the turn limit, CLI flag, trace events, resume rule, and state projection.
 
 ## Deferred tool loading
 

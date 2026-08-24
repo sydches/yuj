@@ -393,6 +393,7 @@ class SubagentRuntime:
                 tools_file_checkpoints_enabled=False,
                 tools_background_enabled=False,
                 injections_enabled=False,
+                plan_mode="off",
                 pre_mutation_turn_cap=0,
                 rumination_enabled=False,
                 done_guard_enabled=False,

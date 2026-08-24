@@ -25,6 +25,7 @@ from ..guardrails import Action, Decision, PASS
 from ..checkpoint_rewind import finalize_deferred_context_actions
 from ..action_metadata import action_metadata
 from ..approvals import approval_decision, approval_transport_available
+from ..plan_mode import effective_model_tool_schemas
 from .._tool_filters import resolve_tool_permission
 from ..system_log import get_system_log, provenance_for
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
@@ -167,7 +168,7 @@ def _preflight_estimate(session) -> int:
         try:
             return int(tok.count(
                 list(session.context.get_messages()),
-                tools=getattr(session, "_tool_schemas", None)))
+                tools=effective_model_tool_schemas(session)))
         except Exception as e:
             log.warning("preflight exact count failed (%s); using strategy estimate", e)
     return int(session.context.estimate_tokens())
@@ -268,6 +269,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # the turn whose tool call triggered the service.
         session._current_turn = turn
         cfg = session.cfg
+        # Freeze the planning phase for this model response.  A successful
+        # exit changes the next turn's surface, but cannot unlock a mutating
+        # sibling call that arrived in the same response.
+        plan_task_required = bool(session._plan_mode.required)
+        plan_turn_active = bool(session._plan_mode.active)
         # stop_resume delivery: the controller decided to intervene last
         # turn and requested a graceful hand-off. End before the next API
         # call; the stop-note in telemetry carries the resume payload.
@@ -496,10 +502,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # guardrails_arm_after_turn turns (earliest observed hurdle onset
         # is turn 11; the opening naturally contains probes and rereads).
         guards_armed = turn > getattr(cfg, "guardrails_arm_after_turn", 0)
-        intent_decision = turn_pre["intent_gate"](
-            session._guards, cfg,
-            turn=turn, content=content, tool_calls=tool_calls,
-        ) if guards_armed else PASS
+        intent_decision = (
+            turn_pre["intent_gate"](
+                session._guards, cfg,
+                turn=turn, content=content, tool_calls=tool_calls,
+            )
+            if guards_armed and not plan_task_required
+            else PASS
+        )
         if intent_decision.action in (
             Action.BLOCK,
             Action.END,
@@ -577,6 +587,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 session._maybe_run_advisor(turn)
                 log.info("Response truncated at turn %d (max_tokens hit), ending session", turn)
                 return SessionResult(turn, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+            if plan_turn_active:
+                log.warning(
+                    "Model stopped at turn %d while plan mode remained active; "
+                    "session ended without success",
+                    turn,
+                )
+                return SessionResult(
+                    turn,
+                    "no_tool_call",
+                    done=False,
+                    total_prompt_tokens=total_prompt,
+                    total_completion_tokens=total_completion,
+                )
             advisor_intervened = session._maybe_run_advisor(turn)
             if advisor_intervened:
                 log.info(
@@ -621,9 +644,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
 
         # ─── 5. GUARDRAIL: duplicate_guard (WARN / END tiers) ────────
         sig = tuple(_dedup_signature(tc) for tc in tool_calls)
-        dup_decision = turn_pre["duplicate_guard"](
-            session._guards, cfg, tool_calls_sig=sig
-        ) if guards_armed else PASS
+        dup_decision = (
+            turn_pre["duplicate_guard"](
+                session._guards, cfg, tool_calls_sig=sig
+            )
+            if guards_armed and not plan_turn_active
+            else PASS
+        )
         if dup_decision.action == Action.REWIND:
             session._record_pressure_event(True)
             _complete_turn_rewind(
@@ -656,9 +683,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Tighter than duplicate_guard: fires at N consecutive identical
         # signatures (default 5) with a single recovery-inject before
         # hard abort. See guardrails.loop_detect for the contract.
-        loop_decision = turn_pre["loop_detect"](
-            session._guards, cfg, tool_calls_sig=sig
-        ) if guards_armed else PASS
+        loop_decision = (
+            turn_pre["loop_detect"](
+                session._guards, cfg, tool_calls_sig=sig
+            )
+            if guards_armed and not plan_turn_active
+            else PASS
+        )
         if loop_decision.action == Action.REWIND:
             session._record_pressure_event(True)
             _complete_turn_rewind(
@@ -701,15 +732,32 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # always run sequentially — they never enter this path.
         preexecuted: dict[str, str] = {}
         turn_active_tool_names = frozenset(session.active_tool_names)
-        inactive_tool_call_ids = frozenset(
-            tc.id
-            for tc in tool_calls
-            if session.is_hidden_tool(
-                tc.name, active_names=turn_active_tool_names
+        inactive_tool_call_ids = (
+            frozenset()
+            if plan_turn_active
+            else frozenset(
+                tc.id
+                for tc in tool_calls
+                if session.is_hidden_tool(
+                    tc.name, active_names=turn_active_tool_names
+                )
             )
         )
+        plan_decisions = {
+            tc.id: session._plan_mode.check(
+                tc.name,
+                tc.arguments,
+                turn=turn,
+                active=plan_turn_active,
+            )
+            for tc in tool_calls
+        }
         pre_tool_hooks = {}
         for tc in tool_calls:
+            # A rejected planning action must not invoke host hooks, and the
+            # plan-mode error must remain the single model-facing rejection.
+            if not plan_decisions[tc.id].allowed:
+                continue
             effect = session._run_hook(
                 "pre_tool",
                 tool_call_id=tc.id,
@@ -722,13 +770,17 @@ def run_session_loop(session: "Session") -> "SessionResult":
             pre_tool_hooks[tc.id] = effect
         schema_validations = {}
         if getattr(cfg, "tools_schema_validation", "off") == "reject":
+            phase_schema_set = session.tool_schema_set_for_phase(
+                plan_mode_active=plan_turn_active
+            )
             schema_validations = {
-                tc.id: session._tool_schema_set.validate(
+                tc.id: phase_schema_set.validate(
                     tc.name, tc.arguments
                 )
                 for tc in tool_calls
                 if (
                     tc.id not in inactive_tool_call_ids
+                    and plan_decisions[tc.id].allowed
                     and not pre_tool_hooks[tc.id].blocked
                 )
             }
@@ -738,6 +790,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         for tc in tool_calls:
             if (
                 tc.id in inactive_tool_call_ids
+                or not plan_decisions[tc.id].allowed
                 or pre_tool_hooks[tc.id].blocked
             ):
                 continue
@@ -779,10 +832,12 @@ def run_session_loop(session: "Session") -> "SessionResult":
             tool_pre=tool_pre,
             tool_post=tool_post,
             observers=observers,
+            plan_mode_active=plan_turn_active,
             turn_had_pressure=turn_had_pressure,
         )
         if (
             cfg.parallel_readonly_enabled
+            and not plan_turn_active
             and len(tool_calls) > 1
             and not inactive_tool_call_ids
             and all(tc.name in _READONLY_TOOLS for tc in tool_calls)

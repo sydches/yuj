@@ -17,6 +17,7 @@ from .model_roles import (
 from .profile_resolution import (
     _resolve_token_estimator,
     bind_effective_edit_format,
+    build_plan_mode_schemas,
     build_tool_surface,
 )
 
@@ -166,8 +167,21 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
         candidate_schema_set = ToolSchemaSet.from_openai_tools(
             candidate_schemas
         )
+        candidate_plan_schemas = (
+            build_plan_mode_schemas(routed.client.cfg, routed.client)
+            if bool(getattr(routed.client.cfg, "plan_mode_enabled", False))
+            else []
+        )
+        candidate_plan_schema_set = ToolSchemaSet.from_openai_tools(
+            candidate_plan_schemas or candidate_schemas
+        )
+        request_schemas = (
+            candidate_plan_schemas
+            if bool(getattr(session._plan_mode, "active", False))
+            else candidate_schemas
+        )
         prompt_tokens, estimator = _candidate_prompt_tokens(
-            session, routed, candidate_schemas,
+            session, routed, request_schemas,
         )
         window = check_context_window(
             prompt_tokens,
@@ -189,11 +203,14 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
         # have all succeeded. Canonical context messages remain untouched.
         session.client = routed.client
         session.cfg = routed.client.cfg
+        session._plan_mode.cfg = session.cfg
         session._active_model_resolution = effective_resolution
         session._active_model_role = effective_resolution.effective_role
         session._tool_surface = candidate_surface
         session._tool_schemas = candidate_schemas
         session._tool_schema_set = candidate_schema_set
+        session._plan_tool_schemas = candidate_plan_schemas
+        session._plan_tool_schema_set = candidate_plan_schema_set
         session.context.set_token_estimator(estimator)
         session._tokenizer = None
         session._server_ctx_cache = live_context

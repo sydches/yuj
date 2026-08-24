@@ -371,6 +371,12 @@ class Session:
             registered_tool_schemas,
         )
         self._tool_schemas = self._tool_surface.active_schemas
+        from ._loop.profile_resolution import build_plan_mode_schemas
+        self._plan_tool_schemas = (
+            build_plan_mode_schemas(cfg, client)
+            if bool(getattr(cfg, "plan_mode_enabled", False))
+            else []
+        )
 
         def _redirect_event_sink(payload: dict[str, object]) -> None:
             fields = dict(payload)
@@ -519,9 +525,13 @@ class Session:
             )
             return loader_success(activation)
 
+        def _exit_plan_mode_handler(_args, _cwd, _cfg):
+            return self._plan_mode.exit(turn=self._current_turn)
+
         handlers["lsp"] = _lsp_handler
         handlers["task"] = _task_handler
         handlers["load_tools"] = _load_tools_handler
+        handlers["exit_plan_mode"] = _exit_plan_mode_handler
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
@@ -558,6 +568,9 @@ class Session:
         )
         self._tool_schema_set = ToolSchemaSet.from_openai_tools(
             self._tool_schemas
+        )
+        self._plan_tool_schema_set = ToolSchemaSet.from_openai_tools(
+            self._plan_tool_schemas or self._tool_schemas
         )
         if context_manager is not None:
             self.context: ContextManager = context_manager
@@ -653,6 +666,24 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        from .plan_mode import PlanModeController
+
+        def _plan_mode_event_sink(payload: dict[str, object]) -> None:
+            fields = dict(payload)
+            event_type = str(fields.pop("event"))
+            with self._service_event_lock:
+                self._emit(
+                    event_type,
+                    session_number=self._session_number,
+                    **fields,
+                )
+
+        self._plan_mode = PlanModeController(
+            cwd=self.cwd,
+            cfg=cfg,
+            events=self._trace_events,
+            event_sink=_plan_mode_event_sink,
+        )
         self._rewind_count = sum(
             1
             for event in self._trace_events
@@ -891,7 +922,24 @@ class Session:
     @property
     def active_tool_names(self) -> frozenset[str]:
         """Names in the current profile-filtered model-facing tool surface."""
-        return frozenset(self._tool_surface.active_names)
+        return frozenset(
+            schema["function"]["name"] for schema in self.model_tool_schemas
+        )
+
+    @property
+    def model_tool_schemas(self) -> list[dict]:
+        """Return the request surface for the current task phase."""
+        if self._plan_mode.active:
+            return self._plan_tool_schemas
+        return self._tool_schemas
+
+    def tool_schema_set_for_phase(self, *, plan_mode_active: bool):
+        """Return the validation schema set pinned to one model response."""
+        return (
+            self._plan_tool_schema_set
+            if plan_mode_active
+            else self._tool_schema_set
+        )
 
     def is_hidden_tool(
         self, name: str, *, active_names: frozenset[str] | None = None
@@ -942,6 +990,15 @@ class Session:
             ),
         )
         self._sync_tool_surface()
+        from ._loop.profile_resolution import build_plan_mode_schemas
+        self._plan_tool_schemas = (
+            build_plan_mode_schemas(effective_cfg, self.client)
+            if bool(getattr(effective_cfg, "plan_mode_enabled", False))
+            else []
+        )
+        self._plan_tool_schema_set = ToolSchemaSet.from_openai_tools(
+            self._plan_tool_schemas or self._tool_schemas
+        )
 
     @property
     def last_tool_calls(self) -> list[tuple[str, str]]:

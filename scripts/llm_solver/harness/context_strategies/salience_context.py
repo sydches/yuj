@@ -126,6 +126,8 @@ class SalienceContext(CompoundSelectiveContext):
 
     @classmethod
     def _is_mutation_item(cls, item) -> bool:
+        if isinstance(item, dict) and item.get("plan_artifact") is True:
+            return False
         if isinstance(item, dict) and item.get("source_write_like") is True:
             return True
         action = cls._item_action_text(item)

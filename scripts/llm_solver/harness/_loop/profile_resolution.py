@@ -78,6 +78,7 @@ def _apply_profile_tool_cap(
     tool_schemas: list[dict],
     client,
     *,
+    extra_immune: frozenset[str] = frozenset(),
     priority_tools: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Apply profile max_tools cap to the declared tool surface.
@@ -95,11 +96,12 @@ def _apply_profile_tool_cap(
     if max_tools is None or len(tool_schemas) <= max_tools:
         return tool_schemas
 
+    immune_names = _CAP_IMMUNE_TOOLS | extra_immune
     immune: list[dict] = []
     rest: list[dict] = []
     for schema in tool_schemas:
         name = schema.get("function", {}).get("name", "")
-        (immune if name in _CAP_IMMUNE_TOOLS else rest).append(schema)
+        (immune if name in immune_names else rest).append(schema)
 
     if priority_tools:
         prioritized = [
@@ -260,6 +262,37 @@ def _build_registered_tool_schemas(
         ),
         client,
     )
+
+
+def build_plan_mode_schemas(
+    cfg, client, tool_schemas: list[dict] | None = None,
+) -> list[dict]:
+    """Build the temporary native surface for a required planning phase.
+
+    The phase is independent of the implementation edit dialect, deferred
+    active set, and code-mode surface. The exact plan writer and explicit exit
+    remain available even when a profile declares a smaller request-tool cap.
+    """
+    if tool_schemas is None:
+        from ..schemas import get_tool_schemas
+
+        tool_schemas = get_tool_schemas(cfg.tool_desc, code_mode=False)
+    from ..plan_mode import filter_plan_mode_schemas
+
+    skills_active = _skills_active(cfg)
+    output = _apply_profile_tool_cap(
+        _apply_profile_schema_simplify(
+            filter_plan_mode_schemas(
+                _filter_disabled_tools(tool_schemas, cfg), active=True,
+            ),
+            client,
+        ),
+        client,
+        extra_immune=frozenset({"write"}),
+        priority_tools=frozenset({"read"}) if skills_active else frozenset(),
+    )
+    _require_skills_read(output, skills_active=skills_active)
+    return output
 
 
 def build_tool_surface(

@@ -259,6 +259,12 @@ _DISPATCH = {
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
     ),
+    "exit_plan_mode": lambda args, cwd, cfg: (
+        '<tool_result tool_name="exit_plan_mode" status="error" '
+        'error_kind="plan_mode" v="1">\n'
+        "Plan mode is unavailable outside a running session.\n"
+        "</tool_result>"
+    ),
     "think": lambda args, cwd, cfg: think(
         args["thought"],
         enabled=bool(getattr(cfg, "tools_think_enabled", False)),

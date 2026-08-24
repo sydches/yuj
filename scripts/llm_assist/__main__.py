@@ -100,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
             help="per-request reasoning effort",
         )
         p.add_argument(
+            "--plan-mode", choices=("off", "required"),
+            help="require an explicit .solver/plan.md before implementation",
+        )
+        p.add_argument(
             "--edit-format", choices=EDIT_FORMATS,
             help="override the selected model profile's edit dialect",
         )
@@ -183,6 +187,10 @@ def main(argv: list[str] | None = None) -> int:
     smoke_parser.add_argument(
         "--thinking", choices=THINKING_LEVELS,
         help="per-request reasoning effort",
+    )
+    smoke_parser.add_argument(
+        "--plan-mode", choices=("off", "required"),
+        help="require an explicit .solver/plan.md before implementation",
     )
     smoke_parser.add_argument(
         "--edit-format", choices=EDIT_FORMATS,
@@ -999,12 +1007,14 @@ def _transport_overrides_from_args(args) -> dict:
     base_url = getattr(args, "base_url", None)
     api_key_env = getattr(args, "api_key_env", None)
     thinking_level = getattr(args, "thinking", None)
+    plan_mode = getattr(args, "plan_mode", None)
     edit_format = getattr(args, "edit_format", None)
     if (
         not provider
         and not base_url
         and not api_key_env
         and not thinking_level
+        and not plan_mode
         and not edit_format
     ):
         return {}
@@ -1028,6 +1038,8 @@ def _transport_overrides_from_args(args) -> dict:
             )
     if thinking_level:
         overrides["thinking_level"] = thinking_level
+    if plan_mode:
+        overrides["plan_mode"] = plan_mode
     if edit_format:
         overrides["tools_edit_format"] = edit_format
     return overrides
@@ -1064,6 +1076,11 @@ def _render_provider_overlay(overrides: dict) -> str:
             lines.append("")
         value = str(overrides["thinking_level"])
         lines.extend(["[model]", f'thinking_level = "{value}"'])
+    if overrides.get("plan_mode") is not None:
+        if lines:
+            lines.append("")
+        value = str(overrides["plan_mode"])
+        lines.extend(["[loop]", f'plan_mode = "{value}"'])
     if overrides.get("tools_edit_format") is not None:
         if lines:
             lines.append("")

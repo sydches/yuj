@@ -94,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
         help="per-request reasoning effort",
     )
     parser.add_argument(
+        "--plan-mode", choices=("off", "required"),
+        help="require an explicit .solver/plan.md before implementation",
+    )
+    parser.add_argument(
         "--edit-format", choices=EDIT_FORMATS,
         help="override the selected model profile's edit dialect",
     )
@@ -198,10 +202,12 @@ def main(argv: list[str] | None = None) -> int:
             args.config
             or args.model
             or args.thinking is not None
+            or args.plan_mode is not None
             or args.edit_format is not None
         ):
             parser.error("--replay-from adopts the recording's config; "
-                         "--config/--model/--thinking/--edit-format are not "
+                         "--config/--model/--thinking/--plan-mode/"
+                         "--edit-format are not "
                          "allowed in replay mode")
         try:
             _replay_prov = load_replay_provenance(args.replay_from)
@@ -228,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
         overrides["model"] = resolve_model(args.model)
     if args.thinking is not None:
         overrides["thinking_level"] = args.thinking
+    if args.plan_mode is not None:
+        overrides["plan_mode"] = args.plan_mode
     if args.edit_format is not None:
         overrides["tools_edit_format"] = args.edit_format
     if args.port:
