@@ -310,6 +310,11 @@ constrained_decoding = "off"    # off | json_schema | grammar
 background_enabled = false
 background_max_procs = 4
 background_poll_timeout = 300  # seconds; caps each bash_poll wait
+# Python code mode. When enabled, send a compact meta-tool surface instead of
+# the full native schema catalog. Cells always fail closed unless they can run
+# inside the selected shell sandbox.
+exec_cell_enabled = false
+exec_cell_timeout = 30  # seconds; bounds the whole cell and all inner calls
 # Paginated search envelopes. When enabled, grep and glob wrap their
 # output in <search_result .../> with total/shown/page/next_page
 # attributes so the agent can check discovery scope and request

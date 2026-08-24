@@ -193,6 +193,12 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_background_poll_timeout": d.get("tools", {}).get(
             "background_poll_timeout", 300.0
         ),
+        "tools_exec_cell_enabled": d.get("tools", {}).get(
+            "exec_cell_enabled", False
+        ),
+        "tools_exec_cell_timeout": d.get("tools", {}).get(
+            "exec_cell_timeout", 30
+        ),
         "lsp_enabled": bool(d.get("lsp", {}).get("enabled", False)),
         "lsp_servers": dict(d.get("lsp", {}).get("servers", {})),
         "lsp_diagnostics_timeout_s": d.get("lsp", {}).get(
@@ -688,6 +694,23 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.background_poll_timeout must be a finite "
             "number >= 0."
+        )
+    if not isinstance(cfg.tools_exec_cell_enabled, bool):
+        raise ValueError(
+            "config error: tools.exec_cell_enabled must be a boolean."
+        )
+    if cfg.tools_lazy_loading_enabled and cfg.tools_exec_cell_enabled:
+        raise ValueError(
+            "config error: tools.lazy_loading_enabled and "
+            "tools.exec_cell_enabled cannot be enabled together."
+        )
+    if (
+        isinstance(cfg.tools_exec_cell_timeout, bool)
+        or not isinstance(cfg.tools_exec_cell_timeout, int)
+        or cfg.tools_exec_cell_timeout < 1
+    ):
+        raise ValueError(
+            "config error: tools.exec_cell_timeout must be an integer >= 1."
         )
     if cfg.sandbox_backend not in {"bwrap", "container"}:
         raise ValueError(

@@ -402,6 +402,10 @@ class Config:
     tools_background_enabled: bool = False
     tools_background_max_procs: int = 4
     tools_background_poll_timeout: float = 300.0
+    # Code mode replaces the native schema catalog with three meta-tools and
+    # executes model-written Python inside the selected fail-closed sandbox.
+    tools_exec_cell_enabled: bool = False
+    tools_exec_cell_timeout: int = 30
     # First-class shell sandbox backend. Container mode creates one ephemeral
     # Docker/Podman container per command and preserves the absolute cwd.
     sandbox_backend: str = "bwrap"

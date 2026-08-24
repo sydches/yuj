@@ -1,0 +1,1 @@
+Run Python in Yuj's shell sandbox with injected read, grep, glob, list_definitions, and bash functions. Print only the text needed in the result.

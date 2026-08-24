@@ -143,6 +143,8 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[tools].exec_cell_enabled` | Replace the native tool schemas with the code-mode meta surface. Off by default. |
+| `[tools].exec_cell_timeout` | Bound one Python cell, including all inner calls, in seconds. |
 | `[injections].enabled` | Load Markdown injection rules from `[injections].dir`. Off by default. |
 | `[injections].dir` | Select the task-relative rule directory. Defaults to `.harness/injections`. |
 | `[injections].path_rules_enabled` | Match rule `paths` globs against executed file-tool targets. Off by default and requires `[injections].enabled = true`. |
@@ -440,6 +442,10 @@ lazy_loading_enabled = true
 active_default = ["bash", "read", "edit", "glob", "grep", "done"]
 ```
 
+Deferred loading and code mode are alternative schema-reduction modes. Yuj
+rejects a configuration that enables both `lazy_loading_enabled` and
+`exec_cell_enabled` instead of silently choosing one surface.
+
 Yuj first applies ordinary tool enable switches and the selected model
 profile's schema simplification. It keeps every resulting schema registered,
 then sends only the names in `active_default`, plus the cap-immune
@@ -609,6 +615,47 @@ normal use.
 The paper runtime files set the tokenizer for each reported model. Apply the
 files in the [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
 when you reproduce an experiment.
+
+### Run a sandboxed Python cell
+
+Code mode is off by default:
+
+```toml
+[tools]
+exec_cell_enabled = true
+exec_cell_timeout = 30
+```
+
+When enabled, Yuj sends `list_functions`, `get_function_details`,
+`exec_cell`, and `done` instead of the full native tool-schema catalog.
+`list_functions` returns the names available inside a cell.
+`get_function_details` returns the selected input schemas on demand. This
+keeps the initial request smaller while preserving exact function details.
+
+`exec_cell` runs Python with five injected functions: `read`, `grep`, `glob`,
+`list_definitions`, and `bash`. Each function returns text. Print the final
+text that the model needs from the cell. An injected call re-enters the normal
+tool dispatcher, including shell quirks, output filters, secret redaction,
+the unified result envelope, repository ignore policy, and configured
+permission rules. Repository-wide `list_definitions` still requires
+`ast_search_enabled = true`.
+
+The Python process always uses the selected shell sandbox and the same
+command environment, read-only skill roots, and unreadable-path masks as
+`bash`. It fails closed when the sandbox is disabled or cannot start, even
+when ordinary shell settings would permit an unsandboxed fallback. The
+timeout covers the whole cell and all inner calls. A cell cannot start a
+background shell process.
+
+The raw trace stores the complete accepted cell source and its combined
+stdout/stderr byte and character counts. Every injected call is a normal
+`tool_call` child row with `parent_tool_call_id` and `cell_inner_index`. The
+ordinary deterministic state writer projects those child rows as tool steps;
+it does not run or reinterpret the cell source.
+
+Profile schema simplification still applies to the four code-mode tools. The
+fixed code-mode surface is kept intact even when a profile's native-tool cap
+is smaller, because a partial discovery/execution surface cannot run a cell.
 
 ## Configure auxiliary model roles
 

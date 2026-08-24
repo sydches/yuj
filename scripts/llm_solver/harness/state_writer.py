@@ -527,7 +527,7 @@ def project(events: list[dict], *, max_result_chars: int,
             # it. Recognising the harness-generated gate marker is not
             # task parsing — the harness wrote it.
             blocked = ev.get("gate_blocked", is_gate_blocked(result))
-            trace.append({
+            projected_step = {
                 "step": step,
                 "session": ev.get("session_number"),
                 "turn": ev.get("turn_number"),
@@ -542,7 +542,14 @@ def project(events: list[dict], *, max_result_chars: int,
                 "pass_fail": str(ev.get("pass_fail") or ""),
                 "output_sha256": str(ev.get("output_sha256") or ""),
                 "output_full_path": str(ev.get("output_full_path") or ""),
-            })
+            }
+            if ev.get("parent_tool_call_id"):
+                projected_step["parent_tool_call_id"] = str(
+                    ev["parent_tool_call_id"]
+                )
+            if ev.get("cell_inner_index") is not None:
+                projected_step["cell_inner_index"] = ev["cell_inner_index"]
+            trace.append(projected_step)
             state["current_attempt"] = action
             # Evidence: every bash or run_tests call that actually ran (not
             # gate-blocked) is a verification attempt. The verdict comes from

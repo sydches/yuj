@@ -109,6 +109,11 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
     TraceEventSpec(
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
+        frozenset({
+            "parent_tool_call_id", "cell_inner_index", "cell_source",
+            "combined_output_chars", "combined_output_bytes",
+            "inner_call_count",
+        }),
     ),
     TraceEventSpec(
         "tools_activated",
@@ -326,7 +331,10 @@ def write_trace(session, entry: dict) -> None:
     recording, and the replay-stop capture fires when the stop turn's event
     is written (docs/replay_mode_spec.md).
     """
-    if entry.get("event") == "tool_call":
+    if (
+        entry.get("event") == "tool_call"
+        and not entry.get("parent_tool_call_id")
+    ):
         _verify = getattr(getattr(session, "client", None), "verify_executed_turn", None)
         if _verify is not None:
             _verify(entry)

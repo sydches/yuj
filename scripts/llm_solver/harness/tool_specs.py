@@ -23,6 +23,7 @@ class ToolSpec:
     cap_immune: bool = False
     native_envelope_prefix: str | None = None
     schema_order: int | None = None
+    schema_surface: str = "native"
 
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
@@ -91,6 +92,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "done",
         cap_immune=True,
         schema_order=15,
+        schema_surface="both",
     ),
     ToolSpec(
         "run_tests",
@@ -112,6 +114,27 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         native_envelope_prefix="<apply_patch",
         schema_order=12,
     ),
+    ToolSpec(
+        "list_functions",
+        profile_gate_attr="tools_exec_cell_enabled",
+        cap_immune=True,
+        schema_order=0,
+        schema_surface="code",
+    ),
+    ToolSpec(
+        "get_function_details",
+        profile_gate_attr="tools_exec_cell_enabled",
+        cap_immune=True,
+        schema_order=1,
+        schema_surface="code",
+    ),
+    ToolSpec(
+        "exec_cell",
+        profile_gate_attr="tools_exec_cell_enabled",
+        cap_immune=True,
+        schema_order=2,
+        schema_surface="code",
+    ),
     # Compatibility names can appear in older traces or model profiles even
     # though the active public schema no longer declares handlers for them.
     ToolSpec(
@@ -130,15 +153,39 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
 _ACTIVE_TOOL_SPECS = tuple(spec for spec in TOOL_SPECS if spec.active)
 
 ACTIVE_TOOL_NAMES = tuple(spec.name for spec in _ACTIVE_TOOL_SPECS)
-SCHEMA_TOOL_NAMES = tuple(
-    spec.name
-    for spec in sorted(
-        _ACTIVE_TOOL_SPECS,
-        key=lambda item: (
-            item.schema_order if item.schema_order is not None else 10_000,
-            item.name,
-        ),
+
+
+def _schema_tool_names(surface: str) -> tuple[str, ...]:
+    return tuple(
+        spec.name
+        for spec in sorted(
+            (
+                item for item in _ACTIVE_TOOL_SPECS
+                if item.schema_surface in {surface, "both"}
+            ),
+            key=lambda item: (
+                item.schema_order if item.schema_order is not None else 10_000,
+                item.name,
+            ),
+        )
     )
+
+
+SCHEMA_TOOL_NAMES = _schema_tool_names("native")
+CODE_MODE_SCHEMA_TOOL_NAMES = _schema_tool_names("code")
+DECLARED_SCHEMA_TOOL_NAMES = (
+    *SCHEMA_TOOL_NAMES,
+    *(
+        name for name in CODE_MODE_SCHEMA_TOOL_NAMES
+        if name not in SCHEMA_TOOL_NAMES
+    ),
+)
+EXEC_CELL_API_TOOL_NAMES = (
+    "read",
+    "grep",
+    "glob",
+    "list_definitions",
+    "bash",
 )
 PARALLEL_READ_SAFE_TOOL_NAMES = frozenset(
     spec.name for spec in _ACTIVE_TOOL_SPECS if spec.parallel_read_safe
@@ -175,6 +222,9 @@ __all__ = [
     "ACTIVE_TOOL_NAMES",
     "ACTION_WRITE_LIKE_TOOL_NAMES",
     "CAP_IMMUNE_TOOL_NAMES",
+    "CODE_MODE_SCHEMA_TOOL_NAMES",
+    "DECLARED_SCHEMA_TOOL_NAMES",
+    "EXEC_CELL_API_TOOL_NAMES",
     "GUARDRAIL_MUTATION_TOOL_NAMES",
     "NATIVE_ENVELOPE_PREFIXES",
     "PARALLEL_READ_SAFE_TOOL_NAMES",

@@ -1,6 +1,6 @@
 """Agentic loop — Session (inner) + solve_task (outer)."""
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
@@ -128,7 +128,7 @@ from ._loop import (  # noqa: F401
     _record_session_start_costs, _resolve_profile,
     _resolve_token_estimator, _sanitize_runner_timing,
     _simplify_tool_schema, _split_bash_segments,
-    _summarize_args, _truncate_focus_display, _truncate_for_trace,
+    _truncate_focus_display, _truncate_for_trace,
     _truncate_pretest_output, build_context_manager, build_resume_prompt,
     run_pretest,
 )
@@ -307,7 +307,14 @@ class Session:
         # Monotonic bash counter for sink filenames (.tool_output/<sess>_<N>.log)
         self._sink_counter: int = 0
         self._tool_surface = build_tool_surface(
-            cfg, client, get_tool_schemas(cfg.tool_desc)
+            cfg,
+            client,
+            get_tool_schemas(
+                cfg.tool_desc,
+                code_mode=bool(
+                    getattr(cfg, "tools_exec_cell_enabled", False)
+                ),
+            ),
         )
         self._tool_schemas = self._tool_surface.active_schemas
 
@@ -442,6 +449,11 @@ class Session:
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
+        from ._loop.exec_cell_runtime import build_session_exec_cell_handler
+
+        handlers["exec_cell"] = build_session_exec_cell_handler(
+            self, dispatch_getter=lambda: dispatch
+        )
         from .checkpoint_rewind import build_session_tool_handlers
         handlers.update(build_session_tool_handlers(self))
         self._tool_registry = ToolRegistry(handlers=handlers)

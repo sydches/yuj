@@ -180,6 +180,22 @@ They can reach anything that your account can reach.
 The approval check still pauses before specific risky commands. It does not
 form a general security boundary.
 
+## Python code mode
+
+An enabled `exec_cell` uses this same selected sandbox, environment, writable
+task directory, network boundary, enabled read-only skill roots, and
+unreadable-path masks. Unlike ordinary
+`bash` with `sandbox_required = false`, a Python cell never degrades to host
+execution: it returns an error when the sandbox is off, missing, or unable to
+start. Its injected `read`, `grep`, `glob`, `list_definitions`, and `bash`
+functions call back into the host dispatcher; the model-written Python itself
+remains inside the sandbox for the whole cell.
+
+`[tools].exec_cell_timeout` bounds the process and its inner calls. The cell
+runner also arms an in-sandbox timer so a disconnected container client cannot
+leave model code running. The escape-attempt checks below apply to cell Python
+as well as shell commands.
+
 ## Separate model work from Yuj records
 
 The sandbox controls shell commands that the model asks Yuj to run.

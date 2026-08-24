@@ -152,7 +152,7 @@ def _skills_active(cfg) -> bool:
 def _require_skills_read(tool_schemas: list[dict], *, skills_active: bool) -> None:
     """Fail when a profile cap removed the only skill-body loading seam."""
     if skills_active and not any(
-        schema.get("function", {}).get("name", "") == "read"
+        schema.get("function", {}).get("name", "") in {"read", "exec_cell"}
         for schema in tool_schemas
     ):
         raise ValueError(
@@ -189,7 +189,12 @@ def _build_registered_tool_schemas(
     if tool_schemas is None:
         from ..schemas import get_tool_schemas
 
-        tool_schemas = get_tool_schemas(cfg.tool_desc)
+        tool_schemas = get_tool_schemas(
+            cfg.tool_desc,
+            code_mode=bool(
+                getattr(cfg, "tools_exec_cell_enabled", False)
+            ),
+        )
 
     return _apply_profile_schema_simplify(
         _filter_disabled_tools(tool_schemas, cfg),
@@ -204,6 +209,12 @@ def build_tool_surface(
     from ..tool_loading import ToolSurface
 
     lazy = bool(getattr(cfg, "tools_lazy_loading_enabled", False))
+    code_mode = bool(getattr(cfg, "tools_exec_cell_enabled", False))
+    if lazy and code_mode:
+        raise ValueError(
+            "tools.lazy_loading_enabled and tools.exec_cell_enabled "
+            "cannot be enabled together"
+        )
     registered = _build_registered_tool_schemas(cfg, client, tool_schemas)
     if not lazy:
         skills_active = _skills_active(cfg)
