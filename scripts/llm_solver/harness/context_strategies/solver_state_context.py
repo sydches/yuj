@@ -21,7 +21,12 @@ from ..checkpoint_rewind import preserve_rewind_reports
 
 
 from ._solver_state_dedup import apply_dedup
-from ._solver_state_format import format_list, format_state, format_trace
+from ._solver_state_format import (
+    format_list,
+    format_state,
+    format_todo_section,
+    format_trace,
+)
 # Re-exports so existing imports `from .solver_state_context import _TEST_PREFIXES`
 # / `_classify_cmd` / `_dedup_message` / `_extract_error_snippet` keep working.
 from ._solver_state_helpers import (
@@ -30,6 +35,7 @@ from ._solver_state_helpers import (
 )
 from ._solver_state_io import prepopulate_from_trace as _prepopulate_from_trace
 from ._metadata import (
+    STATEFUL_BUDGET_CONFIG_ATTRS,
     STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
     STATEFUL_SECTION_LABELS,
     STATEFUL_SECTION_ORDER,
@@ -62,6 +68,7 @@ class SolverStateContext(ContextManager):
         trace_stub_chars: int,
         min_turns: int,
         suffix: str,
+        todos_char_budget: int = 2000,
         ignore_state: bool = False,
         token_estimator: Callable[[list[dict]], int] = chars_div_4,
     ):
@@ -75,6 +82,7 @@ class SolverStateContext(ContextManager):
         self._trace_stub_chars = trace_stub_chars
         self._min_turns = min_turns
         self._suffix = suffix
+        self._todos_char_budget = todos_char_budget
         self._ignore_state = ignore_state
 
         # Internal state
@@ -274,6 +282,7 @@ class SolverStateContext(ContextManager):
         "state": "",
         "trace": "",
         "evidence": "",
+        "todos": "",
     }
 
     def _get_solver_files(self, solver_dir: Path) -> dict[str, str]:
@@ -306,6 +315,9 @@ class SolverStateContext(ContextManager):
             "state": format_state(data.get("state")),
             "trace": format_trace(data.get("trace", []), self._trace_lines, self._trace_stub_chars),
             "evidence": format_list(data.get("evidence", []), self._evidence_lines),
+            "todos": format_todo_section(
+                data.get("todos", []), self._todos_char_budget
+            ),
         }
         return self._file_cache
 
@@ -317,6 +329,11 @@ class SolverStateContext(ContextManager):
 
     def _format_list(self, items, max_items: int) -> str:
         return format_list(items, max_items)
+
+    def _render_state_suffix(self, files: dict[str, str]) -> str:
+        # `files["todos"]` is already bounded including its section header.
+        parts = [files.get("todos", ""), self._suffix]
+        return "\n\n".join(part for part in parts if part)
 
     def prepopulate_from_trace(self) -> int:
         return _prepopulate_from_trace(
@@ -382,8 +399,9 @@ class SolverStateContext(ContextManager):
         if tool_results:
             parts.append(tool_results)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        suffix = self._render_state_suffix(files)
+        if suffix:
+            parts.append(suffix)
 
         return [
             {"role": "system", "content": self._system_content},
@@ -408,5 +426,6 @@ CONTEXT_METADATA = ContextModeMetadata(
     file_freshness="snapshot",
     injection_support="buried_in_projection",
     state_ignored_when_context_ignore_state=True,
+    budget_config_attrs=STATEFUL_BUDGET_CONFIG_ATTRS,
     constructor_config_attrs=STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
 )

@@ -34,6 +34,7 @@ from ._tools.read import read
 from ._tools.run_tests import run_tests
 from ._tools.udiff import udiff_tool
 from ._tools.write import write
+from ._tools.write_todos import write_todos
 # Cross-tool helpers (imported by tests as `from harness.tools import _resolve`)
 from ._tools._common import _resolve, _xml_attr
 # Sandbox runner — re-exported here so tests' `mock.patch.object(tools_mod,
@@ -160,6 +161,15 @@ def _effective_command_environment(cfg: Config) -> tuple[dict[str, str], bool]:
     return policy.resolve(), policy.allow_login_shell
 
 
+def _dispatch_write_todos(args, _cwd, cfg):
+    if not bool(getattr(cfg, "tools_todos_enabled", False)):
+        return "ERROR: write_todos tool is disabled (tools.todos_enabled=false)"
+    return write_todos(
+        args.get("todos"),
+        max_items=getattr(cfg, "tools_todos_max_items", 20),
+    )
+
+
 def _dispatch_list_functions(args, cwd, cfg):
     if not bool(getattr(cfg, "tools_exec_cell_enabled", False)):
         return "ERROR: code mode is disabled"
@@ -242,6 +252,7 @@ _DISPATCH = {
         cwd=cwd, timeout=cfg.grep_timeout,
         page=int(args.get("page", 1)), cfg=cfg,
     ),
+    "write_todos": _dispatch_write_todos,
     "checkpoint": lambda args, cwd, cfg: unavailable_tool_result("checkpoint"),
     "rewind": lambda args, cwd, cfg: unavailable_tool_result("rewind"),
     "lsp": lambda args, cwd, cfg: (
@@ -532,6 +543,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     applied_operations = tuple(getattr(result, "applied_operations", ()))
     raw_exit_status = getattr(result, "exit_status", None)
     raw_timed_out = bool(getattr(result, "timed_out", False))
+    canonical_todos = getattr(result, "todos", None)
+    if execution_metadata is not None and canonical_todos is not None:
+        execution_metadata["todos"] = [dict(item) for item in canonical_todos]
     exec_cell_metadata = getattr(result, "trace_metadata", None)
 
     # Update the mechanical read ledger only after an operation actually

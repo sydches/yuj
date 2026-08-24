@@ -14,6 +14,7 @@ Schema (target of the projection, consumed by SolverStateContext):
       "state":     {"current_attempt": str, "last_verify": str,
                      "next_action": str, "last_rewind": object?,
                      "rewind_report": object?},
+      "todos":     [{"description": str, "status": str}, ...],
       "trace":     [{"step": int, "session": int, "turn": int, "reasoning": str,
                      "action": str, "result": str, "next": str,
                      "gate_blocked": bool, "write_like": bool,
@@ -87,6 +88,7 @@ because the model is its reader:
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections import Counter
@@ -511,6 +513,7 @@ def project(events: list[dict], *, max_result_chars: int,
     raw_events = events
     logical_events = active_events(raw_events)
     state: dict = {}
+    todos: list[dict] = []
     trace: list[dict] = []
     evidence: list[dict] = []
     tools: dict = {
@@ -612,6 +615,12 @@ def project(events: list[dict], *, max_result_chars: int,
             if "hook_outcome" in ev:
                 last_compaction["hook_outcome"] = ev.get("hook_outcome")
             state["last_compaction"] = last_compaction
+        elif et == "todos":
+            # Model-authored planning content enters state only through this
+            # explicit trace event. Each event replaces the whole list; no
+            # tool-call summary or prior state.json value is merged into it.
+            latest = ev.get("todos")
+            todos = copy.deepcopy(latest) if isinstance(latest, list) else []
         elif et == "session_start" and "active_tools" in ev:
             tools = {
                 "lazy_loading_enabled": bool(
@@ -691,6 +700,7 @@ def project(events: list[dict], *, max_result_chars: int,
         # without descending into the existing sections.
         "meta": meta,
         "state": state,
+        "todos": todos,
         "tools": tools,
         "trace": trace,
         "gates": [],
@@ -707,11 +717,25 @@ def project_from_trace(trace_path: Path, *, max_result_chars: int,
     """Load `.trace.jsonl` and project it. Missing file → empty schema."""
     trace_path = Path(trace_path)
     if not trace_path.is_file():
-        return {"state": {"current_attempt": "", "last_verify": "", "next_action": ""},
-                "tools": {"lazy_loading_enabled": False, "active_limit": None,
-                          "registered": [],
-                          "active": [], "activations": []},
-                "trace": [], "gates": [], "evidence": [], "inference": []}
+        return {
+            "state": {
+                "current_attempt": "",
+                "last_verify": "",
+                "next_action": "",
+            },
+            "todos": [],
+            "tools": {
+                "lazy_loading_enabled": False,
+                "active_limit": None,
+                "registered": [],
+                "active": [],
+                "activations": [],
+            },
+            "trace": [],
+            "gates": [],
+            "evidence": [],
+            "inference": [],
+        }
     events = []
     with open(trace_path) as f:
         for line in f:

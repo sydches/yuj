@@ -1208,6 +1208,7 @@ class SalienceContext(CompoundSelectiveContext):
         self,
         *,
         state_text: str,
+        suffix_text: str,
         trace: list,
         evidence: list,
         trace_limit: int,
@@ -1259,8 +1260,8 @@ class SalienceContext(CompoundSelectiveContext):
         if tool_results:
             parts.append(tool_results)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        if suffix_text:
+            parts.append(suffix_text)
         return parts
 
     def _messages_from_parts(self, parts: list[str]) -> list[dict]:
@@ -1273,6 +1274,7 @@ class SalienceContext(CompoundSelectiveContext):
         self,
         *,
         state_text: str,
+        suffix_text: str,
         trace: list,
         evidence: list,
     ) -> list[dict]:
@@ -1284,6 +1286,7 @@ class SalienceContext(CompoundSelectiveContext):
         while True:
             messages = self._messages_from_parts(self._build_parts(
                 state_text=state_text,
+                suffix_text=suffix_text,
                 trace=trace,
                 evidence=evidence,
                 trace_limit=trace_limit,
@@ -1324,6 +1327,7 @@ class SalienceContext(CompoundSelectiveContext):
 
         return self._bounded_projection(
             state_text=files["state"],
+            suffix_text=self._render_state_suffix(files),
             trace=raw_trace,
             evidence=raw_evidence,
         )

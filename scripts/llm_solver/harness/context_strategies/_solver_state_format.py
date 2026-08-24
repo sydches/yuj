@@ -73,3 +73,43 @@ def format_list(items, max_items: int) -> str:
         else:
             lines.append(str(x))
     return "\n".join(lines)
+
+
+def format_todo_section(todos, max_chars: int) -> str:
+    """Render a bounded, line-safe todo block for the per-turn suffix."""
+    if not isinstance(todos, list) or not todos or max_chars <= 0:
+        return ""
+    lines: list[str] = []
+    for item in todos:
+        if not isinstance(item, dict):
+            continue
+        description = " ".join(str(item.get("description") or "").split())
+        status = str(item.get("status") or "")
+        if description and status:
+            lines.append(f"- [{status}] {description}")
+    if not lines:
+        return ""
+
+    rendered = "=== Todos ===\n" + "\n".join(lines)
+    if len(rendered) <= max_chars:
+        return rendered
+    marker = "\n... [todo list truncated]"
+    if max_chars <= len(marker):
+        return rendered[:max_chars]
+    return rendered[: max_chars - len(marker)].rstrip() + marker
+
+
+def format_state_suffix(
+    suffix: str,
+    todos,
+    *,
+    todo_char_budget: int,
+) -> str:
+    """Combine the bounded projected todo block with the configured suffix."""
+    parts = []
+    todo_section = format_todo_section(todos, todo_char_budget)
+    if todo_section:
+        parts.append(todo_section)
+    if suffix:
+        parts.append(suffix)
+    return "\n\n".join(parts)

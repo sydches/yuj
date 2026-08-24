@@ -35,6 +35,7 @@ from ..._shared.classification import classify_outcome as _classify_outcome
 from ..edit_operations import edit_operations
 from ..tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 from ._working_set import WorkingSet, GateSlot
+from ._solver_state_format import format_state_suffix
 from ._working_set_baseline_helpers import (  # noqa: F401
     _clean_reasoning, _cmd_display, _cmd_text, _extract_action_target,
     _extract_focus_target_from_command, _extract_test_target_from_action,
@@ -119,6 +120,7 @@ class WorkingSetBaselineContext(ContextManager):
         trace_lines: int | None = None,
         evidence_lines: int | None = None,
         suffix: str = "",
+        todos_char_budget: int = 2000,
         use_solver_state: bool = False,
         style: str = "generic",
         contract: str = "baseline",
@@ -140,6 +142,7 @@ class WorkingSetBaselineContext(ContextManager):
         self._trace_lines = trace_lines
         self._evidence_lines = evidence_lines
         self._suffix = suffix
+        self._todos_char_budget = todos_char_budget
         self._use_solver_state = use_solver_state
         self._style = style
         self._contract = contract
@@ -393,6 +396,17 @@ class WorkingSetBaselineContext(ContextManager):
     def _has_solver_state(self) -> bool:
         return self._use_solver_state and bool(self._load_state_json())
 
+    def _render_state_suffix(self) -> str:
+        todos = []
+        if self._use_solver_state:
+            state = self._load_state_json()
+            todos = state.get("todos", []) if isinstance(state, dict) else []
+        return format_state_suffix(
+            self._suffix,
+            todos,
+            todo_char_budget=self._todos_char_budget,
+        )
+
     # -- delegating methods (per-concern logic in sibling modules) ---
     # Kept as one-liners so subclass overrides still work; logic lives in
     # _working_set_baseline_{state,focus,recovery,evidence}.py.
@@ -522,8 +536,9 @@ class WorkingSetBaselineContext(ContextManager):
             parts.append(f"{section.title}\n{text}")
             remaining -= min(len(text), allocated)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        suffix = self._render_state_suffix()
+        if suffix:
+            parts.append(suffix)
 
         return [
             {"role": "system", "content": self._system_content},

@@ -308,6 +308,11 @@ ast_search_max_rows = 1000
 # profile capability and otherwise fall back to runtime validation.
 schema_validation = "off"       # off | reject
 constrained_decoding = "off"    # off | json_schema | grammar
+# Session-scoped model-authored task list. Disabled means the schema is not
+# sent to the model. A successful call replaces the whole list and emits a
+# trace event; only the harness projects that event into state.json.
+todos_enabled = false
+todos_max_items = 20
 # Session-scoped asynchronous shell commands. Polls are the only model-facing
 # output channel; every live child is terminated when the session ends.
 background_enabled = false
@@ -613,6 +618,10 @@ resume_last_n_actions = 3
 # leaving harness/scorer access unchanged. Earlier file names take precedence.
 ignore_file_enabled = true
 ignore_file_names = [".yujignore"]
+# Character budget for the complete `=== Todos ===` block rendered beside the
+# normal state-context suffix. This bounds model-authored descriptions without
+# changing the canonical list stored in the trace/state projection.
+todos_char_budget = 2000
 
 # Optional host paths to hide inside bwrap. Patterns may be absolute and may
 # contain `**`. Prefix a pattern with `optional:` when absence is acceptable.

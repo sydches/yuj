@@ -184,6 +184,7 @@ def test_tool_specs_drive_surface_metadata():
         "lsp": "lsp_tool_enabled",
         "bash_poll": "tools_background_enabled",
         "bash_kill": "tools_background_enabled",
+        "write_todos": "tools_todos_enabled",
         "list_functions": "tools_exec_cell_enabled",
         "get_function_details": "tools_exec_cell_enabled",
         "exec_cell": "tools_exec_cell_enabled",
@@ -218,6 +219,9 @@ def test_trace_event_specs_drive_compatibility_views():
     }
     assert TRACE_EVENT_REQUIRED_FIELDS["tool_call"] == frozenset(
         {"session_number", "turn_number", "tool_name"}
+    )
+    assert TRACE_EVENT_REQUIRED_FIELDS["todos"] == frozenset(
+        {"session_number", "turn_number", "todos"}
     )
 
 

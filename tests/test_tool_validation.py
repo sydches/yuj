@@ -34,6 +34,9 @@ VALID_ARGUMENTS = {
     },
     "glob": {"pattern": "**/*.py", "path": "src", "page": 1},
     "grep": {"pattern": "value", "path": "src", "glob": "*.py", "page": 2},
+    "write_todos": {
+        "todos": [{"description": "Run focused tests", "status": "in_progress"}],
+    },
     "checkpoint": {"goal": "Inspect the implementation."},
     "rewind": {"report": "The implementation uses a safe boundary."},
     "lsp": {
@@ -75,6 +78,12 @@ INVALID_ARGUMENTS = (
     ("glob", {"pattern": "*.py", "page": "one"}, "$.page", "type"),
     ("grep", {}, "$.pattern", "required"),
     ("grep", {"pattern": "x", "path": 3}, "$.path", "type"),
+    (
+        "write_todos",
+        {"todos": [{"description": "x", "status": "unknown"}]},
+        "$.todos[0].status",
+        "enum",
+    ),
     ("checkpoint", {}, "$.goal", "required"),
     ("checkpoint", {"goal": 7}, "$.goal", "type"),
     ("rewind", {}, "$.report", "required"),

@@ -171,6 +171,19 @@ def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> 
     )
 
 
+def _emit_todos_event(tc, state: "TurnState", execution_metadata: dict) -> None:
+    """Persist one successful whole-list replacement as raw trace content."""
+    if tc.name != "write_todos" or "todos" not in execution_metadata:
+        return
+    state.session._emit(
+        "todos",
+        session_number=state.session._session_number,
+        turn_number=state.turn,
+        tool_call_id=tc.id,
+        todos=execution_metadata["todos"],
+    )
+
+
 def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
     """Run automatic diagnostics after a successful edit-dialect call."""
     from ..._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
@@ -976,6 +989,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         **({"cmd_pre_rewrite": _truncate_for_trace(_pre, cfg.trace_args_summary_chars)} if _pre else {}),
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
     )
+    if call_executed:
+        _emit_todos_event(tc, state, execution_metadata)
     _capture_workspace_checkpoint(
         tc, state, executed=call_executed,
     )

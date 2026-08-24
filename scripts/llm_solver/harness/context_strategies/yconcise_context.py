@@ -10,7 +10,11 @@ from collections.abc import Callable
 
 from ..context import chars_div_4
 from ._working_set_baseline import WorkingSetBaselineContext
-from ._metadata import YWORKING_SET_CONSTRUCTOR_CONFIG_ATTRS, ContextModeMetadata
+from ._metadata import (
+    STATEFUL_BUDGET_CONFIG_ATTRS,
+    YWORKING_SET_CONSTRUCTOR_CONFIG_ATTRS,
+    ContextModeMetadata,
+)
 
 
 class YconciseContext(WorkingSetBaselineContext):
@@ -29,6 +33,7 @@ class YconciseContext(WorkingSetBaselineContext):
         min_turns: int,
         args_summary_chars: int,
         suffix: str,
+        todos_char_budget: int = 2000,
         inspect_repeat_threshold: int = 0,
         token_estimator: Callable[[list[dict]], int] = chars_div_4,
     ):
@@ -46,6 +51,7 @@ class YconciseContext(WorkingSetBaselineContext):
             trace_lines=trace_lines,
             evidence_lines=evidence_lines,
             suffix=suffix,
+            todos_char_budget=todos_char_budget,
             use_solver_state=True,
             style="yuj",
             inspect_repeat_threshold=inspect_repeat_threshold,
@@ -68,5 +74,6 @@ CONTEXT_METADATA = ContextModeMetadata(
     ),
     file_freshness="live",
     injection_support="buried_in_projection",
+    budget_config_attrs=STATEFUL_BUDGET_CONFIG_ATTRS,
     constructor_config_attrs=YWORKING_SET_CONSTRUCTOR_CONFIG_ATTRS,
 )

@@ -49,6 +49,7 @@ class TestProjectEmpty:
                 "edit_format": "",
             },
             "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
+            "todos": [],
             "tools": {
                 "lazy_loading_enabled": False,
                 "active_limit": None,
@@ -620,7 +621,13 @@ class TestWriteStateFromTrace:
         data = json.loads(state_path.read_text())
         # The output includes the top-level meta block.
         assert set(data.keys()) == {
-            "meta", "state", "tools", "trace", "gates", "evidence",
+            "meta",
+            "state",
+            "todos",
+            "tools",
+            "trace",
+            "gates",
+            "evidence",
             "inference",
         }
         assert set(data["state"].keys()) >= {"current_attempt", "last_verify", "next_action"}

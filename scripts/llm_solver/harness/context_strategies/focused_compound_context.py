@@ -134,8 +134,9 @@ class FocusedCompoundContext(CompoundContext):
         if tool_results:
             parts.append(tool_results)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        suffix = self._render_state_suffix(files)
+        if suffix:
+            parts.append(suffix)
 
         return [
             {"role": "system", "content": self._system_content},

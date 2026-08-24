@@ -18,8 +18,13 @@ BASE_BUDGET_CONFIG_ATTRS = (
     "trace_stub_chars",
 )
 
-FOCUSED_COMPOUND_BUDGET_CONFIG_ATTRS = (
+STATEFUL_BUDGET_CONFIG_ATTRS = (
     *BASE_BUDGET_CONFIG_ATTRS,
+    "state_todos_char_budget",
+)
+
+FOCUSED_COMPOUND_BUDGET_CONFIG_ATTRS = (
+    *STATEFUL_BUDGET_CONFIG_ATTRS,
     "focused_compound_trace_lines",
     "focused_compound_evidence_lines",
     "focused_compound_recent_tool_results_chars",
@@ -27,7 +32,7 @@ FOCUSED_COMPOUND_BUDGET_CONFIG_ATTRS = (
 )
 
 COMPOUND_SELECTIVE_BUDGET_CONFIG_ATTRS = (
-    *BASE_BUDGET_CONFIG_ATTRS,
+    *STATEFUL_BUDGET_CONFIG_ATTRS,
     "compound_selective_trace_lines",
     "compound_selective_unresolved_evidence_lines",
     "compound_selective_resolved_evidence_lines",
@@ -90,6 +95,7 @@ STATEFUL_SECTION_ORDER = (
     "progress_trace",
     "evidence",
     "tool_results",
+    "todos",
     "continuation_suffix",
 )
 
@@ -99,6 +105,7 @@ STATEFUL_SECTION_LABELS = {
     "progress_trace": "=== Progress trace (recent) ===",
     "evidence": "=== Evidence ===",
     "tool_results": "=== Tool result from your last action ===",
+    "todos": "=== Todos ===",
     "continuation_suffix": "<state_context_suffix>",
 }
 
@@ -109,6 +116,7 @@ COMPOUND_SECTION_ORDER = (
     "trace",
     "evidence",
     "tool_results",
+    "todos",
     "continuation_suffix",
 )
 
@@ -119,6 +127,7 @@ COMPOUND_SECTION_LABELS = {
     "trace": "=== Trace ===",
     "evidence": "=== Evidence ===",
     "tool_results": "=== Tool result(s) ===",
+    "todos": "=== Todos ===",
     "continuation_suffix": "<state_context_suffix>",
 }
 
@@ -131,6 +140,7 @@ SALIENCE_SECTION_ORDER = (
     "trace",
     "evidence",
     "tool_results",
+    "todos",
     "continuation_suffix",
 )
 
@@ -171,6 +181,7 @@ STATEFUL_CONSTRUCTOR_CONFIG_ATTRS = {
     "trace_stub_chars": "trace_stub_chars",
     "min_turns": "min_turns_before_context",
     "suffix": "state_context_suffix",
+    "todos_char_budget": "state_todos_char_budget",
     "ignore_state": "context_ignore_state",
 }
 
