@@ -285,7 +285,7 @@ class ReplayClient:
                     self.process_events.append(ev)
                 elif (
                     ev.get("event") == "rewind"
-                    and ev.get("delivery", "in_session") == "in_session"
+                    and ev.get("delivery") == "in_session"
                 ):
                     key = (
                         int(ev.get("session_number", 0) or 0),

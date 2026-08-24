@@ -283,18 +283,32 @@ def test_replay_reproduces_recorded_rewind(tmp_path):
         + "\n"
     )
     source_trace = tmp_path / "source.trace.jsonl"
-    source_trace.write_text(json.dumps({
-        "event": "rewind",
-        "session_number": 1,
-        "turn_number": 2,
-        "from_turn": 2,
-        "to_turn": 0,
-        "reason": "rewind_on_destructive_mutation",
-        "commit": "source-commit-is-runtime-specific",
-        "rewind_count": 1,
-        "rewind_id": "source-rewind",
-        "delivery": "in_session",
-    }) + "\n")
+    source_trace.write_text(
+        json.dumps({
+            "event": "rewind",
+            "session_number": 1,
+            "turn_number": 2,
+            "from_turn": 2,
+            "to_turn": 0,
+            "report_chars": 8,
+            "goal": "Explore safely.",
+            "report": "Retained",
+        })
+        + "\n"
+        + json.dumps({
+            "event": "rewind",
+            "session_number": 1,
+            "turn_number": 2,
+            "from_turn": 2,
+            "to_turn": 0,
+            "reason": "rewind_on_destructive_mutation",
+            "commit": "source-commit-is-runtime-specific",
+            "rewind_count": 1,
+            "rewind_id": "source-rewind",
+            "delivery": "in_session",
+        })
+        + "\n"
+    )
     client = ReplayClient(transcript, source_trace_path=source_trace)
 
     workspace = tmp_path / "replay-task"
@@ -322,7 +336,43 @@ def test_replay_reproduces_recorded_rewind(tmp_path):
 
 
 def source_trace_reason(path: Path) -> str:
-    return json.loads(path.read_text())["reason"]
+    return json.loads(path.read_text().splitlines()[-1])["reason"]
+
+
+def test_model_tool_rewind_does_not_spend_workspace_rewind_limit(tmp_path):
+    workspace = tmp_path / "task"
+    artifact_dir = tmp_path / "artifacts"
+    workspace.mkdir()
+    artifact_dir.mkdir()
+    (workspace / "value.txt").write_text("base\n")
+    trace_path = artifact_dir / ".trace.jsonl"
+    trace_path.write_text(json.dumps({
+        "event": "rewind",
+        "session_number": 1,
+        "turn_number": 1,
+        "from_turn": 1,
+        "to_turn": 0,
+        "report_chars": 8,
+        "goal": "Explore safely.",
+        "report": "Retained",
+    }) + "\n")
+
+    with trace_path.open("a") as trace_file:
+        session, store = _session(
+            workspace,
+            artifact_dir,
+            trace_file=trace_file,
+            trace_path=trace_path,
+            rewind_max=1,
+        )
+        assert session._rewind_count == 0
+        _record_turn(session, store, workspace, 0, "turn zero\n")
+        _record_turn(session, store, workspace, 1, "turn one\n")
+
+        event = session.rewind_to(0, reason="operator")
+
+    assert event["rewind_count"] == 1
+    assert (workspace / "value.txt").read_text() == "turn zero\n"
 
 
 def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
@@ -335,7 +385,7 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
     overlay.write_text(
         "[loop]\n"
         "rewind_enabled = true\n"
-        "rewind_max_per_session = 2\n\n"
+        "rewind_max_per_session = 1\n\n"
         "[tools]\n"
         "file_checkpoints_enabled = true\n"
     )
@@ -371,6 +421,16 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
             create_later_file=True,
         )
         session._emit(
+            "rewind",
+            session_number=1,
+            turn_number=1,
+            from_turn=1,
+            to_turn=0,
+            report_chars=8,
+            goal="Explore safely.",
+            report="Retained",
+        )
+        session._emit(
             "session_end",
             session_number=1,
             finish_reason="stop",
@@ -395,6 +455,7 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
     event = json.loads(raw_lines_after[-1])
     assert event["event"] == "rewind"
     assert event["delivery"] == "next_session"
+    assert event["rewind_count"] == 1
     assert (workspace / "value.txt").read_text() == "turn zero\n"
     assert not (workspace / "later.txt").exists()
     pending = load_pending_rewind(snapshot_root)

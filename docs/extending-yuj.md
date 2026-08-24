@@ -36,10 +36,12 @@ Do not pass a descriptor file with `--config`.
 | A model and local server | `configs/runtime/*.toml` | The config loader reads `[model]`. `scripts/serve.sh` reads `[launch]`. | No, for a supported server and field. |
 | A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
+| On-demand task instructions and resources | An [Agent Skills](https://agentskills.io/) directory containing `SKILL.md` | `[prompts].skills_dirs` discovers skill collections; `[prompts].skill_paths` names exact skills. | No. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
 | An existing tool's input shape | `profiles/_base/tool_schemas.toml` | The tool-schema loader reads it. | The handler must already accept the same inputs. |
 | The text sent with each tool | `profiles/_base/tool_descriptions/MODE/*.txt` | The tool-schema loader reads one complete mode. | No. |
+| Threshold-triggered context compaction | A settings overlay with `[context].compaction_hook` plus a trusted Python module | The config loader resolves `module:function` at startup. | Yes. The function uses the bounded compaction-hook contract. |
 | A new tool or server type | Python and its data files | The dispatcher or server launcher must know the new type. | Yes. |
 
 ## Share an extension
@@ -58,9 +60,14 @@ files. It stores language, shell, and tool quirks in the matching directories.
 | Shell rewrite, refusal, redirect, or redaction | One or more TOML rule entries | Review and merge the entries into the matching fixed file under `bash_quirks/`. The current loader ignores other TOML files in that directory. |
 | `glob` refusal text | The changed entries from `tool_quirks/glob.toml` | Review and merge them into that fixed file. The current loader does not scan extra tool-quirk files. |
 | Tool description mode | One complete `tool_descriptions/MODE/` directory | Copy the directory under `profiles/_base/tool_descriptions/`. Include one `.txt` file for every tool. |
+| Agent Skill | One directory containing `SKILL.md` and any referenced resources | Review the directory, then name its parent collection in `[prompts].skills_dirs` or its exact directory/file in `[prompts].skill_paths`. |
 
 Do not share an API key, private host name, or private filesystem path. Keep
 those values in `config.local.toml` or in a private runtime copy.
+
+Agent Skills can contain instructions and executable scripts. Review the whole
+directory before enabling it. See [Configuration](configuration.html#load-agent-skills-on-demand)
+for discovery, validation, collision, prompt, trace, and sandbox behavior.
 
 Test a shared extension before you use it on a real repository. The sections
 below give the test command for each extension type.
@@ -490,6 +497,12 @@ Run the schema tests after either change:
 ```
 
 ## Know when TOML is not enough
+
+The custom compaction hook is the narrow public Python extension point for
+context compaction. Configure it with `context.compaction_hook`; do not fork
+`harness/_loop/compaction.py`. Read [Compaction hooks](compaction.html) before
+enabling one. Hook modules are trusted in-process code, and an invalid import
+stops startup.
 
 | Change | Why Python is needed |
 | --- | --- |

@@ -10,12 +10,14 @@ code reads remain visible across the 2-3 turns it takes to go from "read
 the file" to "edit the file" — otherwise the model would see a 200-char
 stub of its own read by the next decision turn.
 """
+import copy
 import json
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
 from ..context import ContextManager, chars_div_4
+from ..checkpoint_rewind import preserve_rewind_reports
 
 
 from ._solver_state_dedup import apply_dedup
@@ -210,6 +212,9 @@ class SolverStateContext(ContextManager):
                 ctx={"turn_count": self._turn_count,
                      "messages": len(self._msg_cache)},
             )
+        self._msg_cache = preserve_rewind_reports(
+            self._msg_cache, self._all_messages
+        )
         return self._msg_cache
 
     def estimate_tokens(self) -> int:
@@ -227,6 +232,38 @@ class SolverStateContext(ContextManager):
         rendered + stitched with the latest assistant/tool pair.
         """
         self._all_messages = list(new_messages)
+        self._msg_cache = None
+        self._tok_cache = None
+        return True
+
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the raw append log rather than the state projection."""
+        return copy.deepcopy(self._all_messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Restore raw history and rebuild every recent-result dependency."""
+        self._all_messages = copy.deepcopy(list(new_messages))
+        self._system_content = next(
+            (
+                str(message.get("content") or "")
+                for message in self._all_messages
+                if message.get("role") == "system"
+            ),
+            "",
+        )
+        self._recent_tool_results = deque(
+            message
+            for message in self._all_messages
+            if message.get("role") == "tool"
+        )
+        self._turn_count = sum(
+            message.get("role") == "assistant"
+            for message in self._all_messages
+        )
+        self._dedup_counts.clear()
+        self._dedup_epoch = 0
+        self._file_cache = None
+        self._raw_state_cache = None
         self._msg_cache = None
         self._tok_cache = None
         return True

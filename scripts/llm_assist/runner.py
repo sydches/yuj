@@ -268,6 +268,7 @@ def rewind_session(
         1
         for event in events
         if event.get("event") == "rewind"
+        and isinstance(event.get("rewind_id"), str)
         and event.get("session_number") == target_session
     )
     if rewind_count >= cfg.rewind_max_per_session:

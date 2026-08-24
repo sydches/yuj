@@ -40,7 +40,7 @@ def test_build_context_contract_records_mode_order_and_budgets():
 
     contract = build_context_contract(CompoundSelectiveContext, cfg)
 
-    assert contract["version"] == 1
+    assert contract["version"] == 2
     assert contract["mode"] == "compound_selective"
     assert contract["section_order"] == [
         "task",

@@ -99,6 +99,8 @@ order in the
 | `[model].context_size` | Give Yuj an input limit when the service does not report one. |
 | `[model].tokenizer_id` | Count tokens with this Hugging Face tokenizer. Leave it empty to estimate the count from text length. |
 | `[model].thinking_level` | Select the requested per-run reasoning effort. |
+| `[context].repo_map_tokens` | Append a ranked repository file/symbol map within this hard token budget. `0` (the default) disables it. |
+| `[context].repo_map_refresh` | Choose run-private symbol-cache reuse: `auto`, `always`, `files`, or `manual`. |
 | `[models.roles].weak` | Choose an optional profile or endpoint for summaries and classifiers. Empty uses the main model. |
 | `[models.roles].editor` | Choose an optional profile or endpoint for edit-focused side work. Empty uses the main model. |
 | `[models.fallback_chain].main` | Opt into ordered replacement profiles/endpoints after eligible main-model failures. Empty by default. |
@@ -110,6 +112,10 @@ order in the
 | `[loop].length_continue_max` | Bound same-turn follow-up requests after a response reaches its output-token limit. `0` disables continuation. |
 | `[loop].handoff_summary_enabled` | Ask for a validated summary before an eligible fresh-session rollover. Off by default. |
 | `[prompts].handoff_max_tokens` | Bound the optional model-written rollover summary. |
+| `[prompts].skills_enabled` | Discover validated Agent Skills and add their metadata catalog to the system prompt. Off by default. |
+| `[prompts].skills_dirs` | Search these skill collection directories in order. Relative entries are searched from the task cwd to its project root. |
+| `[prompts].skill_paths` | Load these exact `SKILL.md` files or skill directories before directory discovery. |
+| `[context].compaction_hook` | Import one trusted synchronous `module:function` that can delegate, cancel, or replace a threshold-triggered compaction. Empty uses only the built-in path. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
@@ -125,6 +131,7 @@ order in the
 | `[state].ignore_file_enabled` | Apply task-root Gitignore-style model-view files. On by default. |
 | `[state].ignore_file_names` | List ignore files in precedence order. Defaults to `.yujignore`. |
 | `[runtime].worktree` | Run in a retained isolated Git worktree: `off`, `auto`, or an explicit branch name. |
+| `[tools].checkpoint_enabled` | Add the paired `checkpoint(goal)` and `rewind(report)` conversation tools. Both are off by default. |
 | `[tools].file_checkpoints_enabled` | Capture an independent workspace snapshot after every potentially mutating model tool call. Off by default. |
 | `[tools].file_checkpoints_exclude` | Keep harness output and other declared relative paths outside checkpoint and restore scope. |
 | `[tools].stale_guard_mode` | Apply the session read-before-edit ledger as `off`, `warn`, or `block`. The default is `warn`. |
@@ -134,6 +141,10 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[injections].enabled` | Load Markdown injection rules from `[injections].dir`. Off by default. |
+| `[injections].dir` | Select the task-relative rule directory. Defaults to `.harness/injections`. |
+| `[injections].path_rules_enabled` | Match rule `paths` globs against executed file-tool targets. Off by default and requires `[injections].enabled = true`. |
+| `[injections].path_rule_repeat` | Let path rules without a per-rule `repeat` value fire on every matching tool result. False means once per session. |
 | `[permissions].rules` | Decide `allow`, `ask`, or `deny` per tool and argument glob. Empty rules allow current behavior. |
 | `[permissions].ask_fallback` | Choose `deny` or `allow` only for assistant sessions without an approval transport. Measurement `ask` always denies. |
 | `[lsp].enabled` | Start a configured language server lazily after the first matching `edit` or `write`, and return diagnostics. Off by default. |
@@ -311,6 +322,47 @@ mode. The state writer treats that row as a branch instruction and rebuilds
 `.solver/state.json` from the active view. Assistant-shell rewind restores the
 tree immediately and stores one pending continuation; the next `yuj resume`
 restores the exact saved model-facing messages before another request.
+
+### Collapse a model exploration branch
+
+`[tools].checkpoint_enabled = false` is the shipped default. Set it to `true`
+to add both `checkpoint(goal)` and `rewind(report)` to the effective
+model-facing tool set. The tools are gated as a pair; Yuj never exposes only
+one of them.
+
+`checkpoint` marks the end of its complete tool-call turn. If that assistant
+turn contains several calls, Yuj waits for every result before activating the
+mark. This guarantees that a later cut cannot separate an assistant tool call
+from its result. One checkpoint is active at a time in each session, and a
+later checkpoint replaces it.
+
+`rewind` requires an active checkpoint. A call without one returns a typed
+`no_active_checkpoint` error. A valid call is deferred until every result in
+the current turn has been recorded. Yuj then restores the saved conversation
+prefix and appends one user-role message:
+
+```text
+<rewind-report goal="GOAL">
+SHORT FINDINGS REPORT
+</rewind-report>
+```
+
+The raw `.trace.jsonl` remains append-only. Its `rewind` row records the full
+goal/report plus `from_turn`, `to_turn`, and `report_chars`; the mechanical
+state writer derives a truncated model-state view while retaining the raw
+event count. Replay sends recorded checkpoint/rewind calls through the same
+turn-boundary logic.
+
+This feature changes conversation context only. It does not restore, delete,
+or rewrite task files. Any filesystem effects produced during exploration
+remain present. Use the separate
+[`file_checkpoints_enabled`](#save-restorable-file-checkpoints) operator
+facility when you need a restorable workspace snapshot.
+
+This model-facing `rewind(report)` tool is separate from the operator and
+guardrail conversation/workspace rewind controlled by `[loop].rewind_enabled`.
+Both append a `rewind` trace row, but their documented fields identify which
+operation occurred.
 
 ### Return language-server diagnostics after edits
 
@@ -687,6 +739,66 @@ purpose.
 A context mode changes what the model can see. Record the mode when you compare
 sessions.
 
+### Add a ranked repository map to the task
+
+Set a positive `[context].repo_map_tokens` value to append one compact
+`<repo-map>` block after the task text in the session's first user message:
+
+```toml
+[context]
+repo_map_tokens = 1024
+repo_map_refresh = "auto"
+```
+
+This setting works through the normal installed and measurement command
+surfaces, so a small overlay can be passed to `yuj code --config FILE.toml` or
+`python -m scripts.llm_solver ... --config FILE.toml`. The checked-in default
+is `0`: existing runs keep their task message unchanged until the feature is
+enabled explicitly.
+
+Yuj reuses the tree-sitter tag extractor behind repository-wide
+`list_definitions`. It collects definitions, references, and signatures for
+the locally installed Python, JavaScript/TypeScript, Go, Rust, and Java
+grammars. Files are graph nodes; a reference to a definition forms an edge.
+A deterministic personalized PageRank-style pass starts from repository paths
+named in the task, then places symbols referenced by those files before
+unreferenced definitions. Ties use stable path, location, and signature order.
+No model call authors or ranks the map.
+
+The budget is a hard incremental count for adding the block to the task user
+message. When `[model].tokenizer_id` is set, Yuj uses that local tokenizer and
+attempts to synchronize its chat template from the active server before
+counting. Otherwise it uses the active profile estimator, then the documented
+one-token-per-four-characters fallback. If the wrapper and highest-ranked
+definition cannot fit, Yuj omits the map rather than exceed the budget.
+
+The rendered block is immutable for one solver session. It stays in the
+stable task prefix on every turn and survives deterministic or checkpoint
+compaction as part of that unchanged task message. A later solver session may
+build a new map from its then-current tree. `repo_map_refresh` controls the
+mechanical symbol-row cache used at that boundary:
+
+| Value | Cache behavior at session start |
+| --- | --- |
+| `auto` | Reuse while supported source paths, byte sizes, and nanosecond mtimes match. |
+| `always` | Parse the readable source tree again and replace the cache. |
+| `files` | Content-hash every supported source file before deciding whether to reuse. |
+| `manual` | Reuse any valid cache for the same repository; parse only when no valid cache exists. |
+
+For measurement commands the per-task cache is beneath
+`<run_dir>/.repo_map_cache/`; installed sessions keep it beneath their private
+session artifact directory. An unusual caller that places an artifact
+directory inside the task tree is redirected to the harness telemetry sibling.
+The cache is always outside the model's file-tool root and is also added to
+shell unreadable masks.
+
+Both configured `[sandbox].unreadable_paths` and the immutable task-root
+`.yujignore` policy are applied before files are fingerprinted or parsed.
+`session_start` records the actual incremental token count, content hash,
+refresh policy, scanned-file count, emitted-symbol count, and cache-hit flag;
+it never records the map body or cache path. These fields are raw run-start
+provenance and are not projected into `.solver/state.json`.
+
 ### Compact a nearly full context
 
 Compaction runs only after the existing context threshold and mutation gate
@@ -695,6 +807,7 @@ allow it. These settings live under `[context]`:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `compaction_method` | `"digest"` | Use the deterministic trace digest, or opt into a model-written `"checkpoint"`. |
+| `compaction_hook` | `""` | Trusted synchronous `module:function` called after the normal threshold and mutation gate. Empty disables the hook. |
 | `checkpoint_keep_recent_tokens` | `0` | Verbatim recent-tail target. Zero means 20% of the live context window, with a 4,096-token minimum. |
 | `checkpoint_max_summary_tokens` | `4000` | Maximum checkpoint response; the runtime also applies a 4,000-token hard cap and the available-reserve limit. |
 | `digest_compaction_safety_margin` | `0.05` | Margin used by the derived compaction threshold. |
@@ -708,6 +821,14 @@ beginning at an assistant-turn boundary. The checkpoint must contain every
 required section and every mechanically observed modified path, fit the
 budget, and reduce the prompt token count. Any request, response, validation,
 or size failure uses the deterministic digest instead.
+
+When `compaction_hook` is non-empty, Yuj resolves it while configuration is
+loaded, before model work starts. The hook may return `None` for the built-in
+method, `Cancel()` to keep the current conversation, or a validated
+`Compaction(summary, first_kept_turn)`. Hook failures and invalid replacements
+use the digest. Read [Compaction hooks](compaction.html) for the exact Python
+types, preparation fields, validation rules, and trace outcomes. The hook runs
+inside the harness process, not inside the model-command sandbox.
 
 Yuj records only compaction metadata in the trace and state projection; it
 does not copy model-written checkpoint text into `.solver/state.json`. If two
@@ -775,6 +896,74 @@ response or request text. Post-run `metrics.length_continuations` counts the
 follow-up requests, while the normal prompt/completion totals include every
 initial and follow-up call.
 
+### Load conditional injection rules
+
+Injection rules are off by default. Enable the rule loader and path matching
+with a small overlay:
+
+```toml
+[injections]
+enabled = true
+dir = ".harness/injections"
+path_rules_enabled = true
+path_rule_repeat = false
+```
+
+Yuj loads each `*.md` file in alphabetical filename order before the model
+starts. A malformed enabled file stops startup. Each file uses strict TOML
+frontmatter between `+++` fences:
+
+```markdown
++++
+name = "python-tests"
+paths = ["src/**/*.py", "tests/**/*.py"]
+keywords = ["pytest"]
+repeat = false
++++
+
+Follow this repository's Python and test conventions.
+```
+
+`name` is required and must be a non-empty string. `paths` and `keywords`,
+when present, must be arrays of non-empty strings. `repeat` must be `true` or
+`false`. A rule with neither `paths` nor `keywords` is unscoped and is added
+once at the start of a session. The older explicit `trigger` and `fire_once`
+fields remain readable; do not combine `repeat` and `fire_once` in one file.
+
+Path globs are project-relative POSIX patterns. They support `*`, `?`,
+character classes, and slash-aware `**`. Absolute paths, parent traversal,
+directory-only patterns, empty entries, and non-string entries are rejected.
+Matching checks both the model's contained path spelling and its
+symlink-resolved target. The visible and traced path is always the canonical
+task-relative target.
+
+A path rule can fire after an executed `read`, `edit`, or `write`, after an
+`apply_patch` operation was applied, or after a shell command is proven to
+read one explicit file. The shell classifier accepts bounded forms of `cat`,
+`head`, `tail`, `sed -n`, `grep`, and `rg`. Compounds, pipelines,
+redirections, recursive or multi-file reads, and rewritten shell commands do
+not qualify. A non-matching target adds nothing.
+
+By default, the first path or keyword match consumes the rule for that
+session. `repeat = true` on the rule makes both trigger kinds repeat.
+`path_rule_repeat = true` changes only the default for path matches when the
+rule omits `repeat`; a per-rule value wins.
+
+A path fire appends this shape to the same model-visible tool result:
+
+```xml
+<injected-fragment rule="python-tests" trigger="path" path="src/app.py" source="python-tests">
+Follow this repository's Python and test conventions.
+</injected-fragment>
+```
+
+Each conditional fire also writes a raw `injection` trace row with `rule`,
+`trigger`, and `path`; keyword rows use an empty path. That metadata row is
+not copied into `.solver/state.json`. The visible fragment remains part of
+the ordinary tool result and therefore follows the normal `tool_call`
+projection. Startup logs name each armed rule, its trigger kinds, and its safe
+source label without copying the rule body.
+
 ### Load project instruction files
 
 Repository instruction discovery is an opt-in prompt treatment. The public
@@ -828,14 +1017,102 @@ global scope. Each selected document is wrapped as
 `global/<name>` label.
 
 Prompt order is the resolved `--system-prompt` arm file, project-instruction
-blocks, then `prompts.system_header`; a model-profile preamble remains
-outermost. `session_start.prompt_import_tree` records ordered source envelopes
-and nested status/depth/byte metadata with safe labels. It stores no prompt
+blocks, `prompts.system_header`, then an enabled Agent Skills catalog; a
+model-profile preamble remains outermost. `session_start.prompt_import_tree`
+records ordered source envelopes and nested status/depth/byte metadata with
+safe labels. It stores no prompt
 body or absolute host path, and injection entries mean a fragment was resolved,
 not that it fired. Project source, imported, and admitted resolved bytes are
 reported separately. `metrics.json` provenance hashes and counts the exact
 fully resolved prompt, never its body. Enabling project instruction discovery
 changes model input and must be treated as an experimental condition.
+
+### Load Agent Skills on demand
+
+Yuj supports [Agent Skills](https://agentskills.io/specification) directories.
+This is progressive disclosure: startup reads and validates only YAML
+frontmatter, then adds each model-invocable skill's name, description, and
+absolute `SKILL.md` path to a `<skills>` system-prompt block. The Markdown body
+and bundled scripts, references, and assets stay out of the prompt until the
+model reads them.
+
+The feature is off by default. Enable it with a small overlay:
+
+```toml
+[prompts]
+skills_enabled = true
+skills_dirs = [
+  "~/.pi/agent/skills",
+  "~/.agents/skills",
+  ".pi/skills",
+  ".agents/skills",
+]
+skill_paths = ["/opt/team-skills/release/SKILL.md"]
+```
+
+`skill_paths` is the exact-path layer and is considered first, in declaration
+order. An entry may name `SKILL.md` or its containing directory; a missing
+exact path is a startup error. Yuj then searches `skills_dirs` in declaration
+order. It ignores a missing collection directory. An absolute, `~`-expanded,
+or environment-expanded entry names one collection. A relative entry is
+searched at the task cwd and each ancestor through the nearest directory with
+one of `[prompts].project_root_markers`. Collection discovery is deterministic
+across subdirectories, with a six-level and 2,000-directory safety bound. A
+subdirectory is a skill only when it contains a file named exactly `SKILL.md`;
+a collection-root `SKILL.md` is not discovered implicitly and should instead
+be named in `skill_paths`.
+
+When more than one validated skill has the same frontmatter `name`, Yuj logs a
+warning and keeps the first. Exact paths therefore let an overlay take
+precedence over collection discovery. Multiple collection roots retain their
+declared order.
+
+Startup validates these frontmatter rules before any model call:
+
+- `name` is required, has at most 64 characters, uses lowercase letters,
+  digits, and single hyphens, and matches the parent directory;
+- `description` is required, non-empty, and at most 1,024 characters;
+- `license` and experimental `allowed-tools` are non-empty strings when set;
+- `compatibility` is a non-empty string of at most 500 characters when set;
+- `metadata` maps string keys to string values; and
+- `disable-model-invocation` is a boolean when set.
+
+`disable-model-invocation = true` keeps a validated skill out of the `<skills>`
+block. It remains in raw startup provenance and can still be read when its path
+is explicitly supplied. `allowed-tools` is validated metadata only: a skill
+cannot weaken `[permissions]`, approvals, sandboxing, or the effective profile
+tool set.
+
+The catalog tells the model to use the ordinary `read` tool with the listed
+absolute path and to resolve relative resource references from the skill
+directory. Every successfully loaded skill directory is added to that run's
+skill-readable path set. An external skill directory is readable through `read` and
+available read-only to bwrap and the first-class container backend; `write`
+and `edit` reject its absolute paths. A project skill already under the task
+cwd follows the normal task rule and remains writable. Configured unreadable
+masks still apply to external skill reads and shell mounts; `.yujignore`
+continues to govern project-local skills. A masked discovered skill is skipped,
+while a masked exact `skill_paths` entry is a conflicting startup error.
+
+Every raw `session_start` trace row contains `loaded_skills`, including the
+canonical path and `disable_model_invocation` value for each first-wins skill.
+This provenance is not projected into `.solver/state.json`. Post-run resolved
+configuration records the effective skill-readable directories, and the savings
+ledger records only the visible catalog's character cost, not any skill body.
+
+Apply this overlay with the normal CLI configuration surface:
+
+```bash
+yuj code --config skills.toml "Prepare the release."
+```
+
+All model profiles use the same discovery, prompt catalog, normal `read` tool,
+and sandbox boundary. When at least one skill loads and a profile caps its tool
+count, `read` gets first priority after the always-present `done` tool; a cap
+too small to retain `read` stops startup. Yuj does not add a separate
+skill-loader tool. These are run-start settings; a live adaptive TOML
+transaction cannot change them after the catalog and skill-readable roots have
+been fixed.
 
 ## Apply a small TOML file
 

@@ -44,6 +44,7 @@ from ._tool_filters import (
     _filter_bash_output, _line_skeleton, truncate_output,
 )
 from .tool_specs import ACTIVE_TOOL_NAMES, is_native_envelope
+from .checkpoint_rewind import unavailable_tool_result
 from .process_manager import AdmittedProcessOutput, ProcessManagerError
 from .sandbox.ignore_policy import (
     IgnorePolicy,
@@ -91,6 +92,13 @@ def _bash_unreadable_paths(
     return tuple(dict.fromkeys((*configured, *additions)))
 
 
+def _bash_readable_paths(cfg) -> tuple[str, ...]:
+    """Return startup-validated external skill roots for shell sandboxes."""
+    return tuple(dict.fromkeys(
+        tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+    ))
+
+
 def _dispatch_bash(args, cwd, cfg):
     if bool(args.get("background", False)):
         return "ERROR: background process manager is unavailable"
@@ -102,6 +110,7 @@ def _dispatch_bash(args, cwd, cfg):
         bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
         unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        readable_paths=_bash_readable_paths(cfg),
         sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
         container_runtime=getattr(
             cfg, "sandbox_container_runtime", "docker"
@@ -163,6 +172,8 @@ _DISPATCH = {
         cwd=cwd, timeout=cfg.grep_timeout,
         page=int(args.get("page", 1)), cfg=cfg,
     ),
+    "checkpoint": lambda args, cwd, cfg: unavailable_tool_result("checkpoint"),
+    "rewind": lambda args, cwd, cfg: unavailable_tool_result("rewind"),
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
     ),
@@ -433,7 +444,14 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         succeeded = not is_error_result(raw_result)
         try:
             if succeeded and name == "read":
-                stale_guard.observe_read(str(arguments.get("path", "")))
+                read_path = str(arguments.get("path", ""))
+                candidate = Path(read_path)
+                if (
+                    not candidate.is_absolute()
+                    or candidate.resolve(strict=False) == Path(cwd).resolve()
+                    or Path(cwd).resolve() in candidate.resolve(strict=False).parents
+                ):
+                    stale_guard.observe_read(read_path)
             elif succeeded and name in {"write", "edit"}:
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name
@@ -465,6 +483,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     already_admitted = isinstance(result, AdmittedProcessOutput)
     if execution_metadata is not None:
         execution_metadata["executed"] = executed
+        if applied_operations:
+            execution_metadata["applied_operations"] = applied_operations
         if hasattr(result, "exit_status"):
             execution_metadata["exit_status_known"] = True
             execution_metadata["exit_status"] = getattr(result, "exit_status")

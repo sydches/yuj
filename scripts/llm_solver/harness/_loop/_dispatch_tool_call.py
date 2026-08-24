@@ -461,6 +461,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     mutation_warn_text = ""
     gate_blocked_flag = False
     gate_intercepted = False
+    path_injection_fired = False
     result: str = ""
     execution_metadata: dict = {}
     if mutation_decision.action == Action.END:
@@ -624,6 +625,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 state.turn_had_pressure = True
                 log.warning("Error abort: %s consecutive=%d", tc.name,
                             session._guards.consecutive_errors.get(tc.name, 0))
+                result, _ = session._apply_path_injections(
+                    result,
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    turn_number=turn,
+                    executed=bool(execution_metadata.get("executed", True)),
+                    execution_metadata=execution_metadata,
+                    bash_rewritten=bool(rewrite_log),
+                )
                 session.context.add_tool_result(tc.id, result, tool_name=tc.name,
                                                 cmd_signature="", gate_blocked=False)
                 # cmd_pre_rewrite preserves the model's original
@@ -769,6 +779,20 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if state.turn_warn_text:
         result += "\n\n" + state.turn_warn_text
 
+    path_call_executed = (
+        not gate_blocked_flag
+        and bool(execution_metadata.get("executed", True))
+    )
+    result, path_injection_fired = session._apply_path_injections(
+        result,
+        tool_name=tc.name,
+        arguments=tc.arguments,
+        turn_number=turn,
+        executed=path_call_executed,
+        execution_metadata=execution_metadata,
+        bash_rewritten=bool(rewrite_log),
+    )
+
     # 6f. Trace + record. cmd_pre_rewrite is added when bash_quirks
     # rewrites the model's cmd before execution. The
     # trace then preserves both what the model wrote and what
@@ -839,6 +863,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if (
         cfg.tools_output_dedup_enabled
         and not gate_blocked_flag
+        and not path_injection_fired
         and focus_key
         and tc.name not in MUTATION_TOOLS
         and result

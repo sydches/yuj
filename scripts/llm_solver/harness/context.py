@@ -94,6 +94,23 @@ class ContextManager(ABC):
         """
         return False
 
+    def snapshot_messages(self) -> list[dict]:
+        """Return a detached copy of the strategy's canonical append log.
+
+        Projecting strategies override this method because ``get_messages``
+        may return a synthesized model request rather than their append log.
+        """
+        return copy.deepcopy(list(self.get_messages()))
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Replace history at a protocol-safe checkpoint boundary.
+
+        Simple transcript strategies can use their ordinary replacement path.
+        Strategies with derived working sets or recent-result windows override
+        this method to rebuild those dependent views from the retained prefix.
+        """
+        return self.replace_all_messages(new_messages)
+
     def get_history_messages(self) -> list[dict]:
         """Return the canonical append-log behind the model projection.
 
