@@ -443,6 +443,25 @@ def _extract_config_fields(d: dict) -> dict:
         "imports_max_depth": d.get("prompts", {}).get(
             "imports_max_depth", 5
         ),
+        "skills_enabled": d.get("prompts", {}).get(
+            "skills_enabled", False
+        ),
+        "skills_dirs": _string_tuple(
+            d.get("prompts", {}).get(
+                "skills_dirs",
+                [
+                    "~/.pi/agent/skills",
+                    "~/.agents/skills",
+                    ".pi/skills",
+                    ".agents/skills",
+                ],
+            ),
+            path="prompts.skills_dirs",
+        ),
+        "skill_paths": _string_tuple(
+            d.get("prompts", {}).get("skill_paths", []),
+            path="prompts.skill_paths",
+        ),
         "system_header": _require(d, "prompts", "system_header"),
         "state_context_suffix": _require(d, "prompts", "state_context_suffix"),
         "intent_gate_first": _require(d, "prompts", "intent_gate_first"),
@@ -677,6 +696,15 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
             "config error: prompts.imports_max_depth must be a non-negative "
             "integer."
         )
+    from .harness.skills import validate_skill_settings
+    try:
+        validate_skill_settings(
+            cfg.skills_enabled,
+            cfg.skills_dirs,
+            cfg.skill_paths,
+        )
+    except ValueError as exc:
+        raise ValueError(f"config error: prompts.{exc}") from exc
     if not isinstance(cfg.injections_enabled, bool):
         raise ValueError(
             "config error: injections.enabled must be a boolean."

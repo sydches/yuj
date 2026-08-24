@@ -17,7 +17,7 @@ person types into a terminal.
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
 | `bash` | `cmd` | None | Run one shell command and return its output. |
-| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. |
+| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |

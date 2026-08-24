@@ -209,6 +209,15 @@ or `.solver/state.json`. The matching `metrics.json` provenance
 prompt after the arm file and project blocks are assembled; the prompt body is
 not stored in provenance.
 
+When Agent Skills are enabled, every `session_start` row also records
+`loaded_skills` in first-wins discovery order. Each record contains the
+validated name, canonical `SKILL.md` path, and
+`disable_model_invocation` value; it contains no description or Markdown
+body. This is raw run-start provenance and is not projected into
+`.solver/state.json`. The post-run resolved configuration records the
+effective read-only skill directories, while `savings.jsonl` measures only
+the model-visible metadata catalog.
+
 A `schema_reject` row is raw validation metadata: it records the tool and
 value-free field errors before any handler runs. It is not projected into
 `.solver/state.json`; the associated gate-blocked `tool_call` row remains the

@@ -52,7 +52,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instruction_imported_bytes",
             "project_instruction_resolved_bytes",
             "project_instructions_truncated", "prompt_import_tree",
-            "ignore_file_names",
+            "ignore_file_names", "loaded_skills",
             "repo_map_refresh", "repo_map_files", "repo_map_symbols",
             "repo_map_cache_hit", "repo_map_sha256",
         })

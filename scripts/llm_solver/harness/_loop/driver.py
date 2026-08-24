@@ -158,6 +158,18 @@ def solve_task(
         *tuple(cfg.unreadable_paths),
         *ignore_policy.sandbox_unreadable_paths(),
     )))
+    from ..skills import discover_skills
+    skill_catalog = discover_skills(
+        work_dir,
+        enabled=getattr(cfg, "skills_enabled", False),
+        skills_dirs=getattr(cfg, "skills_dirs", ()),
+        skill_paths=getattr(cfg, "skill_paths", ()),
+        root_markers=cfg.project_root_markers,
+        unreadable_paths=prompt_unreadable_paths,
+    )
+    # Freeze only validated, first-wins skill directories into the run config.
+    # File mutation tools retain their cwd-only resolver.
+    cfg = replace(cfg, skills_readable_dirs=skill_catalog.readable_dirs)
     prompt_file = artifact_dir / "prompt.txt"
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
@@ -175,6 +187,7 @@ def solve_task(
         cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
         context_class,
         unreadable_paths=prompt_unreadable_paths,
+        skill_catalog=skill_catalog,
     )
     resolved_injections, injection_import_tree = load_session_injections(
         cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
@@ -443,6 +456,14 @@ def solve_task(
             log.info("[session %d/%d] %s", session_num, end_session_num, work_dir.name)
             model_binding = model_role_runtime.begin_model_session(client, cfg)
             session_client, session_cfg = model_binding.client, model_binding.config
+            # Transport clients retain their endpoint-specific Config object.
+            # Reapply the run-fixed skill roots after model-role binding so
+            # tool dispatch cannot fall back to the client's pre-discovery
+            # config.
+            session_cfg = replace(
+                session_cfg,
+                skills_readable_dirs=cfg.skills_readable_dirs,
+            )
             thinking_fields = thinking_trace_fields(session_cfg, session_client)
             local_tokenizer = None
             if int(getattr(session_cfg, "repo_map_tokens", 0) or 0) > 0:

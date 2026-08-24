@@ -490,6 +490,17 @@ project_doc_global_dir = "~/.config/yuj"
 # behavior. Set false to treat every standalone @path line literally.
 imports_enabled = true
 imports_max_depth = 5
+# Agent Skills are opt-in so existing runs keep byte-identical prompts. When
+# enabled, explicit skill_paths are considered first, followed by skills_dirs
+# in declaration order; the first valid skill for a repeated name wins.
+skills_enabled = false
+skills_dirs = [
+  "~/.pi/agent/skills",
+  "~/.agents/skills",
+  ".pi/skills",
+  ".agents/skills",
+]
+skill_paths = []
 # Harness system header. It follows an optional --system-prompt arm file and
 # optional project-instruction blocks. Task-agnostic — names no benchmark,
 # test framework, or tool invocation convention.
