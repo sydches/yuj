@@ -476,6 +476,9 @@ class SubagentRuntime:
                 child._cache_usage_accumulator = getattr(
                     parent, "_cache_usage_accumulator", None
                 )
+                child._session_usage_accumulator = getattr(
+                    parent, "_session_usage_accumulator", None
+                )
                 child._role_token_ledger = getattr(parent, "_role_token_ledger", None)
                 role = binding.resolution or f"subagent.{spec.name}"
                 child._active_model_resolution = role

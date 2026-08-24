@@ -550,18 +550,29 @@ def usage_from_response(response: object):
     from .types import Usage
 
     usage = _field(response, "usage")
-    completion_tokens = int(_field(usage, "completion_tokens") or 0)
+    raw_completion = _field(usage, "completion_tokens")
+    completion_tokens = int(raw_completion or 0)
+    completion_known = _token_count(raw_completion) is not None
+    if _field(usage, "completion_tokens_known") is False:
+        completion_known = False
     observation = extract_cache_observation(response)
+    prompt_known = observation is not None
+    if _field(usage, "prompt_tokens_known") is False:
+        prompt_known = False
     if observation is None:
         return Usage(
             prompt_tokens=int(_field(usage, "prompt_tokens") or 0),
             completion_tokens=completion_tokens,
+            prompt_tokens_known=False,
+            completion_tokens_known=completion_known,
         )
     return Usage(
         prompt_tokens=observation.prompt_tokens,
         completion_tokens=completion_tokens,
         cached_tokens=observation.cached_tokens,
         cache_hit_ratio=observation.hit_ratio,
+        prompt_tokens_known=prompt_known,
+        completion_tokens_known=completion_known,
     )
 
 

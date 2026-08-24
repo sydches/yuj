@@ -99,6 +99,13 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "session_usage",
+        frozenset({
+            "session_number", "scope", "input_tokens", "output_tokens",
+            "cached_tokens", "cost", "quota",
+        }),
+    ),
+    TraceEventSpec(
         "subagent",
         frozenset({
             "session_number", "turn_number", "id", "agent", "turns",

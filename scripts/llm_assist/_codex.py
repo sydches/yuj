@@ -6,7 +6,7 @@ import json
 import requests
 
 from ..llm_solver.server.client import LlamaClient
-from ._anthropic import _CompatResponse, _Obj
+from ._anthropic import _CompatResponse, _Obj, _observed_usage_count
 from ._auth import (
     AuthProtocolError,
     CredentialSession,
@@ -110,7 +110,15 @@ def _responses_to_openai(raw: dict) -> _CompatResponse:
         "completed": "stop",
         "incomplete": "length",
     }.get(status, status)
-    usage_raw = raw.get("usage") or {}
+    raw_usage = raw.get("usage")
+    usage_raw = raw_usage if isinstance(raw_usage, dict) else {}
+    input_tokens = _observed_usage_count(usage_raw.get("input_tokens"))
+    output_tokens = _observed_usage_count(usage_raw.get("output_tokens"))
+    raw_input_details = usage_raw.get("input_tokens_details")
+    input_details = (
+        raw_input_details if isinstance(raw_input_details, dict) else {}
+    )
+    cached_tokens = _observed_usage_count(input_details.get("cached_tokens"))
     return _CompatResponse(
         raw,
         message=_Obj(
@@ -119,8 +127,15 @@ def _responses_to_openai(raw: dict) -> _CompatResponse:
         ),
         finish_reason=finish_reason,
         usage=_Obj(
-            prompt_tokens=int(usage_raw.get("input_tokens") or 0),
-            completion_tokens=int(usage_raw.get("output_tokens") or 0),
+            prompt_tokens=input_tokens if input_tokens is not None else 0,
+            completion_tokens=output_tokens if output_tokens is not None else 0,
+            prompt_tokens_known=input_tokens is not None,
+            completion_tokens_known=output_tokens is not None,
+            prompt_tokens_details=(
+                _Obj(cached_tokens=cached_tokens)
+                if cached_tokens is not None
+                else None
+            ),
         ),
     )
 

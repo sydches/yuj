@@ -41,6 +41,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj current` | Run `yuj status latest`. |
 | `yuj status` | Show one session's status and the next user action. |
 | `yuj show` | Show one session's settings and recent activity. |
+| `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List saved sessions. |
 | `yuj resume` | Continue a paused session. |
 | `yuj answer` | Record one exact answer for a pending clarification. |
@@ -427,8 +428,8 @@ The command prints the throwaway path and keeps it after the check.
 Do not give `--root` a directory that contains work you need.
 
 Later commands have no `--assist-home` option. Set `HARNESS_ASSIST_HOME` to
-the same path before you run `status`, `show`, `answer`, `approve`, `reject`,
-or `resume` for that smoke session.
+the same path before you run `status`, `show`, `usage`, `answer`, `approve`,
+`reject`, or `resume` for that smoke session.
 
 ## Understand Git changes
 
@@ -461,6 +462,7 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | `yuj current` | The active or newest session for the current repository. If that repository has no session, the newest saved session. |
 | `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, clarification, approval, process lock, interrupt mark, and next action |
 | `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Up to `N` recent sessions from all repositories; the default is 20 |
 
 Use `yuj show --turns N --trace-lines N [SESSION]` to choose how many recent
@@ -472,12 +474,47 @@ turns and trace events to print.
 | `yuj show` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj show` | `--turns N` | Show this many recent turns. The default is 5. |
 | `yuj show` | `--trace-lines N` | Show this many recent trace events. The default is 10. |
+| `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
 
 The current parser accepts any integer for these three options. A value of
 `0` prints no matching rows. A negative `--turns` or `--trace-lines` value
 also prints no tail. A negative `--limit` removes the database row limit.
 Use a positive value for normal work.
+
+### Inspect usage
+
+Show the usage evidence for one coding session:
+
+```bash
+yuj usage [SESSION]
+```
+
+The command reads the session index and trace without changing either one. It
+does not create a model client, read a credential, refresh authentication, or
+contact a service. Repeating the command against unchanged files prints the
+same report.
+
+`input_tokens`, `output_tokens`, and `cached_tokens` cover every complete
+model response in each recorded run segment, including responses from a named
+model role or child agent. Yuj adds each segment fact once. It does not add a
+turn row or child summary again after it reads that segment fact.
+
+The cache ratio is the total cached-token count divided by the total input-token
+count. Yuj prints it only when both counts are known and input tokens are
+greater than zero.
+
+Cost needs an exact decimal amount and currency in every run-segment fact.
+Quota needs a remaining amount, limit, unit, and scope in every fact. Yuj does
+not derive either value from the model name, service address, credential, or a
+price table. Missing evidence makes only the affected report field
+`unknown`. Incompatible currencies or quota meanings also produce `unknown`.
+
+Older run segments do not have the all-response usage fact. If one coding
+session mixes an older segment with a new segment, Yuj keeps aggregate fields
+unknown instead of joining narrower turn data with all-response data. Read
+[Saved files](harness_artifacts.html#trace-event-fields) for the exact trace
+field contract.
 
 ### Select a session
 
@@ -487,7 +524,7 @@ either ID.
 Use `latest` or `last` to let Yuj choose. If you omit the ID, Yuj uses
 `latest`.
 
-For `status` and `show`, Yuj chooses in this order:
+For `status`, `show`, and `usage`, Yuj chooses in this order:
 
 1. the active session for the current repository
 2. the newest session for the current repository

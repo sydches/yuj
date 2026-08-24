@@ -352,6 +352,13 @@ def _decode_tool_name(name: object, *, subscription: bool) -> str:
     return value
 
 
+def _observed_usage_count(value: object) -> int | None:
+    """Return one provider-owned token count without coercing missing data."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _anthropic_to_openai_response(
     raw: dict, *, subscription: bool = False
 ) -> _CompatResponse:
@@ -378,14 +385,43 @@ def _anthropic_to_openai_response(
         "end_turn": "stop",
         "stop_sequence": "stop",
     }.get(stop_reason, stop_reason)
-    usage_raw = raw.get("usage") or {}
+    raw_usage = raw.get("usage")
+    usage_raw = raw_usage if isinstance(raw_usage, dict) else {}
+    input_tokens = _observed_usage_count(usage_raw.get("input_tokens"))
+    output_tokens = _observed_usage_count(usage_raw.get("output_tokens"))
+    cache_creation_tokens = (
+        _observed_usage_count(usage_raw.get("cache_creation_input_tokens"))
+        if "cache_creation_input_tokens" in usage_raw
+        else (0 if input_tokens is not None else None)
+    )
+    cache_read_tokens = (
+        _observed_usage_count(usage_raw.get("cache_read_input_tokens"))
+        if "cache_read_input_tokens" in usage_raw
+        else (0 if input_tokens is not None else None)
+    )
+    prompt_known = all(
+        count is not None
+        for count in (input_tokens, cache_creation_tokens, cache_read_tokens)
+    )
+    prompt_tokens = (
+        input_tokens + cache_creation_tokens + cache_read_tokens
+        if prompt_known
+        else 0
+    )
     message = _Obj(
         content="\n".join(part for part in text_parts if part) or None,
         tool_calls=tool_calls,
     )
     usage = _Obj(
-        prompt_tokens=int(usage_raw.get("input_tokens") or 0),
-        completion_tokens=int(usage_raw.get("output_tokens") or 0),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=output_tokens if output_tokens is not None else 0,
+        prompt_tokens_known=prompt_known,
+        completion_tokens_known=output_tokens is not None,
+        prompt_tokens_details=(
+            _Obj(cached_tokens=cache_read_tokens)
+            if cache_read_tokens is not None
+            else None
+        ),
     )
     return _CompatResponse(
         raw, message=message, finish_reason=finish_reason, usage=usage

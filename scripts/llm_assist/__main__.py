@@ -74,6 +74,11 @@ from .runner import (
 )
 from .store import AmbiguousSessionRefError, SessionLockedError, SessionStore
 from .startup import preflight_assistant_startup, render_startup_preflight
+from .usage import (
+    UsageEvidenceError,
+    aggregate_session_usage,
+    render_session_usage,
+)
 
 CLI_NAME = "yuj"
 _LATEST_SESSION_TOKENS = {"latest", "last"}
@@ -479,6 +484,17 @@ def main(argv: list[str] | None = None) -> int:
     show_parser.add_argument("--trace-lines", type=int, default=10,
                              help="number of recent trace events to show")
     show_parser.set_defaults(func=cmd_show)
+
+    usage_parser = sub.add_parser(
+        "usage", help="show exact persisted usage for one coding session"
+    )
+    usage_parser.add_argument(
+        "session_id",
+        nargs="?",
+        default="latest",
+        help="coding-session ID or 'latest' (default: latest session)",
+    )
+    usage_parser.set_defaults(func=cmd_usage)
 
     worktree_parser = sub.add_parser(
         "worktree", help="inspect or remove retained session worktrees"
@@ -1375,6 +1391,24 @@ def cmd_show(args) -> int:
     print("trace_tail:")
     for line in trace_lines:
         print(f"  {line}")
+    return 0
+
+
+def cmd_usage(args) -> int:
+    """Render persisted usage without opening a writable store or provider."""
+    try:
+        store = SessionStore(read_only=True)
+    except FileNotFoundError as exc:
+        raise SystemExit("no assistant sessions found") from exc
+    record = _resolve_session_record(store, args.session_id, selector="latest")
+    try:
+        usage = aggregate_session_usage([record.artifact_path / ".trace.jsonl"])
+    except UsageEvidenceError as exc:
+        raise SystemExit(f"corrupt session usage evidence: {exc}") from exc
+    print(f"session_id: {record.session_id}")
+    print(f"session_ref: {record.short_id}")
+    for line in render_session_usage(usage):
+        print(line)
     return 0
 
 

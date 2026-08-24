@@ -331,6 +331,11 @@ def record_role_usage(owner: Any, routed: ConsumerRoleClient, usage: Any) -> Non
         usage,
         cached_tokens=int(cached or 0),
     )
+    session_usage = _stored_attr(owner, "_session_usage_accumulator") or _stored_attr(
+        direct_client, "_session_usage_accumulator"
+    )
+    if session_usage is not None:
+        session_usage.record(usage)
 
 
 def role_token_ledger(client: Any) -> RoleTokenLedger:

@@ -666,6 +666,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 chat_result.usage,
                 cached_tokens=int(chat_result.usage.cached_tokens or 0),
             )
+        session_usage = getattr(session, "_session_usage_accumulator", None)
+        if session_usage is not None:
+            session_usage.record(chat_result.usage)
         warn_on_cache_miss(
             cache_observation,
             warn_ratio=getattr(cfg, "cache_miss_warn_ratio", 0.0),

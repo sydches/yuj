@@ -51,6 +51,7 @@ from . import model_role_runtime
 from .profile_resolution import build_tool_surface, resolve_effective_edit_format
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
+from .usage_evidence import SessionUsageAccumulator
 from ..plan_mode import (
     has_plan_mode_transition,
     plan_mode_active_from_trace,
@@ -569,6 +570,15 @@ def solve_task(
             log.info("[session %d/%d] %s", session_num, end_session_num, work_dir.name)
             model_binding = model_role_runtime.begin_model_session(client, cfg)
             session_client, session_cfg = model_binding.client, model_binding.config
+            session_usage = (
+                SessionUsageAccumulator()
+                if getattr(cfg, "runtime_mode", "measurement") == "assistant"
+                else None
+            )
+            for usage_owner in (client, session_client):
+                namespace = getattr(usage_owner, "__dict__", None)
+                if isinstance(namespace, dict):
+                    usage_owner._session_usage_accumulator = session_usage
             # Transport clients retain their endpoint-specific Config object.
             # Reapply the run-fixed skill roots after model-role binding so
             # tool dispatch cannot fall back to the client's pre-discovery
@@ -718,6 +728,7 @@ def solve_task(
                     "token_count_method": count_method,
                 }
             session._cache_usage_accumulator = cache_usage
+            session._session_usage_accumulator = session_usage
             model_role_runtime.bind_session_model_roles(
                 session, session_client, role_usage,
             )
@@ -813,6 +824,13 @@ def solve_task(
             sessions_used = session_num - start_session_num + 1
 
             # Trace: session end
+            if session_usage is not None:
+                _emit_trace_event(
+                    trace_file,
+                    "session_usage",
+                    session_number=session_num,
+                    **session_usage.trace_fields(),
+                )
             _emit_trace_event(
                 trace_file, "session_end",
                 session_number=session_num,

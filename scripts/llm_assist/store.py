@@ -126,11 +126,16 @@ def assist_home() -> Path:
 class SessionStore:
     """Persistent assistant session metadata."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, *, read_only: bool = False):
         self.root = Path(root) if root is not None else assist_home()
+        self.read_only = read_only
+        self.db_path = self.root / "sessions.sqlite3"
+        if read_only:
+            if not self.db_path.is_file():
+                raise FileNotFoundError(f"session store does not exist: {self.db_path}")
+            return
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "sessions").mkdir(parents=True, exist_ok=True)
-        self.db_path = self.root / "sessions.sqlite3"
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             columns = {
@@ -149,7 +154,12 @@ class SessionStore:
                     conn.execute(f"alter table sessions add column {name} text")
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        if self.read_only:
+            uri = self.db_path.resolve().as_uri() + "?mode=ro"
+            conn = sqlite3.connect(uri, uri=True)
+            conn.execute("pragma query_only = on")
+        else:
+            conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -311,6 +321,8 @@ class SessionStore:
         record = self.get_session(session_id)
         if record is not None:
             return record
+        if self.read_only:
+            return None
         self.clear_active_session(cwd, session_id=session_id)
         return None
 
@@ -373,6 +385,8 @@ class SessionStore:
             return None
         lock = _row_to_lock(row)
         if _is_stale_lock(lock):
+            if self.read_only:
+                return lock
             with self._connect() as conn:
                 conn.execute(
                     "delete from session_locks where session_id = ?",
@@ -451,6 +465,7 @@ class SessionStore:
 
 
 def _row_to_record(row: sqlite3.Row) -> SessionRecord:
+    optional = set(row.keys())
     return SessionRecord(
         session_id=row["session_id"],
         created_at=row["created_at"],
@@ -465,12 +480,20 @@ def _row_to_record(row: sqlite3.Row) -> SessionRecord:
         context_mode=row["context_mode"],
         system_prompt_path=row["system_prompt_path"],
         config_paths_json=row["config_paths_json"],
-        worktree_path=row["worktree_path"],
-        worktree_branch=row["worktree_branch"],
-        worktree_base_commit=row["worktree_base_commit"],
-        provider=row["provider"],
-        auth_method=row["auth_method"],
-        credential_id=row["credential_id"],
+        worktree_path=row["worktree_path"] if "worktree_path" in optional else None,
+        worktree_branch=(
+            row["worktree_branch"] if "worktree_branch" in optional else None
+        ),
+        worktree_base_commit=(
+            row["worktree_base_commit"]
+            if "worktree_base_commit" in optional
+            else None
+        ),
+        provider=row["provider"] if "provider" in optional else None,
+        auth_method=row["auth_method"] if "auth_method" in optional else None,
+        credential_id=(
+            row["credential_id"] if "credential_id" in optional else None
+        ),
     )
 
 

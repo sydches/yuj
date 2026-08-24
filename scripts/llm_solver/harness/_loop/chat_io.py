@@ -47,6 +47,14 @@ def _aggregate_usage(usages: list[Usage]) -> Usage:
         completion_tokens=completion_tokens,
         cached_tokens=cached_tokens,
         cache_hit_ratio=cache_hit_ratio,
+        prompt_tokens_known=all(
+            getattr(usage, "prompt_tokens_known", True) is True
+            for usage in usages
+        ),
+        completion_tokens_known=all(
+            getattr(usage, "completion_tokens_known", True) is True
+            for usage in usages
+        ),
     )
 
 

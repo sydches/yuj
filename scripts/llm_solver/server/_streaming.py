@@ -87,6 +87,8 @@ class _StreamedUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     prompt_tokens_details: _StreamedPromptTokenDetails | None = None
+    prompt_tokens_known: bool = True
+    completion_tokens_known: bool = True
 
 
 @dataclass
@@ -99,7 +101,12 @@ class _StreamedTimings:
 class _StreamedResponse:
     """Quacks like the non-stream openai response. Attribute-access only."""
     choices: list[_StreamedChoice]
-    usage: _StreamedUsage = field(default_factory=_StreamedUsage)
+    usage: _StreamedUsage = field(
+        default_factory=lambda: _StreamedUsage(
+            prompt_tokens_known=False,
+            completion_tokens_known=False,
+        )
+    )
     timings: _StreamedTimings | None = None
 
     def model_dump_json(self) -> str:
@@ -274,6 +281,10 @@ def _field(value, name: str):
     return extra.get(name) if isinstance(extra, dict) else None
 
 
+def _observed_token_count(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
 # ── Stream assembly ──────────────────────────────────────────────────
 
 
@@ -284,6 +295,8 @@ def _build_response(
     finish_reason: str,
     prompt_tokens: int,
     completion_tokens: int,
+    prompt_tokens_known: bool,
+    completion_tokens_known: bool,
     cached_tokens: int | None,
     timing_prompt_n: int | None,
     timing_cache_n: int | None,
@@ -318,6 +331,8 @@ def _build_response(
                 if cached_tokens is not None
                 else None
             ),
+            prompt_tokens_known=prompt_tokens_known,
+            completion_tokens_known=completion_tokens_known,
         ),
         timings=(
             _StreamedTimings(
@@ -354,6 +369,8 @@ def assemble_stream(
     finish_reason: str | None = None
     prompt_tokens = 0
     completion_tokens = 0
+    prompt_tokens_known = False
+    completion_tokens_known = False
     cached_tokens: int | None = None
     timing_prompt_n: int | None = None
     timing_cache_n: int | None = None
@@ -372,6 +389,8 @@ def assemble_stream(
                     finish_reason="stream_rule_interrupted",
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    prompt_tokens_known=prompt_tokens_known,
+                    completion_tokens_known=completion_tokens_known,
                     cached_tokens=cached_tokens,
                     timing_prompt_n=timing_prompt_n,
                     timing_cache_n=timing_cache_n,
@@ -393,6 +412,10 @@ def assemble_stream(
         if usage is not None:
             prompt_tokens = usage.prompt_tokens
             completion_tokens = usage.completion_tokens
+            prompt_tokens_known = _observed_token_count(usage.prompt_tokens)
+            completion_tokens_known = _observed_token_count(
+                usage.completion_tokens
+            )
             details = _field(usage, "prompt_tokens_details")
             if details is None:
                 details = _field(usage, "input_tokens_details")
@@ -479,6 +502,8 @@ def assemble_stream(
         finish_reason=finish_reason,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        prompt_tokens_known=prompt_tokens_known,
+        completion_tokens_known=completion_tokens_known,
         cached_tokens=cached_tokens,
         timing_prompt_n=timing_prompt_n,
         timing_cache_n=timing_cache_n,

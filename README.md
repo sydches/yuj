@@ -159,6 +159,7 @@ own repository.
 | `yuj current` | Show the active or newest session for this repository. If it has none, show the newest saved session. |
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj show` | Show settings and recent session activity. |
+| `yuj usage` | Show persisted token, cache, cost, and quota evidence without contacting a model. |
 | `yuj resume` | Continue a paused session. |
 | `yuj answer SESSION REQUEST_ID "ANSWER"` | Record one answer for a pending clarification. |
 | `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |

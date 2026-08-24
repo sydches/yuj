@@ -15,6 +15,8 @@ class Usage:
     completion_tokens: int
     cached_tokens: int | None = None
     cache_hit_ratio: float | None = None
+    prompt_tokens_known: bool = True
+    completion_tokens_known: bool = True
 
 
 @dataclass(frozen=True)

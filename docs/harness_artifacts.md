@@ -51,7 +51,7 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/session.json` | Model, original target repository, provider and authentication method when pinned, context mode, starting config paths and their available SHA-256 hashes, and retained worktree path/branch/base commit when enabled. It never contains a credential value or credential ID. A later `provider.toml` for that coding session is not added to this file in the current code. |
 | `<session_id>/provider.toml` | Model-service, thinking-level, plan-mode, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
-| `<session_id>/.trace.jsonl` | Append-only event record across run segments. |
+| `<session_id>/.trace.jsonl` | Append-only event record across run segments, including one assistant-only `session_usage` fact for each newly ended run segment. |
 | `<session_id>/subagents/<id>/.trace.jsonl` | Separate append-only event record for one named child, including its exact terminal result and token counts. |
 | `<session_id>/subagents/<id>/transcript.log` | Model messages for one live named child. |
 | `<session_id>/.solver/state.json` | Current state view when the state writer is on. |
@@ -194,11 +194,32 @@ context or `.solver/state.json` shows a shorter active view.
 | `model_fallback` | Source and target profiles, model IDs, context windows, and reason. | Raw treatment-change provenance; state does not copy it. |
 | `proc_start`, `proc_poll`, `proc_kill` | Background-process lifecycle and poll bytes returned to the model. | State does not copy these rows. |
 | `turn` | Prompt tokens, cached tokens, hit ratio, and effective role. | Missing cache data stays null. |
+| `session_usage` | Assistant run-segment number, all-response scope, input, output, and cached tokens, plus typed cost and quota evidence or null. | The row does not enter model input or measurement traces. A report counts one matching row per segment and fails on conflicting duplicates. |
 | `length_continue` | Attempt number and completion-token count. | Stores no request or response text. |
 | `checkpoint` | Shadow-Git commit and capture time, files, and bytes. | State does not copy it. |
 | `tool_start`, `session_exit`, `turn_aborted` | Pending calls and recovery facts. | These rows do not claim a tool outcome. |
 | `lsp_diagnostics` | File, counts, time, server, and status. | Diagnostic text stays in the edit result returned to the model. |
 | `stale_guard_observe`, `stale_guard` | Read-ledger observations and policy hits. | The trace is the only resume source for the ledger. |
+
+For `session_usage`, `scope` is `all_model_responses`. Token fields are
+nonnegative integers or null. An input or output field is null when any
+complete response in that segment lacks the matching provider count.
+`cached_tokens` is null when any response lacks cache evidence. A known `cost`
+object holds an exact decimal `amount`, encoded as a string or integer, and a
+`currency`. A known `quota` object holds exact decimal `remaining` and `limit`
+values, encoded as strings or integers, plus its `unit` and `scope`. The
+current writer has no owned cost or quota source, so it writes null for both.
+A later provider writer must supply these explicit meanings; the report never
+supplies them from a model price table or a live request.
+
+The report adds compatible same-currency cost amounts across segments. Quota
+is a snapshot, not an additive value, so it shows the newest segment's quota
+only when every segment supplies the same unit and scope.
+
+Older segments have no `session_usage` row. Their `turn` rows cover a narrower
+scope and omit output tokens, while `metrics.json` covers only the newest
+segment. The session report therefore keeps an aggregate field unknown when
+any segment lacks the matching all-response fact.
 
 ### Run-start provenance
 
@@ -239,8 +260,9 @@ names an explicit copy.
 | `last_compaction` | Trace-derived compaction fields, including hook outcome. Never summary text. |
 | `meta.event_count`, `meta.projected_event_count`, `meta.active_event_count` | Raw and active-view event counts. |
 
-Handoff text, advisor records, hook rows, background-process rows, cache-only
-turn data, and most run-start provenance do not enter the state file. A rewind
+Handoff text, advisor records, hook rows, background-process rows,
+`session_usage`, cache-only turn data, and most run-start provenance do not
+enter the state file. A rewind
 selects an earlier active branch without deleting raw events. If state and
 trace disagree, trust the trace.
 
