@@ -47,9 +47,9 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 
 | File | What it means |
 | --- | --- |
-| `sessions.sqlite3` | Index of coding sessions, active-session pointers, and process locks. |
+| `sessions.sqlite3` | Index of coding sessions, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. Credential IDs are internal and are not printed by session commands. |
 | `<session_id>/prompt.txt` | Original task text. |
-| `<session_id>/session.json` | Model, original target repository, context mode, starting config paths, and retained worktree path/branch/base commit when enabled. A later `provider.toml` for that coding session is not added to this file in the current code. |
+| `<session_id>/session.json` | Model, original target repository, provider and authentication method when pinned, context mode, starting config paths, and retained worktree path/branch/base commit when enabled. It never contains a credential value or credential ID. A later `provider.toml` for that coding session is not added to this file in the current code. |
 | `<session_id>/provider.toml` | Model-service, thinking-level, plan-mode, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
 | `<session_id>/.trace.jsonl` | Append-only event record across run segments. |
 | `<session_id>/subagents/<id>/.trace.jsonl` | Separate append-only event record for one named child, including its exact terminal result and token counts. |
@@ -73,6 +73,11 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 Yuj may write `<target_repository>/.tool_output/*.log` when a kept tool result
 is too large for the current model input. This is the main Yuj record that can
 appear in the target repository.
+
+Claude and Codex credential files are host configuration, not harness
+artifacts. They remain outside the target repository and assistant session
+directory. Model messages, transcripts, traces, metrics, logs, configuration
+inspection, and model-command environments never receive their values.
 
 ## How to read the tables
 

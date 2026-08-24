@@ -68,6 +68,21 @@ yuj setup --provider openai --model YOUR_MODEL_ID \
   --api-key-env OPENAI_API_KEY
 ```
 
+Claude and Codex also support provider-scoped API keys and eligible
+subscription sign-in. For browser sign-in, run one of:
+
+```bash
+yuj setup --provider claude --auth subscription --model YOUR_MODEL_ID
+yuj setup --provider codex --auth subscription --model YOUR_MODEL_ID
+```
+
+Yuj opens the provider's sign-in page and saves the resulting credential in
+the user configuration directory. Credential secret values stay out of the
+target repository and session records; the private session index retains only
+the non-secret credential identifier needed to keep a session pinned. Run
+`yuj auth-status` to see the selected provider and authentication method
+without showing the credential.
+
 For a local OpenAI-compatible server at `localhost:8080`, run:
 
 ```bash
@@ -132,6 +147,9 @@ own repository.
 | Command | What it does |
 | --- | --- |
 | `yuj setup` | Save settings for an online model service or a local model server. |
+| `yuj login` | Save and select one Claude or Codex credential. |
+| `yuj auth-status` | Show the selected provider and authentication method without credentials. |
+| `yuj logout` | Remove only the named provider credential. |
 | `yuj config` | Validate and explain every resolved setting without contacting a model. |
 | `yuj doctor` | Check the settings, model connection, Git, and `bwrap`. |
 | `yuj models` | List the models that the selected service offers. |

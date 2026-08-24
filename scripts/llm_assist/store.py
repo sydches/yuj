@@ -30,7 +30,10 @@ create table if not exists sessions (
     config_paths_json text not null,
     worktree_path text,
     worktree_branch text,
-    worktree_base_commit text
+    worktree_base_commit text,
+    provider text,
+    auth_method text,
+    credential_id text
 );
 
 create table if not exists active_sessions (
@@ -66,6 +69,9 @@ class SessionRecord:
     worktree_path: str | None = None
     worktree_branch: str | None = None
     worktree_base_commit: str | None = None
+    provider: str | None = None
+    auth_method: str | None = None
+    credential_id: str | None = None
 
     @property
     def artifact_path(self) -> Path:
@@ -132,7 +138,12 @@ class SessionStore:
                 for row in conn.execute("pragma table_info(sessions)").fetchall()
             }
             for name in (
-                "worktree_path", "worktree_branch", "worktree_base_commit"
+                "worktree_path",
+                "worktree_branch",
+                "worktree_base_commit",
+                "provider",
+                "auth_method",
+                "credential_id",
             ):
                 if name not in columns:
                     conn.execute(f"alter table sessions add column {name} text")
@@ -152,6 +163,9 @@ class SessionStore:
         context_mode: str,
         system_prompt_path: Path | None,
         config_paths: list[Path],
+        provider: str | None = None,
+        auth_method: str | None = None,
+        credential_id: str | None = None,
     ) -> SessionRecord:
         now = _utc_now()
         session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
@@ -170,6 +184,9 @@ class SessionStore:
             context_mode=context_mode,
             system_prompt_path=str(system_prompt_path.resolve()) if system_prompt_path else None,
             config_paths_json=json.dumps([str(Path(p).resolve()) for p in config_paths]),
+            provider=provider,
+            auth_method=auth_method,
+            credential_id=credential_id,
         )
         with self._connect() as conn:
             conn.execute(
@@ -177,8 +194,9 @@ class SessionStore:
                 insert into sessions (
                     session_id, created_at, updated_at, cwd, artifact_dir, model, status,
                     last_finish_reason, prompt_text, prompt_source, context_mode,
-                    system_prompt_path, config_paths_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    system_prompt_path, config_paths_json, provider, auth_method,
+                    credential_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.session_id,
@@ -194,6 +212,9 @@ class SessionStore:
                     record.context_mode,
                     record.system_prompt_path,
                     record.config_paths_json,
+                    record.provider,
+                    record.auth_method,
+                    record.credential_id,
                 ),
             )
         return record
@@ -447,6 +468,9 @@ def _row_to_record(row: sqlite3.Row) -> SessionRecord:
         worktree_path=row["worktree_path"],
         worktree_branch=row["worktree_branch"],
         worktree_base_commit=row["worktree_base_commit"],
+        provider=row["provider"],
+        auth_method=row["auth_method"],
+        credential_id=row["credential_id"],
     )
 
 

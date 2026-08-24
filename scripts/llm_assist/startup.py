@@ -27,6 +27,8 @@ from ..llm_solver.harness.tools import _effective_command_environment
 from ..llm_solver.models import resolve_model
 from ..llm_solver.runtime_resources import validate_runtime_resources
 from ..llm_solver.server.profile_loader import load_profile
+from ._auth import AuthBinding, CredentialStore
+from .runner import _protect_auth_environment
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ def preflight_assistant_startup(
     requested_model: str | None = None,
     config_overrides: Mapping[str, object] | None = None,
     system_prompt_file: Path | None = None,
+    auth_binding: AuthBinding | None = None,
+    auth_store: CredentialStore | None = None,
 ) -> StartupPreflightReport:
     """Run ordinary local discovery and validation without model I/O or writes."""
     target = Path(cwd).expanduser().resolve()
@@ -75,6 +79,12 @@ def preflight_assistant_startup(
     if requested_model:
         overrides["model"] = resolve_model(requested_model)
     cfg = load_config(user_config=list(config_paths), overrides=overrides)
+    if auth_binding is not None:
+        auth_store = auth_store or CredentialStore()
+        auth_store.require_outside_target(target)
+    cfg = _protect_auth_environment(
+        cfg, auth_binding, store=auth_store
+    )
     require_runtime_mode(cfg, expected="assistant", caller="yuj startup preflight")
 
     resources = validate_runtime_resources()

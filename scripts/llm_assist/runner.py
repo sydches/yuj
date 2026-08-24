@@ -32,14 +32,157 @@ from ..llm_solver.harness.workspace_checkpoints import (
 from ..llm_solver.models import resolve_model
 from ..llm_solver.server import LlamaClient, load_profile
 from ._anthropic import AnthropicClient
+from ._auth import (
+    AccountIneligibleError,
+    AuthBinding,
+    CredentialRevokedError,
+    CredentialSession,
+    CredentialStore,
+    ProviderAuthError,
+    ProviderRequestError,
+    validate_auth_endpoint,
+)
+from ._codex import CodexSubscriptionClient
 from .store import SessionRecord, SessionStore
 
 
-def _make_client(cfg, profile) -> LlamaClient:
-    """Pick the transport for cfg.provider; OpenAI-compatible is the default."""
+class _ProviderAPIKeyClient(LlamaClient):
+    """OpenAI-compatible API-key client with safe provider auth failures."""
+
+    def __init__(self, cfg, profile=None, *, provider: str):
+        super().__init__(cfg, profile=profile)
+        self._provider_name = provider
+
+    def _call_api(self, payload: dict, *, record_transcript: bool = True):
+        n = 0
+        if record_transcript:
+            self._transcript_call_n += 1
+            n = self._transcript_call_n
+            self._write_transcript(
+                f"turn {n:03d} input", json.dumps(payload, default=str)
+            )
+        try:
+            response = super()._call_api(payload, record_transcript=False)
+        except Exception as exc:
+            translated = self._translate_provider_error(exc)
+            if isinstance(translated, ProviderAuthError):
+                self._last_provider_auth_error = translated
+            if record_transcript:
+                detail = (
+                    str(translated)
+                    if isinstance(translated, ProviderAuthError)
+                    else "provider request failed"
+                )
+                self._write_transcript(
+                    f"turn {n:03d} output",
+                    f"{type(translated).__name__}: {detail}",
+                )
+            if translated is exc:
+                raise
+            raise translated from exc
+        if record_transcript:
+            self._write_transcript(
+                f"turn {n:03d} output", response.model_dump_json()
+            )
+        return response
+
+    def health_check(self) -> list[str]:
+        try:
+            return super().health_check()
+        except Exception as exc:
+            translated = self._translate_provider_error(exc)
+            if translated is exc:
+                raise
+            raise translated from exc
+
+    def _translate_provider_error(self, exc: Exception) -> Exception:
+        status = int(getattr(exc, "status_code", 0) or 0)
+        if status == 401:
+            return CredentialRevokedError(
+                self._provider_name, "API key was rejected or revoked"
+            )
+        if status == 403:
+            return AccountIneligibleError(
+                self._provider_name, "account is not eligible for this request"
+            )
+        if status in {404, 405, 410, 422}:
+            return ProviderRequestError(
+                self._provider_name,
+                f"API request failed with HTTP {status}",
+            )
+        return exc
+
+
+def _make_client(
+    cfg,
+    profile,
+    *,
+    auth_binding: AuthBinding | None = None,
+    auth_store: CredentialStore | None = None,
+    http=None,
+    now=None,
+) -> LlamaClient:
+    """Pick one explicit transport and never fall back between credentials."""
+    if auth_binding is not None:
+        validate_auth_endpoint(cfg, auth_binding)
+        auth = CredentialSession(
+            auth_binding,
+            store=auth_store,
+            http=http,
+            now=now,
+        )
+        if auth_binding.provider == "claude":
+            return AnthropicClient(
+                cfg, profile=profile, auth=auth, http=http
+            )
+        if auth_binding.auth_method == "subscription":
+            return CodexSubscriptionClient(
+                cfg, profile=profile, auth=auth, http=http
+            )
+
+        credential = auth.access()
+        client = _ProviderAPIKeyClient(
+            replace(cfg, api_key=credential.token),
+            profile=profile,
+            provider=auth_binding.provider,
+        )
+        # The SDK retains the key internally. Keep it out of the config object
+        # shared with the harness, its artifacts, and inspection surfaces.
+        client.cfg = cfg
+        return client
     if getattr(cfg, "provider", "") == "anthropic":
         return AnthropicClient(cfg, profile=profile)
     return LlamaClient(cfg, profile=profile)
+
+
+def _protect_auth_environment(
+    cfg,
+    binding: AuthBinding | None,
+    *,
+    store: CredentialStore | None = None,
+):
+    """Pin managed authentication and remove its environment from tools."""
+    if binding is None:
+        return cfg
+    # A provider-scoped session must never advance to a configured fallback
+    # target after a request failure.
+    cfg = replace(cfg, model_fallback_chain={})
+    excluded_names = {"YUJ_AUTH_HOME"}
+    if binding.auth_method == "api_key":
+        session = CredentialSession(binding, store=store)
+        environment_name = session.environment_name()
+        if environment_name:
+            excluded_names.add(environment_name)
+    sandbox_set = dict(cfg.sandbox_env_set)
+    filters = dict(cfg.sandbox_env_filters)
+    for environment_name in excluded_names:
+        sandbox_set.pop(environment_name, None)
+        filters[environment_name] = "exclude"
+    return replace(
+        cfg,
+        sandbox_env_set=sandbox_set,
+        sandbox_env_filters=filters,
+    )
 
 
 _EMPTY_STATE = {
@@ -64,6 +207,7 @@ def create_session(
     config_paths: list[Path],
     system_prompt_path: Path | None,
     context_mode: str,
+    auth_binding: AuthBinding | None = None,
 ) -> SessionRecord:
     record = store.create_session(
         cwd=cwd,
@@ -73,6 +217,9 @@ def create_session(
         context_mode=context_mode,
         system_prompt_path=system_prompt_path,
         config_paths=config_paths,
+        provider=auth_binding.provider if auth_binding else None,
+        auth_method=auth_binding.auth_method if auth_binding else None,
+        credential_id=auth_binding.credential_id if auth_binding else None,
     )
     store.set_active_session(cwd, record.session_id)
     _seed_session_artifacts(record)
@@ -113,10 +260,18 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
     worktree_info, record = _resolve_session_worktree(
         store, record, cfg=cfg, resume=resume
     )
-    store.update_session(record.session_id, status="running", last_finish_reason=None)
-
+    auth_binding = _record_auth_binding(record)
+    auth_store = CredentialStore() if auth_binding is not None else None
+    if auth_store is not None:
+        auth_store.require_outside_target(Path(record.cwd))
+    cfg = _protect_auth_environment(cfg, auth_binding, store=auth_store)
     profile = _load_profile(cfg)
-    client = _make_client(cfg, profile)
+    client = _make_client(
+        cfg,
+        profile,
+        auth_binding=auth_binding,
+        auth_store=auth_store,
+    )
     if hasattr(client, "set_session_id"):
         client.set_session_id(record.session_id)
     cfg = _apply_effective_context(cfg, client)
@@ -125,7 +280,15 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
         cfg=cfg,
         main_client=client,
         profiles_dir=PROJECT_ROOT / "profiles",
-        client_factory=_make_client,
+        client_factory=lambda role_cfg, role_profile: _make_client(
+            role_cfg,
+            role_profile,
+            auth_binding=auth_binding,
+            auth_store=auth_store,
+        ),
+    )
+    store.update_session(
+        record.session_id, status="running", last_finish_reason=None
     )
 
     prompt_text = record.prompt_text
@@ -161,6 +324,14 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
         resume_from_artifacts=resume,
         worktree_info=worktree_info,
     )
+    provider_auth_error = getattr(client, "_last_provider_auth_error", None)
+    if isinstance(provider_auth_error, ProviderAuthError):
+        store.update_session(
+            record.session_id,
+            status="error",
+            last_finish_reason="provider_auth_error",
+        )
+        raise provider_auth_error
     finish_reason = last_finish_reason(artifact_dir)
     store.update_session(
         record.session_id,
@@ -705,6 +876,8 @@ def _write_session_metadata(record: SessionRecord) -> None:
         "session_id": record.session_id,
         "cwd": record.cwd,
         "model": record.model,
+        "provider": record.provider,
+        "authentication": record.auth_method,
         "prompt_source": record.prompt_source,
         "context_mode": record.context_mode,
         "system_prompt_path": record.system_prompt_path,
@@ -714,6 +887,19 @@ def _write_session_metadata(record: SessionRecord) -> None:
         "worktree_base_commit": record.worktree_base_commit,
     }
     (artifact_dir / "session.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def _record_auth_binding(record: SessionRecord) -> AuthBinding | None:
+    values = (record.provider, record.auth_method, record.credential_id)
+    if not any(values):
+        return None
+    if not all(values):
+        raise RuntimeError("saved session has incomplete authentication identity")
+    return AuthBinding(
+        provider=str(record.provider),
+        auth_method=str(record.auth_method),
+        credential_id=str(record.credential_id),
+    )
 
 
 def _format_trace_event(event: dict) -> str:
@@ -915,6 +1101,9 @@ def resolve_served_model(
     config_paths: list[Path],
     requested_model: str | None = None,
     config_overrides: dict | None = None,
+    *,
+    auth_binding: AuthBinding | None = None,
+    auth_store: CredentialStore | None = None,
 ) -> tuple[str, list[str]]:
     """Resolve an exact served model id against ``/v1/models``.
 
@@ -936,11 +1125,18 @@ def resolve_served_model(
         overrides=overrides,
     )
     profile = _load_profile(cfg)
-    client = _make_client(cfg, profile)
+    client = _make_client(
+        cfg,
+        profile,
+        auth_binding=auth_binding,
+        auth_store=auth_store,
+    )
     served = client.health_check()
     if not served:
         raise RuntimeError("server returned no models from /v1/models")
     if base_model in served:
+        return base_model, served
+    if auth_binding is not None:
         return base_model, served
     if requested_model and _is_remote_transport(config_overrides):
         return base_model, served
@@ -951,12 +1147,17 @@ def resolve_smoke_model(
     config_paths: list[Path],
     requested_model: str | None = None,
     config_overrides: dict | None = None,
+    *,
+    auth_binding: AuthBinding | None = None,
+    auth_store: CredentialStore | None = None,
 ) -> tuple[str, list[str]]:
     """Backwards-compatible alias for ``resolve_served_model``."""
     return resolve_served_model(
         config_paths,
         requested_model=requested_model,
         config_overrides=config_overrides,
+        auth_binding=auth_binding,
+        auth_store=auth_store,
     )
 
 

@@ -29,6 +29,9 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | Command | What it does |
 | --- | --- |
 | `yuj setup` | Save the model connection settings for this machine. |
+| `yuj login` | Save and select a Claude or Codex credential. |
+| `yuj auth-status` | Show the selected provider and authentication method without credentials. |
+| `yuj logout` | Remove one provider-scoped credential. |
 | `yuj config` | Validate and explain the resolved settings without model work. |
 | `yuj models` | List models from the selected service. |
 | `yuj doctor` | Check the settings, model connection, Git, and `bwrap`. |
@@ -188,7 +191,7 @@ Yuj calls the starting group of settings a base.
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |
 | `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
-| `--provider NAME` | Use `local`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
+| `--provider NAME` | Use `local`, `claude`, `codex`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
 | `--config PATH`, `-c PATH` | Apply this TOML file. Repeat the option to apply more files from left to right. |
@@ -226,6 +229,12 @@ An `@path` line in a system-prompt file imports that file. A relative import
 starts beside the file that contains it. Imports may nest five levels. Yuj
 adds a visible marker for a missing file, a cycle, or a deeper import.
 
+`--provider claude` and `--provider codex` use the provider-scoped credential
+selected by `setup` or `login`. Yuj rejects a different endpoint or a
+different selected provider before it reads that credential. A provider
+failure does not switch the provider, account, credential, model, endpoint,
+or billing method.
+
 Read [Configuration](configuration.html) for setting order, model services,
 context modes, and saved settings.
 
@@ -242,6 +251,23 @@ yuj setup --provider openai --model YOUR_MODEL_ID \
   --api-key-env OPENAI_API_KEY
 ```
 
+For an eligible Claude or ChatGPT subscription, use browser sign-in:
+
+```bash
+yuj setup --provider claude --auth subscription --model YOUR_MODEL_ID
+yuj setup --provider codex --auth subscription --model YOUR_MODEL_ID
+```
+
+For a provider-scoped API key, use `--auth api-key` with exactly one key
+source:
+
+```bash
+yuj setup --provider claude --auth api-key --model YOUR_MODEL_ID \
+  --api-key-env ANTHROPIC_API_KEY
+yuj setup --provider codex --auth api-key --model YOUR_MODEL_ID \
+  --api-key-env OPENAI_API_KEY
+```
+
 For an installed package, Yuj writes
 `$XDG_CONFIG_HOME/yuj/config.local.toml`, or
 `~/.config/yuj/config.local.toml` when `XDG_CONFIG_HOME` is unset. An editable
@@ -250,11 +276,12 @@ ignores it. `YUJ_CONFIG_LOCAL` selects an exact alternative path.
 
 | Option | What it does |
 | --- | --- |
-| `--provider NAME` | Save `local`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
+| `--provider NAME` | Save `local`, `claude`, `codex`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
+| `--auth METHOD` | With `claude` or `codex`, use `api-key` or `subscription`. |
 | `--model NAME`, `-m NAME` | Save the default model ID. |
 | `--base-url URL` | Save the API base address. `custom` requires it. |
 | `--api-key-env NAME` | Save `$ENV:NAME`. Yuj reads the key from that variable when a command starts. |
-| `--api-key VALUE` | Save the key itself in `config.local.toml`. |
+| `--api-key VALUE` | Save a key. Claude and Codex keep it in their provider credential file; other service choices keep it in `config.local.toml`. |
 | `--force` | Replace an existing local settings file without asking. |
 
 Without `--force`, a non-interactive command does not replace an existing
@@ -263,8 +290,38 @@ file. An interactive command asks first.
 Always give `--provider` when you use setup options. Without it, Yuj starts
 the interactive provider question.
 
-If you give both `--api-key` and `--api-key-env`, the literal `--api-key`
-wins. Use only one so the saved source is clear.
+With Claude or Codex, give only one of `--api-key` and `--api-key-env`.
+
+### `yuj login`, `yuj auth-status`, and `yuj logout`
+
+Use `login` to replace and select one provider credential without rewriting
+the model settings:
+
+```bash
+yuj login --provider claude --auth subscription
+yuj login --provider codex --auth api-key --api-key-env OPENAI_API_KEY
+```
+
+Run `yuj auth-status` to print only the active provider, authentication
+method, and whether its credential record exists. Run one of these commands
+to remove exactly one provider credential:
+
+```bash
+yuj logout --provider claude
+yuj logout --provider codex
+```
+
+Subscription credentials refresh when they approach expiration. Missing,
+malformed, expired without a usable refresh token, revoked, ineligible, and
+unsupported credentials stop with distinct errors. Yuj does not try another
+credential or service after any of these errors.
+
+Yuj stores provider credentials under `$XDG_CONFIG_HOME/yuj/auth`, or
+`~/.config/yuj/auth` when `XDG_CONFIG_HOME` is unset. The directory has mode
+`0700`. Credential and active-selection files have mode `0600` and are
+replaced atomically. Credential values do not enter the target repository,
+model messages, session artifacts, trace, logs, configuration output, or
+model-command environment.
 
 ### `yuj models`
 
@@ -393,8 +450,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | Command | What it shows |
 | --- | --- |
 | `yuj current` | The active or newest session for the current repository. If that repository has no session, the newest saved session. |
-| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Status, times, saved-file path, context mode, task source, recent turns, and recent trace events |
+| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, context mode, task source, recent turns, and recent trace events |
 | `yuj sessions --limit N` | Up to `N` recent sessions from all repositories; the default is 20 |
 
 Use `yuj show --turns N --trace-lines N [SESSION]` to choose how many recent

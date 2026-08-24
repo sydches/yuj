@@ -34,6 +34,14 @@ from ..llm_solver.harness.worktree_runtime import (
     inspect_session_worktree,
     remove_session_worktree,
 )
+from ._auth import (
+    AuthBinding,
+    CredentialMissingError,
+    CredentialStore,
+    ProviderAuthError,
+    browser_sign_in,
+    provider_spec,
+)
 from .progress import TraceFollower
 from .runner import (
     _make_client,
@@ -83,8 +91,19 @@ _PROVIDER_PRESETS = {
         "base_url": "https://api.anthropic.com/v1",
         "api_key": "$ENV:ANTHROPIC_API_KEY",
     },
+    "claude": {
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com/v1",
+        "api_key": "yuj-host-credential",
+    },
+    "codex": {
+        "provider": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "yuj-host-credential",
+    },
     "custom": {"provider": "openai-compatible"},
 }
+_MANAGED_PROVIDERS = frozenset({"claude", "codex"})
 _TREATMENT_CONFIG = PROJECT_ROOT / "configs/regimes/treatment.toml"
 _PLAIN_CONFIG = PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml"
 
@@ -127,11 +146,17 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "--provider",
             choices=sorted(_PROVIDER_PRESETS),
-            help="model service: local, openai, anthropic, zai, openrouter, or custom",
+            help=(
+                "model service: local, claude, codex, openai, anthropic, "
+                "zai, openrouter, or custom"
+            ),
         )
         p.add_argument(
             "--base-url",
-            help="OpenAI-compatible or Anthropic API base URL; overrides provider preset",
+            help=(
+                "model API base URL; Claude and Codex managed endpoints "
+                "cannot be changed"
+            ),
         )
         p.add_argument(
             "--api-key-env",
@@ -239,7 +264,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     setup_parser.add_argument("--model", "-m", help="default model ID to save")
     setup_parser.add_argument("--base-url", help="API base URL to save")
-    setup_parser.add_argument("--api-key", help="API key to save in config.local.toml")
+    setup_parser.add_argument(
+        "--auth",
+        choices=("api-key", "subscription"),
+        help="Claude or Codex authentication method",
+    )
+    setup_parser.add_argument("--api-key", help="API key to save")
     setup_parser.add_argument(
         "--api-key-env",
         help="save an environment-variable reference instead of the key",
@@ -250,6 +280,34 @@ def main(argv: list[str] | None = None) -> int:
         help="replace an existing config.local.toml",
     )
     setup_parser.set_defaults(func=cmd_setup)
+
+    login_parser = sub.add_parser(
+        "login", help="save and select a Claude or Codex credential"
+    )
+    login_parser.add_argument(
+        "--provider", choices=sorted(_MANAGED_PROVIDERS), required=True
+    )
+    login_parser.add_argument(
+        "--auth",
+        choices=("api-key", "subscription"),
+        default="subscription",
+    )
+    login_parser.add_argument("--api-key")
+    login_parser.add_argument("--api-key-env")
+    login_parser.set_defaults(func=cmd_login)
+
+    logout_parser = sub.add_parser(
+        "logout", help="remove one Claude or Codex credential"
+    )
+    logout_parser.add_argument(
+        "--provider", choices=sorted(_MANAGED_PROVIDERS)
+    )
+    logout_parser.set_defaults(func=cmd_logout)
+
+    auth_status_parser = sub.add_parser(
+        "auth-status", help="show selected provider authentication without secrets"
+    )
+    auth_status_parser.set_defaults(func=cmd_auth_status)
 
     models_parser = sub.add_parser("models", help="list models from the selected service")
     models_parser.add_argument("--config", "-c", type=Path, action="append", default=[],
@@ -284,11 +342,17 @@ def main(argv: list[str] | None = None) -> int:
     smoke_parser.add_argument(
         "--provider",
         choices=sorted(_PROVIDER_PRESETS),
-        help="model service: local, openai, anthropic, zai, openrouter, or custom",
+        help=(
+            "model service: local, claude, codex, openai, anthropic, "
+            "zai, openrouter, or custom"
+        ),
     )
     smoke_parser.add_argument(
         "--base-url",
-        help="OpenAI-compatible or Anthropic API base URL; overrides provider preset",
+        help=(
+            "model API base URL; Claude and Codex managed endpoints "
+            "cannot be changed"
+        ),
     )
     smoke_parser.add_argument(
         "--api-key-env",
@@ -422,13 +486,17 @@ def main(argv: list[str] | None = None) -> int:
                 base_url=None,
                 api_key=None,
                 api_key_env=None,
+                auth=None,
                 force=False,
             ))
         parser.print_help()
         return 0
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ProviderAuthError as exc:
+        raise SystemExit(f"{exc.code}: {exc}") from exc
 
 
 def cmd_run(args) -> int:
@@ -437,7 +505,12 @@ def cmd_run(args) -> int:
     prompt_text, prompt_source = _resolve_prompt_input(args)
     config_paths, context_mode = _effective_run_settings(args)
 
-    transport_overrides = _transport_overrides_from_args(args)
+    auth_store = CredentialStore()
+    auth_store.require_outside_target(args.cwd)
+    auth_binding = _auth_binding_for_args(args, store=auth_store)
+    transport_overrides = _transport_overrides_from_args(
+        args, auth_binding=auth_binding
+    )
     try:
         preflight = preflight_assistant_startup(
             config_paths=config_paths,
@@ -446,6 +519,8 @@ def cmd_run(args) -> int:
             requested_model=args.model,
             config_overrides=transport_overrides,
             system_prompt_file=args.system_prompt,
+            auth_binding=auth_binding,
+            auth_store=auth_store,
         )
     except Exception as exc:
         raise SystemExit(f"startup preflight failed: {exc}") from exc
@@ -458,6 +533,8 @@ def cmd_run(args) -> int:
         config_paths,
         requested_model=args.model,
         config_overrides=transport_overrides,
+        auth_binding=auth_binding,
+        auth_store=auth_store,
     )
     record = create_session(
         store,
@@ -468,6 +545,7 @@ def cmd_run(args) -> int:
         config_paths=config_paths,
         system_prompt_path=args.system_prompt.resolve() if args.system_prompt else None,
         context_mode=context_mode,
+        auth_binding=auth_binding,
     )
     record = _persist_session_config_overlay(
         store,
@@ -572,11 +650,18 @@ def cmd_smoke(args) -> int:
     _maybe_offer_first_run_setup(args)
     smoke_root = prepare_smoke_repo(args.root)
     config_paths, context_mode = _effective_run_settings(args)
-    transport_overrides = _transport_overrides_from_args(args)
+    auth_store = CredentialStore()
+    auth_store.require_outside_target(smoke_root)
+    auth_binding = _auth_binding_for_args(args, store=auth_store)
+    transport_overrides = _transport_overrides_from_args(
+        args, auth_binding=auth_binding
+    )
     model, served = _resolve_smoke_model_or_exit(
         config_paths,
         requested_model=args.model,
         config_overrides=transport_overrides,
+        auth_binding=auth_binding,
+        auth_store=auth_store,
     )
     prompt_text = (
         "Fix the bug in calc.py so tests/test_calc.py passes. "
@@ -592,6 +677,7 @@ def cmd_smoke(args) -> int:
         config_paths=config_paths,
         system_prompt_path=args.system_prompt.resolve() if args.system_prompt else None,
         context_mode=context_mode,
+        auth_binding=auth_binding,
     )
     record = _persist_session_config_overlay(
         store,
@@ -723,11 +809,53 @@ def cmd_setup(args) -> int:
 
     provider = args.provider or _prompt_choice(
         "Provider",
-        choices=["local", "openai", "anthropic", "openrouter", "zai", "custom"],
+        choices=[
+            "local",
+            "claude",
+            "codex",
+            "openai",
+            "anthropic",
+            "openrouter",
+            "zai",
+            "custom",
+        ],
         default="local",
     )
     preset = dict(_PROVIDER_PRESETS[provider])
-    if provider == "local":
+    auth_method: str | None = None
+    binding: AuthBinding | None = None
+    managed_store: CredentialStore | None = None
+    if provider in _MANAGED_PROVIDERS:
+        managed_store = CredentialStore()
+        managed_store.require_outside_current_repository()
+        auth_choice = args.auth or _prompt_choice(
+            "Authentication",
+            choices=["api-key", "subscription"],
+            default="api-key",
+        )
+        auth_method = auth_choice.replace("-", "_")
+        spec = provider_spec(provider)
+        base_url = (
+            spec.subscription_base_url
+            if auth_method == "subscription"
+            else spec.api_key_base_url
+        )
+        if args.base_url and args.base_url.rstrip("/") != base_url.rstrip("/"):
+            raise SystemExit(
+                f"--base-url cannot change the {provider} {auth_method} endpoint"
+            )
+        model = args.model or _prompt_required("Default model id")
+        binding = _save_managed_login(
+            provider,
+            auth_method=auth_method,
+            api_key=args.api_key,
+            api_key_env=args.api_key_env,
+            store=managed_store,
+        )
+        api_key = "yuj-host-credential"
+    elif args.auth:
+        raise SystemExit("--auth is supported only with --provider claude or codex")
+    elif provider == "local":
         base_url = args.base_url or _prompt_default(
             "Local OpenAI-compatible base URL",
             "http://localhost:8080/v1",
@@ -754,15 +882,112 @@ def cmd_setup(args) -> int:
         api_key=api_key,
         model=model,
     ))
+    if binding is not None:
+        assert managed_store is not None
+        managed_store.select(binding)
     print(f"wrote: {config_path}")
     print(f"provider: {provider}")
+    if auth_method is not None:
+        print(f"authentication: {auth_method}")
+    else:
+        CredentialStore().clear_selection()
     print(f"model: {model}")
     return 0
 
 
+def cmd_login(args) -> int:
+    auth_method = args.auth.replace("-", "_")
+    store = CredentialStore()
+    store.require_outside_current_repository()
+    binding = _save_managed_login(
+        args.provider,
+        auth_method=auth_method,
+        api_key=args.api_key,
+        api_key_env=args.api_key_env,
+        store=store,
+    )
+    store.select(binding)
+    print(f"active_provider: {binding.provider}")
+    print(f"authentication: {binding.auth_method}")
+    print("credential: stored")
+    return 0
+
+
+def cmd_logout(args) -> int:
+    store = CredentialStore()
+    provider = args.provider
+    if provider is None:
+        active = store.active_binding()
+        if active is None:
+            raise CredentialMissingError(
+                "active", "no provider credential is selected"
+            )
+        provider = active.provider
+    removed = store.logout(provider)
+    print(f"provider: {provider}")
+    print(f"credential_removed: {str(removed).lower()}")
+    return 0
+
+
+def cmd_auth_status(_args) -> int:
+    store = CredentialStore()
+    binding = store.active_binding()
+    if binding is None:
+        print("active_provider: none")
+        print("authentication: none")
+        print("credential: missing")
+        return 1
+    store.load(binding.provider, expected_binding=binding)
+    print(f"active_provider: {binding.provider}")
+    print(f"authentication: {binding.auth_method}")
+    print("credential: stored")
+    return 0
+
+
+def _save_managed_login(
+    provider: str,
+    *,
+    auth_method: str,
+    api_key: str | None,
+    api_key_env: str | None,
+    store: CredentialStore | None = None,
+) -> AuthBinding:
+    store = store or CredentialStore()
+    if auth_method == "subscription":
+        if api_key or api_key_env:
+            raise SystemExit(
+                "subscription authentication does not accept an API key"
+            )
+        return browser_sign_in(provider, store=store)
+    if auth_method != "api_key":
+        raise SystemExit(f"unsupported authentication method: {auth_method}")
+    if api_key and api_key_env:
+        raise SystemExit("provide only one of --api-key or --api-key-env")
+    if not api_key and not api_key_env:
+        if not _is_interactive():
+            raise SystemExit(
+                "API-key authentication requires --api-key or --api-key-env"
+            )
+        api_key = getpass.getpass("API key: ").strip()
+        if not api_key:
+            raise SystemExit("API key is required")
+    return store.save_api_key(
+        provider,
+        secret=api_key,
+        environment=api_key_env,
+    )
+
+
 def cmd_models(args) -> int:
     cfg = _load_assistant_config(args.config)
-    client = _make_client(cfg, profile=None)
+    auth_store = CredentialStore()
+    auth_binding = auth_store.active_binding()
+    client = _make_client(
+        cfg,
+        profile=None,
+        auth_binding=auth_binding,
+        auth_store=auth_store,
+    )
     models = client.health_check()
     print(f"provider: {cfg.provider}")
     print(f"base_url: {cfg.base_url}")
@@ -790,7 +1015,13 @@ def cmd_doctor(args) -> int:
 
     if cfg is not None:
         try:
-            models = _make_client(cfg, profile=None).health_check()
+            auth_store = CredentialStore()
+            models = _make_client(
+                cfg,
+                profile=None,
+                auth_binding=auth_store.active_binding(),
+                auth_store=auth_store,
+            ).health_check()
             print(f"models: ok ({len(models)} returned)")
             if cfg.model in models:
                 print("selected_model: ok")
@@ -911,6 +1142,9 @@ def cmd_status(args) -> int:
     print(f"turns: {turns}")
     print(f"cwd: {record.cwd}")
     print(f"model: {record.model}")
+    if record.provider:
+        print(f"provider: {record.provider}")
+        print(f"authentication: {record.auth_method}")
     if approval is not None and approval.get("status") == "pending":
         print("approval: pending")
     else:
@@ -957,6 +1191,9 @@ def cmd_show(args) -> int:
     print(f"cwd: {record.cwd}")
     print(f"artifacts: {record.artifact_dir}")
     print(f"model: {record.model}")
+    if record.provider:
+        print(f"provider: {record.provider}")
+        print(f"authentication: {record.auth_method}")
     print(f"context: {record.context_mode}")
     print(f"prompt_source: {record.prompt_source}")
     if record.system_prompt_path:
@@ -1116,6 +1353,7 @@ def _maybe_offer_first_run_setup(args) -> None:
             base_url=None,
             api_key=None,
             api_key_env=None,
+            auth=None,
             force=False,
         ))
         if rc == 0:
@@ -1179,7 +1417,37 @@ def _toml_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _transport_overrides_from_args(args) -> dict:
+def _auth_binding_for_args(
+    args,
+    *,
+    store: CredentialStore | None = None,
+) -> AuthBinding | None:
+    store = store or CredentialStore()
+    selected_provider = getattr(args, "provider", None)
+    if selected_provider and selected_provider not in _MANAGED_PROVIDERS:
+        return None
+    active = store.active_binding()
+    if selected_provider in _MANAGED_PROVIDERS:
+        if active is None:
+            raise CredentialMissingError(
+                selected_provider,
+                "no credential is selected; run "
+                f"`yuj login --provider {selected_provider}`",
+            )
+        if active.provider != selected_provider:
+            raise CredentialMissingError(
+                selected_provider,
+                "a different provider credential is selected; "
+                "select this provider explicitly",
+            )
+    return active
+
+
+def _transport_overrides_from_args(
+    args,
+    *,
+    auth_binding: AuthBinding | None = None,
+) -> dict:
     provider = getattr(args, "provider", None)
     base_url = getattr(args, "base_url", None)
     api_key_env = getattr(args, "api_key_env", None)
@@ -1198,16 +1466,45 @@ def _transport_overrides_from_args(args) -> dict:
     if provider == "custom" and not base_url:
         raise SystemExit("--provider custom requires --base-url")
 
-    overrides = (
-        dict(_PROVIDER_PRESETS.get(provider or "custom", {}))
-        if provider or base_url or api_key_env
-        else {}
-    )
-    if base_url:
+    if provider in _MANAGED_PROVIDERS:
+        binding = auth_binding or _auth_binding_for_args(args)
+        assert binding is not None
+        if api_key_env:
+            raise SystemExit(
+                f"--api-key-env cannot replace the selected {provider} credential"
+            )
+        spec = provider_spec(provider)
+        expected_base = (
+            spec.subscription_base_url
+            if binding.auth_method == "subscription"
+            else spec.api_key_base_url
+        )
+        if base_url and base_url.rstrip("/") != expected_base.rstrip("/"):
+            raise SystemExit(
+                f"--base-url cannot change the {provider} {binding.auth_method} endpoint"
+            )
+        overrides = {
+            "provider": spec.core_provider,
+            "base_url": expected_base,
+            "api_key": "yuj-host-credential",
+        }
+    else:
+        overrides = (
+            dict(_PROVIDER_PRESETS.get(provider or "custom", {}))
+            if provider or base_url or api_key_env
+            else {}
+        )
+
+    if base_url and provider not in _MANAGED_PROVIDERS:
         overrides["base_url"] = base_url
-    if api_key_env:
+    if api_key_env and provider not in _MANAGED_PROVIDERS:
         overrides["api_key"] = f"$ENV:{api_key_env}"
-    if provider and provider != "local" and overrides.get("api_key", "").startswith("$ENV:"):
+    if (
+        provider
+        and provider not in _MANAGED_PROVIDERS
+        and provider != "local"
+        and overrides.get("api_key", "").startswith("$ENV:")
+    ):
         env_name = overrides["api_key"].split(":", 1)[1]
         if env_name not in os.environ:
             raise SystemExit(
@@ -1348,12 +1645,16 @@ def _resolve_model_or_exit(
     *,
     requested_model: str | None,
     config_overrides: dict | None = None,
+    auth_binding: AuthBinding | None = None,
+    auth_store: CredentialStore | None = None,
 ):
     try:
         return resolve_served_model(
             config_paths,
             requested_model=requested_model,
             config_overrides=config_overrides,
+            auth_binding=auth_binding,
+            auth_store=auth_store,
         )
     except Exception as exc:
         friendly = _friendly_model_resolution_error(exc)
@@ -1367,12 +1668,16 @@ def _resolve_smoke_model_or_exit(
     *,
     requested_model: str | None,
     config_overrides: dict | None = None,
+    auth_binding: AuthBinding | None = None,
+    auth_store: CredentialStore | None = None,
 ):
     try:
         return resolve_smoke_model(
             config_paths,
             requested_model=requested_model,
             config_overrides=config_overrides,
+            auth_binding=auth_binding,
+            auth_store=auth_store,
         )
     except Exception as exc:
         friendly = _friendly_model_resolution_error(exc)

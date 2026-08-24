@@ -32,6 +32,13 @@ yuj setup --provider openrouter --model PROVIDER_MODEL_ID \
   --api-key-env OPENROUTER_API_KEY
 ```
 
+Claude and Codex can instead use an eligible subscription:
+
+```bash
+yuj setup --provider claude --auth subscription --model YOUR_MODEL_ID
+yuj setup --provider codex --auth subscription --model YOUR_MODEL_ID
+```
+
 Run `yuj doctor` after you change the service or model.
 
 ### `--provider` settings
@@ -42,6 +49,8 @@ model.
 | Setup name | API format | Address saved by setup | Usual key variable |
 | --- | --- | --- | --- |
 | `local` | OpenAI-compatible | `http://localhost:8080/v1` | No variable. Yuj uses the key value `local`. |
+| `claude` | Anthropic Messages | Provider endpoint fixed by the selected authentication method | Provider credential file |
+| `codex` | OpenAI-compatible for API keys; subscription transport for browser sign-in | Provider endpoint fixed by the selected authentication method | Provider credential file |
 | `openai` | OpenAI-compatible | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
 | `anthropic` | Anthropic Messages | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` |
 | `openrouter` | OpenAI-compatible | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
@@ -50,11 +59,24 @@ model.
 
 Run `yuj setup` with no options when you want an interactive setup.
 
-Prefer `--api-key-env NAME`. Yuj saves `$ENV:NAME` and reads the key when a
-command starts.
+For `claude` or `codex`, choose `--auth api-key` or `--auth subscription`.
+The API-key form accepts `--api-key-env NAME` or `--api-key VALUE`. The
+subscription form opens a browser sign-in. Both forms save a provider-scoped
+credential outside `config.local.toml` and put only the non-secret
+`yuj-host-credential` marker in the server setting.
 
-`--api-key VALUE` saves the key itself in `config.local.toml`. Git ignores
-this file.
+For the other online choices, prefer `--api-key-env NAME`. Yuj saves
+`$ENV:NAME` and reads the key when a command starts.
+
+`--api-key VALUE` saves the key itself in `config.local.toml` for the other
+service choices. Git ignores this file. Claude and Codex never save the key
+there.
+
+Provider credentials live under `$XDG_CONFIG_HOME/yuj/auth`, or
+`~/.config/yuj/auth` when `XDG_CONFIG_HOME` is unset. Yuj creates this
+directory with mode `0700` and atomically replaces provider and selection
+files with mode `0600`. The credential record is not a configuration layer.
+It is never rendered by `yuj config`.
 
 Use `--force` to replace an existing file without an interactive question.
 
@@ -358,6 +380,11 @@ Yuj gives the same mapping to shell calls, test runners, post-edit checks, and
 language servers under every command backend. The mapping does not change the
 harness process, so the model client can still read its provider credentials.
 Saved provenance records variable names, not values, and redacts fixed values.
+For a provider-scoped Claude or Codex API key, Yuj always removes that key's
+environment name from this mapping, even when `ignore_default_excludes` or a
+fixed value would otherwise restore it. Every provider-scoped Claude or Codex
+session also removes `YUJ_AUTH_HOME`, so a model-issued command cannot discover
+the managed credential directory through its environment.
 
 ### Hide repository paths from the model view
 
@@ -1045,6 +1072,10 @@ text. `.solver/state.json` stores neither. Replay never runs the advisor.
 Fallback is off by default. Each role's chain is an empty list until you opt
 in. A string entry uses exact `<profile>@<endpoint>` syntax:
 
+Provider-scoped Claude and Codex sessions keep fallback off even when this
+table configures one. An authentication or provider failure must not change
+their provider, account, credential, model, endpoint, or billing method.
+
 ```toml
 [models]
 fallback_revert = "never"
@@ -1585,6 +1616,7 @@ guides name their own special variables where needed.
 | `YUJ_CONFIG` | Use this exact main settings file and its parent as the logical runtime-resource root. |
 | `YUJ_CONFIG_LOCAL` | Use this exact optional machine-local settings file. |
 | `XDG_CONFIG_HOME` | Own installed-package machine settings at `$XDG_CONFIG_HOME/yuj/config.local.toml` when `YUJ_CONFIG_LOCAL` is unset. |
+| `YUJ_AUTH_HOME` | Use this exact provider-credential directory. Keep it outside every target repository. |
 | `HARNESS_ASSIST_HOME` | Use this exact assistant session-state root. |
 | `XDG_STATE_HOME` | Own installed-package session state at `$XDG_STATE_HOME/yuj` when `HARNESS_ASSIST_HOME` is unset. |
 | `YUJ_CONTAINER=ambient` | Use the current outer container as the shell boundary. |

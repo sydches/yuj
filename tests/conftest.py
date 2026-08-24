@@ -6,6 +6,7 @@ unless explicitly overridden.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,20 @@ def pytest_configure(config):
     # PytestUnknownMarkWarning. test_smoke.py uses pytestmark =
     # pytest.mark.smoke as the module-level "smoke run" tag.
     config.addinivalue_line("markers", "smoke: smoke-test subset")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_yuj_auth_home(tmp_path_factory):
+    """Keep every test process away from a user's real provider credentials."""
+    prior = os.environ.get("YUJ_AUTH_HOME")
+    os.environ["YUJ_AUTH_HOME"] = str(tmp_path_factory.mktemp("yuj-auth-home"))
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop("YUJ_AUTH_HOME", None)
+        else:
+            os.environ["YUJ_AUTH_HOME"] = prior
 
 
 @pytest.fixture(autouse=True)
