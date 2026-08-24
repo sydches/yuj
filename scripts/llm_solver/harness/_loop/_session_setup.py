@@ -81,6 +81,10 @@ def build_context_manager(
         if param in sig.parameters:
             kwargs[param] = value
     ctx = context_class(**kwargs)
+    ctx.configure_thought_retention(
+        cfg.tools_think_keep_turns,
+        session_number=session_num,
+    )
     # Session 2+: pre-populate the rolling tool-result window
     # with files modified in prior sessions so the model doesn't
     # edit from stale memory.  Only SolverStateContext subclasses

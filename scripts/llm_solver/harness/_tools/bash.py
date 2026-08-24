@@ -4,7 +4,11 @@ import shlex
 
 from ..sandbox import _DEFAULT_BWRAP_BIN, container_mode
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
-from ._common import ToolExecutionText, _resolve
+from ._common import (
+    ToolExecutionText,
+    _require_external_readable,
+    _resolve_read,
+)
 from ._env_hints import (
     _PYTHON_ENV_MISSING_HINT, _SEALED_INSTALL_FAILURE_HINT,
     _python_env_missing, _sealed_install_failure,
@@ -24,6 +28,8 @@ _SHELL_METACHARS = frozenset("*?[]$`|&;()<>\\")
 
 def _try_inproc_trivial_read(
     cmd: str, cwd: str, ignore_policy: IgnorePolicy | None = None,
+    readonly_roots: tuple[str, ...] = (),
+    unreadable_paths: tuple[str, ...] = (),
 ) -> tuple[str, int, bool] | None:
     """In-process fast path for whitelisted single-target read commands.
 
@@ -60,10 +66,16 @@ def _try_inproc_trivial_read(
             return None
     verb = argv[0].rsplit("/", 1)[-1]
     if verb == "cat" and len(argv) == 2:
-        return _read_cat(argv[1], cwd, ignore_policy=ignore_policy)
+        return _read_cat(
+            argv[1], cwd, ignore_policy=ignore_policy,
+            readonly_roots=readonly_roots,
+            unreadable_paths=unreadable_paths,
+        )
     if verb == "head" and len(argv) == 2:
         return _read_head(
-            argv[1], cwd, n=10, ignore_policy=ignore_policy
+            argv[1], cwd, n=10, ignore_policy=ignore_policy,
+            readonly_roots=readonly_roots,
+            unreadable_paths=unreadable_paths,
         )
     if verb == "head" and len(argv) == 4 and argv[1] == "-n":
         try:
@@ -73,20 +85,35 @@ def _try_inproc_trivial_read(
         if n <= 0:
             return None  # head -n 0 / negative — out of scope
         return _read_head(
-            argv[3], cwd, n=n, ignore_policy=ignore_policy
+            argv[3], cwd, n=n, ignore_policy=ignore_policy,
+            readonly_roots=readonly_roots,
+            unreadable_paths=unreadable_paths,
         )
     if verb == "ls" and ignore_policy is not None:
-        return _read_ls(argv[1:], cwd, ignore_policy=ignore_policy)
+        return _read_ls(
+            argv[1:],
+            cwd,
+            ignore_policy=ignore_policy,
+            readonly_roots=readonly_roots,
+            unreadable_paths=unreadable_paths,
+        )
     return None
 
 
 def _read_cat(
     path: str, cwd: str, *, ignore_policy: IgnorePolicy | None = None,
+    readonly_roots: tuple[str, ...] = (),
+    unreadable_paths: tuple[str, ...] = (),
 ) -> tuple[str, int, bool]:
     """In-process equivalent of ``cat <path>``. Bytewise output match."""
     try:
-        target = _resolve(cwd, path)
-        if ignore_policy is not None:
+        target = _resolve_read(cwd, path, readonly_roots=readonly_roots)
+        _require_external_readable(
+            cwd, target, unreadable_paths=unreadable_paths,
+        )
+        if ignore_policy is not None and (
+            target == ignore_policy.root or ignore_policy.root in target.parents
+        ):
             ignore_policy.require_visible(target, is_dir=target.is_dir())
     except ValueError:
         return f"cat: {path}: No such file or directory\n", 1, False
@@ -109,11 +136,18 @@ def _read_head(
     *,
     n: int,
     ignore_policy: IgnorePolicy | None = None,
+    readonly_roots: tuple[str, ...] = (),
+    unreadable_paths: tuple[str, ...] = (),
 ) -> tuple[str, int, bool]:
     """In-process equivalent of ``head [-n N] <path>`` (default N=10)."""
     try:
-        target = _resolve(cwd, path)
-        if ignore_policy is not None:
+        target = _resolve_read(cwd, path, readonly_roots=readonly_roots)
+        _require_external_readable(
+            cwd, target, unreadable_paths=unreadable_paths,
+        )
+        if ignore_policy is not None and (
+            target == ignore_policy.root or ignore_policy.root in target.parents
+        ):
             ignore_policy.require_visible(target, is_dir=target.is_dir())
     except ValueError:
         return (
@@ -153,7 +187,12 @@ def _read_head(
 
 
 def _read_ls(
-    args: list[str], cwd: str, *, ignore_policy: IgnorePolicy,
+    args: list[str],
+    cwd: str,
+    *,
+    ignore_policy: IgnorePolicy,
+    readonly_roots: tuple[str, ...] = (),
+    unreadable_paths: tuple[str, ...] = (),
 ) -> tuple[str, int, bool]:
     """Serve simple captured-output ``ls`` calls from the filtered view.
 
@@ -191,8 +230,16 @@ def _read_ls(
         return "ls: multiple paths are unavailable in the filtered view\n", 2, False
     display = paths[0] if paths else "."
     try:
-        target = _resolve(cwd, display)
-        if ignore_policy.is_model_hidden(target, is_dir=target.is_dir()):
+        target = _resolve_read(cwd, display, readonly_roots=readonly_roots)
+        inside_project = (
+            target == ignore_policy.root or ignore_policy.root in target.parents
+        )
+        _require_external_readable(
+            cwd, target, unreadable_paths=unreadable_paths,
+        )
+        if inside_project and ignore_policy.is_model_hidden(
+            target, is_dir=target.is_dir(),
+        ):
             raise FileNotFoundError(display)
     except (ValueError, FileNotFoundError):
         return (
@@ -210,20 +257,31 @@ def _read_ls(
         )
     try:
         names = []
+        inside_project = (
+            target == ignore_policy.root or ignore_policy.root in target.parents
+        )
         mask_roots = tuple(
             Path(path) for path in ignore_policy.existing_ignored_paths()
-        )
+        ) if inside_project else ()
         for entry in target.iterdir():
             if entry.name.startswith(".") and not (show_all or almost_all):
                 continue
             is_dir = entry.is_dir()
-            ignored = ignore_policy.is_ignored(entry, is_dir=is_dir)
-            hidden_directory = is_dir and any(
-                entry == root or entry.is_relative_to(root)
-                for root in mask_roots
-            )
-            if ignored and (not is_dir or hidden_directory):
-                continue
+            if inside_project:
+                ignored = ignore_policy.is_ignored(entry, is_dir=is_dir)
+                hidden_directory = is_dir and any(
+                    entry == root or entry.is_relative_to(root)
+                    for root in mask_roots
+                )
+                if ignored and (not is_dir or hidden_directory):
+                    continue
+            else:
+                try:
+                    _require_external_readable(
+                        cwd, entry, unreadable_paths=unreadable_paths,
+                    )
+                except FileNotFoundError:
+                    continue
             names.append(entry.name)
     except OSError as exc:
         return f"ls: cannot open directory '{display}': {exc.strerror}\n", 2, False
@@ -285,6 +343,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
          bwrap_bin: str = _DEFAULT_BWRAP_BIN,
          sandbox_required: bool = False,
          unreadable_paths: tuple[str, ...] = (),
+         readable_paths: tuple[str, ...] = (),
          sandbox_backend: str = "bwrap",
          container_runtime: str = "docker",
          container_image: str = "",
@@ -320,14 +379,19 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
         # commands even where a single-file mount would leave its directory
         # entry enumerable (and for container backends with the same limit).
         inproc = _try_inproc_trivial_read(
-            cmd, cwd, ignore_policy=ignore_policy
+            cmd, cwd, ignore_policy=ignore_policy,
+            readonly_roots=readable_paths,
+            unreadable_paths=unreadable_paths,
         )
     elif (
         sandbox
         and sandbox_backend == "bwrap"
         and container_mode() is None
     ):
-        inproc = _try_inproc_trivial_read(cmd, cwd)
+        inproc = _try_inproc_trivial_read(
+            cmd, cwd, readonly_roots=readable_paths,
+            unreadable_paths=unreadable_paths,
+        )
     else:
         inproc = None
     if inproc is not None:
@@ -341,6 +405,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             cmd, cwd=cwd, timeout=timeout, sandbox=sandbox, bwrap_bin=bwrap_bin,
             sandbox_required=sandbox_required,
             unreadable_paths=unreadable_paths,
+            readable_paths=readable_paths,
             sandbox_backend=sandbox_backend,
             container_runtime=container_runtime,
             container_image=container_image,

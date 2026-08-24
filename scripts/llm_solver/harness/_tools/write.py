@@ -1,6 +1,6 @@
 """write tool: create or overwrite a file."""
 from ...config import Config
-from ._common import _resolve
+from ._common import _is_external_readonly_path, _resolve
 
 
 def write(path: str, content: str, *, cwd: str,
@@ -17,6 +17,14 @@ def write(path: str, content: str, *, cwd: str,
     # tool call referencing the same path is fragile. Refuse early.
     if "\n" in path or "\x00" in path:
         return f"ERROR: path contains forbidden character (newline or NUL)"
+    if cfg is not None and _is_external_readonly_path(
+        cwd,
+        path,
+        readonly_roots=tuple(
+            getattr(cfg, "skills_readable_dirs", ()) or ()
+        ),
+    ):
+        return f"ERROR: skill path is read-only: {path}"
     try:
         target = _resolve(cwd, path)
     except ValueError as e:

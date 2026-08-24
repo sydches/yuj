@@ -28,10 +28,17 @@ def apply_patch_tool(patch: str, *, cwd: str, cfg: Config) -> str:
         render_error as _render_apply_patch_error,
         PatchParseError, PatchVerifyError,
     )
-    if not getattr(cfg, "tools_apply_patch_enabled", False):
+    effective = str(getattr(cfg, "effective_edit_format", "") or "")
+    configured = str(getattr(cfg, "tools_edit_format", "") or "")
+    selected = configured or (
+        "apply_patch"
+        if bool(getattr(cfg, "tools_apply_patch_enabled", False))
+        else effective or "exact"
+    )
+    if selected != "apply_patch":
         return _render_apply_patch_error(
             "disabled",
-            "apply_patch tool is disabled (tools.apply_patch.enabled=false)",
+            "apply_patch is unavailable for the selected edit format",
         )
     try:
         ops = _parse_patch(patch)

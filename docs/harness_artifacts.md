@@ -48,15 +48,20 @@ The normal `assist_home` is `<yuj-installation>/.llm_assist`. Set
 | `sessions.sqlite3` | Index of coding sessions, active-session pointers, and process locks. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/session.json` | Model, original target repository, context mode, starting config paths, and retained worktree path/branch/base commit when enabled. A later `provider.toml` for that coding session is not added to this file in the current code. |
-| `<session_id>/provider.toml` | Model-service settings given on the `code`, `run`, or `smoke` command. Present only when that command changes the service. |
+| `<session_id>/provider.toml` | Model-service, thinking-level, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
 | `<session_id>/.trace.jsonl` | Append-only event record across run segments. |
+| `<session_id>/subagents/<id>/.trace.jsonl` | Separate append-only event record for one named child, including its exact terminal result and token counts. |
+| `<session_id>/subagents/<id>/transcript.log` | Model messages for one live named child. |
 | `<session_id>/.solver/state.json` | Current state view when the state writer is on. |
 | `<session_id>/transcript.log` | Model messages for the newest run segment. Resume replaces this file. |
+| `<session_id>/advisor.jsonl` | Isolated advisor requests, responses, read-only tool results, quarantine decisions, and accepted note bodies when the advisor is enabled. |
 | `<session_id>/savings.jsonl` | Append-only record of context and output changes. |
 | `<session_id>/system_log.jsonl` | Append-only record of harness warnings and internal events. |
 | `<session_id>/checkpoint.json` | End status for the newest run segment. Resume replaces this file. |
 | `<session_id>/metrics.json` | Measures for the newest run segment. Resume replaces this file. |
 | `<session_id>/.shadow_git/` or the task telemetry sibling's `.shadow_git/` | Independent Git object store for enabled file checkpoints. It is outside the model's task view. |
+| `<session_id>/rewind_snapshots/*.json.gz` or the task telemetry sibling's `rewind_snapshots/*.json.gz` | Permission-restricted exact conversation snapshots bound to session, turn, and shadow-Git commit. Normal context and live detectors do not read them; only explicit rewind/resume and replay setup do. |
+| `<session_id>/rewind_snapshots/rewind_pending.json` | One assistant-shell rewind waiting to restore its exact conversation on the next resume. It records identities and turns, not a second trace. |
 | `<session_id>/approval_request.json` | Current tool approval request, stable action identity, matched permission rule when applicable, and status. Bash requests retain `cmd` for compatibility. |
 | `<session_id>/approval_decisions.json` | Exact tool actions accepted or refused with `--always`; legacy bash command keys remain readable. |
 | `<session_id>/shell_interrupt.json` | Time and reason for the latest user interrupt. Resume clears it when the new run segment starts. |
@@ -128,19 +133,55 @@ folder does not change them.
 | File | Writer | What it holds | Ready | Context | Detector | Audit | Scoring | Limits |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `<task_cwd>/prompt.txt`, `<session_dir>/prompt.txt`, or `TaskSpec.prompt_text` | launcher / caller | task prompt supplied to solver | `run-start` | Yes, as the task message. | Only if a detector contract names it as fixed setup. | Yes. | No, except to group results for the same task. | Do not use it as evidence of the model's behavior or result. |
-| `<task_cwd>/.trace.jsonl` or `<session_dir>/.trace.jsonl` | harness trace writer (`_loop/trace_schema.py`) | model tool intent and reasoning, tool calls, tool-result summaries, background-process and lifecycle-hook events, per-response cache telemetry, compaction, handoff, file-checkpoint, LSP-diagnostic, stale-guard, interrupted-turn, and length-continuation metadata, model-fallback metadata, harness events, flags, and timings | `live-prefix` | Yes, through a projection that uses only the current prefix or a context mode that uses current events. | Yes, but only through the current turn and only for fields named by the detector contract. | Yes. | Yes, for post-run behavior and cost checks. | `proc_start`, `proc_poll`, and `proc_kill` are raw lifecycle evidence; a poll stores the exact admitted model-visible bytes and hash, and none of these rows enters model state. A `hook` row is raw host-process evidence and records the configured command, exit, duration, outcome, and normalized effect; it does not enter model state. One `turn` row per logical model response records aggregate `prompt_tokens`, `cached_tokens`, `cache_hit_ratio`, and effective role; unavailable cache counts stay null. A `length_continue` row records one bounded same-turn follow-up's attempt and completion tokens, carries no response/request text, and is not projected into model state. A `checkpoint` row records the external shadow-Git commit plus capture duration, file count, and byte count; it is not projected into model state. `tool_start`, `session_exit`, and `turn_aborted` are durable harness diagnostics: they preserve pending-call and recovery facts, not a claimed tool outcome, and none is projected into model state. An `lsp_diagnostics` row records file, counts, elapsed milliseconds, server, and status; diagnostic text appears only in the admitted edit result and is not projected into model state. `stale_guard_observe` rows are the only resume source for the read ledger; `stale_guard` rows record policy hits. Neither enters `.solver/state.json`. Model-backed `compaction` and `handoff` rows also record the effective role. An unset consumer role adds `requested_role` and `role_fallback=main`. Each `session_start` names its effective secret-free model target. A `model_fallback` row records the from/to target, reason code, profiles, model IDs, and context windows. Summary text and endpoint keys are never stored in these rows. Do not read future rows for a live decision. |
-| `<run_dir>/transcripts/<task>.log`, `<run_dir>/harness_run/transcripts/<task>.log`, `<session_dir>/transcript.log`, or legacy `<task_cwd>/transcript.log` | model client transcript writer | saved model request and response records | `live-prefix` as a file; only audit, explicit resume, or replay may read it | No for normal context. Yes only for an explicit resume or replay. | No for a live detector. | Yes. | No. | An assistant resume replaces its transcript. With `YUJ_STREAMING=1`, the client saves the request before it adds stream fields and rebuilds the saved response from stream events. Do not call those records exact wire bytes. Do not use the file as live detector input. |
-| `<task_cwd>/.solver/state.json` or `<session_dir>/.solver/state.json` | harness state writer (`state_writer.py`) | deterministic projection of `.trace.jsonl`, including the latest mechanical compaction metadata | `live-prefix` when `state.writer_enabled` | Yes for state-backed modes. | No by default. A detector should use facts from the trace prefix unless its contract names this file. | Yes, as a projection. | No, except to explain a completed run. | `last_compaction` contains no model summary text. Handoff rows, raw `hook` rows, and transport-only `turn` cache fields do not enter the projection. If state disagrees with `.trace.jsonl`, the trace wins. The model must not write this file. |
+| `<task_cwd>/.trace.jsonl` or `<session_dir>/.trace.jsonl` | harness trace writer (`_loop/trace_schema.py`) | model tool intent and reasoning, tool calls, tool-result summaries, stream-rule triggers and injections, todo-list replacements, deferred-tool activation, conversation rewind, background-process lifecycle, per-response cache telemetry, compaction, handoff, file-checkpoint, LSP-diagnostic, stale-guard, interrupted-turn, repo-map run-start metadata, length-continuation metadata, model-fallback metadata, harness events, flags, and timings | `live-prefix` | Yes, through a projection that uses only the current prefix or a context mode that uses current events. | Yes, but only through the current turn and only for fields named by the detector contract. | Yes. | Yes, for post-run behavior and cost checks. | `stream_rule_triggered` records rule, scope, offset, path, tool, and interrupt status; `stream_rule_injection` records rule names, delivery seam, and context mode. Those rows never contain the rule body and project mechanically into `state.json.gates`. A non-interrupting tool reminder is model-visible tool-result text, so its ordinary `tool_call` row and normal state trace projection may contain the admitted reminder. A successful `write_todos` call adds a raw `todos` row containing the complete replacement list; this row is the only todo source for state projection. A `tools_activated` row records the loader request, additive change, and resulting active set; it enters only the mechanical `tools` projection. `exec_cell` stores its complete accepted source and combined stdout/stderr size; each injected call is a `tool_call` child linked by `parent_tool_call_id` and is projected like any other tool step. Both rewind operations append a `rewind` row with `from_turn` and `to_turn`: a model-tool exploration collapse adds `report_chars` and may retain its goal/report, while an operator or guardrail conversation/workspace rewind adds reason, checkpoint commit, action count, action ID, and delivery mode. Neither rewind form removes raw rows; only the model-state projection treats the selected interval as abandoned. `proc_start`, `proc_poll`, and `proc_kill` are raw lifecycle evidence; a poll stores the exact admitted model-visible bytes and hash, and none enters model state. One `turn` row per logical model response records aggregate `prompt_tokens`, `cached_tokens`, `cache_hit_ratio`, and effective role; unavailable cache counts stay null. A `length_continue` row records one bounded same-turn follow-up's attempt and completion tokens, carries no response/request text, and is not projected into model state. A `checkpoint` row records the external shadow-Git commit plus capture duration, file count, and byte count; it is not projected into model state. `tool_start`, `session_exit`, and `turn_aborted` are durable harness diagnostics: they preserve pending-call and recovery facts, not a claimed tool outcome, and none is projected into model state. An `lsp_diagnostics` row records file, counts, elapsed milliseconds, server, and status; diagnostic text appears only in the admitted edit result and is not projected into model state. `stale_guard_observe` rows are the only resume source for the read ledger; `stale_guard` rows record policy hits. Neither enters `.solver/state.json`. Model-backed `compaction` and `handoff` rows also record the effective role. An unset consumer role adds `requested_role` and `role_fallback=main`. Each `session_start` names its effective secret-free model target and, when configured, repository-map token/hash/cache metadata, but never the map body or cache path. A `model_fallback` row records the from/to target, reason code, profiles, model IDs, and context windows. Summary text and endpoint keys are never stored in these rows. Do not read future rows for a live decision. |
+| `<run_dir>/subagents/<id>/.trace.jsonl` or `<session_dir>/subagents/<id>/.trace.jsonl` | named-subagent runtime (`harness/subagents.py`) | child start metadata, the child's ordinary loop events, and one terminal `subagent_result` with exact final text, hash, outcome, and token counts | `live-prefix`; terminal result is ready when the child ends | No for normal live context. Replay may read the terminal result for the corresponding parent call. | No. | Yes. | Yes, for post-run child cost checks. | The parent trace keeps only `subagent{id, agent, turns, tokens, result_chars}` plus its ordinary admitted `task` tool result. Child metadata is not projected into parent `.solver/state.json`; the ordinary parent `tool_call` row is. Replay verifies identity, length, hash, turns, and tokens and does not call the child model. |
+| `<run_dir>/transcripts/<task>.log`, `<run_dir>/harness_run/transcripts/<task>.log`, `<session_dir>/transcript.log`, `<run_dir>/subagents/<id>/transcript.log`, `<session_dir>/subagents/<id>/transcript.log`, or legacy `<task_cwd>/transcript.log` | model client transcript writer | saved model request and response records | `live-prefix` as a file; only audit, explicit resume, or replay may read it | No for normal context. Yes only for an explicit resume or replay. | No for a live detector. | Yes. | No. | An assistant resume replaces its parent transcript. Each live child has its own transcript. With `YUJ_STREAMING=1`, the client saves the request before it adds stream fields and rebuilds the saved response from stream events. An intentional stream-rule interrupt is a complete input/output transcript pair: its valid JSON output retains the partial assembled response and exact hidden-injection record so replay can reproduce the retry. It is reconstructed client evidence, not exact wire bytes. Do not use the file as live detector input. |
+| `<run_dir>/advisor.jsonl` or `<session_dir>/advisor.jsonl` | passive advisor (`advisor.py`) | isolated advisor requests and responses, admitted read-only tool results, skip/quarantine decisions, and accepted note bodies | `live-prefix` append-only when `[advisor].enabled` | Only an accepted note is copied into the next model request as a visible `<injected-fragment>`; normal context never reads this file. | No. | Yes. | Yes, only to audit advisor behavior; use `metrics.tokens_by_role` for costs. | The advisor receives only the current primary-turn delta plus its own same-review conversation. Its task view hides the primary transcript, trace, state, and harness artifacts. This file is advisor output and private review history, not raw primary-model evidence, detector input, replay input, or mechanical state. |
+| `<task_cwd>/.solver/state.json` or `<session_dir>/.solver/state.json` | harness state writer (`state_writer.py`) | deterministic projection of `.trace.jsonl`, including the latest complete `todos` replacement, latest effective edit format, mechanical compaction and rewind metadata, current deferred-tool set, and stream-rule gate events | `live-prefix` when `state.writer_enabled` | Yes for state-backed modes. | No by default. A detector should use facts from the trace prefix unless its contract names this file. | Yes, as a projection. | No, except to explain a completed run. | `gates` projects stream-rule trigger and injection metadata without rule bodies. Top-level `todos` is a pure projection of the latest raw `todos` event in the active prefix; absent events produce an empty list, and a rewind restores the list selected by that prefix without changing raw evidence. `meta.edit_format` copies the latest `session_start.edit_format`. `tools` projects session-start registration/defaults and `tools_activated` rows. Either `rewind` form selects an earlier active prefix without changing raw evidence. `last_rewind` carries report metadata for a model-tool collapse or checkpoint/action/delivery metadata for a conversation/workspace rewind; a retained model report also appears as `rewind_report`. `meta.event_count` counts the raw source prefix, while `meta.projected_event_count` and `meta.active_event_count` identify the same derived view. `last_compaction` contains mechanical metadata, including declared hook outcome when present, but no model summary text. Handoff, advisor, raw `hook`, and transport-only `turn` cache rows do not enter the projection. If state disagrees with `.trace.jsonl`, the trace wins. The model must not write this file. |
 | `<run_dir>/savings/<task>.jsonl`, `<assist_home>/sessions/<session_id>/savings.jsonl`, legacy `<task_cwd>/.savings.jsonl` | savings ledger (`savings.py`) | records of changes to context and tool output, with their size or cost | `live-prefix` append-only | No. | No. | Yes. | Yes, but only to count tokens or costs. | Do not use it as evidence of behavior or task success. |
 | `<task_cwd>/.tool_output/*.log` | harness output sink | the full result that remains after Yuj filters tool output and moves it out of the model input | `live-prefix` | Yes, but only through sink pointers, tails, or direct reads that the context mode allows. | Only if a detector contract names output that the sink wrote through the current turn. | Yes. | No. | If the sink is off, do not take a missing sink file to mean that the tool made no output. Do not read future files for a live decision. |
 | `<session_dir>/.procs/<proc_id>.log` | background process manager | raw combined stdout and stderr from one background command | `live-prefix` | No directly. Only bytes returned by a traced `bash_poll` enter context. | No. | Yes. | No. | Harness-owned audit evidence, not a process-control channel, state input, or scoring input. Lifecycle control is only through `bash_poll`, `bash_kill`, and mandatory session teardown. |
 | `<task_cwd>/checkpoint.json` or `<session_dir>/checkpoint.json` | harness solver (`write_checkpoint`) | final status, model, solver, and time | `post-run` | No. | No. | Yes. | Yes, for run completion status. | It is not ready during the run. Assistant resume replaces it. It does not explain why the run behaved as it did. |
-| `<task_cwd>/metrics.json` or `<session_dir>/metrics.json` | harness solver (`write_run_metrics`) | token totals, token-weighted `prompt_cache` metrics, `tokens_by_role`, length-continuation and file-checkpoint costs, model-fallback study filters, wall time, guardrail counters, provenance, and resolved config | `post-run` | No. | No. | Yes. | Yes, to group runs, check cost, and check provenance. | `metrics.length_continuations` counts same-turn follow-up requests; the ordinary prompt/completion totals include their usage. `metrics.file_checkpoints` reports enabled state and per-call duration/file/byte counts; it does not contain file contents. `metrics.prompt_cache` separates observed and unobserved logical responses; its hit ratio stays null when any underlying response lacks cache counts. `metrics.tokens_by_role` charges each complete logical main or side response once to the effective role. `model_fallback_used`, count, roles, and active targets identify treatment-changing runs. Provenance keeps the secret-free configured chains, revert policy, and initial target; raw trace transitions recover later effective targets. It is not ready during the run. Assistant resume replaces it. Do not use final totals or counters as detector evidence. |
+| `<task_cwd>/metrics.json` or `<session_dir>/metrics.json` | harness solver (`write_run_metrics`) | token totals, token-weighted `prompt_cache` metrics, `tokens_by_role`, deferred-tool block cost, length-continuation and file-checkpoint costs, model-fallback study filters, wall time, guardrail counters, provenance, and resolved config | `post-run` | No. | No. | Yes. | Yes, to group runs, check cost, and check provenance. | `metrics.tool_loading` reports registered/default names, default-block token count and method, and activation totals. `metrics.length_continuations` counts same-turn follow-up requests; the ordinary prompt/completion totals include their usage. `metrics.file_checkpoints` reports enabled state and per-call duration/file/byte counts; it does not contain file contents. `metrics.prompt_cache` separates observed and unobserved logical responses; its hit ratio stays null when any underlying response lacks cache counts. `metrics.tokens_by_role` charges each complete logical main or side response once to the effective role. `model_fallback_used`, count, roles, and active targets identify treatment-changing runs. Provenance keeps the secret-free configured chains, revert policy, and initial target; raw trace transitions recover later effective targets. It is not ready during the run. Assistant resume replaces it. Do not use final totals or counters as detector evidence. |
 | `<run_dir>/session.json` or `<run_dir>/harness_run/session.json` | measurement command / outside launcher | run, model, config, and Git provenance | `run-start` to `post-run` | No. | Only for fixed provenance that a detector contract names. | Yes. | Yes, to group runs and check provenance. | Do not use it as evidence of behavior during a turn. |
 | `<run_dir>/server_meta.json` or `<run_dir>/harness_run/server_meta.json` | measurement command / server metadata probe | model server metadata snapshot | `run-start` | No. | Only for fixed provenance that a detector contract names. | Yes. | Yes, to group runs and check provenance. | Do not use it as evidence of behavior on the task. |
 | `<run_dir>/run_manifest.env`, `<run_dir>/container.id` | launcher / runtime wrapper | launch environment and container identity | `run-start` | No. | Only for fixed provenance that a detector contract names. | Yes. | Yes, to group runs and check provenance. | Do not use it as evidence of behavior. |
 | `<run_dir>/harness_<model>_<time>.log`, `<run_dir>/harness.stdout.log`, `<run_dir>/harness_run/*.log` | measurement command / launcher | process logs and details used to find errors | `live-prefix` as logs; most readers use them `post-run` | No. | No. | Yes. | No. | Use these files only to debug or audit a run. Do not treat them as scoring results or detector input. |
 | `<run_dir>/system_log.jsonl` or `<session_dir>/system_log.jsonl` | harness system log | warnings and internal harness events | `live-prefix` append-only | No. | No. | Yes. | No. | Use it to debug or audit the harness. Do not use it as model behavior or scoring evidence. |
+
+When the passive advisor accepts a note, `.trace.jsonl` receives an
+`advisor_note` row containing severity, character count, source turn,
+completed-turn ordinal, and a normalized note hash. It never contains the note
+body. Advisor rows are raw control metadata and are not projected into
+`.solver/state.json`; the body remains only in `advisor.jsonl` until Yuj copies
+it into the visible next-turn injection.
+
+An enabled `think(thought)` call follows the same raw-evidence boundary as any
+other model tool call. Its append-only `tool_call` row stores `tool_name=think`
+and the bounded argument summary; neither context retention nor state refresh
+rewrites that row. Once a thought expires, the mechanical state projection
+keeps only a `think()` action breadcrumb with empty reasoning. Every context
+mode applies the same configured turn window to its own message, progress,
+working-set, recent-result, or state-derived view. Audit the raw trace when the
+original thought text is needed; do not treat the shorter state view as
+missing raw evidence.
+
+A rewind adds data; it never deletes or rewrites raw evidence. The `rewind`
+trace row identifies `from_turn`, `to_turn`, reason, checkpoint commit, count,
+and delivery mode. State projection treats it as a branch instruction: later
+rows in that session after the target stay in `.trace.jsonl` but leave the
+active projected trace and evidence. `.solver/state.json.last_rewind` names
+the active branch point. Exact compressed snapshots live in the
+harness-owned `rewind_snapshots/` directory outside the model's task view and
+may contain the full saved conversation; normal context and live detectors
+must not read them.
+
+Every new `compaction` trace row records `hook` and `hook_outcome`. A
+`hook_outcome` of `cancel` records a threshold-crossing attempt without
+claiming that context was replaced. The mechanical `last_compaction` state
+projection copies both fields when they exist; older trace rows remain
+readable without them. Hook-written and model-written summary text never
+enters the trace or `.solver/state.json`.
 
 Every `session_start` trace row records `thinking_level`, plus
 `thinking_level_requested` when profile capabilities forced a clamp. The
@@ -148,10 +189,34 @@ matching `metrics.json` provenance records `thinking_level_requested`,
 `thinking_level_effective`, and `thinking_level_clamped`. These are run
 conditions, not model-side state or evidence of task success.
 
+The same row records `stream_rule_files` when stream rules are enabled. Each
+entry contains only the repository-relative file label, rule name, and SHA-256
+of the exact loaded bytes. Rule bodies remain in their owner files and in
+model request records only when Yuj injects them. This startup provenance is
+not projected into `.solver/state.json`.
+
+Every `session_start` also records `edit_format`, the effective dialect after
+the command/config override, legacy compatibility selector, and selected model
+profile are resolved. This raw run-start field is authoritative. When the
+state writer is enabled, `.solver/state.json` mechanically copies the latest
+value to `meta.edit_format`; the projection does not independently infer or
+validate the dialect.
+
 The same `session_start` row records `sandbox_backend`, `container_runtime`,
 and `container_image_digest`. Runtime and digest are null for the bwrap
 backend. These fields are run-start provenance and are not projected into
 `.solver/state.json`.
+
+For a deferred tool surface, `session_start` also records whether lazy loading
+is enabled, the profile's active-tool limit, and the registered and initially
+active tool names. Each successful
+`load_tools` call writes a `tools_activated` row with the requested names, the
+newly activated names, names that were already active, and the complete
+resulting active set. The raw row remains authoritative; only those mechanical
+fields enter the top-level `tools` projection in `.solver/state.json`.
+The same resolved limit is reported as
+`metrics.tool_loading.active_tool_limit`; null means no profile limit was
+available.
 
 Every `session_start` also records `sandbox_env_names`, the sorted names in the
 immutable environment passed to command children for that run. Values are
@@ -160,6 +225,14 @@ As with any model-visible value, a command can still explicitly print an
 allowed variable into its ordinary traced tool-result evidence.
 `metrics.json` resolved configuration preserves fixed variable names but
 redacts every `[sandbox.env].set` value.
+
+Every `session_start` records `repo_map_tokens`, including `0` when repository
+mapping is disabled or no ranked definition fits. Enabled maps also record
+`repo_map_sha256`, `repo_map_refresh`, `repo_map_files`, `repo_map_symbols`,
+and `repo_map_cache_hit`. These are run-start provenance for the mechanical
+block appended to the stable task message. The map body, task-personalized
+ranking inputs, absolute cache path, and cache contents do not enter the trace.
+No repository-map field is projected into `.solver/state.json`.
 
 When runtime worktree isolation is enabled, each `session_start` also records
 `worktree_path`, `worktree_branch`, and `worktree_base_commit`. The assistant
@@ -175,6 +248,13 @@ byte metadata; they contain no imported body or absolute host path. An
 injection envelope records resolution, not a claim that the fragment fired.
 This raw provenance is not projected into `.solver/state.json`.
 
+A later `injection` row is raw conditional-fire metadata. It records the rule,
+`path` or `keyword` trigger, and a canonical task-relative path; keyword fires
+use an empty path. This row is not projected into `.solver/state.json`. A
+path-triggered fragment is separately appended to the model-visible tool
+result. The ordinary `tool_call` row and its mechanical projection represent
+that result subject to their existing result-summary clipping limits.
+
 When project instruction discovery is enabled, the same row records
 `project_instruction_files` (ordered safe labels plus source bytes, scope, and
 truncation), `project_instruction_bytes`,
@@ -186,6 +266,15 @@ or `.solver/state.json`. The matching `metrics.json` provenance
 `system_prompt_sha256` and `system_prompt_chars` describe the exact resolved
 prompt after the arm file and project blocks are assembled; the prompt body is
 not stored in provenance.
+
+When Agent Skills are enabled, every `session_start` row also records
+`loaded_skills` in first-wins discovery order. Each record contains the
+validated name, canonical `SKILL.md` path, and
+`disable_model_invocation` value; it contains no description or Markdown
+body. This is raw run-start provenance and is not projected into
+`.solver/state.json`. The post-run resolved configuration records the
+effective read-only skill directories, while `savings.jsonl` measures only
+the model-visible metadata catalog.
 
 A `schema_reject` row is raw validation metadata: it records the tool and
 value-free field errors before any handler runs. It is not projected into
@@ -207,6 +296,16 @@ These values can contain task or operator-provided text, so do not put secrets
 in hook command arguments or output. Hook rows never enter
 `.solver/state.json`; ordinary tool and conversation rows reflect any admitted
 downstream effect.
+
+A parent `subagent` row is raw child-call metadata. It records the deterministic
+child ID, descriptor name, turns, aggregate tokens, and final-text length, but
+not the text itself. The child trace's `subagent_result` owns the exact text,
+its SHA-256, and the child's own and descendant token counts. Neither metadata
+row enters `.solver/state.json`; the parent's ordinary `task` `tool_call` row
+projects the admitted result in the same way as any other model-visible tool
+result. `metrics.json` includes child usage in the ordinary total fields and
+`tokens_by_role`, and separately reports child-call counts and own child usage
+under `metrics.subagents`.
 
 Every `session_start` records `ignore_file_hash` and `ignore_file_names` for
 the immutable repository model-view policy loaded at run start. The hash is

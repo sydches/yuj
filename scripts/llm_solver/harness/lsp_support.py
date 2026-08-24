@@ -151,6 +151,7 @@ class LspQueryResult:
 def build_lsp_sandbox_argv(
     command: Sequence[str], *, cwd: str, bwrap_bin: str,
     unreadable_paths: tuple[str, ...] = (), sandbox_required: bool = True,
+    readable_paths: tuple[str, ...] = (),
     sandbox: bool = True, sandbox_backend: str = "bwrap",
     container_runtime: str = "docker", container_image: str = "",
     container_flags: tuple[str, ...] = (),
@@ -195,6 +196,7 @@ def build_lsp_sandbox_argv(
             cwd,
             runtime_bin=runtime_bin,
             unreadable_paths=unreadable_paths,
+            readable_paths=readable_paths,
             sandbox_required=sandbox_required,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
@@ -209,6 +211,7 @@ def build_lsp_sandbox_argv(
     return _build_bwrap_argv(
         command_text, cwd, bwrap_bin,
         unreadable_paths=unreadable_paths,
+        readable_paths=readable_paths,
         sandbox_required=sandbox_required,
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
@@ -422,6 +425,7 @@ class LspManager:
     def sandboxed(
         cls, *, cwd: str | Path, servers: Iterable[LspServerSpec],
         bwrap_bin: str, unreadable_paths: tuple[str, ...] = (),
+        readable_paths: tuple[str, ...] = (),
         sandbox_required: bool = True, sandbox: bool = True,
         sandbox_backend: str = "bwrap", container_runtime: str = "docker",
         container_image: str = "", container_flags: tuple[str, ...] = (),
@@ -435,6 +439,7 @@ class LspManager:
             return build_lsp_sandbox_argv(
                 spec.command, cwd=cwd_text, bwrap_bin=bwrap_bin,
                 unreadable_paths=unreadable_paths,
+                readable_paths=readable_paths,
                 sandbox_required=sandbox_required,
                 sandbox=sandbox,
                 sandbox_backend=sandbox_backend,

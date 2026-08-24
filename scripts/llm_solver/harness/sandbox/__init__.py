@@ -140,6 +140,7 @@ def _resolve_docker_sock() -> str | None:
 def _build_bwrap_argv(
     cmd: str, cwd: str, bwrap_bin: str = _DEFAULT_BWRAP_BIN,
     *, unreadable_paths: tuple[str, ...] = (),
+    readable_paths: tuple[str, ...] = (),
     sandbox_required: bool = False,
     tail: list[str] | None = None,
     effective_env: Mapping[str, str] | None = None,
@@ -287,13 +288,28 @@ def _build_bwrap_argv(
     git_hooks = Path(cwd) / ".git" / "hooks"
     if git_hooks.is_dir():
         argv += ["--tmpfs", str(git_hooks)]
-    # Mask answer-key files / pre-mask source trees BEFORE the cwd bind so
-    # the masks survive: bwrap mounts are processed in argv order, and a
-    # later --bind would otherwise overwrite an earlier --ro-bind on the
-    # same target path. Cwd is always task-local so the masks (which
-    # target paths under the separately configured task tree) cannot
-    # collide with cwd anyway, but argv-order discipline matters if the
-    # mask set ever expands.
+    # The host root is already read-only, but explicit skill binds make the
+    # startup-fixed read set visible in the sandbox argv and preserve that
+    # boundary if the broad root bind is ever narrowed. Project-local skills
+    # stay under the writable cwd mount; only disjoint external roots belong
+    # here.
+    cwd_path = Path(cwd).resolve(strict=False)
+    bound_readable: list[Path] = []
+    for raw_path in readable_paths:
+        path = Path(raw_path).resolve(strict=True)
+        if not path.is_dir():
+            raise RuntimeError(f"sandbox readable path is not a directory: {path}")
+        if (
+            path == cwd_path
+            or cwd_path in path.parents
+            or path in cwd_path.parents
+            or any(path == kept or kept in path.parents for kept in bound_readable)
+        ):
+            continue
+        bound_readable.append(path)
+        argv += ["--ro-bind", str(path), str(path)]
+    # Apply unreadable masks after all readable mounts so a protected child
+    # remains hidden even when its parent is a configured skill directory.
     if unreadable_paths:
         mask_args, _, _ = _expand_unreadable_paths(
             tuple(unreadable_paths), sandbox_required=sandbox_required,

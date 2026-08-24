@@ -124,6 +124,8 @@ class YujTranscript(CompactTranscript):
                 f"Last {len(kept_rev)} tool results (full, newest last):\n{results}"
             )
 
+        parts.extend(self._injected_fragments)
+
         return [
             {"role": "system", "content": self._system_content},
             {"role": "user", "content": "\n\n".join(parts)},

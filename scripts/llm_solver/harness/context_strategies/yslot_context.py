@@ -9,7 +9,11 @@ from collections.abc import Callable
 
 from ..context import chars_div_4
 from ._working_set_baseline import WorkingSetBaselineContext
-from ._metadata import YSLOT_CONSTRUCTOR_CONFIG_ATTRS, ContextModeMetadata
+from ._metadata import (
+    STATEFUL_BUDGET_CONFIG_ATTRS,
+    YSLOT_CONSTRUCTOR_CONFIG_ATTRS,
+    ContextModeMetadata,
+)
 
 
 class YslotContext(WorkingSetBaselineContext):
@@ -28,6 +32,7 @@ class YslotContext(WorkingSetBaselineContext):
         min_turns: int,
         args_summary_chars: int,
         suffix: str,
+        todos_char_budget: int = 2000,
         inspect_repeat_threshold: int = 0,
         recovery_same_target_threshold: int = 0,
         recovery_verify_repeat_threshold: int = 0,
@@ -46,6 +51,7 @@ class YslotContext(WorkingSetBaselineContext):
             trace_lines=trace_lines,
             evidence_lines=evidence_lines,
             suffix=suffix,
+            todos_char_budget=todos_char_budget,
             use_solver_state=True,
             style="yuj",
             contract="slot",
@@ -73,5 +79,6 @@ CONTEXT_METADATA = ContextModeMetadata(
     ),
     file_freshness="live",
     injection_support="buried_in_projection",
+    budget_config_attrs=STATEFUL_BUDGET_CONFIG_ATTRS,
     constructor_config_attrs=YSLOT_CONSTRUCTOR_CONFIG_ATTRS,
 )
