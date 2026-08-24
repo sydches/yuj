@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from ..guardrails import Action, Decision, PASS
+from ..checkpoint_rewind import finalize_deferred_context_actions
 from ..action_metadata import action_metadata
 from ..approvals import approval_decision, approval_transport_available
 from .._tool_filters import resolve_tool_permission
@@ -693,6 +694,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     total_prompt_tokens=total_prompt,
                     total_completion_tokens=total_completion,
                 )
+        # checkpoint/rewind handlers only schedule context work. Finalizing
+        # here guarantees the assistant message and every result from a
+        # multi-tool turn form a complete protocol boundary before any cut.
+        finalize_deferred_context_actions(session, turn)
         session._record_pressure_event(state.turn_had_pressure)
         _run_post_turn_hooks(session, turn)
     # ─── 7. GUARDRAIL: max_turns (hard cap, END tier) ────────────────

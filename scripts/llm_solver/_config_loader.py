@@ -137,6 +137,9 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_ast_search_max_rows": d.get("tools", {}).get(
             "ast_search_max_rows", 1000
         ),
+        "tools_checkpoint_enabled": d.get("tools", {}).get(
+            "checkpoint_enabled", False
+        ),
         "tools_file_checkpoints_enabled": bool(
             d.get("tools", {}).get("file_checkpoints_enabled", False)
         ),
@@ -617,6 +620,10 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     )
     normalize_schema_validation_mode(cfg.tools_schema_validation)
     normalize_constrained_decoding_mode(cfg.tools_constrained_decoding)
+    if not isinstance(cfg.tools_checkpoint_enabled, bool):
+        raise ValueError(
+            "config error: tools.checkpoint_enabled must be a boolean."
+        )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,

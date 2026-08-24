@@ -11,7 +11,9 @@ state.json is a *view* over `.trace.jsonl`, nothing more.
 Schema (target of the projection, consumed by SolverStateContext):
 
     {
-      "state":     {"current_attempt": str, "last_verify": str, "next_action": str},
+      "state":     {"current_attempt": str, "last_verify": str,
+                     "next_action": str, "last_rewind": object?,
+                     "rewind_report": object?},
       "trace":     [{"step": int, "session": int, "turn": int, "reasoning": str,
                      "action": str, "result": str, "next": str,
                      "gate_blocked": bool, "write_like": bool,
@@ -31,6 +33,11 @@ by `tools.py` on exception, the `[exit code: N]` suffix appended by
 `bash()` on non-zero exit, and the `[harness gate]` prefix on gate-blocked
 results. A harness that derived intelligence from task output would be
 cheating the benchmark — moving capability from the model into the loop.
+
+Rewind is a structural exception to the otherwise linear projection. The raw
+event list is never changed. A `rewind` row mechanically removes events in its
+declared turn interval from this derived view and retains the model-supplied
+goal/report carried by that row.
 
 Evidence population is filtered to bash calls because bash is the
 subprocess execution surface where exit-code verdicts originate. Read,
@@ -78,6 +85,7 @@ from pathlib import Path
 import orjson as _orjson
 
 from .._shared.classification import classify_outcome, is_gate_blocked
+from .checkpoint_rewind import logical_trace_events
 from .bash_write_classification import (
     STATE_WRITER_MUTATION_PREFIXES,
     _SOURCE_EXT_RE,
@@ -409,9 +417,10 @@ def project(events: list[dict], *, max_result_chars: int,
     state: dict = {}
     trace: list[dict] = []
     evidence: list[dict] = []
+    logical_events = logical_trace_events(events)
 
     step = 0
-    for ev in events:
+    for ev in logical_events:
         et = ev.get("event")
         if et == "tool_call":
             step += 1
@@ -494,11 +503,37 @@ def project(events: list[dict], *, max_result_chars: int,
             if "hook_outcome" in ev:
                 last_compaction["hook_outcome"] = ev.get("hook_outcome")
             state["last_compaction"] = last_compaction
+        elif et == "rewind":
+            state["last_rewind"] = {
+                "session_number": ev.get("session_number"),
+                "from_turn": ev.get("from_turn"),
+                "to_turn": ev.get("to_turn"),
+                "report_chars": ev.get("report_chars"),
+            }
+            if isinstance(ev.get("goal"), str) and isinstance(
+                ev.get("report"), str
+            ):
+                state["rewind_report"] = {
+                    "goal": ev["goal"],
+                    "report": ev["report"],
+                }
         # session_start: no state mutation.
 
     state.setdefault("current_attempt", "")
     state.setdefault("last_verify", "")
     state.setdefault("next_action", "")
+
+    meta = {
+        "schema_version": (
+            STATE_SCHEMA_VERSION_IMPERATIVE
+            if imperative_projection else STATE_SCHEMA_VERSION
+        ),
+        "event_count": len(events),
+        "last_session": _last_session(logical_events),
+        "last_turn": _last_turn(logical_events),
+    }
+    if any(event.get("event") == "rewind" for event in events):
+        meta["projected_event_count"] = len(logical_events)
 
     projected = {
         # The meta block lets readers detect the schema version and prefix
@@ -507,15 +542,7 @@ def project(events: list[dict], *, max_result_chars: int,
         # computed once over the input list (cheap; events in-memory).
         # Top-level (sibling to state/trace/gates) so it is discoverable
         # without descending into the existing sections.
-        "meta": {
-            "schema_version": (
-                STATE_SCHEMA_VERSION_IMPERATIVE
-                if imperative_projection else STATE_SCHEMA_VERSION
-            ),
-            "event_count": len(events),
-            "last_session": _last_session(events),
-            "last_turn": _last_turn(events),
-        },
+        "meta": meta,
         "state": state,
         "trace": trace,
         "gates": [],

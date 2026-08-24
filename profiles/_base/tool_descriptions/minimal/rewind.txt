@@ -1,0 +1,1 @@
+Collapse conversation after the active checkpoint and keep only this short findings report. This does not restore or change files. Requires an active checkpoint.

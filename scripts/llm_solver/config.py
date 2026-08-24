@@ -370,6 +370,9 @@ class Config:
     # Optional repository-wide tree-sitter symbol definition/reference mode.
     tools_ast_search_enabled: bool = False
     tools_ast_search_max_rows: int = 1000
+    # Conversation checkpoint/rewind pair. Both model tools share this one
+    # default-off gate and operate on context only, never workspace files.
+    tools_checkpoint_enabled: bool = False
     # Independent shadow-Git checkpoints after every potentially mutating
     # model tool call. The store is outside the task cwd and restore remains
     # a harness/operator function, never a model-facing tool.

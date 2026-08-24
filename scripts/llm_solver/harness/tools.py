@@ -44,6 +44,7 @@ from ._tool_filters import (
     _filter_bash_output, _line_skeleton, truncate_output,
 )
 from .tool_specs import ACTIVE_TOOL_NAMES, is_native_envelope
+from .checkpoint_rewind import unavailable_tool_result
 from .process_manager import AdmittedProcessOutput, ProcessManagerError
 from .sandbox.ignore_policy import (
     IgnorePolicy,
@@ -171,6 +172,8 @@ _DISPATCH = {
         cwd=cwd, timeout=cfg.grep_timeout,
         page=int(args.get("page", 1)), cfg=cfg,
     ),
+    "checkpoint": lambda args, cwd, cfg: unavailable_tool_result("checkpoint"),
+    "rewind": lambda args, cwd, cfg: unavailable_tool_result("rewind"),
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
     ),

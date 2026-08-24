@@ -11,6 +11,7 @@ The class keeps recent results in full and summarizes older turns.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections import deque
@@ -18,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..context import ContextManager, chars_div_4
+from ..checkpoint_rewind import preserve_rewind_reports
 from ._metadata import COMPACT_CONSTRUCTOR_CONFIG_ATTRS, ContextModeMetadata
 
 
@@ -262,6 +264,9 @@ class CompactTranscript(ContextManager):
                 ctx={"turn_count": self._turn_count,
                      "messages": len(self._msg_cache)},
             )
+        self._msg_cache = preserve_rewind_reports(
+            self._msg_cache, self._all_messages
+        )
         return self._msg_cache
 
     def estimate_tokens(self) -> int:
@@ -288,6 +293,42 @@ class CompactTranscript(ContextManager):
         # both deques to maintain the alignment invariant.
         self._recent_results.clear()
         self._recent_results_meta.clear()
+        self._msg_cache = None
+        self._tok_cache = None
+        return True
+
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the raw append log rather than the compact projection."""
+        return copy.deepcopy(self._all_messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Rebuild compact turn/result indexes from the retained prefix."""
+        retained = copy.deepcopy(list(new_messages))
+        self._system_content = ""
+        self._turn_entries.clear()
+        self._recent_results.clear()
+        self._recent_results_meta.clear()
+        self._all_messages = []
+        self._turn_count = 0
+        self._last_assistant_msg = None
+        self._prev_assistant_msg = None
+        self._msg_cache = None
+        self._tok_cache = None
+        for message in retained:
+            role = message.get("role")
+            if role == "system":
+                self.add_system(str(message.get("content") or ""))
+            elif role == "user":
+                self.add_user(str(message.get("content") or ""))
+            elif role == "assistant":
+                self.add_assistant(message)
+            elif role == "tool":
+                self.add_tool_result(
+                    str(message.get("tool_call_id") or ""),
+                    str(message.get("content") or ""),
+                )
+            else:
+                self._all_messages.append(message)
         self._msg_cache = None
         self._tok_cache = None
         return True

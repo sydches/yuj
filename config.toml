@@ -269,6 +269,9 @@ prompt_version = "llm_hurdle_detector_prompt_v2"
 [tools]
 bash_timeout = 120          # seconds before a bash tool call is killed
 grep_timeout = 30           # seconds before a grep tool call is killed
+# Conversation-only exploration checkpoints. Enabling this one switch exposes
+# both checkpoint(goal) and rewind(report); rewind never restores task files.
+checkpoint_enabled = false
 # Independent shadow-Git workspace checkpoints. The repository lives outside
 # the task cwd, is masked from model commands, and is never exposed as a tool.
 file_checkpoints_enabled = false
