@@ -80,13 +80,16 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
         "project_instruction_imported_bytes": 0,
         "project_instruction_resolved_bytes": 0,
         "project_instructions_truncated": False,
-        "prompt_import_tree": [{
-            "owner": "system_prompt",
-            "source": "arm.md",
-            "source_bytes": len("ARM\n"),
-            "imported_bytes": 0,
-            "imports": [],
-        }],
+        "prompt_import_tree": [
+            {
+                "owner": "system_prompt",
+                "source": "arm.md",
+                "source_bytes": len("ARM\n"),
+                "imported_bytes": 0,
+                "imports": [],
+            }
+        ],
+        "loaded_skills": [],
     }
 
     enabled = make_config(

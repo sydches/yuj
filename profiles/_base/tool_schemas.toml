@@ -49,6 +49,16 @@ required = ["pattern"]
 properties = { pattern = { type = "string" }, path = { type = "string" }, glob = { type = "string" }, page = { type = "integer" } }
 
 [[tools]]
+name = "checkpoint"
+required = ["goal"]
+properties = { goal = { type = "string" } }
+
+[[tools]]
+name = "rewind"
+required = ["report"]
+properties = { report = { type = "string" } }
+
+[[tools]]
 name = "run_tests"
 required = []
 properties = { path = { type = "string" }, k = { type = "string" }, last_failed = { type = "boolean" } }
@@ -74,8 +84,28 @@ required = ["kind", "path"]
 properties = { kind = { type = "string", enum = ["definition", "references", "symbols"] }, path = { type = "string" }, line = { type = "integer" }, character = { type = "integer" } }
 
 [[tools]]
+name = "load_tools"
+required = ["names"]
+properties = { names = { type = "array", items = { type = "string" } } }
+
+[[tools]]
 name = "done"
 required = []
 [tools.properties]
 [tools.properties.message]
 type = "string"
+
+[[tools]]
+name = "list_functions"
+required = []
+properties = {}
+
+[[tools]]
+name = "get_function_details"
+required = ["names"]
+properties = { names = { type = "array", items = { type = "string" }, minItems = 1, uniqueItems = true } }
+
+[[tools]]
+name = "exec_cell"
+required = ["source"]
+properties = { source = { type = "string", minLength = 1, maxLength = 65536 } }

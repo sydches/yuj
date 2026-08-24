@@ -63,6 +63,10 @@ _BLOCKED_FIELD_NAMES = {
     "max_turns",
     "model",
     "profile_name",
+    "skill_paths",
+    "skills_dirs",
+    "skills_enabled",
+    "skills_readable_dirs",
     "timeout_connect",
     "timeout_read",
     "tokenizer_id",
@@ -223,25 +227,28 @@ def _refresh_context(context, new_cfg, targets: tuple[str, ...]) -> tuple[str, .
 def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
     tool_fields = {
         "tool_desc",
+        "tools_lazy_loading_enabled",
+        "tools_active_default",
         "tools_run_tests_enabled",
         "tools_list_definitions_enabled",
         "tools_apply_patch_enabled",
         "tools_edit_format",
         "effective_edit_format",
+        "tools_exec_cell_enabled",
+        "tools_checkpoint_enabled",
     }
     if not (changed & tool_fields):
         return None
     if not all(hasattr(session, attr) for attr in ("client", "_tool_registry")):
         return None
-    from .._loop.profile_resolution import apply_profile_to_schemas
-    from ..schemas import get_tool_schemas
-    from ..tool_validation import ToolSchemaSet
+    from .._loop.profile_resolution import build_tool_surface
     from ..tools import validate_tool_handlers
 
-    schemas = apply_profile_to_schemas(get_tool_schemas(new_cfg.tool_desc), new_cfg, session.client)
-    schema_names = [s["function"]["name"] for s in schemas]
+    surface = build_tool_surface(new_cfg, session.client)
+    schemas = list(surface.registered_schemas)
+    schema_names = list(surface.registered_names)
     validate_tool_handlers(schema_names, registry=session._tool_registry)
-    return schemas, ToolSchemaSet.from_openai_tools(schemas)
+    return schemas
 
 
 def _prepare_guardrail_state(session, new_cfg, changed: set[str]):
@@ -305,7 +312,7 @@ def _refresh_runtime_surfaces(
     if context is not None:
         refreshed.extend(_refresh_context(context, new_cfg, targets))
     if schemas is not None:
-        session._tool_schemas, session._tool_schema_set = schemas
+        session._replace_registered_tool_schemas(schemas, new_cfg)
         refreshed.append("tool_schemas")
     if permission_policy is not None:
         session._permission_policy = permission_policy

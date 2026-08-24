@@ -262,6 +262,46 @@ def select_checkpoint_cut(
     )
 
 
+def select_checkpoint_cut_at_turn(
+    messages: Sequence[Mapping[str, Any]],
+    tokenizer: MessageTokenizer | None,
+    *,
+    first_kept_turn: int,
+    tools: Sequence[Mapping[str, Any]] | None = None,
+    turn_number_offset: int = 0,
+) -> CheckpointCut:
+    """Select an exact assistant boundary proposed by a compaction hook."""
+    if isinstance(first_kept_turn, bool) or not isinstance(first_kept_turn, int):
+        raise TypeError("first_kept_turn must be an integer")
+    materialized = [dict(message) for message in messages]
+    prefix_end = _initial_task_end(materialized)
+    assistant_indices = [
+        index
+        for index in range(prefix_end, len(materialized))
+        if materialized[index].get("role") == "assistant"
+    ]
+    if not assistant_indices:
+        raise ValueError("checkpoint history has no assistant-turn boundary")
+    _validate_assistant_tool_sequences(materialized, assistant_indices)
+    ordinal = first_kept_turn - turn_number_offset
+    if ordinal < 0 or ordinal >= len(assistant_indices):
+        raise ValueError(
+            "first_kept_turn is outside the available assistant turns: "
+            f"{first_kept_turn}"
+        )
+    selected_index = assistant_indices[ordinal]
+    tail_tokens = count_messages(materialized[selected_index:], tokenizer)
+    return CheckpointCut(
+        prefix=tuple(materialized[:prefix_end]),
+        head=tuple(materialized[prefix_end:selected_index]),
+        tail=tuple(materialized[selected_index:]),
+        first_kept_message_index=selected_index,
+        first_kept_turn=first_kept_turn,
+        tail_tokens=tail_tokens,
+        target_satisfied=True,
+    )
+
+
 def serialize_checkpoint_head(
     messages: Sequence[Mapping[str, Any]],
     *,
@@ -921,6 +961,7 @@ __all__ = [
     "make_checkpoint_message",
     "parse_required_sections",
     "select_checkpoint_cut",
+    "select_checkpoint_cut_at_turn",
     "serialize_checkpoint_head",
     "summary_token_limit",
     "validate_checkpoint_candidate",

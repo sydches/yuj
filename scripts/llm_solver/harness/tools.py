@@ -9,6 +9,7 @@ tests continue to import from ``llm_solver.harness.tools``.
 """
 import hashlib
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -21,6 +22,11 @@ from .._shared.telemetry_paths import telemetry_dir
 from ._tools.apply_patch import apply_patch_tool
 from ._tools.bash import bash
 from ._tools.edit import edit, _whitespace_normalized_match
+from ._tools.exec_cell import (
+    execute_cell,
+    get_function_details_result,
+    list_functions_result,
+)
 from ._tools.glob import glob_files
 from ._tools.grep import grep_files
 from ._tools.list_definitions import list_definitions
@@ -44,7 +50,12 @@ from ._tool_filters import (
     _collapse_duplicate_lines, _collapse_similar_lines,
     _filter_bash_output, _line_skeleton, truncate_output,
 )
-from .tool_specs import ACTIVE_TOOL_NAMES, is_native_envelope
+from .tool_specs import (
+    ACTIVE_TOOL_NAMES,
+    EXEC_CELL_API_TOOL_NAMES,
+    is_native_envelope,
+)
+from .checkpoint_rewind import unavailable_tool_result
 from .process_manager import AdmittedProcessOutput, ProcessManagerError
 from .sandbox.ignore_policy import (
     IgnorePolicy,
@@ -59,6 +70,10 @@ from .sandbox.env_policy import (
 )
 
 log = logging.getLogger(__name__)
+
+_ACTIVE_DISPATCH_OPTIONS: ContextVar[dict | None] = ContextVar(
+    "yuj_active_dispatch_options", default=None
+)
 
 
 # Unified <tool_result> envelope schema version. Bump when the attribute
@@ -92,6 +107,13 @@ def _bash_unreadable_paths(
     return tuple(dict.fromkeys((*configured, *additions)))
 
 
+def _bash_readable_paths(cfg) -> tuple[str, ...]:
+    """Return startup-validated external skill roots for shell sandboxes."""
+    return tuple(dict.fromkeys(
+        tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+    ))
+
+
 def _dispatch_bash(args, cwd, cfg):
     if bool(args.get("background", False)):
         return "ERROR: background process manager is unavailable"
@@ -103,6 +125,7 @@ def _dispatch_bash(args, cwd, cfg):
         bwrap_bin=cfg.bwrap_bin,
         sandbox_required=getattr(cfg, "sandbox_required", False),
         unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        readable_paths=_bash_readable_paths(cfg),
         sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
         container_runtime=getattr(
             cfg, "sandbox_container_runtime", "docker"
@@ -137,6 +160,61 @@ def _effective_command_environment(cfg: Config) -> tuple[dict[str, str], bool]:
     return policy.resolve(), policy.allow_login_shell
 
 
+def _dispatch_list_functions(args, cwd, cfg):
+    if not bool(getattr(cfg, "tools_exec_cell_enabled", False)):
+        return "ERROR: code mode is disabled"
+    return list_functions_result()
+
+
+def _dispatch_get_function_details(args, cwd, cfg):
+    if not bool(getattr(cfg, "tools_exec_cell_enabled", False)):
+        return "ERROR: code mode is disabled"
+    return get_function_details_result(
+        args["names"], mode=getattr(cfg, "tool_desc", "minimal")
+    )
+
+
+def _dispatch_exec_cell(args, cwd, cfg):
+    effective_env, allow_login_shell = active_environment()
+    if effective_env is None:
+        effective_env, allow_login_shell = _effective_command_environment(cfg)
+    inherited = dict(_ACTIVE_DISPATCH_OPTIONS.get() or {})
+
+    def _inner_dispatch(name, arguments, inner_cfg):
+        metadata: dict = {}
+        result = dispatch(
+            name,
+            arguments,
+            cwd=cwd,
+            cfg=inner_cfg,
+            output_control=inherited.get("output_control"),
+            universal_rewrites=inherited.get("universal_rewrites"),
+            forbidden_rules=inherited.get("forbidden_rules"),
+            redirect_rules=inherited.get("redirect_rules"),
+            redactions=inherited.get("redactions"),
+            tool_registry=inherited.get("tool_registry"),
+            stale_guard=inherited.get("stale_guard"),
+            active_tools=EXEC_CELL_API_TOOL_NAMES,
+            redirect_event_sink=inherited.get("redirect_event_sink"),
+            ignore_policy=inherited.get("ignore_policy"),
+            execution_metadata=metadata,
+            effective_env=effective_env,
+            allow_login_shell=allow_login_shell,
+        )
+        return result, metadata
+
+    return execute_cell(
+        args["source"],
+        cwd=cwd,
+        cfg=cfg,
+        inner_dispatch=_inner_dispatch,
+        unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+        readable_paths=_bash_readable_paths(cfg),
+        effective_env=effective_env,
+        allow_login_shell=allow_login_shell,
+    )
+
+
 _DISPATCH = {
     "bash": _dispatch_bash,
     "bash_poll": lambda args, cwd, cfg: (
@@ -164,8 +242,13 @@ _DISPATCH = {
         cwd=cwd, timeout=cfg.grep_timeout,
         page=int(args.get("page", 1)), cfg=cfg,
     ),
+    "checkpoint": lambda args, cwd, cfg: unavailable_tool_result("checkpoint"),
+    "rewind": lambda args, cwd, cfg: unavailable_tool_result("rewind"),
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
+    ),
+    "load_tools": lambda args, cwd, cfg: (
+        "ERROR: load_tools requires a live session tool surface"
     ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
@@ -186,6 +269,9 @@ _DISPATCH = {
     "udiff": lambda args, cwd, cfg: udiff_tool(
         args["patch"], cwd=cwd, cfg=cfg,
     ),
+    "list_functions": _dispatch_list_functions,
+    "get_function_details": _dispatch_get_function_details,
+    "exec_cell": _dispatch_exec_cell,
 }
 
 if tuple(_DISPATCH) != ACTIVE_TOOL_NAMES:
@@ -266,13 +352,18 @@ def admit_tool_output(
             from ..bash_quirks import condense_output
             result = condense_output(result, synthesized_cmd, output_control)
 
-    if redactions and not is_native_envelope(result):
+    # Cell stdout is model-authored and may deliberately begin with a native
+    # envelope prefix.  It never owns the harness envelope, so it must not use
+    # the content-based compatibility shortcut that trusted handlers use.
+    owns_native_envelope = name != "exec_cell" and is_native_envelope(result)
+
+    if redactions and not owns_native_envelope:
         from ..bash_quirks import apply_redactions
         result = apply_redactions(result, redactions)
 
     if (
         getattr(cfg, "tools_unified_envelope_enabled", False)
-        and not is_native_envelope(result)
+        and not owns_native_envelope
     ):
         from .._shared.classification import derive_envelope_status
         status, error_kind = derive_envelope_status(result)
@@ -418,7 +509,21 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         ):
             try:
                 executed = True
-                result = handler(arguments, cwd, cfg)
+                dispatch_token = _ACTIVE_DISPATCH_OPTIONS.set({
+                    "output_control": output_control,
+                    "universal_rewrites": universal_rewrites,
+                    "forbidden_rules": forbidden_rules,
+                    "redirect_rules": redirect_rules,
+                    "redactions": redactions,
+                    "tool_registry": reg,
+                    "stale_guard": stale_guard,
+                    "redirect_event_sink": redirect_event_sink,
+                    "ignore_policy": ignore_policy,
+                })
+                try:
+                    result = handler(arguments, cwd, cfg)
+                finally:
+                    _ACTIVE_DISPATCH_OPTIONS.reset(dispatch_token)
             except ProcessManagerError as e:
                 result = f"ERROR: {e}"
             except (KeyError, TypeError) as e:
@@ -427,6 +532,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     applied_operations = tuple(getattr(result, "applied_operations", ()))
     raw_exit_status = getattr(result, "exit_status", None)
     raw_timed_out = bool(getattr(result, "timed_out", False))
+    exec_cell_metadata = getattr(result, "trace_metadata", None)
 
     # Update the mechanical read ledger only after an operation actually
     # succeeded. Observation failures never turn a completed tool call into a
@@ -437,7 +543,14 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         succeeded = not is_error_result(raw_result)
         try:
             if succeeded and name == "read":
-                stale_guard.observe_read(str(arguments.get("path", "")))
+                read_path = str(arguments.get("path", ""))
+                candidate = Path(read_path)
+                if (
+                    not candidate.is_absolute()
+                    or candidate.resolve(strict=False) == Path(cwd).resolve()
+                    or Path(cwd).resolve() in candidate.resolve(strict=False).parents
+                ):
+                    stale_guard.observe_read(read_path)
             elif succeeded and name in {"write", "edit"}:
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name
@@ -469,6 +582,10 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     already_admitted = isinstance(result, AdmittedProcessOutput)
     if execution_metadata is not None:
         execution_metadata["executed"] = executed
+        if callable(exec_cell_metadata):
+            execution_metadata["exec_cell"] = exec_cell_metadata()
+        if applied_operations:
+            execution_metadata["applied_operations"] = applied_operations
         if hasattr(result, "exit_status"):
             execution_metadata["exit_status_known"] = True
             execution_metadata["exit_status"] = getattr(result, "exit_status")

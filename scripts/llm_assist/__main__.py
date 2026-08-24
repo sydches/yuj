@@ -28,6 +28,7 @@ from .runner import (
     load_interrupt_marker,
     mark_session_interrupted,
     prepare_smoke_repo,
+    rewind_session,
     resolve_served_model,
     resolve_smoke_model,
     run_session,
@@ -225,6 +226,22 @@ def main(argv: list[str] | None = None) -> int:
         help="coding-session ID or 'latest' (default: latest incomplete session)",
     )
     resume_parser.set_defaults(func=cmd_resume)
+
+    rewind_parser = sub.add_parser(
+        "rewind",
+        help="restore a saved session to an earlier conversation and tree turn",
+    )
+    rewind_parser.add_argument(
+        "session_id",
+        help="coding-session ID or unique session reference",
+    )
+    rewind_parser.add_argument("turn", type=int, help="completed turn to restore")
+    rewind_parser.add_argument(
+        "--reason",
+        default="operator_cli",
+        help="reason recorded in the append-only trace",
+    )
+    rewind_parser.set_defaults(func=cmd_rewind)
 
     approve_parser = sub.add_parser("approve", help="allow a pending shell action")
     approve_parser.add_argument(
@@ -480,6 +497,31 @@ def cmd_resume(args) -> int:
     refreshed = store.get_session(record.session_id)
     _print_session_result(refreshed or record, success, finish_reason)
     return 0 if success else 1
+
+
+def cmd_rewind(args) -> int:
+    store = SessionStore()
+    record = _resolve_session_record(
+        store, args.session_id, selector="latest"
+    )
+    try:
+        with _session_lock(store, record):
+            event = rewind_session(
+                store,
+                record,
+                turn=args.turn,
+                reason=args.reason,
+            )
+    except (RuntimeError, WorktreeRuntimeError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"rewound: {record.session_id}")
+    print(f"session_ref: {record.short_id}")
+    print(f"from_turn: {event['from_turn']}")
+    print(f"to_turn: {event['to_turn']}")
+    print(f"commit: {event['commit']}")
+    print(f"reason: {event['reason']}")
+    print(f"resume with: {CLI_NAME} resume {record.short_id}")
+    return 0
 
 
 def cmd_setup(args) -> int:

@@ -1,11 +1,19 @@
 """Server context size lookup + validated compaction at the OOM-safe threshold."""
 from __future__ import annotations
 
+import copy
 import json
 import logging
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ..tool_specs import GUARDRAIL_MUTATION_TOOL_NAMES
+from ..compaction_hooks import (
+    Cancel,
+    Compaction,
+    CompactionFileOps,
+    CompactionPreparation,
+)
 
 if TYPE_CHECKING:
     from ..loop import Session
@@ -15,8 +23,8 @@ log = logging.getLogger(__name__)
 
 class CompactionOverflowError(Exception):
     """Raised when compaction cannot fit the prompt within budget even
-    after truncating tool messages in the most recent assistant+tool
-    pair. Caller (chat_io) treats this as terminal — better to end the
+    after truncating tool messages in the retained conversation tail.
+    Caller (chat_io) treats this as terminal — better to end the
     session with a debuggable reason than send and take a server 400.
     """
 
@@ -46,6 +54,132 @@ def _latest_assistant_turn(messages: list[dict], current_turn: int) -> int:
     if any(message.get("role") == "assistant" for message in messages):
         return max(0, int(current_turn) - 1)
     return 0
+
+
+def _session_compaction_hook(session: "Session"):
+    """Return the canonical config reference and its startup-resolved hook."""
+    from ..compaction_hooks import resolve_compaction_hook
+
+    reference = str(getattr(session.cfg, "compaction_hook", "") or "").strip()
+    if hasattr(session, "_compaction_hook"):
+        resolved_reference = str(
+            getattr(session, "_compaction_hook_reference", reference) or ""
+        )
+        return resolved_reference, session._compaction_hook
+    hook = resolve_compaction_hook(reference)
+    session._compaction_hook_reference = reference
+    session._compaction_hook = hook
+    return reference, hook
+
+
+def _build_hook_preparation(
+    session: "Session",
+    messages: list[dict],
+    *,
+    tokenizer,
+    tool_schemas: list[dict] | None,
+    keep_recent_tokens: int,
+    tokens_before: int,
+    requested_method: str,
+    safety_margin: float,
+    gate_min_mutations: int,
+):
+    """Build the detached, trace-derived input for one hook invocation."""
+    from .checkpoint_summary import (
+        build_mechanical_appendix,
+        select_checkpoint_cut,
+    )
+
+    cut = select_checkpoint_cut(
+        messages,
+        tokenizer,
+        keep_recent_tokens=keep_recent_tokens,
+        tools=tool_schemas,
+    )
+    appendix = build_mechanical_appendix(session._trace_events)
+    file_ops = CompactionFileOps(
+        read_files=appendix.read_files,
+        modified_files=appendix.modified_files,
+        last_test_runner_digest=appendix.last_test_runner_digest,
+        mutation_count=appendix.mutation_count,
+    )
+    knobs = MappingProxyType(
+        {
+            "compaction_method": requested_method,
+            "checkpoint_keep_recent_tokens": int(
+                getattr(session.cfg, "checkpoint_keep_recent_tokens", 0) or 0
+            ),
+            "checkpoint_max_summary_tokens": int(
+                getattr(session.cfg, "checkpoint_max_summary_tokens", 4000)
+            ),
+            "digest_compaction_safety_margin": safety_margin,
+            "digest_keep_recent_turns": int(
+                getattr(session.cfg, "digest_keep_recent_turns", 8)
+            ),
+            "digest_compaction_gate_min_mutations": gate_min_mutations,
+        }
+    )
+    preparation = CompactionPreparation(
+        messages_to_summarize=tuple(copy.deepcopy(list(cut.head))),
+        kept_tail=tuple(copy.deepcopy(list(cut.tail))),
+        previous_summary=str(
+            getattr(session, "_checkpoint_previous_summary", "") or ""
+        ),
+        file_ops=file_ops,
+        tokens_before=tokens_before,
+        first_kept_turn=cut.first_kept_turn,
+        knobs=knobs,
+    )
+    return preparation, appendix
+
+
+def _validate_hook_compaction(
+    session: "Session",
+    candidate,
+    messages: list[dict],
+    *,
+    appendix,
+    tokenizer,
+    tool_schemas: list[dict] | None,
+    budget: int,
+    tokens_before: int,
+):
+    """Apply the built-in checkpoint validator to one hook replacement."""
+    from .checkpoint_summary import (
+        select_checkpoint_cut_at_turn,
+        validate_checkpoint_candidate,
+    )
+
+    if not isinstance(candidate.summary, str):
+        raise TypeError("Compaction.summary must be a string")
+    first_kept_turn = candidate.first_kept_turn
+    if isinstance(first_kept_turn, bool) or not isinstance(first_kept_turn, int):
+        raise TypeError("Compaction.first_kept_turn must be an integer")
+    previous_first_kept_turn = int(
+        getattr(session, "_checkpoint_first_kept_turn", 0) or 0
+    )
+    if first_kept_turn < previous_first_kept_turn:
+        raise ValueError(
+            "Compaction.first_kept_turn cannot move behind the previous "
+            f"boundary: {first_kept_turn} < {previous_first_kept_turn}"
+        )
+    cut = select_checkpoint_cut_at_turn(
+        messages,
+        tokenizer,
+        first_kept_turn=first_kept_turn,
+        tools=tool_schemas,
+    )
+    validation = validate_checkpoint_candidate(
+        candidate.summary,
+        prefix=cut.prefix,
+        tail=cut.tail,
+        appendix=appendix,
+        tokenizer=tokenizer,
+        budget=budget,
+        tokens_before=tokens_before,
+        tools=tool_schemas,
+    )
+    return validation, cut
 
 
 def _head_tail_truncate(text: str, char_budget: int, head_ratio: float = 0.4,
@@ -284,7 +418,8 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     requested_method = str(
         getattr(session, "_compaction_method_override", "") or configured_method
     )
-    if requested_method == "checkpoint":
+    hook_reference, hook = _session_compaction_hook(session)
+    if requested_method == "checkpoint" or hook is not None:
         _sync_checkpoint_archive(session, messages)
     # Route through the bound method so test mocks patching
     # `Session._get_server_ctx` continue to intercept this call site.
@@ -344,26 +479,6 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
                          in GUARDRAIL_MUTATION_TOOL_NAMES)
     if mutation_count < gate_min_mut:
         return messages
-    if session._trace_path is None or not session._trace_path.is_file():
-        return messages
-    try:
-        # Import the content-blind rendering core from _shared.
-        from ..._shared.digest_core import _load as digest_load, render_digest, DigestOptions
-        rows = digest_load(session._trace_path)
-    except Exception as e:
-        log.warning("compaction: digest load failed (%s); skipping", e)
-        return messages
-    if not rows:
-        return messages
-    digest_text = render_digest(rows, DigestOptions(
-        reasoning=False,
-        expand_flags=(),
-        tail_threshold=10**9,
-        collapse_harness=True,
-        head_chars=80,
-    ))
-    if not digest_text.strip():
-        return messages
 
     compaction_fallback = ""
     compaction_role_fields: dict[str, object] = {"role": "main"}
@@ -372,14 +487,159 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     )
     latest_pair: list[dict] = []
     new_messages: list[dict] | None = None
+    event_method = requested_method
+    hook_outcome = "not_configured"
+    keep_recent_tokens = int(
+        getattr(cfg, "checkpoint_keep_recent_tokens", 0) or 0
+    ) or max(4096, int(0.20 * ctx_size))
 
-    if requested_method == "checkpoint":
+    if hook is not None:
+        source_messages = getattr(session, "_checkpoint_raw_messages", messages)
+        hook_outcome = "fallback_digest"
+        preparation = None
+        appendix = None
+        try:
+            preparation, appendix = _build_hook_preparation(
+                session,
+                source_messages,
+                tokenizer=tokenizer,
+                tool_schemas=tool_schemas,
+                keep_recent_tokens=keep_recent_tokens,
+                tokens_before=est_pt,
+                requested_method=requested_method,
+                safety_margin=safety_margin,
+                gate_min_mutations=gate_min_mut,
+            )
+            hook_result = hook(preparation)
+        except Exception as exc:  # noqa: BLE001 - digest is the fail-safe
+            event_method = "hook"
+            compaction_fallback = "digest"
+            compaction_role_fields = {"role": None}
+            log.warning(
+                "compaction hook %s failed; using digest fallback: %s: %s",
+                hook_reference,
+                type(exc).__name__,
+                exc,
+            )
+        else:
+            if hook_result is None:
+                hook_outcome = "default"
+            elif isinstance(hook_result, Cancel):
+                hook_outcome = "cancel"
+                session._emit(
+                    "compaction",
+                    session_number=getattr(session, "_session_number", 0),
+                    turn_number=int(
+                        getattr(session, "_compaction_turn", 0) or 0
+                    ),
+                    tokens_before=est_pt,
+                    tokens_after=est_pt,
+                    first_kept_turn=preparation.first_kept_turn,
+                    method="hook",
+                    fallback="",
+                    role=None,
+                    hook=hook_reference,
+                    hook_outcome=hook_outcome,
+                )
+                log.info(
+                    "compaction hook %s canceled compaction at turn %d",
+                    hook_reference,
+                    getattr(session, "_compaction_turn", -1),
+                )
+                return messages
+            elif isinstance(hook_result, Compaction):
+                event_method = "hook"
+                compaction_role_fields = {"role": None}
+                try:
+                    validation, hook_cut = _validate_hook_compaction(
+                        session,
+                        hook_result,
+                        source_messages,
+                        appendix=appendix,
+                        tokenizer=tokenizer,
+                        tool_schemas=tool_schemas,
+                        budget=budget,
+                        tokens_before=est_pt,
+                    )
+                except Exception as exc:  # noqa: BLE001 - digest is fail-safe
+                    compaction_fallback = "digest"
+                    log.warning(
+                        "compaction hook %s returned an invalid replacement; "
+                        "using digest fallback: %s: %s",
+                        hook_reference,
+                        type(exc).__name__,
+                        exc,
+                    )
+                else:
+                    if (
+                        validation.valid
+                        and validation.compacted_messages is not None
+                    ):
+                        new_messages = [
+                            dict(message)
+                            for message in validation.compacted_messages
+                        ]
+                        first_kept_turn = hook_cut.first_kept_turn
+                        session._checkpoint_previous_summary = (
+                            validation.model_summary
+                        )
+                        session._checkpoint_first_kept_turn = first_kept_turn
+                        hook_outcome = "replace"
+                    else:
+                        compaction_fallback = "digest"
+                        log.warning(
+                            "compaction hook %s replacement failed checkpoint "
+                            "validation; using digest fallback: %s",
+                            hook_reference,
+                            validation.reason,
+                        )
+            else:
+                event_method = "hook"
+                compaction_fallback = "digest"
+                compaction_role_fields = {"role": None}
+                log.warning(
+                    "compaction hook %s returned %s, expected None, Cancel, "
+                    "or Compaction; using digest fallback",
+                    hook_reference,
+                    type(hook_result).__name__,
+                )
+
+    # A hook replacement does not need the digest. Every built-in or fallback
+    # path retains the existing requirement for a valid trace-derived digest.
+    if new_messages is None:
+        if session._trace_path is None or not session._trace_path.is_file():
+            return messages
+        try:
+            # Import the content-blind rendering core from _shared.
+            from ..._shared.digest_core import (
+                DigestOptions,
+                _load as digest_load,
+                render_digest,
+            )
+            rows = digest_load(session._trace_path)
+        except Exception as e:
+            log.warning("compaction: digest load failed (%s); skipping", e)
+            return messages
+        if not rows:
+            return messages
+        digest_text = render_digest(rows, DigestOptions(
+            reasoning=False,
+            expand_flags=(),
+            tail_threshold=10**9,
+            collapse_harness=True,
+            head_chars=80,
+        ))
+        if not digest_text.strip():
+            return messages
+
+    if (
+        new_messages is None
+        and event_method != "hook"
+        and requested_method == "checkpoint"
+    ):
         from .checkpoint_summary import generate_checkpoint
         from .model_role_runtime import consumer_role_client, record_role_usage
 
-        keep_recent_tokens = int(
-            getattr(cfg, "checkpoint_keep_recent_tokens", 0) or 0
-        ) or max(4096, int(0.20 * ctx_size))
         routed = consumer_role_client(session, "weak")
         compaction_role_fields = routed.trace_fields()
 
@@ -456,17 +716,12 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         new_messages.extend(latest_pair)
 
     # ── Overflow guard ─────────────────────────────────────────────
-    # latest_pair was appended verbatim. When it carries 3-5 parallel
-    # read() results each ≥10k chars, the post-build prompt can still
-    # exceed budget. Recount; if over, truncate tool messages within
-    # latest_pair (preserving the assistant message intact) and
-    # recount once more. If still over, raise a typed error so the
-    # session ends with a debuggable reason instead of a server 400.
+    # A retained tail can still exceed budget. Recount; if over, truncate
+    # retained tool messages while preserving assistant structure, then
+    # recount once more. If still over, raise a typed error so the session
+    # ends with a debuggable reason instead of a server 400.
     final_count = _recount_tokens(new_messages, tokenizer, tools=tool_schemas)
     if final_count > 0 and final_count > budget:
-        # tool messages in new_messages all came from latest_pair —
-        # the digest user message has role "user", initial user has
-        # role "user", system messages have role "system".
         tool_indices = [i for i, m in enumerate(new_messages)
                         if m.get("role") == "tool"]
         if tool_indices:
@@ -495,7 +750,7 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
                 if isinstance(content, str):
                     new_messages[i]["content"] = _head_tail_truncate(content, per_msg_budget)
             log.warning(
-                "compaction overflow guard: latest_pair exceeded budget by ~%d tokens; "
+                "compaction overflow guard: retained tail exceeded budget by ~%d tokens; "
                 "truncated %d tool message(s) to ~%d chars each",
                 over_tokens, len(tool_indices), per_msg_budget,
             )
@@ -505,17 +760,19 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
                 f"compaction cannot fit prompt within budget after truncation: "
                 f"final_count={final_count} > budget={budget} "
                 f"(ctx={ctx_size}, threshold={threshold:.2f}, "
-                f"latest_pair_msgs={len(latest_pair)})"
+                f"retained_tool_msgs={len(tool_indices)})"
             )
 
     session._compacted = True
     session._compaction_count = int(getattr(session, "_compaction_count", 0)) + 1
     log.info(
         "compaction fired (#%d) at turn %d: threshold=%.2f, est_pt=%d, ctx=%d, "
-        "mutation_count=%d, old_msg_count=%d -> new=%d",
+        "mutation_count=%d, method=%s, hook_outcome=%s, "
+        "old_msg_count=%d -> new=%d",
         session._compaction_count,
         getattr(session, "_compaction_turn", -1),
         threshold, est_pt, ctx_size, mutation_count,
+        event_method, hook_outcome,
         len(messages), len(new_messages),
     )
     # Persist compaction into the context manager so subsequent turns
@@ -531,7 +788,7 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     ctx = getattr(session, "context", None)
     if ctx is not None:
         ctx.replace_all_messages(new_messages)
-    if requested_method == "checkpoint":
+    if requested_method == "checkpoint" or hook is not None:
         session._checkpoint_visible_message_count = len(new_messages)
     # Invalidate the output-dedup cache: its entries reference prior
     # turn numbers whose tool-result content has just been folded into
@@ -556,11 +813,13 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         tokens_before=est_pt,
         tokens_after=final_count,
         first_kept_turn=first_kept_turn,
-        method=requested_method,
+        method=event_method,
         fallback=compaction_fallback,
+        hook=hook_reference,
+        hook_outcome=hook_outcome,
         **compaction_role_fields,
     )
-    if configured_method == "checkpoint":
+    if configured_method == "checkpoint" and event_method == "checkpoint":
         from .checkpoint_summary import loop_guard_forces_digest
 
         if loop_guard_forces_digest(

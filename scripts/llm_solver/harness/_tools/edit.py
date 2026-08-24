@@ -1,6 +1,11 @@
 """edit tool: replace first occurrence of old_str with new_str in a file."""
 from ...config import Config
-from ._common import _path_hint, _resolve
+from ._common import (
+    _is_external_readonly_path,
+    _path_hint,
+    _resolve,
+    _xml_attr,
+)
 
 
 def _whitespace_normalized_match(text: str, old_str: str) -> tuple[int, int] | None:
@@ -65,6 +70,14 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
     from ..post_edit import run_post_edit_checks
     if "\n" in path or "\x00" in path:
         return f"ERROR: path contains forbidden character (newline or NUL)"
+    if cfg is not None and _is_external_readonly_path(
+        cwd,
+        path,
+        readonly_roots=tuple(
+            getattr(cfg, "skills_readable_dirs", ()) or ()
+        ),
+    ):
+        return f"ERROR: skill path is read-only: {path}"
     if old_str == "":
         return (
             "ERROR: old_str must be non-empty — an empty old_str would "

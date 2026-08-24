@@ -1,6 +1,6 @@
 """Agentic loop — Session (inner) + solve_task (outer)."""
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
@@ -23,12 +23,20 @@ from .context import ContextManager
 from .context_contract import build_context_contract
 from .context_strategies import SolverStateContext
 from .tool_specs import PARALLEL_READ_SAFE_TOOL_NAMES
+from .tool_loading import (
+    ToolLoadingError,
+    loader_error,
+    loader_success,
+    replace_tool_surface,
+)
+from .schemas import get_tool_schemas
 
 # Tools safe to dispatch concurrently when the flag is set.
 _READONLY_TOOLS = PARALLEL_READ_SAFE_TOOL_NAMES
 from .injections import (
     InjectionState,
     fire_candidates,
+    fire_path_candidates,
     load_injections,
     record_fire,
 )
@@ -42,14 +50,14 @@ from .guardrails import (
 )
 from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
-from .schemas import get_tool_schemas
 from .tool_validation import ToolSchemaSet
 from .tool_policy import PermissionPolicy
 from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import write_state_from_events, write_state_from_trace
 from .tools import (
-    ToolRegistry, _bash_unreadable_paths, admit_tool_output,
+    ToolRegistry, _bash_readable_paths, _bash_unreadable_paths,
+    admit_tool_output,
     _effective_command_environment, build_tool_registry, dispatch,
     validate_tool_handlers,
 )
@@ -112,6 +120,7 @@ from ._loop import (  # noqa: F401
     _apply_profile_preamble, _apply_profile_schema_simplify,
     _apply_profile_tool_cap, apply_profile_to_schemas,
     bind_effective_edit_format, resolve_effective_edit_format,
+    build_tool_surface,
     _auto_commit, _canon_focus_path,
     _dedup_signature, _encode_focus_path, _encode_focus_target,
     _extract_bash_focus_target, _extract_test_target_from_command,
@@ -121,7 +130,7 @@ from ._loop import (  # noqa: F401
     _record_session_start_costs, _resolve_profile,
     _resolve_token_estimator, _sanitize_runner_timing,
     _simplify_tool_schema, _split_bash_segments,
-    _summarize_args, _truncate_focus_display, _truncate_for_trace,
+    _truncate_focus_display, _truncate_for_trace,
     _truncate_pretest_output, build_context_manager, build_resume_prompt,
     run_pretest,
 )
@@ -184,6 +193,14 @@ class TaskSpec:
     pretest_script: Path | None = None
 
 
+def rewind_to(
+    session: "Session", turn_number: int, *, reason: str = "operator"
+) -> dict[str, object]:
+    """Public harness entry point for an atomic conversation/tree rewind."""
+    from .turn_snapshots import rewind_to as _rewind_to
+    return _rewind_to(session, turn_number, reason=reason)
+
+
 class Session:
     """One context window — multi-turn tool calling until done or limit."""
 
@@ -217,9 +234,17 @@ class Session:
         ignore_policy: IgnorePolicy | None = None,
         effective_env: Mapping[str, str] | None = None,
         allow_login_shell: bool | None = None,
+        local_tokenizer=None,
     ):
         cfg = bind_effective_edit_format(cfg, client)
         self.cfg = cfg
+        from .compaction_hooks import resolve_compaction_hook
+        self._compaction_hook_reference = str(
+            getattr(cfg, "compaction_hook", "") or ""
+        ).strip()
+        self._compaction_hook = resolve_compaction_hook(
+            self._compaction_hook_reference
+        )
         self._permission_policy = PermissionPolicy.from_rule_tables(
             getattr(cfg, "permissions_rules", {})
         )
@@ -284,9 +309,17 @@ class Session:
         self.adaptive_control_resolved_baseline_cfg = cfg
         # Monotonic bash counter for sink filenames (.tool_output/<sess>_<N>.log)
         self._sink_counter: int = 0
-        self._tool_schemas = apply_profile_to_schemas(
-            get_tool_schemas(cfg.tool_desc), cfg, client,
+        self._tool_surface = build_tool_surface(
+            cfg,
+            client,
+            get_tool_schemas(
+                cfg.tool_desc,
+                code_mode=bool(
+                    getattr(cfg, "tools_exec_cell_enabled", False)
+                ),
+            ),
         )
+        self._tool_schemas = self._tool_surface.active_schemas
 
         def _redirect_event_sink(payload: dict[str, object]) -> None:
             fields = dict(payload)
@@ -325,6 +358,7 @@ class Session:
                 unreadable_paths=_bash_unreadable_paths(
                     cwd, cfg, self._ignore_policy,
                 ),
+                readable_paths=_bash_readable_paths(cfg),
                 sandbox_required=getattr(cfg, "sandbox_required", False),
                 sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                 sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -394,13 +428,50 @@ class Session:
                 f"LSP {query.kind} {query.file} status={query.status}\n{body}"
             )
 
+        def _load_tools_handler(args, _cwd, _cfg):
+            try:
+                activation = self._tool_surface.activate(args.get("names"))
+            except ToolLoadingError as exc:
+                return loader_error(exc, self._tool_surface)
+            self._sync_tool_surface()
+            self._tool_activation_events += 1
+            self._activated_tool_names.update(activation.activated)
+            self._emit(
+                "tools_activated",
+                session_number=self._session_number,
+                turn_number=self._current_turn,
+                requested=list(activation.requested),
+                activated=list(activation.activated),
+                already_active=list(activation.already_active),
+                active_tools=list(activation.active_tools),
+            )
+            return loader_success(activation)
+
         handlers["lsp"] = _lsp_handler
+        handlers["load_tools"] = _load_tools_handler
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
+        from ._loop.exec_cell_runtime import build_session_exec_cell_handler
+
+        handlers["exec_cell"] = build_session_exec_cell_handler(
+            self, dispatch_getter=lambda: dispatch
+        )
+        from .checkpoint_rewind import build_session_tool_handlers
+        handlers.update(build_session_tool_handlers(self))
         self._tool_registry = ToolRegistry(handlers=handlers)
+        self._context_checkpoint = None
+        self._pending_context_checkpoint = None
+        self._pending_context_rewind = None
         self._checkpoint_store = checkpoint_store
-        schema_names = [s["function"]["name"] for s in self._tool_schemas]
+        self._artifact_dir = Path(artifact_dir or cwd)
+        from .turn_snapshots import rewind_snapshot_dir
+        self._rewind_snapshot_dir = rewind_snapshot_dir(
+            Path(cwd), self._artifact_dir
+        )
+        self._rewind_guard_snapshots: dict[int, GuardrailState] = {}
+        self._pending_rewind: dict[str, object] | None = None
+        schema_names = list(self._tool_surface.registered_names)
         validate_tool_handlers(schema_names, registry=self._tool_registry)
         self._tool_schema_set = ToolSchemaSet.from_openai_tools(
             self._tool_schemas
@@ -495,6 +566,16 @@ class Session:
                 line=_trace_corrupt_line,
                 events_kept=len(self._trace_events),
             )
+        self._rewind_count = sum(
+            1
+            for event in self._trace_events
+            if event.get("event") == "rewind"
+            and isinstance(event.get("rewind_id"), str)
+            and int(event.get("session_number", -1)) == int(session_number)
+        )
+        if self._trace_events:
+            from .checkpoint_rewind import restore_rewind_reports
+            restore_rewind_reports(self.context, self._trace_events)
         if self._process_manager is None and getattr(
             cfg, "tools_background_enabled", False
         ):
@@ -539,6 +620,7 @@ class Session:
                     unreadable_paths=_bash_unreadable_paths(
                         cwd, cfg, self._ignore_policy,
                     ),
+                    readable_paths=_bash_readable_paths(cfg),
                     sandbox_required=getattr(cfg, "sandbox_required", False),
                     sandbox=bool(getattr(cfg, "sandbox_bash", True)),
                     sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
@@ -596,8 +678,13 @@ class Session:
         # _maybe_compact_messages. None when cfg.tokenizer_id is unset
         # — caller falls back to chars_div_4 estimate.
         from .local_tokenizer import load as _load_tokenizer
-        self._tokenizer = _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
-        if self._tokenizer is not None:
+        tokenizer_was_preloaded = local_tokenizer is not None
+        self._tokenizer = (
+            local_tokenizer
+            if tokenizer_was_preloaded
+            else _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
+        )
+        if self._tokenizer is not None and not tokenizer_was_preloaded:
             synced = self._tokenizer.sync_chat_template(
                 getattr(cfg, "base_url", "") or "")
             log.info("local tokenizer loaded: %s (server template %s)",
@@ -618,6 +705,8 @@ class Session:
         # Number of same-turn follow-up requests, aggregated by the driver
         # into post-run metrics. The initial response is not a continuation.
         self._length_continuation_count = 0
+        self._tool_activation_events = 0
+        self._activated_tool_names: set[str] = set()
         # Adaptive phase state (config-driven runtime switch).
         self._adaptive_phase = "base"
         self._adaptive_switched = False
@@ -658,9 +747,43 @@ class Session:
     @property
     def active_tool_names(self) -> frozenset[str]:
         """Names in the current profile-filtered model-facing tool surface."""
-        return frozenset(
-            schema["function"]["name"] for schema in self._tool_schemas
+        return frozenset(self._tool_surface.active_names)
+
+    def is_hidden_tool(
+        self, name: str, *, active_names: frozenset[str] | None = None
+    ) -> bool:
+        """Return whether ``name`` was registered but hidden on a request."""
+        return self._tool_surface.is_hidden(name, active_names=active_names)
+
+    def _sync_tool_surface(self) -> None:
+        """Atomically rebuild request schemas and their validation view."""
+        self._tool_schemas = self._tool_surface.active_schemas
+        self._tool_schema_set = ToolSchemaSet.from_openai_tools(
+            self._tool_schemas
         )
+
+    def _replace_registered_tool_schemas(
+        self, registered_schemas: list[dict], cfg=None
+    ) -> None:
+        """Refresh config/profile gates without losing prior activations."""
+        effective_cfg = cfg or self.cfg
+        from ._loop.profile_resolution import _profile_tool_limit
+
+        lazy = bool(getattr(
+            effective_cfg, "tools_lazy_loading_enabled", False
+        ))
+        self._tool_surface = replace_tool_surface(
+            self._tool_surface,
+            registered_schemas,
+            lazy_loading_enabled=lazy,
+            active_default=getattr(
+                effective_cfg, "tools_active_default", ()
+            ),
+            max_active_tools=(
+                _profile_tool_limit(self.client) if lazy else None
+            ),
+        )
+        self._sync_tool_surface()
 
     @property
     def last_tool_calls(self) -> list[tuple[str, str]]:
@@ -672,7 +795,27 @@ class Session:
         """Last known context fill ratio (0.0–1.0)."""
         return self._last_fill
 
-    def _apply_injections(self) -> None:
+    def _emit_injection_event(
+        self, *, rule: str, trigger: str, path: str, turn_number: int | None,
+    ) -> None:
+        """Write raw conditional-fire metadata without projecting it."""
+        emitter = getattr(self, "_emit", None)
+        if not callable(emitter):
+            return
+        emitter(
+            "injection",
+            session_number=getattr(self, "_session_number", 0),
+            turn_number=(
+                int(turn_number)
+                if turn_number is not None
+                else int(getattr(self, "_current_turn", 0))
+            ),
+            rule=rule,
+            trigger=trigger,
+            path=path,
+        )
+
+    def _apply_injections(self, *, turn_number: int | None = None) -> None:
         """Fire matching injections against the latest user/tool text.
 
         No-op when the subsystem is disabled or no fragments loaded.
@@ -698,8 +841,71 @@ class Session:
             block = inj.format_block()
             self.context.add_user(block)
             record_fire(
-                inj.name, body_chars=len(block), match_mode=inj.trigger,
+                inj.name,
+                body_chars=len(block),
+                match_mode="keyword" if inj.keywords else "always",
             )
+            if inj.keywords:
+                emit_injection = getattr(self, "_emit_injection_event", None)
+                if callable(emit_injection):
+                    emit_injection(
+                        rule=inj.name,
+                        trigger="keyword",
+                        path="",
+                        turn_number=turn_number,
+                    )
+
+    def _apply_path_injections(
+        self,
+        result: str,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        turn_number: int,
+        executed: bool,
+        execution_metadata: Mapping[str, object] | None = None,
+        bash_rewritten: bool = False,
+    ) -> tuple[str, bool]:
+        """Append matching path fragments to one executed tool result."""
+        if (
+            not executed
+            or not getattr(self.cfg, "injections_path_rules_enabled", False)
+            or not self._injections
+        ):
+            return result, False
+        metadata = execution_metadata or {}
+        operations = metadata.get("applied_operations", ())
+        if not isinstance(operations, (list, tuple)):
+            operations = ()
+        fired = fire_path_candidates(
+            self._injections,
+            tool_name=tool_name,
+            arguments=arguments,
+            cwd=self.cwd,
+            state=self._injection_state,
+            path_rule_repeat=bool(getattr(
+                self.cfg, "injections_path_rule_repeat", False,
+            )),
+            applied_operations=operations,
+            bash_rewritten=bash_rewritten,
+        )
+        for fire in fired:
+            block = fire.injection.format_block(
+                trigger="path", path=fire.path,
+            )
+            result += ("\n\n" if result else "") + block
+            record_fire(
+                fire.injection.name,
+                body_chars=len(block),
+                match_mode="path",
+            )
+            self._emit_injection_event(
+                rule=fire.injection.name,
+                trigger="path",
+                path=fire.path,
+                turn_number=turn_number,
+            )
+        return result, bool(fired)
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx
@@ -720,6 +926,20 @@ class Session:
     def _emit(self, event_type: str, **fields) -> None:
         from ._loop.trace_schema import emit
         emit(self, event_type, **fields)
+
+    def rewind_to(
+        self, turn_number: int, *, reason: str = "operator"
+    ) -> dict[str, object]:
+        """Restore conversation and workspace state at a completed turn."""
+        from .turn_snapshots import rewind_to
+        return rewind_to(self, turn_number, reason=reason)
+
+    def request_rewind(
+        self, turn_number: int | None = None, *, reason: str = "guardrail"
+    ) -> None:
+        """Queue a rewind for the next complete turn boundary."""
+        from .turn_snapshots import request_rewind
+        request_rewind(self, turn_number, reason=reason)
 
     def _refresh_state(self) -> None:
         from ._loop.state_projection import refresh_state

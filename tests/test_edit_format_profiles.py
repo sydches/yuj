@@ -12,7 +12,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from _config_helpers import make_config
 from llm_solver.config import load_config
-from llm_solver.harness._loop.profile_resolution import apply_profile_to_schemas
+from llm_solver.harness._loop.profile_resolution import (
+    apply_profile_to_schemas,
+    build_tool_surface,
+)
 from llm_solver.harness.schemas import get_tool_schemas
 from llm_solver.harness.tools import dispatch
 from llm_solver.server.profile_loader import load_profile
@@ -88,6 +91,32 @@ def test_selected_dialect_changes_model_facing_spec_text() -> None:
     assert "standard unified diff" in descriptions["udiff"]
     assert "overwrite a file" in descriptions["whole"]
     assert len(set(descriptions.values())) == 4
+
+
+@pytest.mark.parametrize("edit_format", tuple(_EXPECTED_TOOL))
+def test_deferred_surface_registers_and_activates_only_selected_dialect(
+    edit_format: str,
+) -> None:
+    cfg = make_config(
+        tools_edit_format=edit_format,
+        tools_lazy_loading_enabled=True,
+        tools_active_default=("bash", "read", "edit", "glob", "grep", "done"),
+    )
+    profile = SimpleNamespace(
+        name="fixture",
+        edit_format="exact",
+        max_tools=99,
+        simplify_schemas=False,
+    )
+
+    surface = build_tool_surface(cfg, SimpleNamespace(profile=profile))
+
+    assert set(surface.registered_names) & _EDIT_TOOLS == {
+        _EXPECTED_TOOL[edit_format]
+    }
+    assert set(surface.default_active_names) & _EDIT_TOOLS == {
+        _EXPECTED_TOOL[edit_format]
+    }
 
 
 @pytest.mark.parametrize("edit_format", tuple(_EXPECTED_TOOL))
