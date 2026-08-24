@@ -622,8 +622,25 @@ def session_compact_summary(artifact_dir: Path) -> dict[str, object]:
         args_summary = str(ev.get("args_summary") or "")
         result_summary = str(ev.get("result_summary") or "")
 
-        if tool_name in {"edit", "write", "multi_edit"}:
-            for file_path in _extract_paths_from_args(args_summary):
+        outcome = str(ev.get("outcome") or "").lower()
+        pass_fail = str(ev.get("pass_fail") or "").lower()
+        succeeded = (
+            not bool(ev.get("gate_blocked"))
+            and outcome not in {"blocked", "error"}
+            and pass_fail != "fail"
+        )
+        if succeeded:
+            structured_paths = [
+                str(path)
+                for path in (ev.get("source_write_paths") or [])
+                if str(path)
+            ]
+            fallback_paths = (
+                _extract_paths_from_args(args_summary)
+                if tool_name in {"edit", "write", "multi_edit"}
+                else []
+            )
+            for file_path in structured_paths or fallback_paths:
                 if file_path not in changed_seen:
                     changed_seen.add(file_path)
                     changed_files.append(file_path)

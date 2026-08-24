@@ -13,10 +13,43 @@ from scripts.llm_assist.runner import (
     resolve_served_model,
     resolve_smoke_model,
     save_approval_request,
+    session_compact_summary,
     session_trace_tail,
     session_turn_tail,
 )
 from scripts.llm_assist.store import SessionLock, SessionLockedError, SessionStore
+
+
+def test_session_compact_summary_reports_successful_edit_dialects(tmp_path: Path):
+    events = [
+        {
+            "event": "tool_call",
+            "tool_name": "apply_patch",
+            "source_write_paths": ["failed.py"],
+            "outcome": "error",
+            "pass_fail": "fail",
+        },
+        {
+            "event": "tool_call",
+            "tool_name": "apply_patch",
+            "source_write_paths": ["calc.py"],
+            "outcome": "ok",
+            "pass_fail": "pass",
+        },
+        {
+            "event": "tool_call",
+            "tool_name": "write",
+            "args_summary": "path='.solver/plan.md'",
+            "result_summary": "OK",
+        },
+    ]
+    (tmp_path / ".trace.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events)
+    )
+
+    summary = session_compact_summary(tmp_path)
+
+    assert summary["changed_files"] == ["calc.py", ".solver/plan.md"]
 
 
 def test_session_store_round_trip(tmp_path: Path):
