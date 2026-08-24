@@ -67,12 +67,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "lsp",
         profile_gate_attr="lsp_tool_enabled",
-        schema_order=11,
+        schema_order=12,
     ),
     ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=12,
+        schema_order=13,
     ),
     ToolSpec(
         "run_tests",
@@ -90,9 +90,14 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "apply_patch",
         guardrail_mutation=True,
         action_write_like=True,
-        profile_gate_attr="tools_apply_patch_enabled",
         native_envelope_prefix="<apply_patch",
         schema_order=10,
+    ),
+    ToolSpec(
+        "udiff",
+        guardrail_mutation=True,
+        action_write_like=True,
+        schema_order=11,
     ),
     # Compatibility names can appear in older traces or model profiles even
     # though the active public schema no longer declares handlers for them.

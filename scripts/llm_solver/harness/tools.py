@@ -26,6 +26,7 @@ from ._tools.grep import grep_files
 from ._tools.list_definitions import list_definitions
 from ._tools.read import read
 from ._tools.run_tests import run_tests
+from ._tools.udiff import udiff_tool
 from ._tools.write import write
 # Cross-tool helpers (imported by tests as `from harness.tools import _resolve`)
 from ._tools._common import _resolve, _xml_attr
@@ -180,6 +181,9 @@ _DISPATCH = {
         page=int(args.get("page", 1)),
     ),
     "apply_patch": lambda args, cwd, cfg: apply_patch_tool(
+        args["patch"], cwd=cwd, cfg=cfg,
+    ),
+    "udiff": lambda args, cwd, cfg: udiff_tool(
         args["patch"], cwd=cwd, cfg=cfg,
     ),
 }
@@ -438,13 +442,13 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name
                 )
-            elif succeeded and name == "apply_patch":
+            elif succeeded and name in {"apply_patch", "udiff"}:
                 for operation_kind, operation_path in applied_operations:
                     if operation_kind == "delete":
-                        stale_guard.forget(operation_path, source="apply_patch")
+                        stale_guard.forget(operation_path, source=name)
                     else:
                         stale_guard.observe_mutation(
-                            operation_path, source="apply_patch"
+                            operation_path, source=name
                         )
             elif name == "bash" and not bash_was_rewritten and not raw_timed_out:
                 from .stale_guard import classify_single_file_read

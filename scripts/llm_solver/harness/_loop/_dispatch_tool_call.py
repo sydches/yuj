@@ -150,20 +150,26 @@ def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> 
 
 
 def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
-    """Run automatic diagnostics after a successful edit or write."""
-    if tc.name not in {"edit", "write"} or is_error_result(result):
+    """Run automatic diagnostics after a successful edit-dialect call."""
+    from ..._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
+    if tc.name not in EDIT_FORMAT_TOOL_NAMES or is_error_result(result):
         return result
     manager = getattr(state.session, "_lsp_manager", None)
     if manager is None:
         return result
-    report = manager.after_edit(str(tc.arguments.get("path", "")))
+    from ..edit_operations import edit_operations
     from ..lsp_support import append_diagnostics_to_tool_result
-    return append_diagnostics_to_tool_result(
-        result,
-        report,
-        max_output_chars=state.cfg.max_output_chars,
-        tool_name=tc.name,
-    )
+    for kind, path in edit_operations(tc.name, tc.arguments):
+        if kind == "delete":
+            continue
+        report = manager.after_edit(path)
+        result = append_diagnostics_to_tool_result(
+            result,
+            report,
+            max_output_chars=state.cfg.max_output_chars,
+            tool_name=tc.name,
+        )
+    return result
 
 
 def _run_rejection_error_ladder(tc, state: "TurnState", result: str):
@@ -677,7 +683,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # guardrail state is reset inside rumination_ladder; this is
     # the context's own signal (separate concern — stateful
     # compaction, not thrash control).
-    if (tc.name in ("write", "edit")
+    if (tc.name in MUTATION_TOOLS
             and not is_error_result(result)
             and hasattr(session.context, "reset_dedup_counts")):
         session.context.reset_dedup_counts()

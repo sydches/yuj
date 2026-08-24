@@ -181,6 +181,18 @@ def _last_turn(events: list[dict]) -> int | None:
     return best
 
 
+def _latest_edit_format(events: list[dict]) -> str:
+    """Return the latest raw session-start dialect for state provenance."""
+    value = ""
+    for event in events:
+        if event.get("event") != "session_start":
+            continue
+        candidate = event.get("edit_format")
+        if isinstance(candidate, str) and candidate:
+            value = candidate
+    return value
+
+
 def _extract_quoted_arg(action: str, name: str) -> str:
     marker = f"{name}="
     start = action.find(marker)
@@ -508,6 +520,7 @@ def project(events: list[dict], *, max_result_chars: int,
             "event_count": len(events),
             "last_session": _last_session(events),
             "last_turn": _last_turn(events),
+            "edit_format": _latest_edit_format(events),
         },
         "state": state,
         "trace": trace,

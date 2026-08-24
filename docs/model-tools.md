@@ -26,6 +26,7 @@ person types into a terminal.
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `udiff` | `patch` | None | Apply a checked standard unified diff with safe unique-context recovery. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -37,8 +38,10 @@ schema, description, or result rule.
 
 | Tool | Shipped setting |
 | --- | --- |
-| `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `read`, `glob`, `grep`, `bash`, `done` | On |
+| `edit` | Selected by the shipped profile's `exact` edit format. |
+| `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
+| `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 
 Turn on the optional tools in a small settings file:
 
@@ -46,13 +49,11 @@ Turn on the optional tools in a small settings file:
 [tools.list_definitions]
 enabled = true
 
-[tools.apply_patch]
-enabled = true
-
 [tools.run_tests]
 enabled = true
 
 [tools]
+edit_format = "apply_patch"
 background_enabled = true
 
 [lsp]
@@ -72,10 +73,19 @@ structured result.
 A model profile can also limit how many enabled tools Yuj sends to the model.
 The `done` tool is not removed by that limit.
 
+For a tool-calling profile, Yuj retains exactly one of `edit`, `apply_patch`,
+`udiff`, and `write` according to the effective edit format. `exact` selects
+`edit`, `apply_patch` selects the Codex V4A patch tool, `udiff` selects standard
+unified diffs, and `whole` selects `write`. Set inherited
+`[profile].edit_format` for a model or override it with `[tools].edit_format`
+or `--edit-format`. See
+[Configuration](configuration.html#select-the-models-edit-format) for the
+precedence rules.
+
 When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
-successful `edit` or `write`; this does not require the navigation tool to be
-enabled. The configured severity threshold controls which messages enter the
-model-facing `<tool_result>`. See [Configuration](configuration.html) for the
+successful edit-dialect mutation; this does not require the navigation tool to
+be enabled. The configured severity threshold controls which messages enter
+the model-facing result. See [Configuration](configuration.html) for the
 server table and timeout settings.
 
 ## File and shell limits
@@ -123,7 +133,15 @@ or `rg` shell command, records the current content hash. An external content
 change makes that observation stale. In `warn` mode Yuj applies the edit and
 adds a warning inside its result envelope; in `block` mode it returns
 `ERROR: stale_file: read PATH first` without changing the file. Successful
-`write`, `edit`, and `apply_patch` calls refresh their affected paths.
+`write`, `edit`, `apply_patch`, and `udiff` calls refresh their affected paths.
+
+The `apply_patch` dialect keeps the existing Codex V4A
+`*** Begin Patch`/`*** End Patch` grammar. The `udiff` dialect accepts ordinary
+`---`/`+++` file headers and `@@` hunks. It checks every file and hunk before
+the first write. Hunk line numbers are hints: Yuj may use one unique exact
+offset or one unique whitespace-normalized whole-line match. Missing or
+ambiguous hunks leave every file unchanged and return the same ranked
+`<candidates>` repair block used by a strict exact-string `edit` miss.
 
 Repository-wide `list_definitions` rows use
 `path:line kind name signature`. `symbol` is an exact name, and `kind` is

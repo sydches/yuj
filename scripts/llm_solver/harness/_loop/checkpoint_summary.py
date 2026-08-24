@@ -63,7 +63,7 @@ _PATH_ARG_RE = re.compile(
 )
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _WRITE_TOOL_NAMES = frozenset(
-    {"write", "edit", "str_replace", "create", "apply_patch"}
+    {"write", "edit", "str_replace", "create", "apply_patch", "udiff"}
 )
 _READ_TOOL_NAMES = frozenset({"read", "list_definitions"})
 

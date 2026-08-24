@@ -39,6 +39,7 @@ from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
 from .interrupted_turn import RecoveryPlan, recover_interrupted_trace
 from . import model_role_runtime
+from .profile_resolution import resolve_effective_edit_format
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
 
@@ -416,6 +417,9 @@ def solve_task(
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
                 sandbox_env_names=list(effective_env),
+                edit_format=resolve_effective_edit_format(
+                    session_cfg, session_client
+                ),
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
                 **model_binding.trace_fields(),

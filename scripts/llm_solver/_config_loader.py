@@ -182,6 +182,8 @@ def _extract_config_fields(d: dict) -> dict:
         "lsp_min_severity": d.get("lsp", {}).get("min_severity", "error"),
         "lsp_tool_enabled": bool(d.get("lsp", {}).get("tool_enabled", False)),
         "tools_apply_patch_enabled": bool(d.get("tools", {}).get("apply_patch", {}).get("enabled", False)),
+        "tools_edit_format": d.get("tools", {}).get("edit_format", ""),
+        "effective_edit_format": "",
         "tools_unified_envelope_enabled": bool(d.get("tools", {}).get("unified_envelope", {}).get("enabled", False)),
         "state_writer_enabled": d.get("state", {}).get("writer_enabled", True),
         "context_ignore_state": d.get("state", {}).get("context_ignore", False),
@@ -446,19 +448,19 @@ def _extract_config_fields(d: dict) -> dict:
             "prompts", {}
         ).get(
             "rumination_gate_grace_prefix",
-            "[HARNESS: Gate armed. Next call must be write or edit — all else blocked.]",
+            "[HARNESS: Gate armed. Next call must mutate a file — all else blocked.]",
         ),
         "pre_mutation_gate": d.get(
             "prompts", {}
         ).get(
             "pre_mutation_gate",
-            "[HARNESS: {turn_number} read-only turns elapsed without a write or edit; the next tool call must be write / edit / str_replace / apply_patch, a bash command that mutates a source file, or done(). This call was not executed.]",
+            "[HARNESS: {turn_number} read-only turns elapsed without a file mutation; the next tool call must use the selected file-edit tool, run a bash command that mutates a source file, or call done(). This call was not executed.]",
         ),
         "rumination_same_target_nudge": d.get(
             "prompts", {}
         ).get(
             "rumination_same_target_nudge",
-            "[HARNESS: same target hit {count} times without a write/edit ({target}). Stop rereading it; either edit, verify, or move to a different target.]",
+            "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]",
         ),
         "rumination_outside_cwd_nudge": d.get(
             "prompts", {}
@@ -476,19 +478,19 @@ def _extract_config_fields(d: dict) -> dict:
             "prompts", {}
         ).get(
             "contract_commit_warn",
-            "[HARNESS: source file {source} is already in view. Choose a concrete next move: edit/write, read a test file, or run verification. Do not continue broad inspection.]",
+            "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]",
         ),
         "contract_commit_block": d.get(
             "prompts", {}
         ).get(
             "contract_commit_block",
-            "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit/write, read a test file, or run verification.]",
+            "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]",
         ),
         "contract_recovery_block": d.get(
             "prompts", {}
         ).get(
             "contract_recovery_block",
-            "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, edit/write, or run verification.]",
+            "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, mutate a file, or run verification.]",
         ),
         "mutation_repeat_warn": d.get(
             "prompts", {}
@@ -574,6 +576,17 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)
     normalize_thinking_level(cfg.thinking_level)
+    from ._shared.edit_formats import validate_edit_format
+    validate_edit_format(
+        cfg.tools_edit_format,
+        field="config error: tools.edit_format",
+        allow_inherit=True,
+    )
+    if cfg.effective_edit_format:
+        validate_edit_format(
+            cfg.effective_edit_format,
+            field="config error: effective_edit_format",
+        )
     if cfg.tools_stale_guard_mode not in {"off", "warn", "block"}:
         raise ValueError(
             "config error: tools.stale_guard_mode must be 'off', 'warn', "

@@ -97,15 +97,15 @@ bash_quirks_forbidden_enabled = true  # bash_quirks/forbidden.toml layer — ref
 turn_snapshots_enabled = false  # invisible per-turn git snapshots (dangling commits, private index) after each source-write turn; turn->sha map in telemetry dir. Enables rewind/branch at any turn. See harness/turn_snapshots.py.
 preflight_reclip_enabled = true  # Pre-flight overflow backstop: instead of ending the session when the projected prompt exceeds context_fill_ratio, re-clip the single largest oversized message in token space (head+tail with a visible notice, targeting ctx/2 tokens for that message) and re-project once; only if the projection STILL exceeds the window does the session end context_full. Anomalies land in the per-run system_log.jsonl.
 pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls after N orientation turns if no mutation has occurred. 0 = disabled (default). Opt in via configs/toggles/orientation-cap-15.toml.
-# Symmetric to error_nudge: after N consecutive NON-write tool calls (no
-# write/edit between them), append a strong directive and activate the
-# rumination gate that rejects non-write tool calls until a successful
-# write/edit clears it. Also pauses duplicate_abort while armed so the
+# Symmetric to error_nudge: after N consecutive non-mutation tool calls,
+# append a strong directive and activate the rumination gate that rejects
+# non-mutation calls until a successful mutation clears it. Also pauses
+# duplicate_abort while armed so the
 # two protections don't fight.
 #
 # Value is a PERCENTAGE of max_turns (e.g. 20 = 20%). Derived to an
 # absolute turn count at session init: threshold = max_turns * N / 100.
-# At max_turns=50 and threshold=20, the gate arms after 10 non-write
+# At max_turns=50 and threshold=20, the gate arms after 10 non-mutation
 # calls. At max_turns=200 it arms after 40. Scales automatically.
 rumination_nudge_threshold = 20
 # After this many consecutive gate-blocked calls, end the session.
@@ -113,7 +113,7 @@ rumination_nudge_threshold = 20
 # infinite blocking and forced-write regressions. 0 = disabled.
 rumination_gate_max_blocks = 5
 # Optional same-target rumination path. Detects repeated inspection of the
-# same file or normalized bash target before the broad non-write threshold
+# same file or normalized bash target before the broad non-mutation threshold
 # triggers. 0 keeps the path disabled.
 rumination_same_target_warn_count = 0
 rumination_same_target_arm_count = 0
@@ -260,6 +260,9 @@ prompt_version = "llm_hurdle_detector_prompt_v2"
 [tools]
 bash_timeout = 120          # seconds before a bash tool call is killed
 grep_timeout = 30           # seconds before a grep tool call is killed
+# Empty inherits `[profile].edit_format` from the selected model profile.
+# Set exact | apply_patch | udiff | whole to override it for one settings layer.
+edit_format = ""
 # Independent shadow-Git workspace checkpoints. The repository lives outside
 # the task cwd, is masked from model commands, and is never exposed as a tool.
 file_checkpoints_enabled = false
@@ -378,13 +381,13 @@ assertion_context_max = 3
 # Post-edit validation (harness hook; L5 invocation + declared policy)
 # ---------------------------------------------------------------------------
 # Declarative check list. Each [[post_edit_check.checks]] entry runs
-# after an edit/write that matches its trigger and when-predicate.
+# after a selected edit-dialect mutation that matches its trigger and predicate.
 # Empty by default — the harness has zero opinion about what "success"
 # means. Populate in config.local.toml or via configs/toggles/...
 #
 # Schema per check:
 #   name     — identifier used on the savings ledger (ctx.check)
-#   trigger  — "edit" | "write" | "edit|write"
+#   trigger  — "edit" | "write" | "apply_patch" | "udiff" | combinations
 #   when     — safe-eval predicate over {path, ext}; "" (empty) = always
 #              allowed:  == != in not in and or not,  str.startswith /
 #              endswith / lower / upper,  constants
@@ -395,7 +398,7 @@ assertion_context_max = 3
 #              block  — edit reverted, tool call returns ERROR
 [post_edit_check]
 enabled = false              # master off-switch
-timeout = 10                 # seconds; runs per edit/write
+timeout = 10                 # seconds; runs per matching mutation
 checks = []                  # no shipped defaults — user declares policy
 
 # ---------------------------------------------------------------------------
@@ -482,7 +485,7 @@ imports_max_depth = 5
 # optional project-instruction blocks. Task-agnostic — names no benchmark,
 # test framework, or tool invocation convention.
 system_header = """\
-You are a software engineering solver. Work in the current directory. Use tools to read, write, edit, search, and run commands."""
+You are a software engineering solver. Work in the current directory. Use the available tools to inspect, change, search, and verify the project."""
 
 # Suffix injected at the end of every stateful-context user message.
 # Reminds the model that the harness maintains state on its behalf.
@@ -504,20 +507,20 @@ resume_base = "Continue. Review prior actions, do the next step."
 error_nudge = "[harness: {count} errors. Re-read the file.]"
 
 # Appended to tool result when rumination_nudge_threshold is crossed.
-# {count} is replaced with the non-write call count at runtime.
-rumination_nudge = "[HARNESS: {count} non-write calls. One more and all tools except write/edit are blocked. Write or edit now.]"
+# {count} is replaced with the non-mutation call count at runtime.
+rumination_nudge = "[HARNESS: {count} non-mutation calls. One more and all tools except file-mutation tools are blocked. Mutate a file now.]"
 
-# Returned as the tool result when the rumination gate blocks a non-write call.
-rumination_gate = "NOT EXECUTED. Only write/edit accepted. Blocked until a write or edit succeeds. Each blocked call wastes a turn."
+# Returned when the rumination gate blocks a non-mutation call.
+rumination_gate = "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked until a file mutation succeeds. Each blocked call wastes a turn."
 
 # Appended to tool result when the same file / normalized command target has
-# been inspected repeatedly without a write/edit.
-rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a write/edit ({target}). Stop rereading it; either edit, verify, or move to a different target.]"
+# been inspected repeatedly without a file mutation.
+rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]"
 rumination_outside_cwd_nudge = "[HARNESS: repeated inspection is anchored outside the repo root ({target}). The working directory is already correct; search and read relative to it.]"
 test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]"
-contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: edit/write, read a test file, or run verification. Do not continue broad inspection.]"
-contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit/write, read a test file, or run verification.]"
-contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, edit/write, or run verification.]"
+contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]"
+contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]"
+contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, mutate a file, or run verification.]"
 
 # Appended to read() tool result when the caller's `limit` capped the
 # output (the file is larger than what was returned). Format

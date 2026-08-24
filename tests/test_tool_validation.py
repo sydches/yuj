@@ -41,6 +41,9 @@ VALID_ARGUMENTS = {
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
+    "udiff": {
+        "patch": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new"
+    },
     "done": {"message": "All checks pass."},
 }
 
@@ -74,6 +77,8 @@ INVALID_ARGUMENTS = (
     ("list_definitions", {"path": None}, "$.path", "type"),
     ("apply_patch", {}, "$.patch", "required"),
     ("apply_patch", {"patch": {"text": "patch"}}, "$.patch", "type"),
+    ("udiff", {}, "$.patch", "required"),
+    ("udiff", {"patch": {"text": "patch"}}, "$.patch", "type"),
     ("done", {"message": 1}, "$.message", "type"),
 )
 

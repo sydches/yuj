@@ -226,6 +226,8 @@ def _prepare_tool_schemas(session, new_cfg, changed: set[str]):
         "tools_run_tests_enabled",
         "tools_list_definitions_enabled",
         "tools_apply_patch_enabled",
+        "tools_edit_format",
+        "effective_edit_format",
     }
     if not (changed & tool_fields):
         return None
@@ -386,6 +388,10 @@ def apply(session, payload: InterventionPayload) -> ExecutorResult:
         resolved_baseline, raw_baseline_cfg, raw_candidate_cfg,
     )
     new_cfg = _preserve_runtime_derived_fields(old_cfg, new_cfg)
+    if hasattr(session, "client"):
+        from .._loop.profile_resolution import bind_effective_edit_format
+
+        new_cfg = bind_effective_edit_format(new_cfg, session.client)
     changed = _changed_fields(old_cfg, new_cfg)
     ok, reason, refreshed, blocked_fields = _refresh_runtime_surfaces(
         session, old_cfg, new_cfg, changed)
@@ -462,6 +468,10 @@ def restore_baseline(session, baseline_config_paths: Iterable[str] | None = None
 
     new_cfg = resolved_baseline_cfg(session, old_cfg)
     new_cfg = _preserve_runtime_derived_fields(old_cfg, new_cfg)
+    if hasattr(session, "client"):
+        from .._loop.profile_resolution import bind_effective_edit_format
+
+        new_cfg = bind_effective_edit_format(new_cfg, session.client)
     changed = _changed_fields(old_cfg, new_cfg)
     ok, reason, refreshed, blocked_fields = _refresh_runtime_surfaces(
         session, old_cfg, new_cfg, changed)

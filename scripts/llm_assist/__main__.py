@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from ..llm_solver.config import PROJECT_ROOT, get_server_base_url, load_config
+from ..llm_solver._shared.edit_formats import EDIT_FORMATS
 from ..llm_solver.server.request_controls import THINKING_LEVELS
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
@@ -98,6 +99,10 @@ def main(argv: list[str] | None = None) -> int:
             help="per-request reasoning effort",
         )
         p.add_argument(
+            "--edit-format", choices=EDIT_FORMATS,
+            help="override the selected model profile's edit dialect",
+        )
+        p.add_argument(
             "--provider",
             choices=sorted(_PROVIDER_PRESETS),
             help="model service: local, openai, anthropic, zai, openrouter, or custom",
@@ -177,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     smoke_parser.add_argument(
         "--thinking", choices=THINKING_LEVELS,
         help="per-request reasoning effort",
+    )
+    smoke_parser.add_argument(
+        "--edit-format", choices=EDIT_FORMATS,
+        help="override the selected model profile's edit dialect",
     )
     smoke_parser.add_argument(
         "--provider",
@@ -948,7 +957,14 @@ def _transport_overrides_from_args(args) -> dict:
     base_url = getattr(args, "base_url", None)
     api_key_env = getattr(args, "api_key_env", None)
     thinking_level = getattr(args, "thinking", None)
-    if not provider and not base_url and not api_key_env and not thinking_level:
+    edit_format = getattr(args, "edit_format", None)
+    if (
+        not provider
+        and not base_url
+        and not api_key_env
+        and not thinking_level
+        and not edit_format
+    ):
         return {}
     if provider == "custom" and not base_url:
         raise SystemExit("--provider custom requires --base-url")
@@ -970,6 +986,8 @@ def _transport_overrides_from_args(args) -> dict:
             )
     if thinking_level:
         overrides["thinking_level"] = thinking_level
+    if edit_format:
+        overrides["tools_edit_format"] = edit_format
     return overrides
 
 
@@ -1004,6 +1022,11 @@ def _render_provider_overlay(overrides: dict) -> str:
             lines.append("")
         value = str(overrides["thinking_level"])
         lines.extend(["[model]", f'thinking_level = "{value}"'])
+    if overrides.get("tools_edit_format") is not None:
+        if lines:
+            lines.append("")
+        value = str(overrides["tools_edit_format"])
+        lines.extend(["[tools]", f'edit_format = "{value}"'])
     return "\n".join(lines) + "\n"
 
 

@@ -34,7 +34,7 @@ Do not pass a descriptor file with `--config`.
 | --- | --- | --- | --- |
 | One coding session | A small settings file | `yuj code --config FILE.toml` | No, for an existing setting. |
 | A model and local server | `configs/runtime/*.toml` | The config loader reads `[model]`. `scripts/serve.sh` reads `[launch]`. | No, for a supported server and field. |
-| A model's message or tool-call format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
+| A model's message, tool-call, or edit format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A test runner or language | `scripts/llm_solver/language_quirks/NAME.toml` | The language loader finds matching project files. | No, for the current descriptor format. |
 | A shell rewrite, refusal, redirect, or redaction | `scripts/llm_solver/bash_quirks/*.toml` | The shell tool loads each rule list. | No, for the current rule types. |
 | The current `glob` refusal text | `scripts/llm_solver/tool_quirks/glob.toml` | The `glob` result filter reads it. | No. |
@@ -263,6 +263,7 @@ canonical_version = "openai-v1"
 name = "my-model"
 family = "my-model-family"
 inherits = "_base"
+edit_format = "exact"
 
 [model]
 supports_tool_calls = true
@@ -285,11 +286,18 @@ Yuj first looks for an exact profile directory. It next looks for one profile
 with the requested `[profile].family`. It uses `_base` when neither exists.
 More than one family match is an error.
 
+A child profile inherits `edit_format` when it omits the field. `exact` sends
+the `edit` schema, `apply_patch` sends the Codex V4A patch schema, `udiff`
+sends the standard unified-diff schema, and `whole` sends the `write` schema.
+The loader rejects any other value. Use `[tools].edit_format` or
+`--edit-format` for a run-specific override instead of copying a model profile.
+
 Use these profile fields for these active jobs:
 
 | Profile field | Active job |
 | --- | --- |
 | `[profile].inherits` | Load a parent profile first. |
+| `[profile].edit_format` | Select `exact`, `apply_patch`, `udiff`, or `whole` and expose only its matching edit tool. |
 | `[model].supports_tool_calls` | Send or omit the tool schema list. |
 | `[model].supports_system_role` | Keep or fold the system message. |
 | `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
@@ -322,7 +330,7 @@ Load the profile without starting a model:
 
 ```bash
 .venv/bin/python -c \
-  'from pathlib import Path; from scripts.llm_solver.server import load_profile; p = load_profile("my-model", Path("profiles")); print(p.name, p.family, p.max_tools)'
+  'from pathlib import Path; from scripts.llm_solver.server import load_profile; p = load_profile("my-model", Path("profiles")); print(p.name, p.family, p.edit_format, p.max_tools)'
 ```
 
 Run the full tests after you add profile rules or modules.

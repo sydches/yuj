@@ -34,6 +34,7 @@ DEFAULT_PERMISSION_RULE = "<default>"
 PERMISSION_MATCH_FIELDS = MappingProxyType(
     {
         "apply_patch": ("patch", ""),
+        "udiff": ("patch", ""),
         "bash": ("cmd", ""),
         "bash_kill": ("proc_id", ""),
         "bash_poll": ("proc_id", ""),
