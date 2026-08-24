@@ -1,7 +1,7 @@
 """read tool: return file contents with line numbers + optional reminders."""
 from ...config import Config
 from ..sandbox.ignore_policy import active_ignore_policy
-from ._common import _path_hint, _resolve
+from ._common import _path_hint, _require_external_readable, _resolve_read
 
 
 def _record_read_reminder(kind: str, path: str, reminder_chars: int) -> None:
@@ -45,9 +45,25 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
     if limit < 0:
         return f"ERROR: limit must be >= 0, got {limit}"
     try:
-        target = _resolve(cwd, path)
+        target = _resolve_read(
+            cwd,
+            path,
+            readonly_roots=tuple(
+                getattr(cfg, "skills_readable_dirs", ()) or ()
+            ) if cfg is not None else (),
+        )
+        if cfg is not None:
+            _require_external_readable(
+                cwd,
+                target,
+                unreadable_paths=tuple(
+                    getattr(cfg, "unreadable_paths", ()) or ()
+                ),
+            )
         policy = active_ignore_policy(cwd)
-        if policy is not None:
+        if policy is not None and (
+            target == policy.root or policy.root in target.parents
+        ):
             policy.require_visible(target, is_dir=target.is_dir())
         if target.is_dir():
             return (

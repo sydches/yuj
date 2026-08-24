@@ -162,6 +162,7 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                               tool_desc mode.
       protocol_commandments — tokens paid by resolved --system-prompt content.
       project_instructions  — tokens paid by resolved project-document blocks.
+      skills_catalog        — tokens paid by startup skill metadata only.
       profile_behavioral    — tokens paid by the profile's behavioral
                               suffix (probe: run denormalize on a
                               minimal Commandments-tagged message and
@@ -273,6 +274,29 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
                         prompt_metadata, "project_instructions_truncated", False
                     )
                 ),
+            },
+        )
+
+    skills_chars = int(
+        getattr(prompt_metadata, "skills_catalog_chars", 0) or 0
+    )
+    if skills_chars:
+        records = tuple(
+            getattr(prompt_metadata, "loaded_skills", ()) or ()
+        )
+        ledger.record(
+            bucket="skills_catalog",
+            layer="L4_protocol",
+            mechanism="agent_skills_metadata",
+            input_chars=0,
+            output_chars=skills_chars,
+            measure_type="exact",
+            ctx={
+                "skills": [
+                    str(record.get("name", ""))
+                    for record in records
+                    if not bool(record.get("disable_model_invocation", False))
+                ],
             },
         )
 

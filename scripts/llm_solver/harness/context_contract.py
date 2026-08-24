@@ -13,7 +13,7 @@ from .context_strategies import (
 from .context_strategies._metadata import BASE_BUDGET_CONFIG_ATTRS
 
 
-CONTEXT_CONTRACT_VERSION = 1
+CONTEXT_CONTRACT_VERSION = 2
 
 
 def _context_mode_record_for_class(
@@ -108,7 +108,27 @@ def build_context_contract(
         "injection_support": (
             metadata.injection_support if metadata is not None else "strategy-defined"
         ),
+        "checkpoint_rewind": {
+            "enabled": bool(_get(cfg, "tools_checkpoint_enabled")),
+            "tools": (
+                ["checkpoint", "rewind"]
+                if bool(_get(cfg, "tools_checkpoint_enabled"))
+                else []
+            ),
+            "checkpoint_boundary": "complete_tool_call_turn",
+            "rewind_report_role": "user",
+            "raw_trace": "append_only",
+            "filesystem_restore": False,
+        },
         "suffix_present": _suffix_present(metadata, cfg),
+        "repo_map": {
+            "enabled": int(_get(cfg, "repo_map_tokens")) > 0,
+            "token_budget": int(_get(cfg, "repo_map_tokens")),
+            "refresh": str(_get(cfg, "repo_map_refresh")),
+            "placement": "task_message_suffix",
+            "stable_for_session": True,
+            "source": "live_workspace_structural_index",
+        },
         "budgets": _budget_snapshot(metadata, cfg),
         "tool_loading": {
             "lazy_loading_enabled": bool(

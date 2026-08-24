@@ -39,6 +39,7 @@ from ._guardrails import (  # noqa: F401
     pre_mutation_gate,
     rumination_gate,
     rumination_ladder,
+    rewind_on,
     test_read_ladder,
     _arm_recovery_mode,
     _canon_test_path,

@@ -37,6 +37,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "bash": ("cmd", ""),
         "bash_kill": ("proc_id", ""),
         "bash_poll": ("proc_id", ""),
+        "checkpoint": ("goal", ""),
         "done": ("message", ""),
         "edit": ("path", ""),
         "glob": ("path", "."),
@@ -45,6 +46,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "load_tools": ("names", ()),
         "lsp": ("path", ""),
         "read": ("path", ""),
+        "rewind": ("report", ""),
         "run_tests": ("path", ""),
         "write": ("path", ""),
     }

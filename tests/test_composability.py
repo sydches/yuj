@@ -177,6 +177,8 @@ def test_tool_specs_drive_surface_metadata():
         "bash_poll": "tools_background_enabled",
         "bash_kill": "tools_background_enabled",
         "load_tools": "tools_lazy_loading_enabled",
+        "checkpoint": "tools_checkpoint_enabled",
+        "rewind": "tools_checkpoint_enabled",
     }
     assert NATIVE_ENVELOPE_PREFIXES == (
         "<test_results",

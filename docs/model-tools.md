@@ -17,11 +17,13 @@ person types into a terminal.
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
 | `bash` | `cmd` | None | Run one shell command and return its output. |
-| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. |
+| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
+| `checkpoint` | `goal` | None | Mark a complete conversation turn before exploration. Becomes active after every call/result pair in that turn completes. |
+| `rewind` | `report` | None | Return conversation context to the active checkpoint and retain the short findings report. Never restores files. |
 | `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
@@ -40,7 +42,7 @@ schema, description, or result rule.
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
-| `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `checkpoint`, `rewind`, `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 
 Turn on the optional tools in a small settings file:
 
@@ -56,6 +58,7 @@ enabled = true
 
 [tools]
 background_enabled = true
+checkpoint_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -91,6 +94,15 @@ ordinary error ladder and turn-level loop guards still count the
 rejection. A disabled tool is not loadable.
 See [Configuration](configuration.html#defer-tools-until-the-model-needs-them)
 for knobs, trace/state behavior, replay fidelity, and token metrics.
+
+`checkpoint` and `rewind` share one setting and survive a profile tool-count
+cap as a pair. A checkpoint is session-scoped. `rewind` consumes it and
+returns a typed error when no checkpoint is active. Rewind is applied only at
+the end of a complete tool-call turn, then the next model request contains the
+checkpoint prefix plus one user-role `<rewind-report goal="...">` message.
+Exploration calls remain in the append-only trace but leave the model-facing
+conversation and mechanical state projection. Files changed during
+exploration remain changed.
 
 When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
 successful `edit` or `write`; this does not require the navigation tool to be

@@ -49,6 +49,16 @@ required = ["pattern"]
 properties = { pattern = { type = "string" }, path = { type = "string" }, glob = { type = "string" }, page = { type = "integer" } }
 
 [[tools]]
+name = "checkpoint"
+required = ["goal"]
+properties = { goal = { type = "string" } }
+
+[[tools]]
+name = "rewind"
+required = ["report"]
+properties = { report = { type = "string" } }
+
+[[tools]]
 name = "run_tests"
 required = []
 properties = { path = { type = "string" }, k = { type = "string" }, last_failed = { type = "boolean" } }

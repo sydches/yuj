@@ -465,6 +465,24 @@ class TestProjectImperativeProcess:
         assert out["meta"]["schema_version"] == 1
         assert "process" not in out
 
+    def test_raw_injection_event_is_not_projected_into_model_state(self):
+        out = _project([{
+            "event": "injection",
+            "session_number": 1,
+            "turn_number": 3,
+            "rule": "python-rule",
+            "trigger": "path",
+            "path": "src/main.py",
+        }])
+        assert out["trace"] == []
+        assert out["evidence"] == []
+        assert out["state"] == {
+            "current_attempt": "",
+            "last_verify": "",
+            "next_action": "",
+        }
+        assert out["meta"]["event_count"] == 1
+
 
 class TestProjectTruncation:
     def test_long_args_summary_is_truncated(self):

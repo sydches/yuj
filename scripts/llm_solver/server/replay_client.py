@@ -269,6 +269,7 @@ class ReplayClient:
         # not the rendered request (windowing/compaction state-dependent)
         self._trace_events: dict[int, dict] = {}
         self.process_events: list[dict] = []
+        self._rewind_events: dict[tuple[int, int], list[dict]] = {}
         if source_trace_path is not None and Path(source_trace_path).is_file():
             for line in Path(source_trace_path).read_text().splitlines():
                 line = line.strip()
@@ -282,6 +283,15 @@ class ReplayClient:
                     self._trace_events[int(ev.get("turn_number", -1) or -1)] = ev
                 elif ev.get("event") in {"proc_start", "proc_poll", "proc_kill"}:
                     self.process_events.append(ev)
+                elif (
+                    ev.get("event") == "rewind"
+                    and ev.get("delivery") == "in_session"
+                ):
+                    key = (
+                        int(ev.get("session_number", 0) or 0),
+                        int(ev.get("from_turn", -1)),
+                    )
+                    self._rewind_events.setdefault(key, []).append(ev)
 
     # -- helpers -------------------------------------------------------------
 
@@ -567,6 +577,39 @@ class ReplayClient:
                 raise ReplayDivergence(msg)
             log.warning("%s (continuing: strict_fidelity=false)", msg)
             return
+
+    def rewinds_at(self, session_number: int, turn_number: int) -> list[dict]:
+        """Return recorded in-session rewinds at one completed boundary."""
+        return list(self._rewind_events.get(
+            (int(session_number), int(turn_number)), ()
+        ))
+
+    def verify_rewind_event(self, live_event: dict) -> None:
+        """Require a reproduced rewind to match the recorded semantics."""
+        key = (
+            int(live_event.get("session_number", 0) or 0),
+            int(live_event.get("from_turn", -1)),
+        )
+        recorded = self._rewind_events.get(key) or []
+        if not recorded:
+            raise ReplayDivergence(
+                f"unexpected replay rewind at session {key[0]} turn {key[1]}"
+            )
+        source = recorded.pop(0)
+        if not recorded:
+            self._rewind_events.pop(key, None)
+        for field in ("from_turn", "to_turn", "reason", "delivery"):
+            if live_event.get(field) != source.get(field):
+                self.divergence = {
+                    "turn": key[1],
+                    "field": field,
+                    "live": live_event.get(field),
+                    "recorded": source.get(field),
+                }
+                raise ReplayDivergence(
+                    f"replay divergence at recorded rewind turn {key[1]}: "
+                    f"{field} differs from recording"
+                )
 
     def build_assistant_message(self, content: str | None,
                                 tool_calls: list[ToolCall]) -> dict:

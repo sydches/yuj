@@ -51,6 +51,16 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
         session.context.add_tool_result(tc.id, "Session ended by model.", tool_name="done")
         _emit_done(tc, state, "Session ended by model.")
         return TCOutcome(end=True, reason="model_done", done=True)
+    if done_decision.action == Action.REWIND:
+        session.context.add_tool_result(
+            tc.id, done_decision.text, tool_name="done"
+        )
+        _emit_done(tc, state, done_decision.text)
+        session.request_rewind(
+            done_decision.target_turn,
+            reason=done_decision.reason or "rewind_on_done_guard",
+        )
+        return TCOutcome(rewind=True)
     # BLOCK or END: store rejection text in trace; END terminates.
     session.context.add_tool_result(tc.id, done_decision.text, tool_name="done")
     _emit_done(tc, state, done_decision.text)
@@ -132,6 +142,17 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
         prompt_tokens=state.prompt_tokens,
         completion_tokens=state.completion_tokens,
     )
+
+
+def _handle_pre_rewind(tc, decision, state: "TurnState") -> TCOutcome:
+    """Complete the current call and defer rewind to the turn boundary."""
+    state.turn_had_pressure = True
+    _emit_gate_block(tc, decision, state, "")
+    state.session.request_rewind(
+        decision.target_turn,
+        reason=decision.reason or "rewind_on_guardrail",
+    )
+    return TCOutcome(rewind=True)
 
 
 def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> None:
@@ -253,6 +274,12 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
             reason=error_decision.reason,
             done=False,
         )
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)
 
 
@@ -370,6 +397,12 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     )
     if error_decision.action == Action.END:
         return TCOutcome(end=True, reason=error_decision.reason, done=False)
+    if error_decision.action == Action.REWIND:
+        session.request_rewind(
+            error_decision.target_turn,
+            reason=error_decision.reason or "rewind_on_error_ladder",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)
 
 
@@ -489,12 +522,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     mutation_warn_text = ""
     gate_blocked_flag = False
     gate_intercepted = False
+    path_injection_fired = False
     result: str = ""
     execution_metadata: dict = {}
     if mutation_decision.action == Action.END:
         state.turn_had_pressure = True
         _emit_gate_block(tc, mutation_decision, state, args_summary)
         return TCOutcome(end=True, reason=mutation_decision.reason, done=False)
+    if mutation_decision.action == Action.REWIND:
+        return _handle_pre_rewind(tc, mutation_decision, state)
     if mutation_decision.action == Action.BLOCK:
         state.turn_had_pressure = True
         log.info("Mutation repeat guard blocked %s", tc.name)
@@ -519,6 +555,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             state.turn_had_pressure = True
             _emit_gate_block(tc, contract_decision, state, args_summary)
             return TCOutcome(end=True, reason=contract_decision.reason, done=False)
+        if contract_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, contract_decision, state)
         if contract_decision.action == Action.BLOCK:
             state.turn_had_pressure = True
             log.info("Contract gate blocked %s", tc.name)
@@ -548,6 +586,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                      tc.name, turn, cfg.pre_mutation_turn_cap)
             _emit_gate_block(tc, pre_mut_decision, state, args_summary)
             return TCOutcome(end=False)
+        if pre_mut_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, pre_mut_decision, state)
 
         # 6d. rumination_gate — grace (WARN+dispatch) / BLOCK / END.
         gate_decision = tool_pre["rumination_gate"](
@@ -559,6 +599,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                      session._guards.gate_block_count)
             _emit_gate_block(tc, gate_decision, state, args_summary)
             return TCOutcome(end=True, reason=gate_decision.reason, done=False)
+        if gate_decision.action == Action.REWIND:
+            return _handle_pre_rewind(tc, gate_decision, state)
         if gate_decision.action == Action.BLOCK:
             state.turn_had_pressure = True
             log.info("Rumination gate blocked %s", tc.name)
@@ -640,10 +682,19 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 state.turn_had_pressure = True
                 log.info("Tool error: %s consecutive=%d",
                          tc.name, session._guards.consecutive_errors.get(tc.name, 0))
-            if err_decision.action == Action.END:
+            if err_decision.action in {Action.END, Action.REWIND}:
                 state.turn_had_pressure = True
                 log.warning("Error abort: %s consecutive=%d", tc.name,
                             session._guards.consecutive_errors.get(tc.name, 0))
+                result, _ = session._apply_path_injections(
+                    result,
+                    tool_name=tc.name,
+                    arguments=tc.arguments,
+                    turn_number=turn,
+                    executed=bool(execution_metadata.get("executed", True)),
+                    execution_metadata=execution_metadata,
+                    bash_rewritten=bool(rewrite_log),
+                )
                 session.context.add_tool_result(tc.id, result, tool_name=tc.name,
                                                 cmd_signature="", gate_blocked=False)
                 # cmd_pre_rewrite preserves the model's original
@@ -682,6 +733,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 )
                 if dispatch_started:
                     _record_tool_finished(tc, state)
+                if err_decision.action == Action.REWIND:
+                    session.request_rewind(
+                        err_decision.target_turn,
+                        reason=(
+                            err_decision.reason
+                            or "rewind_on_error_ladder"
+                        ),
+                    )
+                    return TCOutcome(rewind=True)
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
                 result += "\n\n" + err_decision.text
@@ -733,6 +793,14 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     )
     if rum_decision.action == Action.WARN:
         result += "\n\n" + rum_decision.text
+    post_rewind = next(
+        (
+            decision
+            for decision in (test_read_decision, rum_decision)
+            if decision.action == Action.REWIND
+        ),
+        None,
+    )
 
     # Context-side dedup reset on a successful write/edit. The
     # guardrail state is reset inside rumination_ladder; this is
@@ -771,6 +839,20 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # tc-level appends so it reads last.
     if state.turn_warn_text:
         result += "\n\n" + state.turn_warn_text
+
+    path_call_executed = (
+        not gate_blocked_flag
+        and bool(execution_metadata.get("executed", True))
+    )
+    result, path_injection_fired = session._apply_path_injections(
+        result,
+        tool_name=tc.name,
+        arguments=tc.arguments,
+        turn_number=turn,
+        executed=path_call_executed,
+        execution_metadata=execution_metadata,
+        bash_rewritten=bool(rewrite_log),
+    )
 
     # 6f. Trace + record. cmd_pre_rewrite is added when bash_quirks
     # rewrites the model's cmd before execution. The
@@ -842,6 +924,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     if (
         cfg.tools_output_dedup_enabled
         and not gate_blocked_flag
+        and not path_injection_fired
         and focus_key
         and tc.name not in MUTATION_TOOLS
         and result
@@ -902,4 +985,10 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         result=result,
         gate_blocked=gate_blocked_flag,
     )
+    if post_rewind is not None:
+        session.request_rewind(
+            post_rewind.target_turn,
+            reason=post_rewind.reason or "rewind_on_guardrail",
+        )
+        return TCOutcome(rewind=True)
     return TCOutcome(end=False)

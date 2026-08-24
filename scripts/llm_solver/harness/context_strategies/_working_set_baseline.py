@@ -21,6 +21,7 @@ and thin delegate methods that subclasses can still override.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..context import ContextManager, chars_div_4
+from ..checkpoint_rewind import preserve_rewind_reports
 from .._shell_patterns import TEST_COMMAND_RE as _TEST_COMMAND_RE
 from ..._shared.classification import classify_outcome as _classify_outcome
 from ._working_set import WorkingSet, GateSlot
@@ -261,9 +263,13 @@ class WorkingSetBaselineContext(ContextManager):
         if self._msg_cache is not None:
             return self._msg_cache
         if self._turn_count < self._min_turns:
-            self._msg_cache = self._all_messages
+            self._msg_cache = preserve_rewind_reports(
+                self._all_messages, self._all_messages
+            )
             return self._msg_cache
-        self._msg_cache = self._build()
+        self._msg_cache = preserve_rewind_reports(
+            self._build(), self._all_messages
+        )
         from ..savings import get_ledger
         full_chars = sum(len(str(m)) for m in self._all_messages)
         actual_chars = sum(len(str(m)) for m in self._msg_cache)
@@ -293,6 +299,39 @@ class WorkingSetBaselineContext(ContextManager):
         rendered + stitched with the latest assistant/tool pair.
         """
         self._all_messages = list(new_messages)
+        self._invalidate()
+        return True
+
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the raw append log rather than the working-set view."""
+        return copy.deepcopy(self._all_messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Rebuild the working set and turn records from a retained prefix."""
+        retained = copy.deepcopy(list(new_messages))
+        self._system_content = ""
+        self._all_messages = []
+        self._turn_entries.clear()
+        self._ws = WorkingSet(cwd=self._cwd)
+        self._turn_count = 0
+        self._last_assistant_msg = None
+        self._prev_assistant_msg = None
+        self._invalidate()
+        for message in retained:
+            role = message.get("role")
+            if role == "system":
+                self.add_system(str(message.get("content") or ""))
+            elif role == "user":
+                self.add_user(str(message.get("content") or ""))
+            elif role == "assistant":
+                self.add_assistant(message)
+            elif role == "tool":
+                self.add_tool_result(
+                    str(message.get("tool_call_id") or ""),
+                    str(message.get("content") or ""),
+                )
+            else:
+                self._all_messages.append(message)
         self._invalidate()
         return True
 

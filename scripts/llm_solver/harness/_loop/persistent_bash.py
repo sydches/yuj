@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..tools import _bash_unreadable_paths
+from ..tools import _bash_readable_paths, _bash_unreadable_paths
 from ..sandbox import (
     PersistentBashSession,
     container_mode,
@@ -59,6 +59,7 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
         unreadable_paths=_bash_unreadable_paths(
             session.cwd, session.cfg, session._ignore_policy,
         ),
+        readable_paths=_bash_readable_paths(session.cfg),
         sandbox_required=getattr(session.cfg, "sandbox_required", False),
         effective_env=session._effective_env,
         allow_login_shell=session._allow_login_shell,

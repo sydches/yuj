@@ -293,6 +293,7 @@ def _build_container_argv(
     container_flags: str | Sequence[str] | None = (),
     effective_env: Mapping[str, str] | None = None,
     unreadable_paths: tuple[str, ...] = (),
+    readable_paths: tuple[str, ...] = (),
     sandbox_required: bool = True,
     allow_login_shell: bool = False,
     runtime_bin: str | None = None,
@@ -351,6 +352,28 @@ def _build_container_argv(
         # image ENV values before it execs bash with the resolved policy.
         "--entrypoint", "/usr/bin/env",
     ]
+
+    readable_mounts: list[Path] = []
+    for raw_path in readable_paths:
+        path = Path(raw_path).resolve(strict=True)
+        if not path.is_dir():
+            raise ContainerConfigurationError(
+                f"sandbox readable path is not a directory: {path}"
+            )
+        if path == workdir or workdir in path.parents or path in workdir.parents:
+            continue
+        if any(path == kept or kept in path.parents for kept in readable_mounts):
+            continue
+        if "," in str(path):
+            raise ContainerConfigurationError(
+                f"read-only path contains ',' and cannot be mounted: {path}"
+            )
+        readable_mounts.append(path)
+        argv.extend((
+            "--mount",
+            f"type=bind,source={path},target={path},readonly,"
+            "bind-propagation=rprivate",
+        ))
 
     git_hooks = workdir / ".git" / "hooks"
     if git_hooks.is_dir():

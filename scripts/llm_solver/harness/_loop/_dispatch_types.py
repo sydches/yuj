@@ -57,3 +57,4 @@ class TCOutcome:
     end: bool = False
     reason: str | None = None
     done: bool = False
+    rewind: bool = False
