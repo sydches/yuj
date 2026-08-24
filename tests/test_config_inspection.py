@@ -146,6 +146,8 @@ def test_inspection_redacts_literal_nested_environment_and_future_secrets(
         "fixed_env": "SENSITIVE_SENTINEL_FIXED_ENV",
         "future": "SENSITIVE_SENTINEL_FUTURE",
         "future_camel": "SENSITIVE_SENTINEL_FUTURE_CAMEL",
+        "future_keys": "SENSITIVE_SENTINEL_FUTURE_KEYS",
+        "future_tokens": "SENSITIVE_SENTINEL_FUTURE_TOKENS",
     }
     monkeypatch.setenv("YUJ_INSPECTION_CREDENTIAL", sentinels["environment"])
     overlay = tmp_path / "sensitive.toml"
@@ -167,6 +169,8 @@ set = { LOOKS_SAFE = "SENSITIVE_SENTINEL_FIXED_ENV" }
 [future]
 access_token = "SENSITIVE_SENTINEL_FUTURE"
 apiKey = "SENSITIVE_SENTINEL_FUTURE_CAMEL"
+api_keys = "SENSITIVE_SENTINEL_FUTURE_KEYS"
+access_tokens = "SENSITIVE_SENTINEL_FUTURE_TOKENS"
 """.strip()
     )
 
@@ -186,12 +190,44 @@ apiKey = "SENSITIVE_SENTINEL_FUTURE_CAMEL"
         ("sandbox", "env", "set", "LOOKS_SAFE"),
         ("future", "access_token"),
         ("future", "apiKey"),
+        ("future", "api_keys"),
+        ("future", "access_tokens"),
     ):
         assert entries[path]["redacted"] is True
         assert entries[path]["value"] == "<redacted>"
     assert entries[("server", "api_key")]["environment_variable"] == (
         "YUJ_INSPECTION_CREDENTIAL"
     )
+
+
+def test_environment_profile_value_is_redacted_from_derived_references(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _without_machine_local(monkeypatch, tmp_path)
+    profile = "qwen38-27b"
+    monkeypatch.setenv("YUJ_INSPECTION_PROFILE", profile)
+    overlay = tmp_path / "environment-profile.toml"
+    overlay.write_text(
+        '[model]\nprofile_name = "$ENV:YUJ_INSPECTION_PROFILE"\n'
+    )
+
+    rc = main(
+        ["config", "--json", "--no-treatment", "--config", str(overlay)]
+    )
+
+    encoded = capsys.readouterr().out
+    document = json.loads(encoded)
+    assert rc == 0
+    assert profile not in encoded
+    assert document["references"]["profile"] == {
+        "requested": "<redacted>",
+        "resolved": "<redacted>",
+    }
+    entry = _entry_map(document)[("model", "profile_name")]
+    assert entry["environment_variable"] == "YUJ_INSPECTION_PROFILE"
+    assert entry["value"] == "<redacted>"
 
 
 def test_json_is_versioned_deterministic_and_every_entry_has_provenance(

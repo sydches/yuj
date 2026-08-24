@@ -10,6 +10,7 @@ from ._config_redaction import (
     REDACTED_VALUE,
     environment_string_values,
     redact_config_value,
+    redact_derived_metadata,
     redact_sensitive_text,
     sensitive_string_values,
 )
@@ -58,6 +59,16 @@ def build_inspection_document(
     references: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the stable version-1 machine document from resolved state."""
+    protected_values = (
+        *sensitive_string_values(
+            resolved.data,
+            environment_references=resolved.environment_references,
+        ),
+        *environment_string_values(
+            resolved.data,
+            environment_references=resolved.environment_references,
+        ),
+    )
     settings: list[dict[str, object]] = []
     for path, value in sorted(iter_setting_leaves(resolved.data)):
         source = resolved.provenance.get(path)
@@ -94,10 +105,19 @@ def build_inspection_document(
         "status": "ok" if success else "error",
         "success": bool(success),
         "layers": [layer.as_dict() for layer in resolved.layers],
-        "selection": dict(selection or {}),
+        "selection": redact_derived_metadata(
+            dict(selection or {}),
+            protected_values=protected_values,
+        ),
         "settings": settings,
-        "references": dict(references or {}),
-        "diagnostics": _diagnostics(diagnostics),
+        "references": redact_derived_metadata(
+            dict(references or {}),
+            protected_values=protected_values,
+        ),
+        "diagnostics": redact_derived_metadata(
+            _diagnostics(diagnostics),
+            protected_values=protected_values,
+        ),
     }
 
 

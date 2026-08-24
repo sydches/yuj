@@ -17,12 +17,19 @@ _SENSITIVE_WORDS = frozenset(
         "auth",
         "bearer",
         "cookie",
+        "cookies",
         "credential",
         "credentials",
+        "key",
+        "keys",
         "passwd",
+        "passwds",
         "password",
+        "passwords",
         "secret",
+        "secrets",
         "token",
+        "tokens",
     }
 )
 _SENSITIVE_SUBTREE_NAMES = frozenset(
@@ -82,10 +89,15 @@ def _sensitive_leaf(path: ConfigValuePath) -> bool:
         and compact.endswith(
             (
                 "key",
+                "keys",
                 "token",
+                "tokens",
                 "secret",
+                "secrets",
                 "password",
+                "passwords",
                 "passwd",
+                "passwds",
                 "credential",
                 "credentials",
             )
@@ -182,6 +194,34 @@ def sensitive_string_values(
     return tuple(sorted(values, key=lambda item: (-len(item), item)))
 
 
+def redact_derived_metadata(
+    value: object,
+    *,
+    protected_values: Iterable[str] = (),
+) -> object:
+    """Redact config-derived strings before they enter auxiliary output fields."""
+    protected = tuple(
+        sorted(
+            {item for item in protected_values if item},
+            key=lambda item: (-len(item), item),
+        )
+    )
+
+    def visit(child: object) -> object:
+        if isinstance(child, Mapping):
+            return {str(key): visit(grandchild) for key, grandchild in child.items()}
+        if isinstance(child, (list, tuple)):
+            return [visit(grandchild) for grandchild in child]
+        if not isinstance(child, str):
+            return child
+        output = child
+        for protected_value in protected:
+            output = output.replace(protected_value, REDACTED_VALUE)
+        return output
+
+    return visit(value)
+
+
 def environment_string_values(
     value: object,
     *,
@@ -239,6 +279,7 @@ __all__ = [
     "REDACTED_VALUE",
     "environment_string_values",
     "redact_config_value",
+    "redact_derived_metadata",
     "redact_sensitive_text",
     "sensitive_string_values",
 ]
