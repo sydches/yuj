@@ -9,6 +9,12 @@ import copy
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
+from .thoughts import (
+    filter_expired_thought_messages,
+    redact_expired_thought_state,
+    thought_is_expired,
+)
+
 
 def chars_div_4(msgs: list[dict]) -> int:
     """Default token estimator: total chars across all messages / 4."""
@@ -47,6 +53,51 @@ class ContextManager(ABC):
 
     def __init__(self, token_estimator: Callable[[list[dict]], int] = chars_div_4):
         self._token_estimator = token_estimator
+        # Configured by the session factory after construction so every
+        # context family follows one scratchpad-retention contract without
+        # growing a duplicate constructor argument.
+        self._think_keep_turns: int | None = None
+        self._context_session_number: int | None = None
+
+    def configure_thought_retention(
+        self, keep_turns: int, *, session_number: int,
+    ) -> None:
+        """Apply the model-facing thought window without touching raw logs."""
+        if isinstance(keep_turns, bool) or not isinstance(keep_turns, int):
+            raise TypeError("think_keep_turns must be an integer")
+        if keep_turns < 0:
+            raise ValueError("think_keep_turns must be non-negative")
+        self._think_keep_turns = keep_turns
+        self._context_session_number = session_number
+        if hasattr(self, "_msg_cache"):
+            self._msg_cache = None
+        if hasattr(self, "_tok_cache"):
+            self._tok_cache = None
+
+    def _filter_expired_thought_messages(
+        self, messages: list[dict],
+    ) -> list[dict]:
+        return filter_expired_thought_messages(
+            messages, self._think_keep_turns,
+        )
+
+    def _thought_turn_expired(self, turn: object) -> bool:
+        return thought_is_expired(
+            turn,
+            current_turn=int(getattr(self, "_turn_count", 0)),
+            keep_turns=self._think_keep_turns,
+        )
+
+    def _redact_expired_thought_state(self, data: dict) -> dict:
+        # state.json turn numbers are zero-based; the in-memory context
+        # counter is the number of assistant turns already ingested.
+        current_turn = max(0, int(getattr(self, "_turn_count", 0)) - 1)
+        return redact_expired_thought_state(
+            data,
+            current_turn=current_turn,
+            keep_turns=self._think_keep_turns,
+            current_session=self._context_session_number,
+        )
 
     @abstractmethod
     def add_system(self, content: str) -> None:
@@ -207,7 +258,7 @@ class FullTranscript(ContextManager):
         self._tok_cache = None
 
     def get_messages(self) -> list[dict]:
-        return self._messages
+        return self._filter_expired_thought_messages(self._messages)
 
     def replace_all_messages(self, new_messages: list[dict]) -> bool:
         self._messages = list(new_messages)
@@ -216,7 +267,7 @@ class FullTranscript(ContextManager):
 
     def estimate_tokens(self) -> int:
         if self._tok_cache is None:
-            self._tok_cache = self._token_estimator(self._messages)
+            self._tok_cache = self._token_estimator(self.get_messages())
         return self._tok_cache
 
     def message_count(self) -> int:

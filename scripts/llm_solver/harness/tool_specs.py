@@ -88,15 +88,20 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=15,
     ),
     ToolSpec(
+        "think",
+        profile_gate_attr="tools_think_enabled",
+        schema_order=16,
+    ),
+    ToolSpec(
         "load_tools",
         profile_gate_attr="tools_lazy_loading_enabled",
         cap_immune=True,
-        schema_order=16,
+        schema_order=17,
     ),
     ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=17,
+        schema_order=18,
         schema_surface="both",
     ),
     ToolSpec(

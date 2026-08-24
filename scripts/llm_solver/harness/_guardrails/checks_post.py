@@ -142,6 +142,12 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
     or graced this call — in that case skip the counter bump to avoid
     double counting.
     """
+    successful_think = (
+        tc_name == "think" and not gate_blocked and not _is_tool_error(result)
+    )
+    if not successful_think:
+        state.think_streak = 0
+        state.think_streak_nudge_emitted = False
     if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
         if not _is_tool_error(result):
             state.non_write_calls_since_write = 0
@@ -164,11 +170,15 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
         return PASS
 
     if not cfg.rumination_enabled:
+        state.think_streak = 0
+        state.think_streak_nudge_emitted = False
         return PASS
     if already_blocked_this_turn:
         return PASS
 
     state.non_write_calls_since_write += 1
+    if successful_think:
+        state.think_streak += 1
     _update_same_target_streak(state, focus_key=focus_key, focus_display=focus_display)
 
     recovery_same_target = int(
@@ -196,12 +206,24 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
                  if state.has_mutated
                  else state.rumination_nudge_threshold)
     warn_parts: list[str] = []
-    if (not state.rumination_nudge_emitted
-            and state.non_write_calls_since_write >= threshold
-            and not (cfg.rumination_nudge_only_pre_mutation and state.has_mutated)):
-        warn_parts.append(cfg.rumination_nudge.format(
-            count=state.non_write_calls_since_write,
-        ))
+    think_after = int(getattr(cfg, "think_streak_nudge_after", 0) or 0)
+    if (
+        think_after > 0
+        and state.think_streak == think_after
+        and not state.think_streak_nudge_emitted
+    ):
+        warn_parts.append(cfg.rumination_nudge.format(count=state.think_streak))
+        state.think_streak_nudge_emitted = True
+    broad_nudge_due = (
+        not state.rumination_nudge_emitted
+        and state.non_write_calls_since_write >= threshold
+        and not (cfg.rumination_nudge_only_pre_mutation and state.has_mutated)
+    )
+    if broad_nudge_due:
+        if not warn_parts:
+            warn_parts.append(cfg.rumination_nudge.format(
+                count=state.non_write_calls_since_write,
+            ))
         state.rumination_nudge_emitted = True
 
     same_target_warn = int(getattr(cfg, "rumination_same_target_warn_count", 0) or 0)

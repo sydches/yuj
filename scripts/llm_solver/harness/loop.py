@@ -488,6 +488,10 @@ class Session:
                 _resolve_token_estimator(client),
             )
             assert self.context is not None
+        self.context.configure_thought_retention(
+            cfg.tools_think_keep_turns,
+            session_number=session_number,
+        )
         self.context.add_system(system_prompt)
         self.context.add_user(initial_message)
         # All thrash-control state lives in one place. See harness/guardrails.py.

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 
 BASE_BUDGET_CONFIG_ATTRS = (
+    "tools_think_keep_turns",
     "min_turns_before_context",
     "solver_trace_lines",
     "solver_evidence_lines",

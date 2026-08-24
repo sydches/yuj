@@ -146,6 +146,10 @@ class GuardrailState:
     intent_first_block_turn: int | None = None
     consecutive_intent_rejections: int = 0
     non_write_calls_since_write: int = 0
+    # Consecutive successfully executed think calls. Any different action
+    # resets this narrow scratchpad-rumination signal.
+    think_streak: int = 0
+    think_streak_nudge_emitted: bool = False
     same_target_key: str = ""
     same_target_display: str = ""
     same_target_count: int = 0

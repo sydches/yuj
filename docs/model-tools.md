@@ -26,6 +26,7 @@ person types into a terminal.
 | `checkpoint` | `goal` | None | Mark a complete conversation turn before exploration. Becomes active after every call/result pair in that turn completes. |
 | `rewind` | `report` | None | Return conversation context to the active checkpoint and retain the short findings report. Never restores files. |
 | `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
+| `think` | `thought` | None | Record free-form scratchpad reasoning without running a process or touching the filesystem. Return an empty success envelope. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
@@ -49,7 +50,7 @@ schema, description, or result rule.
 | `edit` | Selected by the shipped profile's `exact` edit format. |
 | `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
-| `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
@@ -62,6 +63,8 @@ enabled = true
 enabled = true
 
 [tools]
+think_enabled = true
+think_keep_turns = 4
 edit_format = "apply_patch"
 background_enabled = true
 todos_enabled = true
@@ -80,6 +83,14 @@ yuj code --config more-tools.toml "Fix the issue and run the tests."
 When `bash` is on, the model can run a test command through `bash` even when
 `run_tests` is off. The `run_tests` tool gives Yuj a fixed test command and a
 structured result.
+
+`think` is a bounded model scratchpad, not model-provider hidden reasoning.
+Its `thought` argument remains in the append-only raw trace, while every
+context strategy removes the call and paired empty result after
+`think_keep_turns` turns. It is a non-mutating, non-progress action for the
+done and rumination guards. Set `[loop].think_streak_nudge_after` to choose
+when a consecutive streak reuses the existing rumination nudge; `0` disables
+that dedicated streak nudge.
 
 `write_todos` accepts statuses `pending`, `in_progress`, `completed`,
 `cancelled`, and `blocked`. Pass the complete desired list on every call; an

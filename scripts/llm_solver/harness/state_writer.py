@@ -102,6 +102,7 @@ from .bash_write_classification import (
     _SOURCE_EXT_RE,
     is_bash_legacy_mutation_like,
 )
+from .thoughts import thought_is_expired
 
 # Per-entry cap for the `action` column. `action` is `tool(args_summary)`;
 # args are already bounded by loop.py's _summarize_args, so this is a
@@ -197,6 +198,25 @@ def _last_turn(events: list[dict]) -> int | None:
         tn = ev.get("turn_number")
         if isinstance(tn, int) and (best is None or tn > best):
             best = tn
+    return best
+
+
+def _last_turn_in_session(
+    events: list[dict], session_number: int | None,
+) -> int | None:
+    """Highest tool-call turn in the latest session segment."""
+    best: int | None = None
+    for ev in events:
+        if ev.get("event") != "tool_call":
+            continue
+        if (
+            session_number is not None
+            and ev.get("session_number") != session_number
+        ):
+            continue
+        turn = ev.get("turn_number")
+        if isinstance(turn, int) and (best is None or turn > best):
+            best = turn
     return best
 
 
@@ -496,8 +516,13 @@ def _project_process(trace: list[dict]) -> dict:
     }
 
 
-def project(events: list[dict], *, max_result_chars: int,
-            imperative_projection: bool = False) -> dict:
+def project(
+    events: list[dict],
+    *,
+    max_result_chars: int,
+    imperative_projection: bool = False,
+    think_keep_turns: int | None = None,
+) -> dict:
     """Project a list of trace events into the state.json schema.
 
     Deterministic, pure. Same input → same output. Content-blind.
@@ -516,6 +541,9 @@ def project(events: list[dict], *, max_result_chars: int,
     todos: list[dict] = []
     trace: list[dict] = []
     evidence: list[dict] = []
+    current_session = _last_session(logical_events)
+    current_turn = _last_turn_in_session(logical_events, current_session)
+    retention_turn = current_turn if current_turn is not None else 0
     tools: dict = {
         "lazy_loading_enabled": False,
         "active_limit": None,
@@ -536,6 +564,18 @@ def project(events: list[dict], *, max_result_chars: int,
                 max_result_chars,
             )
             reasoning = ev.get("reasoning") or ""
+            if (
+                tool == "think"
+                and thought_is_expired(
+                    ev.get("turn_number"),
+                    current_turn=retention_turn,
+                    keep_turns=think_keep_turns,
+                    session_number=ev.get("session_number"),
+                    current_session=current_session,
+                )
+            ):
+                args = ""
+                reasoning = ""
             action = f"{tool}({args})"
             # gate_blocked: prefer the event field (set by loop.py) with
             # fallback to wire-format detection for old traces that lack
@@ -712,8 +752,13 @@ def project(events: list[dict], *, max_result_chars: int,
     return projected
 
 
-def project_from_trace(trace_path: Path, *, max_result_chars: int,
-                       imperative_projection: bool = False) -> dict:
+def project_from_trace(
+    trace_path: Path,
+    *,
+    max_result_chars: int,
+    imperative_projection: bool = False,
+    think_keep_turns: int | None = None,
+) -> dict:
     """Load `.trace.jsonl` and project it. Missing file → empty schema."""
     trace_path = Path(trace_path)
     if not trace_path.is_file():
@@ -747,12 +792,18 @@ def project_from_trace(trace_path: Path, *, max_result_chars: int,
         events,
         max_result_chars=max_result_chars,
         imperative_projection=imperative_projection,
+        think_keep_turns=think_keep_turns,
     )
 
 
-def write_state_from_events(events: list[dict], state_path: Path, *,
-                            max_result_chars: int,
-                            imperative_projection: bool = False) -> None:
+def write_state_from_events(
+    events: list[dict],
+    state_path: Path,
+    *,
+    max_result_chars: int,
+    imperative_projection: bool = False,
+    think_keep_turns: int | None = None,
+) -> None:
     """Rebuild state.json from an in-memory list of trace events.
 
     Fast path used by the harness loop: Session accumulates trace
@@ -765,6 +816,7 @@ def write_state_from_events(events: list[dict], state_path: Path, *,
         events,
         max_result_chars=max_result_chars,
         imperative_projection=imperative_projection,
+        think_keep_turns=think_keep_turns,
     )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(state_path.suffix + ".tmp")
@@ -776,9 +828,14 @@ def write_state_from_events(events: list[dict], state_path: Path, *,
     tmp.replace(state_path)
 
 
-def write_state_from_trace(trace_path: Path, state_path: Path, *,
-                           max_result_chars: int,
-                           imperative_projection: bool = False) -> None:
+def write_state_from_trace(
+    trace_path: Path,
+    state_path: Path,
+    *,
+    max_result_chars: int,
+    imperative_projection: bool = False,
+    think_keep_turns: int | None = None,
+) -> None:
     """Rebuild state.json from the current contents of `.trace.jsonl`.
 
     Slow path used at session boundaries and by any caller without an
@@ -792,6 +849,7 @@ def write_state_from_trace(trace_path: Path, state_path: Path, *,
         trace_path,
         max_result_chars=max_result_chars,
         imperative_projection=imperative_projection,
+        think_keep_turns=think_keep_turns,
     )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(state_path.suffix + ".tmp")

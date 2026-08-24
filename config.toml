@@ -112,6 +112,9 @@ pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls aft
 # At max_turns=50 and threshold=20, the gate arms after 10 non-mutation
 # calls. At max_turns=200 it arms after 40. Scales automatically.
 rumination_nudge_threshold = 20
+# A consecutive think-only streak reuses the rumination nudge before the
+# broader non-write budget is exhausted. 0 disables this dedicated nudge.
+think_streak_nudge_after = 3
 # After this many consecutive gate-blocked calls, end the session.
 # The model's current code becomes the final patch. Prevents both
 # infinite blocking and forced-write regressions. 0 = disabled.
@@ -273,6 +276,10 @@ prompt_version = "llm_hurdle_detector_prompt_v2"
 [tools]
 bash_timeout = 120          # seconds before a bash tool call is killed
 grep_timeout = 30           # seconds before a grep tool call is killed
+# Optional side-effect-free scratchpad tool. The call remains in raw trace;
+# context projections remove its argument after this many subsequent turns.
+think_enabled = false
+think_keep_turns = 4
 # Empty inherits `[profile].edit_format` from the selected model profile.
 # Set exact | apply_patch | udiff | whole to override it for one settings layer.
 edit_format = ""

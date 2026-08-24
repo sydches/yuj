@@ -43,6 +43,7 @@ VALID_ARGUMENTS = {
         "kind": "definition", "path": "src/app.py",
         "line": 4, "character": 2,
     },
+    "think": {"thought": "Plan the next narrow step."},
     "run_tests": {"path": "tests", "k": "unit", "last_failed": False},
     "list_definitions": {"path": "src/app.py"},
     "apply_patch": {"patch": "*** Begin Patch\n*** End Patch"},
@@ -78,6 +79,8 @@ INVALID_ARGUMENTS = (
     ("glob", {"pattern": "*.py", "page": "one"}, "$.page", "type"),
     ("grep", {}, "$.pattern", "required"),
     ("grep", {"pattern": "x", "path": 3}, "$.path", "type"),
+    ("think", {}, "$.thought", "required"),
+    ("think", {"thought": ["plan"]}, "$.thought", "type"),
     (
         "write_todos",
         {"todos": [{"description": "x", "status": "unknown"}]},

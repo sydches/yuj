@@ -32,6 +32,7 @@ from ._tools.grep import grep_files
 from ._tools.list_definitions import list_definitions
 from ._tools.read import read
 from ._tools.run_tests import run_tests
+from ._tools.think import think
 from ._tools.udiff import udiff_tool
 from ._tools.write import write
 from ._tools.write_todos import write_todos
@@ -257,6 +258,10 @@ _DISPATCH = {
     "rewind": lambda args, cwd, cfg: unavailable_tool_result("rewind"),
     "lsp": lambda args, cwd, cfg: (
         "ERROR: lsp manager is unavailable for this dispatch context"
+    ),
+    "think": lambda args, cwd, cfg: think(
+        args["thought"],
+        enabled=bool(getattr(cfg, "tools_think_enabled", False)),
     ),
     "load_tools": lambda args, cwd, cfg: (
         "ERROR: load_tools requires a live session tool surface"

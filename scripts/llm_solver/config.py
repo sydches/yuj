@@ -371,6 +371,12 @@ class Config:
     # context block (token-cost guardrail when many tests fail at once).
     tools_run_tests_assertion_context_lines: int = 5
     tools_run_tests_assertion_context_max: int = 3
+    # Side-effect-free model scratchpad. Disabled by default. Raw trace keeps
+    # every call; model-facing contexts retain each argument for this many
+    # turns before removing it.
+    tools_think_enabled: bool = False
+    tools_think_keep_turns: int = 4
+    think_streak_nudge_after: int = 3
     # list_definitions tool — Python-AST source outline. Disabled by
     # default. Enable it through config.local.toml or another overlay.
     tools_list_definitions_enabled: bool = False
