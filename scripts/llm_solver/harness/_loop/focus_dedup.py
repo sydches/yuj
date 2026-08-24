@@ -77,7 +77,7 @@ def _focus_signature(tc, args_summary: str, cwd: str) -> tuple[str, str]:
         path = tc.arguments.get("path") or tc.arguments.get("file_path")
         if isinstance(path, str) and path:
             return _encode_focus_path(path, cwd)
-    # Give run_tests and apply_patch a stable focus key so
+    # Give run_tests and patch dialects a stable focus key so
     # mutation_repeat_guard and contract_gate
     # rumination_ladder see test-tool repeats with the right
     # granularity. These once fell into the generic JSON fallback
@@ -92,7 +92,7 @@ def _focus_signature(tc, args_summary: str, cwd: str) -> tuple[str, str]:
         if isinstance(target, str) and target:
             return f"run_tests:{target}", f"run_tests({target})"
         return "run_tests:<all>", "run_tests(<all>)"
-    if tc.name == "apply_patch":
+    if tc.name in {"apply_patch", "udiff"}:
         # Use a digest of the patch text as the focus key so the same
         # patch issued twice is recognised as identical without leaking
         # the full text through the focus_display.
@@ -100,8 +100,8 @@ def _focus_signature(tc, args_summary: str, cwd: str) -> tuple[str, str]:
         if isinstance(patch_text, str) and patch_text:
             import hashlib as _hashlib
             digest = _hashlib.sha1(patch_text.encode("utf-8", errors="ignore")).hexdigest()[:12]
-            return f"apply_patch:{digest}", "apply_patch(<patch>)"
-        return "apply_patch:<empty>", "apply_patch(<patch>)"
+            return f"{tc.name}:{digest}", f"{tc.name}(<patch>)"
+        return f"{tc.name}:<empty>", f"{tc.name}(<patch>)"
     if tc.name == "bash":
         cmd = tc.arguments.get("cmd", "")
         if isinstance(cmd, str) and cmd.strip():
@@ -272,4 +272,3 @@ def _extract_bash_focus_target(cmd: str, cwd: str) -> tuple[str, str] | None:
 # Error-taxonomy constants (NORMAL_LIFECYCLE, MODEL_STUCK, _TRANSIENT_ERRORS)
 # stay in loop.py since they depend on openai and are part of the harness
 # public surface.
-

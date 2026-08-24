@@ -17,16 +17,24 @@ person types into a terminal.
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
 | `bash` | `cmd` | None | Run one shell command and return its output. |
-| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. |
+| `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
+| `write_todos` | `todos` | None | Replace the whole session todo list. Each item has a `description` and `status`; at most one item may be `in_progress`. |
+| `checkpoint` | `goal` | None | Mark a complete conversation turn before exploration. Becomes active after every call/result pair in that turn completes. |
+| `rewind` | `report` | None | Return conversation context to the active checkpoint and retain the short findings report. Never restores files. |
 | `lsp` | `kind`, `path` | `line`, `character` | Ask a configured language server for `definition`, `references`, or document `symbols`. Line and character offsets are zero-based. |
 | `think` | `thought` | None | Record free-form scratchpad reasoning without running a process or touching the filesystem. Return an empty success envelope. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `udiff` | `patch` | None | Apply a checked standard unified diff with safe unique-context recovery. |
+| `list_functions` | None | None | In code mode, list the function names injected into `exec_cell`. |
+| `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
+| `exec_cell` | `source` | None | In code mode, run Python inside the shell sandbox and return printed text. |
+| `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Present only when deferred loading is enabled. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -38,16 +46,17 @@ schema, description, or result rule.
 
 | Tool | Shipped setting |
 | --- | --- |
-| `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
-| `think`, `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `read`, `glob`, `grep`, `bash`, `done` | On |
+| `edit` | Selected by the shipped profile's `exact` edit format. |
+| `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
+| `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
+| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
 
 ```toml
 [tools.list_definitions]
-enabled = true
-
-[tools.apply_patch]
 enabled = true
 
 [tools.run_tests]
@@ -56,7 +65,10 @@ enabled = true
 [tools]
 think_enabled = true
 think_keep_turns = 4
+edit_format = "apply_patch"
 background_enabled = true
+todos_enabled = true
+checkpoint_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -80,13 +92,76 @@ done and rumination guards. Set `[loop].think_streak_nudge_after` to choose
 when a consecutive streak reuses the existing rumination nudge; `0` disables
 that dedicated streak nudge.
 
+`write_todos` accepts statuses `pending`, `in_progress`, `completed`,
+`cancelled`, and `blocked`. Pass the complete desired list on every call; an
+empty list clears it. Yuj rejects more than one `in_progress` entry and more
+than `[tools].todos_max_items` entries. A successful call records a `todos`
+trace event, and the harness projects its list into `.solver/state.json` for
+bounded rendering by state-backed context modes. The tool never writes source
+files or state directly.
+
 A model profile can also limit how many enabled tools Yuj sends to the model.
-The `done` tool is not removed by that limit.
+The `done` tool is not removed by that limit. When deferred loading is on,
+`load_tools` is also not removed.
+
+## Deferred tool loading
+
+When `[tools].lazy_loading_enabled = true`, Yuj sends only
+`[tools].active_default` plus `load_tools` and `done` at the start of a harness
+session. Other enabled, profile-shaped tools stay registered but hidden.
+Call `load_tools(names=[...])` to add exact names. Activation never removes a
+tool and takes effect on the next model request. A model profile's `max_tools`
+limits the active count, not the registry; an activation that would exceed the
+limit is rejected atomically.
+
+A hidden tool call returns a typed error naming `load_tools` and does not
+reach schema validation, permission policy, approval, or its handler. The
+ordinary error ladder and turn-level loop guards still count the
+rejection. A disabled tool is not loadable.
+See [Configuration](configuration.html#defer-tools-until-the-model-needs-them)
+for knobs, trace/state behavior, replay fidelity, and token metrics.
+
+`checkpoint` and `rewind` share one setting and survive a profile tool-count
+cap as a pair. A checkpoint is session-scoped. `rewind` consumes it and
+returns a typed error when no checkpoint is active. Rewind is applied only at
+the end of a complete tool-call turn, then the next model request contains the
+checkpoint prefix plus one user-role `<rewind-report goal="...">` message.
+Exploration calls remain in the append-only trace but leave the model-facing
+conversation and mechanical state projection. Files changed during
+exploration remain changed.
+
+## Code mode
+
+Code mode replaces the ordinary native catalog with three meta-tools plus
+`done`. Call `list_functions`, request only the needed schemas with
+`get_function_details`, then pass Python source to `exec_cell`. The cell
+injects `read`, `grep`, `glob`, `list_definitions`, and `bash`; each returns a
+text result from the ordinary dispatcher. A program must print the text that
+should become the cell result.
+
+Code mode and deferred tool loading are alternative compact surfaces. A
+configuration that enables both is rejected.
+
+Cells do not trust model-written Python. They run inside the selected shell
+sandbox, have no background-call option, and stop at the configured whole-cell
+timeout. Inner calls retain the normal filters, redaction, result envelope,
+ignore policy, permissions, and trace behavior. See
+[Configuration](configuration.html#run-a-sandboxed-python-cell) for the two
+settings and [Sandbox](sandbox.html#python-code-mode) for the boundary.
+
+For a tool-calling profile, Yuj retains exactly one of `edit`, `apply_patch`,
+`udiff`, and `write` according to the effective edit format. `exact` selects
+`edit`, `apply_patch` selects the Codex V4A patch tool, `udiff` selects standard
+unified diffs, and `whole` selects `write`. Set inherited
+`[profile].edit_format` for a model or override it with `[tools].edit_format`
+or `--edit-format`. See
+[Configuration](configuration.html#select-the-models-edit-format) for the
+precedence rules.
 
 When `[lsp].enabled` is true, Yuj automatically appends diagnostics after a
-successful `edit` or `write`; this does not require the navigation tool to be
-enabled. The configured severity threshold controls which messages enter the
-model-facing `<tool_result>`. See [Configuration](configuration.html) for the
+successful edit-dialect mutation; this does not require the navigation tool to
+be enabled. The configured severity threshold controls which messages enter
+the model-facing result. See [Configuration](configuration.html) for the
 server table and timeout settings.
 
 ## File and shell limits
@@ -99,7 +174,8 @@ The `bash` tool follows the active sandbox and approval settings. Read
 Docker socket.
 
 `[permissions].rules` can allow, ask for approval, or deny a tool by its
-canonical command/path argument. The last matching `*`/`?` rule wins. Empty
+canonical command/path argument (`load_tools` uses its `names` array). The
+last matching `*`/`?` rule wins. Empty
 rules allow current behavior, and an allow still passes through bash-specific
 forbidden rules. Assistant `ask` decisions use `yuj approve|reject`; measurement
 runs deny them. See
@@ -134,7 +210,15 @@ or `rg` shell command, records the current content hash. An external content
 change makes that observation stale. In `warn` mode Yuj applies the edit and
 adds a warning inside its result envelope; in `block` mode it returns
 `ERROR: stale_file: read PATH first` without changing the file. Successful
-`write`, `edit`, and `apply_patch` calls refresh their affected paths.
+`write`, `edit`, `apply_patch`, and `udiff` calls refresh their affected paths.
+
+The `apply_patch` dialect keeps the existing Codex V4A
+`*** Begin Patch`/`*** End Patch` grammar. The `udiff` dialect accepts ordinary
+`---`/`+++` file headers and `@@` hunks. It checks every file and hunk before
+the first write. Hunk line numbers are hints: Yuj may use one unique exact
+offset or one unique whitespace-normalized whole-line match. Missing or
+ambiguous hunks leave every file unchanged and return the same ranked
+`<candidates>` repair block used by a strict exact-string `edit` miss.
 
 Repository-wide `list_definitions` rows use
 `path:line kind name signature`. `symbol` is an exact name, and `kind` is

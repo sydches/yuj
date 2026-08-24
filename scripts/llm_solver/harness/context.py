@@ -5,6 +5,7 @@ append-only implementation that preserves current behavior exactly).
 """
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
@@ -143,6 +144,55 @@ class ContextManager(ABC):
         ABC and silently no-op'd when private names changed.
         """
         return False
+
+    def snapshot_messages(self) -> list[dict]:
+        """Return a detached copy of the strategy's canonical append log.
+
+        Projecting strategies override this method because ``get_messages``
+        may return a synthesized model request rather than their append log.
+        """
+        return copy.deepcopy(list(self.get_messages()))
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Replace history at a protocol-safe checkpoint boundary.
+
+        Simple transcript strategies can use their ordinary replacement path.
+        Strategies with derived working sets or recent-result windows override
+        this method to rebuild those dependent views from the retained prefix.
+        """
+        return self.replace_all_messages(new_messages)
+
+    def get_history_messages(self) -> list[dict]:
+        """Return the canonical append-log behind the model projection.
+
+        Rewind snapshots need both this lossless history and
+        :meth:`get_messages`, which may be a compact projection.  Current
+        strategies deliberately share one of the two storage names below;
+        keeping the lookup here gives future strategies one public contract
+        to override instead of making rewind depend on their implementation.
+        """
+        for attribute in ("_all_messages", "_messages"):
+            messages = getattr(self, attribute, None)
+            if isinstance(messages, list):
+                return messages
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement get_history_messages()"
+        )
+
+    def pin_model_messages(self, new_messages: list[dict]) -> bool:
+        """Pin the exact projection restored from a rewind snapshot.
+
+        Projection strategies invalidate this cache on their next mutation,
+        at which point their normally derived view resumes from the restored
+        canonical history.  FullTranscript has no projection cache, so exact
+        equality with its restored append-log is the required condition.
+        """
+        if hasattr(self, "_msg_cache"):
+            self._msg_cache = copy.deepcopy(new_messages)
+            if hasattr(self, "_tok_cache"):
+                self._tok_cache = None
+            return True
+        return self.get_messages() == new_messages
 
     def set_token_estimator(
         self,

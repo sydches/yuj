@@ -34,6 +34,7 @@ from pathlib import Path
 
 from .solver_state_context import SolverStateContext
 from ._metadata import (
+    STATEFUL_BUDGET_CONFIG_ATTRS,
     STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
     COMPOUND_SECTION_LABELS,
     COMPOUND_SECTION_ORDER,
@@ -199,8 +200,9 @@ class CompoundContext(SolverStateContext):
         if tool_results:
             parts.append(tool_results)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        suffix = self._render_state_suffix(files)
+        if suffix:
+            parts.append(suffix)
 
         return [
             {"role": "system", "content": self._system_content},
@@ -225,5 +227,6 @@ CONTEXT_METADATA = ContextModeMetadata(
     file_freshness="snapshot",
     injection_support="buried_in_projection",
     state_ignored_when_context_ignore_state=True,
+    budget_config_attrs=STATEFUL_BUDGET_CONFIG_ATTRS,
     constructor_config_attrs=STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
 )

@@ -112,7 +112,7 @@ def slot_state_text(ctx: "WorkingSetBaselineContext", max_chars: int) -> str:
         if last_verdict:
             lines.append(f"last_verdict: {last_verdict}")
         lines.append(
-            "allowed_moves: read a concrete file | edit/write | run verification"
+            "allowed_moves: read a concrete file | mutate a file | run verification"
         )
         return _fit_lines(lines, max_chars)
 

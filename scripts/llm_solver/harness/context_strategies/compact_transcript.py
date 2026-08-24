@@ -11,6 +11,7 @@ The class keeps recent results in full and summarizes older turns.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections import deque
@@ -18,6 +19,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..context import ContextManager, chars_div_4
+from ..checkpoint_rewind import preserve_rewind_reports
+from ..edit_operations import edit_operation_paths
+from ..tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 from ._metadata import COMPACT_CONSTRUCTOR_CONFIG_ATTRS, ContextModeMetadata
 
 
@@ -26,8 +30,8 @@ from ._metadata import COMPACT_CONSTRUCTOR_CONFIG_ATTRS, ContextModeMetadata
 # mutation on path P invalidates any earlier read of P (the file's bytes
 # may have changed) — without that check we'd elide a stale read whose
 # content actually still matters.
-_FILE_TARGETING_TOOLS = frozenset({"read", "write", "edit", "str_replace", "create"})
-_MUTATION_TOOLS = frozenset({"write", "edit", "str_replace", "create"})
+_MUTATION_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES
+_FILE_TARGETING_TOOLS = frozenset({"read", *_MUTATION_TOOLS})
 
 # Argument-shape patterns for path extraction. Args are usually a JSON
 # blob string ('{"path": "src/foo.py", "limit": 80}') but the older
@@ -50,8 +54,10 @@ def _compact_byte_count(n: int) -> str:
     return f"{n // 1000}k"
 
 
-def _extract_path_from_args(tool_name: str, args_summary: str) -> str | None:
-    """Return the file path the tool targeted, or None when not applicable.
+def _extract_paths_from_args(
+    tool_name: str, args_summary: str,
+) -> tuple[str, ...]:
+    """Return paths targeted by a file read or edit-dialect mutation.
 
     Used by the file-read dedup pre-pass in CompactTranscript._build_compact.
     Two strategies:
@@ -63,29 +69,39 @@ def _extract_path_from_args(tool_name: str, args_summary: str) -> str | None:
        shape, the JSON parse fails. The regex catches `path=`, `path:`,
        `file_path=`, and `target=` variants.
 
-    Returns None when:
+    Returns an empty tuple when:
       - tool_name isn't in _FILE_TARGETING_TOOLS
       - neither extractor finds a path
       - the extracted path is empty / clearly malformed
     """
     if tool_name not in _FILE_TARGETING_TOOLS:
-        return None
+        return ()
     s = args_summary or ""
     if not s:
-        return None
+        return ()
     try:
         d = json.loads(s)
+        if tool_name in _MUTATION_TOOLS and isinstance(d, dict):
+            paths = edit_operation_paths(tool_name, d)
+            if paths:
+                return paths
         for k in ("path", "file_path", "target"):
             v = d.get(k)
             if isinstance(v, str) and v.strip():
-                return v.strip()
+                return (v.strip(),)
     except (json.JSONDecodeError, AttributeError):
         pass
     m = _PATH_KEY_RE.search(s)
     if m:
         p = m.group(1).strip()
-        return p or None
-    return None
+        return (p,) if p else ()
+    return ()
+
+
+def _extract_path_from_args(tool_name: str, args_summary: str) -> str | None:
+    """Compatibility wrapper returning the first targeted path."""
+    paths = _extract_paths_from_args(tool_name, args_summary)
+    return paths[0] if paths else None
 
 
 @dataclass
@@ -221,14 +237,16 @@ class CompactTranscript(ContextManager):
                 result_chars=len(content),
                 result_lines=content.count("\n") + (0 if content.endswith("\n") else 1) if content else 0,
             ))
-            # Record metadata used by the dedup pre-pass. Path extraction
-            # only fires for read/write/edit/str_replace/create — the
-            # tools that target a single file. For other tools (bash,
-            # glob, grep) path is None and the entry is treated as
-            # never-deduplicable.
+            # Record metadata used by the dedup pre-pass. Patch dialects may
+            # target several paths in one call; all of them invalidate older
+            # reads before a later re-read.
+            targeted_paths = _extract_paths_from_args(
+                extracted_name, args_summary,
+            )
             self._recent_results_meta.append({
                 "tool_name": extracted_name,
-                "path": _extract_path_from_args(extracted_name, args_summary),
+                "path": targeted_paths[0] if targeted_paths else None,
+                "paths": targeted_paths,
                 "turn": self._turn_count,
             })
         else:
@@ -238,6 +256,7 @@ class CompactTranscript(ContextManager):
             self._recent_results_meta.append({
                 "tool_name": tool_name,
                 "path": None,
+                "paths": (),
                 "turn": self._turn_count,
             })
 
@@ -270,6 +289,9 @@ class CompactTranscript(ContextManager):
                 ctx={"turn_count": self._turn_count,
                      "messages": len(self._msg_cache)},
             )
+        self._msg_cache = preserve_rewind_reports(
+            self._msg_cache, self._all_messages
+        )
         return self._msg_cache
 
     def estimate_tokens(self) -> int:
@@ -296,6 +318,42 @@ class CompactTranscript(ContextManager):
         # both deques to maintain the alignment invariant.
         self._recent_results.clear()
         self._recent_results_meta.clear()
+        self._msg_cache = None
+        self._tok_cache = None
+        return True
+
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the raw append log rather than the compact projection."""
+        return copy.deepcopy(self._all_messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Rebuild compact turn/result indexes from the retained prefix."""
+        retained = copy.deepcopy(list(new_messages))
+        self._system_content = ""
+        self._turn_entries.clear()
+        self._recent_results.clear()
+        self._recent_results_meta.clear()
+        self._all_messages = []
+        self._turn_count = 0
+        self._last_assistant_msg = None
+        self._prev_assistant_msg = None
+        self._msg_cache = None
+        self._tok_cache = None
+        for message in retained:
+            role = message.get("role")
+            if role == "system":
+                self.add_system(str(message.get("content") or ""))
+            elif role == "user":
+                self.add_user(str(message.get("content") or ""))
+            elif role == "assistant":
+                self.add_assistant(message)
+            elif role == "tool":
+                self.add_tool_result(
+                    str(message.get("tool_call_id") or ""),
+                    str(message.get("content") or ""),
+                )
+            else:
+                self._all_messages.append(message)
         self._msg_cache = None
         self._tok_cache = None
         return True
@@ -409,9 +467,7 @@ class CompactTranscript(ContextManager):
             for i, meta in enumerate(meta_list):
                 tn = (meta.get("tool_name") or "")
                 p = meta.get("path")
-                if not p:
-                    continue
-                if tn == "read":
+                if tn == "read" and p:
                     if p in latest_read_idx:
                         prev_i = latest_read_idx[p]
                         muts = mutation_indices.get(p, [])
@@ -419,7 +475,11 @@ class CompactTranscript(ContextManager):
                             elidable.add(prev_i)
                     latest_read_idx[p] = i
                 if tn in _MUTATION_TOOLS:
-                    mutation_indices.setdefault(p, []).append(i)
+                    paths = tuple(meta.get("paths") or ())
+                    if not paths and p:
+                        paths = (p,)
+                    for path in paths:
+                        mutation_indices.setdefault(path, []).append(i)
 
             elided_count = 0
             elided_chars_saved = 0

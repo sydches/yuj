@@ -38,6 +38,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..bash_write_classification import STATE_WRITER_MUTATION_PREFIXES
+
 
 @dataclass
 class FileSlot:
@@ -129,6 +131,10 @@ class WorkingSet:
             slot.content = fresh
             slot.last_access_turn = turn
             slot.epoch += 1
+
+    def forget_file(self, path: str) -> None:
+        """Remove a deleted path from the current file working set."""
+        self.files.pop(self._canon(path), None)
 
     def record_gate(self, cmd_sig: str, cmd_display: str, content: str,
                     turn: int, verdict: str) -> None:
@@ -353,22 +359,30 @@ class WorkingSet:
         seeded = 0
         for entry in reversed(trace):
             action = entry.get("action", "")
-            if not (action.startswith("write(") or action.startswith("edit(")):
+            raw_paths = [
+                str(path) for path in entry.get("source_write_paths") or []
+            ]
+            if not raw_paths and action.startswith(STATE_WRITER_MUTATION_PREFIXES):
+                m = re.search(r"path='([^']+)'", action)
+                if m:
+                    raw_paths.append(m.group(1))
+            if not raw_paths:
                 continue
-            m = re.search(r"path='([^']+)'", action)
-            if not m:
-                continue
-            fpath = m.group(1)
-            key = self._canon(fpath)
-            if key in seen or fpath.endswith("state.json"):
-                continue
-            seen.add(key)
-            body = self._read_disk(fpath)
-            if body is None:
-                continue
-            self.files[key] = FileSlot(path=fpath, content=body,
-                                        last_access_turn=turn, epoch=1)
-            seeded += 1
+            for fpath in reversed(raw_paths):
+                key = self._canon(fpath)
+                if key in seen or fpath.endswith("state.json"):
+                    continue
+                seen.add(key)
+                body = self._read_disk(fpath)
+                if body is None:
+                    continue
+                self.files[key] = FileSlot(
+                    path=fpath,
+                    content=body,
+                    last_access_turn=turn,
+                    epoch=1,
+                )
+                seeded += 1
         return seeded
 
     # ── internal ──────────────────────────────────────────────

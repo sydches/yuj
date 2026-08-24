@@ -112,3 +112,22 @@ def test_apply_rebinds_client_to_committed_config(tmp_path):
     assert res.applied is True
     assert session.client.cfg is session.cfg
     assert "client.cfg" in res.refreshed_surfaces
+
+
+def test_skill_discovery_settings_are_startup_only(tmp_path):
+    baseline = _write(tmp_path / "baseline.toml", """
+        [prompts]
+        skills_enabled = false
+    """)
+    candidate = _write(tmp_path / "candidate.toml", """
+        [prompts]
+        skills_enabled = true
+    """)
+    session = _session(baseline)
+
+    res = executors.apply(session, _payload(candidate))
+
+    assert res.applied is False
+    assert res.blocked_reason == "config_refresh_not_declared"
+    assert res.blocked_config_fields == ("skills_enabled",)
+    assert session.cfg.skills_enabled is False

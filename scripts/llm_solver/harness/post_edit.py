@@ -1,5 +1,5 @@
 """Post-edit validation hook — declared checks run after successful
-``edit`` / ``write`` / ``apply_patch`` tool calls.
+``edit`` / ``write`` / ``apply_patch`` / ``udiff`` tool calls.
 
 Borrowed in spirit from Goose's recipe ``retry.checks`` with
 ``SuccessCheck::Shell`` (``crates/goose/src/agents/retry.rs``). The
@@ -9,8 +9,8 @@ what failure means lives entirely in user-declared config.
 
 Schema per check (see config.toml [post_edit_check]):
     name     — ledger mechanism tag
-    trigger  — "edit" | "write" | "apply_patch" | combinations
-               separated by "|" (e.g. "edit|write|apply_patch")
+    trigger  — "edit" | "write" | "apply_patch" | "udiff" | combinations
+               separated by "|" (e.g. "edit|write|apply_patch|udiff")
     when     — safe-eval predicate over {path, ext}; "" = always
     cmd      — shell command; {path} substituted with shlex-quoted path
     on_fail  — "append" | "warn" | "block"
@@ -193,6 +193,7 @@ def run_post_edit_checks(
     from .sandbox.env_policy import active_environment
     from .tools import (
         _bash_unreadable_paths,
+        _bash_readable_paths,
         _effective_command_environment,
         bash,
     )
@@ -229,6 +230,7 @@ def run_post_edit_checks(
             sandbox=cfg.sandbox_bash, bwrap_bin=cfg.bwrap_bin,
             sandbox_required=getattr(cfg, "sandbox_required", False),
             unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+            readable_paths=_bash_readable_paths(cfg),
             sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
             container_runtime=getattr(
                 cfg, "sandbox_container_runtime", "docker"

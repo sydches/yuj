@@ -195,7 +195,7 @@ def test_runtime_fallback_reasons_are_stable_and_failure_specific(
 def test_retry_exhaustion_atomically_rebinds_profile_context_and_estimator(
     tmp_path: Path,
 ):
-    cfg = _cfg()
+    cfg = _cfg(skills_readable_dirs=("/opt/yuj-test-skill",))
     main = _FakeClient(
         cfg,
         load_profile("_base", FIXTURE_PROFILES),
@@ -219,6 +219,7 @@ def test_retry_exhaustion_atomically_rebinds_profile_context_and_estimator(
     assert session.client.profile.name == "weak"
     assert session.cfg.context_size == 4096
     assert session.cfg.max_tokens == 2048
+    assert session.cfg.skills_readable_dirs == ("/opt/yuj-test-skill",)
     assert session._tool_schema_set.names == tuple(
         schema["function"]["name"] for schema in session._tool_schemas
     )

@@ -21,6 +21,7 @@ and thin delegate methods that subclasses can still override.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections import deque
@@ -29,9 +30,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..context import ContextManager, chars_div_4
+from ..checkpoint_rewind import preserve_rewind_reports
 from .._shell_patterns import TEST_COMMAND_RE as _TEST_COMMAND_RE
 from ..._shared.classification import classify_outcome as _classify_outcome
+from ..edit_operations import edit_operations
+from ..tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 from ._working_set import WorkingSet, GateSlot
+from ._solver_state_format import format_state_suffix
 from ._working_set_baseline_helpers import (  # noqa: F401
     _clean_reasoning, _cmd_display, _cmd_text, _extract_action_target,
     _extract_focus_target_from_command, _extract_test_target_from_action,
@@ -48,7 +53,7 @@ from . import _working_set_baseline_state as _S
 
 _PATH_KEYS = ("path", "file_path")
 _READ_TOOLS = frozenset({"read"})
-_WRITE_TOOLS = frozenset({"edit", "write"})
+_WRITE_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES
 _BASH_READ_RE = re.compile(
     r"^\s*(cat|head|tail|less|more|file)\s+([^\s|;&<>`$()]+)\s*$"
 )
@@ -116,6 +121,7 @@ class WorkingSetBaselineContext(ContextManager):
         trace_lines: int | None = None,
         evidence_lines: int | None = None,
         suffix: str = "",
+        todos_char_budget: int = 2000,
         use_solver_state: bool = False,
         style: str = "generic",
         contract: str = "baseline",
@@ -137,6 +143,7 @@ class WorkingSetBaselineContext(ContextManager):
         self._trace_lines = trace_lines
         self._evidence_lines = evidence_lines
         self._suffix = suffix
+        self._todos_char_budget = todos_char_budget
         self._use_solver_state = use_solver_state
         self._style = style
         self._contract = contract
@@ -222,9 +229,13 @@ class WorkingSetBaselineContext(ContextManager):
                 self._ws.record_artifact(tool_name, args_summary, content,
                                          self._turn_count)
         elif tool_name in _WRITE_TOOLS:
-            path = _pick_path(tool_args)
-            if path and outcome == "OK":
-                self._ws.record_mutation(path, self._turn_count)
+            operations = edit_operations(tool_name, tool_args)
+            if operations and outcome == "OK":
+                for kind, path in operations:
+                    if kind == "delete":
+                        self._ws.forget_file(path)
+                    else:
+                        self._ws.record_mutation(path, self._turn_count)
             else:
                 self._ws.record_artifact(tool_name, args_summary, content,
                                          self._turn_count)
@@ -263,11 +274,14 @@ class WorkingSetBaselineContext(ContextManager):
         if self._msg_cache is not None:
             return self._msg_cache
         if self._turn_count < self._min_turns:
-            self._msg_cache = self._filter_expired_thought_messages(
-                self._all_messages
+            self._msg_cache = preserve_rewind_reports(
+                self._filter_expired_thought_messages(self._all_messages),
+                self._all_messages,
             )
             return self._msg_cache
-        self._msg_cache = self._build()
+        self._msg_cache = preserve_rewind_reports(
+            self._build(), self._all_messages
+        )
         from ..savings import get_ledger
         full_chars = sum(len(str(m)) for m in self._all_messages)
         actual_chars = sum(len(str(m)) for m in self._msg_cache)
@@ -297,6 +311,39 @@ class WorkingSetBaselineContext(ContextManager):
         rendered + stitched with the latest assistant/tool pair.
         """
         self._all_messages = list(new_messages)
+        self._invalidate()
+        return True
+
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the raw append log rather than the working-set view."""
+        return copy.deepcopy(self._all_messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        """Rebuild the working set and turn records from a retained prefix."""
+        retained = copy.deepcopy(list(new_messages))
+        self._system_content = ""
+        self._all_messages = []
+        self._turn_entries.clear()
+        self._ws = WorkingSet(cwd=self._cwd)
+        self._turn_count = 0
+        self._last_assistant_msg = None
+        self._prev_assistant_msg = None
+        self._invalidate()
+        for message in retained:
+            role = message.get("role")
+            if role == "system":
+                self.add_system(str(message.get("content") or ""))
+            elif role == "user":
+                self.add_user(str(message.get("content") or ""))
+            elif role == "assistant":
+                self.add_assistant(message)
+            elif role == "tool":
+                self.add_tool_result(
+                    str(message.get("tool_call_id") or ""),
+                    str(message.get("content") or ""),
+                )
+            else:
+                self._all_messages.append(message)
         self._invalidate()
         return True
 
@@ -382,6 +429,17 @@ class WorkingSetBaselineContext(ContextManager):
 
     def _has_solver_state(self) -> bool:
         return self._use_solver_state and bool(self._load_state_json())
+
+    def _render_state_suffix(self) -> str:
+        todos = []
+        if self._use_solver_state:
+            state = self._load_state_json()
+            todos = state.get("todos", []) if isinstance(state, dict) else []
+        return format_state_suffix(
+            self._suffix,
+            todos,
+            todo_char_budget=self._todos_char_budget,
+        )
 
     # -- delegating methods (per-concern logic in sibling modules) ---
     # Kept as one-liners so subclass overrides still work; logic lives in
@@ -512,8 +570,9 @@ class WorkingSetBaselineContext(ContextManager):
             parts.append(f"{section.title}\n{text}")
             remaining -= min(len(text), allocated)
 
-        if self._suffix:
-            parts.append(self._suffix)
+        suffix = self._render_state_suffix()
+        if suffix:
+            parts.append(suffix)
 
         return [
             {"role": "system", "content": self._system_content},

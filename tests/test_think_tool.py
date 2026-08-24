@@ -11,6 +11,7 @@ import pytest
 
 from _config_helpers import make_config
 from scripts.llm_solver.config import load_config
+from scripts.llm_solver.harness.checkpoint_rewind import render_rewind_report
 from scripts.llm_solver.harness._guardrails.checks_post import rumination_ladder
 from scripts.llm_solver.harness._guardrails.checks_pre import done_guard
 from scripts.llm_solver.harness._guardrails.state import (
@@ -26,7 +27,7 @@ from scripts.llm_solver.harness.context_strategies import (
     resolve_context_class,
 )
 from scripts.llm_solver.harness.schemas import get_tool_schemas
-from scripts.llm_solver.harness.state_writer import write_state_from_trace
+from scripts.llm_solver.harness.state_writer import project, write_state_from_trace
 from scripts.llm_solver.harness.thoughts import (
     EMPTY_THINK_RESULT,
     filter_expired_thought_messages,
@@ -274,6 +275,97 @@ def test_expiry_preserves_other_calls_in_a_mixed_assistant_turn() -> None:
     assert "think-mixed" not in rendered
     assert "read-mixed" in rendered
     assert "README contents" in rendered
+
+
+def test_state_expiry_uses_the_rewind_selected_active_branch() -> None:
+    events = [
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": 0,
+            "tool_name": "think",
+            "args_summary": "thought='KEEP_AFTER_REWIND'",
+            "reasoning": "KEEP_AFTER_REWIND_REASONING",
+            "output_snippet": EMPTY_THINK_RESULT,
+            "pass_fail": "pass",
+        },
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": 1,
+            "tool_name": "read",
+            "args_summary": "path='ABANDONED_BRANCH.txt'",
+            "output_snippet": "ABANDONED_BRANCH_OUTPUT",
+            "pass_fail": "pass",
+        },
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": 2,
+            "tool_name": "read",
+            "args_summary": "path='ABANDONED_BRANCH_AGAIN.txt'",
+            "output_snippet": "ABANDONED_BRANCH_AGAIN_OUTPUT",
+            "pass_fail": "pass",
+        },
+        {
+            "event": "rewind",
+            "session_number": 1,
+            "from_turn": 2,
+            "to_turn": 0,
+            "report_chars": 12,
+        },
+    ]
+
+    projected = project(
+        events,
+        max_result_chars=20_000,
+        think_keep_turns=1,
+    )
+    rendered = json.dumps(projected, sort_keys=True)
+
+    assert "KEEP_AFTER_REWIND" in rendered
+    assert "ABANDONED_BRANCH" not in rendered
+    assert projected["meta"]["event_count"] == len(events)
+    assert projected["meta"]["last_turn"] == 0
+
+
+@pytest.mark.parametrize("mode", ["compact", "concise"])
+def test_conflicted_context_families_preserve_rewind_report_and_expire_thoughts(
+    tmp_path: Path, mode: str,
+) -> None:
+    workdir = tmp_path / mode
+    (workdir / ".solver").mkdir(parents=True)
+    context = build_context_manager(
+        resolve_context_class(mode),
+        make_config(
+            min_turns_before_context=0,
+            recent_tool_results_chars=100_000,
+            tools_think_keep_turns=1,
+        ),
+        workdir,
+        "TASK",
+        1,
+        token_estimator=None,
+    )
+    assert context is not None
+    context.add_system("SYSTEM")
+    context.add_user("TASK")
+    context.add_assistant(_think_message("old-think", "DROP_OLD_THOUGHT"))
+    context.add_tool_result(
+        "old-think", EMPTY_THINK_RESULT, tool_name="think"
+    )
+    context.add_user(render_rewind_report("narrow plan", "KEEP_REWIND_REPORT"))
+    context.add_assistant(
+        _think_message("current-think", "KEEP_CURRENT_THOUGHT")
+    )
+    context.add_tool_result(
+        "current-think", EMPTY_THINK_RESULT, tool_name="think"
+    )
+
+    rendered = json.dumps(context.get_messages(), sort_keys=True)
+    assert "DROP_OLD_THOUGHT" not in rendered
+    assert "KEEP_CURRENT_THOUGHT" in rendered
+    assert "KEEP_REWIND_REPORT" in rendered
 
 
 @pytest.mark.parametrize("mode", list_context_modes())
