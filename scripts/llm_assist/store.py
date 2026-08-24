@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..llm_solver._shared.paths import project_root
+from ..llm_solver._shared.paths import project_root, resource_origin
 
 
 _SCHEMA = """
@@ -106,6 +106,14 @@ def assist_home() -> Path:
     raw = os.environ.get("HARNESS_ASSIST_HOME")
     if raw:
         return Path(raw).expanduser().resolve()
+    if resource_origin() == "installed-package":
+        state_home = os.environ.get("XDG_STATE_HOME")
+        base = (
+            Path(state_home).expanduser()
+            if state_home
+            else Path.home() / ".local" / "state"
+        )
+        return (base / "yuj").resolve()
     return project_root() / ".llm_assist"
 
 

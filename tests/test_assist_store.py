@@ -786,6 +786,7 @@ def test_cmd_run_prints_progress_before_final_result(tmp_path, capsys):
         return True, "stop"
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("exact-served.gguf", ["exact-served.gguf"]),
@@ -834,6 +835,7 @@ def test_cmd_run_keyboard_interrupt_marks_session_interrupted_and_resumable(tmp_
         raise KeyboardInterrupt
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("exact-served.gguf", ["exact-served.gguf"]),
@@ -878,6 +880,7 @@ def test_code_alias_routes_to_run(tmp_path, capsys):
         return True, "stop"
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("exact-served.gguf", ["exact-served.gguf"]),
@@ -1116,6 +1119,7 @@ def test_code_uses_positional_prompt_and_current_dir_by_default(tmp_path, capsys
         return True, "stop"
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("exact-served.gguf", ["exact-served.gguf"]),
@@ -1159,6 +1163,7 @@ def test_code_no_treatment_uses_plain_package_and_full_context(tmp_path, monkeyp
         return True, "stop"
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("exact-served.gguf", ["exact-served.gguf"]),
@@ -1200,6 +1205,7 @@ def test_run_persists_exact_served_model_id(tmp_path, capsys):
         return True, "stop"
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("exact-served-id.gguf", ["exact-served-id.gguf"]),
@@ -1241,6 +1247,7 @@ def test_run_provider_preset_persists_session_overlay(tmp_path, monkeypatch):
         return True, "stop"
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 return_value=("openrouter/model", ["openrouter/model"]),
@@ -1802,6 +1809,7 @@ def test_run_model_resolution_failure_exits_cleanly(tmp_path):
         pass
 
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
             patch(
                 "scripts.llm_assist.__main__.resolve_served_model",
                 side_effect=APIConnectionError("boom"),

@@ -68,8 +68,8 @@ Yuj calls the starting group of settings a base.
 
 Yuj applies settings in this order:
 
-1. `config.toml` supplies the checked-in defaults.
-2. `config.local.toml` supplies this machine's service and model.
+1. `config.toml` supplies the shipped or checked-in defaults.
+2. The resolved machine-local file supplies this machine's service and model.
 3. `--treatment` or `--no-treatment` selects a base.
 4. Each `--config` file applies from left to right.
 5. Model and model-service options on the command apply last.
@@ -78,6 +78,23 @@ A later value replaces an earlier value for the same field.
 
 This order keeps local keys out of Git. It also lets you change one setting
 without copying the full main file.
+
+The main runtime root has its own deterministic precedence. `YUJ_CONFIG`
+names an exact main file; its parent must contain any relative profiles,
+agents, bases, and other runtime resources that file references. Without that
+variable, an editable/source checkout wins. A non-editable install uses its
+immutable package resource bundle. Yuj does not copy package defaults into a
+task or user directory.
+
+`YUJ_CONFIG_LOCAL` names an exact machine-local file. Otherwise, a
+`YUJ_CONFIG` tree and a source checkout use `config.local.toml` beside the
+main file. A package install uses `$XDG_CONFIG_HOME/yuj/config.local.toml`, or
+`~/.config/yuj/config.local.toml` when `XDG_CONFIG_HOME` is unset. The file is
+optional; `yuj setup` creates its parent only when you explicitly save setup.
+
+Yuj never searches the target repository for a settings overlay. Pass project
+or per-run settings explicitly with `--config`; project instruction and
+`.yujignore` discovery are separate features.
 
 A paper comparison does not rely on the CLI defaults alone. Follow the exact
 order in the
@@ -94,9 +111,11 @@ yuj config
 The command applies and validates the same layers, in the same order, as a new
 `yuj code` session. It prints every resolved setting with the layer that won.
 This includes nested tables and values that still come from `config.toml`.
-The preflight loads and validates model profiles, configured model roles and
-fallbacks, and enabled named-agent descriptors. Use `--agent NAME` to validate
-another named agent even when the `task` tool is off.
+The preflight loads and validates the full shipped runtime-resource manifest,
+model profiles, configured model roles and fallbacks, and enabled named-agent
+descriptors. Use `--agent NAME` to validate another named agent even when the
+`task` tool is off. Human output reports the resource origin and counts; JSON
+places the same values under `references.runtime_resources`.
 
 The command does not contact a model service, start a process, create a coding
 session, or write run artifacts. It returns a nonzero status for a missing or
@@ -1563,8 +1582,11 @@ guides name their own special variables where needed.
 
 | Variable | What it changes |
 | --- | --- |
-| `YUJ_CONFIG` | Use this `config.toml` file as the main settings file. Yuj reads `config.local.toml` from the same directory when that file exists. |
-| `HARNESS_ASSIST_HOME` | Use this path instead of `<yuj-installation>/.llm_assist` for sessions. |
+| `YUJ_CONFIG` | Use this exact main settings file and its parent as the logical runtime-resource root. |
+| `YUJ_CONFIG_LOCAL` | Use this exact optional machine-local settings file. |
+| `XDG_CONFIG_HOME` | Own installed-package machine settings at `$XDG_CONFIG_HOME/yuj/config.local.toml` when `YUJ_CONFIG_LOCAL` is unset. |
+| `HARNESS_ASSIST_HOME` | Use this exact assistant session-state root. |
+| `XDG_STATE_HOME` | Own installed-package session state at `$XDG_STATE_HOME/yuj` when `HARNESS_ASSIST_HOME` is unset. |
 | `YUJ_CONTAINER=ambient` | Use the current outer container as the shell boundary. |
 | `YUJ_CONTAINER=<container-id>` | Run model shell commands in this existing task container. |
 | Model-service key variables | Supply a key named by `$ENV:NAME`, such as `OPENAI_API_KEY`. |
@@ -1575,10 +1597,6 @@ These process controls are optional:
 | --- | --- |
 | `YUJ_STREAMING=1` | Read model replies as a stream. Streaming is off by default. Enabled stream rules can close and retry a matching response only in this mode. |
 | `YUJ_PERSISTENT_BASH=0` | Start a new shell process for each `bash` tool call. Yuj normally reuses one eligible `bwrap` shell during a run segment. |
-
-Do not use `YUJ_CONFIG_LOCAL` to move local settings. `yuj setup` writes to
-that path, and `doctor` may print that path. `code`, `run`, `smoke`, `models`,
-and `doctor` still load `config.local.toml` beside the main `config.toml`.
 
 Read [Treatment](treatment.html) for treatment settings. Read
 [Sandbox](sandbox.html) for shell access. Read the

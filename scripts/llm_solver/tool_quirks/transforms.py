@@ -5,9 +5,9 @@ Currently exposes glob caps; future tools land here.
 from __future__ import annotations
 
 import functools
-from pathlib import Path
 from typing import Any
 
+from .._shared.paths import package_data_path
 from .._shared.toml_compat import tomllib
 
 
@@ -16,7 +16,7 @@ from .._shared.toml_compat import tomllib
 # parsing on every glob call is pure overhead.
 @functools.lru_cache(maxsize=1)
 def _load_glob_data() -> dict:
-    p = Path(__file__).parent / "glob.toml"
+    p = package_data_path(__package__, "glob.toml")
     if not p.is_file():
         return {}
     with p.open("rb") as f:

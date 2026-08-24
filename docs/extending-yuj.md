@@ -17,8 +17,9 @@ Yuj reads these files at runtime. Use the file that owns your change. Use the
 supported fields and rule types to extend Yuj without changing Python. This
 guide also states when a change still needs Python.
 
-Run the commands on this page from the Yuj repository. Activate its virtual
-environment first. Otherwise, replace `yuj` with `.venv/bin/yuj`.
+Run repository-layout changes on this page from an editable Yuj checkout.
+Activate its virtual environment first. External `--config` overlays and task
+repository extensions also work with an installed wheel.
 
 ## Choose the right file
 
@@ -166,6 +167,12 @@ The public data files have separate jobs.
 | `<task repository>/.harness/stream_rules/` | Describe repository-specific model-output corrections. |
 
 Do not mix these jobs in one file.
+
+A wheel maps the runtime-owned logical paths in this table into its immutable
+package resource bundle; language, shell, and tool TOML remains beside package
+code. Do not edit an installed bundle in `site-packages`. Use an external
+settings overlay for per-run changes, or use an editable checkout when adding
+or contributing profiles, agents, or rules.
 
 ## Add another model
 

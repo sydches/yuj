@@ -17,6 +17,24 @@ You need Linux, Git, Python 3.11 or newer, and
 [bubblewrap](https://github.com/containers/bubblewrap). Windows users can use
 WSL2. macOS users need a Linux virtual machine.
 
+Install a built wheel or source distribution when you want to use Yuj without
+keeping its source checkout:
+
+```bash
+python3 -m venv ~/.venvs/yuj
+~/.venvs/yuj/bin/pip install /path/to/yuj-0.1.0-py3-none-any.whl
+command -v bwrap
+~/.venvs/yuj/bin/yuj --help
+~/.venvs/yuj/bin/yuj config --json
+```
+
+You can give `pip` the `.tar.gz` source distribution instead. Both artifacts
+install the same `yuj` command and runtime defaults. Yuj is not currently
+published to PyPI, so obtain an artifact from a trusted build or build it from
+the public source.
+
+Use an editable install to develop Yuj:
+
 ```bash
 git clone https://github.com/sydches/yuj.git
 cd yuj
@@ -27,8 +45,16 @@ command -v bwrap
 ```
 
 The `test` extra installs `pytest`, which `yuj smoke` needs for its final
-check. `command -v bwrap` shows the path to `bwrap`. `yuj --help` shows the
+check. A built-package user can install `pytest` separately before using that
+command. `command -v bwrap` shows the path to `bwrap`. `yuj --help` shows the
 Yuj help text.
+
+The package contains the checked-in defaults and bases, treatment data,
+profiles and inherited profile files, named-agent descriptors and prompts,
+tool schemas and descriptions, language and shell rules, and the security
+pattern registry. It does not contain paper, study, benchmark, session, trace,
+or private campaign material. See [Getting started](docs/getting-started.md)
+for resource precedence and writable settings locations.
 
 ## Connect a model
 
@@ -38,14 +64,14 @@ For OpenAI, keep the API key in an environment variable:
 
 ```bash
 export OPENAI_API_KEY='...'
-.venv/bin/yuj setup --provider openai --model YOUR_MODEL_ID \
+yuj setup --provider openai --model YOUR_MODEL_ID \
   --api-key-env OPENAI_API_KEY
 ```
 
 For a local OpenAI-compatible server at `localhost:8080`, run:
 
 ```bash
-.venv/bin/yuj setup --provider local --model YOUR_SERVED_MODEL_ID
+yuj setup --provider local --model YOUR_SERVED_MODEL_ID
 ```
 
 See [Getting started](docs/getting-started.md) for Anthropic, OpenRouter,
@@ -57,15 +83,15 @@ Open the Git repository that you want the model to change:
 
 ```bash
 cd /path/to/your-project
-/path/to/yuj/.venv/bin/yuj doctor
-/path/to/yuj/.venv/bin/yuj code \
+yuj doctor
+yuj code \
   "Fix the failing tests and check the change."
 ```
 
 Run a small test task before you use a real project:
 
 ```bash
-/path/to/yuj/.venv/bin/yuj smoke
+yuj smoke
 ```
 
 ## Choose what you want to do
@@ -182,6 +208,14 @@ Run these commands from the Yuj repository:
 ```bash
 .venv/bin/pip install -e '.[test]'
 .venv/bin/python -m pytest -q
+```
+
+Build and inspect both distribution formats with:
+
+```bash
+.venv/bin/pip install build
+.venv/bin/python -m build
+.venv/bin/python tests/distribution_contract.py dist/*.whl dist/*.tar.gz
 ```
 
 ## License

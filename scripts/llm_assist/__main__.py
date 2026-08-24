@@ -25,7 +25,9 @@ from ..llm_solver.config_inspection import (
     validate_configuration_references,
 )
 from ..llm_solver._shared.edit_formats import EDIT_FORMATS
+from ..llm_solver._shared.paths import local_config_path
 from ..llm_solver.models import resolve_model
+from ..llm_solver.runtime_resources import validate_runtime_resources
 from ..llm_solver.server.request_controls import THINKING_LEVELS
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
@@ -55,6 +57,7 @@ from .runner import (
     session_turn_tail,
 )
 from .store import AmbiguousSessionRefError, SessionLockedError, SessionStore
+from .startup import preflight_assistant_startup, render_startup_preflight
 
 CLI_NAME = "yuj"
 _LATEST_SESSION_TOKENS = {"latest", "last"}
@@ -82,7 +85,6 @@ _PROVIDER_PRESETS = {
     },
     "custom": {"provider": "openai-compatible"},
 }
-_CONFIG_LOCAL_ENV = "YUJ_CONFIG_LOCAL"
 _TREATMENT_CONFIG = PROJECT_ROOT / "configs/regimes/treatment.toml"
 _PLAIN_CONFIG = PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml"
 
@@ -149,6 +151,11 @@ def main(argv: list[str] | None = None) -> int:
             "--context",
             default=None,
             help="context mode (default: halflife with treatment, full without)",
+        )
+        p.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="validate local startup through the model-network boundary, then exit",
         )
         p.set_defaults(func=cmd_run)
 
@@ -425,12 +432,28 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def cmd_run(args) -> int:
-    _maybe_offer_first_run_setup(args)
+    if not args.dry_run:
+        _maybe_offer_first_run_setup(args)
     prompt_text, prompt_source = _resolve_prompt_input(args)
     config_paths, context_mode = _effective_run_settings(args)
 
-    store = SessionStore()
     transport_overrides = _transport_overrides_from_args(args)
+    try:
+        preflight = preflight_assistant_startup(
+            config_paths=config_paths,
+            cwd=args.cwd,
+            context_mode=context_mode,
+            requested_model=args.model,
+            config_overrides=transport_overrides,
+            system_prompt_file=args.system_prompt,
+        )
+    except Exception as exc:
+        raise SystemExit(f"startup preflight failed: {exc}") from exc
+    if args.dry_run:
+        sys.stdout.write(render_startup_preflight(preflight))
+        return 0
+
+    store = SessionStore()
     model, served = _resolve_model_or_exit(
         config_paths,
         requested_model=args.model,
@@ -510,6 +533,9 @@ def cmd_config(args) -> int:
             resolved.config,
             named_agents=args.agent,
         )
+        resource_report = validate_runtime_resources().to_dict()
+        resource_report["root"] = "<yuj-root>"
+        references["runtime_resources"] = resource_report
         document = build_inspection_document(
             resolved,
             success=True,
@@ -721,6 +747,7 @@ def cmd_setup(args) -> int:
         api_key = args.api_key or _api_key_ref_or_value(args.api_key_env)
         model = args.model or _prompt_required("Default model id")
 
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(_render_local_config(
         provider=str(preset["provider"]),
         base_url=base_url,
@@ -1046,10 +1073,7 @@ def _resolve_prompt_input(args) -> tuple[str, str]:
 
 
 def _config_local_path() -> Path:
-    raw = os.environ.get(_CONFIG_LOCAL_ENV)
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return PROJECT_ROOT / "config.local.toml"
+    return local_config_path()
 
 
 def _load_assistant_config(config_paths: list[Path]):

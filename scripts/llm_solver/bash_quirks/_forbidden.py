@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .._shared.paths import package_data_path
+
 log = logging.getLogger(__name__)
 
 
@@ -37,7 +39,7 @@ def load_forbidden_rules(path: Path | None = None) -> list[ForbiddenRule]:
     from .._shared.toml_compat import tomllib
 
     if path is None:
-        path = Path(__file__).parent / "forbidden.toml"
+        path = package_data_path(__package__, "forbidden.toml")
     if not path.is_file():
         return []
     with path.open("rb") as f:

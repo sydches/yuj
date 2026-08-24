@@ -295,16 +295,33 @@ def collect_provenance(
     # carries, but at the per-task ledger surface.
     quirk_hashes: dict[str, str] = {}
     try:
-        from .. import bash_quirks as _bq
-        from .. import tool_quirks as _tq
-        from .. import language_quirks as _lq
+        from .._shared.paths import package_data_path
+
+        solver_package = __package__.split(".harness", 1)[0]
         candidate_paths = [
-            ("bash_quirks/forbidden.toml", Path(_bq.__file__).parent / "forbidden.toml"),
-            ("bash_quirks/redactions.toml", Path(_bq.__file__).parent / "redactions.toml"),
-            ("bash_quirks/universal_rewrites.toml", Path(_bq.__file__).parent / "universal_rewrites.toml"),
-            ("tool_quirks/glob.toml", Path(_tq.__file__).parent / "glob.toml"),
-            (f"language_quirks/{cfg.analysis_task_format}.toml",
-             Path(_lq.__file__).parent / f"{cfg.analysis_task_format}.toml"),
+            (
+                "bash_quirks/forbidden.toml",
+                package_data_path(f"{solver_package}.bash_quirks", "forbidden.toml"),
+            ),
+            (
+                "bash_quirks/redactions.toml",
+                package_data_path(f"{solver_package}.bash_quirks", "redactions.toml"),
+            ),
+            (
+                "bash_quirks/rewrites.toml",
+                package_data_path(f"{solver_package}.bash_quirks", "rewrites.toml"),
+            ),
+            (
+                "tool_quirks/glob.toml",
+                package_data_path(f"{solver_package}.tool_quirks", "glob.toml"),
+            ),
+            (
+                f"language_quirks/{cfg.analysis_task_format}.toml",
+                package_data_path(
+                    f"{solver_package}.language_quirks",
+                    f"{cfg.analysis_task_format}.toml",
+                ),
+            ),
         ]
         for label, path in candidate_paths:
             if path.is_file():

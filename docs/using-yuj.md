@@ -21,8 +21,8 @@ Use these terms in this guide:
 Run `yuj --help` for the command list. Run `yuj COMMAND --help` for the
 current options for one command. Every command accepts `-h` and `--help`.
 
-Activate the Yuj virtual environment before you run a command on this page.
-Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
+Activate the environment where Yuj is installed before you run a command on
+this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Command list
 
@@ -98,6 +98,20 @@ continues until the model finishes or a stopping rule ends the session.
 Keep the terminal process running while the run segment is active.
 
 `yuj run` and `yuj code` use the same code and accept the same options.
+
+Use the local startup seam when you want to validate an installation or task
+repository without contacting the model service:
+
+```bash
+yuj code --dry-run "check local startup"
+```
+
+This runs the same local preflight that an ordinary start completes before
+model discovery. It loads settings and all shipped resources, resolves the
+profile, tools, agents, task-repository instructions, skills, injections,
+stream rules, language rules, security registry, and sandbox state. It writes
+no session or run artifact and exits after printing
+`Model network: not contacted`.
 
 ### Model tools
 
@@ -182,6 +196,7 @@ Yuj calls the starting group of settings a base.
 | `--treatment` | Use the treatment base. This is the default. |
 | `--no-treatment` | Use the plain base. |
 | `--context NAME` | Use this context mode instead of the base default. |
+| `--dry-run` | Complete local startup through the model-network boundary, write no session artifacts, and exit. |
 
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
@@ -227,8 +242,11 @@ yuj setup --provider openai --model YOUR_MODEL_ID \
   --api-key-env OPENAI_API_KEY
 ```
 
-Yuj writes `config.local.toml` in the Yuj installation. Git ignores this
-file.
+For an installed package, Yuj writes
+`$XDG_CONFIG_HOME/yuj/config.local.toml`, or
+`~/.config/yuj/config.local.toml` when `XDG_CONFIG_HOME` is unset. An editable
+source checkout keeps `config.local.toml` at the checkout root, where Git
+ignores it. `YUJ_CONFIG_LOCAL` selects an exact alternative path.
 
 | Option | What it does |
 | --- | --- |
@@ -619,16 +637,19 @@ Use `yuj resume` when you want to continue a paused session.
 Yuj stores its session index here:
 
 ```text
-<yuj-installation>/.llm_assist/sessions.sqlite3
+<assist_home>/sessions.sqlite3
 ```
 
 Yuj stores each session here:
 
 ```text
-<yuj-installation>/.llm_assist/sessions/<session_id>/
+<assist_home>/sessions/<session_id>/
 ```
 
-Set `HARNESS_ASSIST_HOME` to use another session root.
+For an installed package, `<assist_home>` is `$XDG_STATE_HOME/yuj`, or
+`~/.local/state/yuj` when `XDG_STATE_HOME` is unset. For an editable/source
+checkout it is `<checkout>/.llm_assist`. Set `HARNESS_ASSIST_HOME` to use an
+exact alternative.
 
 The session directory can contain the task text, settings, trace, model
 messages for the newest run segment, `.solver/state.json`, approvals, final

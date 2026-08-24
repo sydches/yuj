@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..._shared.paths import project_root
+
 BRANCH_BUNDLE_VERSION = "branch_bundle_v1"
 SNAPSHOT_METHOD = "copytree_repo_snapshot_v1"
 
@@ -32,7 +34,7 @@ _IGNORE_DIRS = {
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    return project_root()
 
 
 def _jsonable(value: Any) -> Any:

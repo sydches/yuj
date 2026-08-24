@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "yuj"
 version = "0.1.0"
 description = "Yuj is a coding-agent harness that watches the LLM and keeps it on course. It maintains relevant context without extra LLM calls."
+readme = "README.md"
 requires-python = ">=3.11"
+license-files = ["LICENSE", "LICENSES/Apache-2.0.txt", "THIRD_PARTY_NOTICES.md"]
 dependencies = [
     "openai",
     "orjson",
@@ -34,5 +36,14 @@ test = [
 [tool.setuptools]
 include-package-data = false
 
+[tool.setuptools.cmdclass]
+build_py = "build_support.BuildPy"
+
 [tool.setuptools.packages.find]
-include = ["scripts*"]
+include = ["scripts", "scripts.llm_assist*", "scripts.llm_solver*"]
+exclude = ["scripts.serve*"]
+
+[tool.setuptools.package-data]
+"scripts.llm_solver.bash_quirks" = ["*.toml"]
+"scripts.llm_solver.language_quirks" = ["*.toml"]
+"scripts.llm_solver.tool_quirks" = ["*.toml"]

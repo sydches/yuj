@@ -203,6 +203,17 @@ def render_inspection_human(document: Mapping[str, object]) -> str:
                 f"[{'; '.join(annotations)}]"
             )
 
+    references = document.get("references")
+    if isinstance(references, Mapping):
+        resources = references.get("runtime_resources")
+        if isinstance(resources, Mapping):
+            lines.append(
+                "Runtime resources: "
+                f"{resources.get('origin')} "
+                f"({resources.get('root_resource_count')} root, "
+                f"{resources.get('package_resource_count')} package)"
+            )
+
     diagnostics = document.get("diagnostics")
     if isinstance(diagnostics, list) and diagnostics:
         lines.append("Diagnostics:")

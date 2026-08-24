@@ -24,7 +24,33 @@ The model can run on another computer if the Linux system can reach it.
 
 ## Install Yuj
 
-Run:
+### Install a built package
+
+A wheel or source distribution is the normal choice when you do not want to
+keep a Yuj source checkout. Yuj is not currently published to PyPI. Obtain a
+trusted artifact, then run:
+
+```bash
+python3 -m venv ~/.venvs/yuj
+~/.venvs/yuj/bin/pip install /path/to/yuj-0.1.0-py3-none-any.whl
+command -v bwrap
+~/.venvs/yuj/bin/yuj --help
+```
+
+You can use `/path/to/yuj-0.1.0.tar.gz` instead of the wheel. `pip` builds the
+source distribution and installs the same package. Neither workflow needs the
+original checkout after installation.
+
+The examples below use `yuj`. Activate the environment with
+`source ~/.venvs/yuj/bin/activate`, or replace `yuj` with
+`~/.venvs/yuj/bin/yuj`.
+
+Install `pytest` in the environment before using `yuj smoke`; the ordinary
+`yuj code` command does not require the Yuj source tree or its test suite.
+
+### Install an editable source checkout
+
+Use this workflow when developing Yuj itself:
 
 ```bash
 git clone https://github.com/sydches/yuj.git
@@ -42,6 +68,52 @@ The last command must print the path to `bwrap` for the normal sandbox.
 The install puts the `yuj` command in `.venv/bin/`. The examples use that
 path until you move to the repository that the model will edit.
 
+### What the installed package carries
+
+The wheel carries one immutable runtime bundle containing `config.toml`, the
+treatment and plain bases, treatment dictionaries and overlays, profiles and
+their inheritance/rules/templates, named-agent definitions and prompts, tool
+schemas and descriptions, and the security pattern registry. Language, shell,
+and tool rule TOML stays beside the package code that loads it.
+
+Paper and study files, benchmarks, CI/tests, sessions, traces, caches, local
+settings, and private campaign or release material are not in the wheel. The
+source distribution adds public documentation and source-only server examples,
+but applies the same exclusions.
+
+Yuj resolves the immutable runtime root in this order: an exact `YUJ_CONFIG`
+file and its parent resource tree, an editable/source checkout, then the
+installed bundle. It never copies that bundle into a task or user directory.
+For an installed package, `yuj setup` writes mutable machine settings to
+`$XDG_CONFIG_HOME/yuj/config.local.toml`, or
+`~/.config/yuj/config.local.toml` when `XDG_CONFIG_HOME` is unset. Source
+checkouts keep the existing checkout-local `config.local.toml`. Set
+`YUJ_CONFIG_LOCAL` to choose an exact local-settings path.
+
+Session state defaults to `$XDG_STATE_HOME/yuj`, or `~/.local/state/yuj` for
+an installed package. A source checkout keeps `.llm_assist/` at its root.
+`HARNESS_ASSIST_HOME` always selects an exact alternative. Target-repository
+settings are not found implicitly: pass each settings overlay with `--config`.
+
+### Verify the install without a model request
+
+From a directory outside the Yuj source tree, run:
+
+```bash
+yuj --help
+yuj code --help
+yuj config
+yuj config --json --agent research
+yuj code --dry-run --cwd /path/to/target \
+  "verify local startup"
+```
+
+`config` reports the runtime-resource origin and validates the shipped
+resources. `code --dry-run` performs ordinary local startup through profile,
+agent, tool, prompt, project-file, language-rule, security, and sandbox
+validation, then stops at the model-network boundary. It creates no coding
+session or run artifact and prints `Model network: not contacted`.
+
 Read the [sandbox guide](sandbox.html) if another container already limits
 shell access. The guide also explains how to run without `bwrap`.
 
@@ -54,7 +126,7 @@ For OpenAI, run:
 
 ```bash
 export OPENAI_API_KEY='...'
-.venv/bin/yuj setup --provider openai --model YOUR_MODEL_ID \
+yuj setup --provider openai --model YOUR_MODEL_ID \
   --api-key-env OPENAI_API_KEY
 ```
 
@@ -65,13 +137,13 @@ Use `custom` for another OpenAI-compatible service:
 
 ```bash
 export MY_MODEL_API_KEY='...'
-.venv/bin/yuj setup --provider custom \
+yuj setup --provider custom \
   --base-url https://provider.example/v1 \
   --model YOUR_MODEL_ID \
   --api-key-env MY_MODEL_API_KEY
 ```
 
-Run `.venv/bin/yuj setup` with no options if you want Yuj to ask for each
+Run `yuj setup` with no options if you want Yuj to ask for each
 value.
 
 Use `--api-key-env` when you can. Yuj then saves only
@@ -96,7 +168,7 @@ curl -fsS http://localhost:8080/v1/models
 Use that ID when you set up Yuj:
 
 ```bash
-.venv/bin/yuj setup --provider local --model YOUR_SERVED_MODEL_ID
+yuj setup --provider local --model YOUR_SERVED_MODEL_ID
 ```
 
 Add `--base-url` if the server uses another address.
@@ -113,8 +185,8 @@ released local runtime for you.
 Run:
 
 ```bash
-.venv/bin/yuj doctor
-.venv/bin/yuj models
+yuj doctor
+yuj models
 ```
 
 `doctor` checks the saved settings, model connection, selected model, Git,
@@ -129,7 +201,7 @@ selected model with `*`.
 Run:
 
 ```bash
-.venv/bin/yuj smoke
+yuj smoke
 ```
 
 `smoke` creates a throwaway directory with one broken function. It asks the
@@ -148,7 +220,7 @@ Move to the Git repository that the model may edit:
 
 ```bash
 cd /path/to/your-project
-/path/to/yuj/.venv/bin/yuj code \
+yuj code \
   "Fix the failing tests and check the change."
 ```
 

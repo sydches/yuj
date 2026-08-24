@@ -1,22 +1,21 @@
 """Configuration loader — TOML defaults + user overrides + CLI flags.
 
 Layered config resolution:
-  1. config.toml        (project root, checked into git)
-  2. config.local.toml  (same directory, gitignored, optional)
+  1. config.toml        (explicit, source checkout, or installed bundle)
+  2. machine-local TOML (resolved by ``local_config_path()``, optional)
   3. selected base and user overlays (in caller order)
   4. CLI overrides      (highest priority)
 
-Project root is located by walking up from this file until config.toml is found,
-or via the YUJ_CONFIG env var pointing directly to config.toml.
+The shared path module owns exact source/install precedence.
 """
-import logging
-import os
 import copy
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
 from ._shared.post_edit_spec import validate_post_edit_check_dict
+from ._shared.paths import default_config_path, local_config_path, project_root
 from ._shared.toml_compat import tomllib
 from ._config_layers import (
     ConfigLayerSpec,
@@ -32,31 +31,9 @@ from ._config_layers import (
 VALID_RUNTIME_MODES = ("measurement", "assistant")
 
 
-def _find_project_root() -> Path:
-    """Walk up from this file to find config.toml, or use YUJ_CONFIG env var."""
-    env = os.environ.get("YUJ_CONFIG")
-    if env:
-        p = Path(env)
-        if p.is_file():
-            return p.parent
-        raise FileNotFoundError("YUJ_CONFIG does not name an existing file")
-
-    d = Path(__file__).resolve().parent
-    for _ in range(10):
-        if (d / "config.toml").is_file():
-            return d
-        parent = d.parent
-        if parent == d:
-            break
-        d = parent
-    raise FileNotFoundError(
-        "config.toml not found. Set YUJ_CONFIG or run from project root."
-    )
-
-
-PROJECT_ROOT = _find_project_root()
-_DEFAULT_CONFIG = PROJECT_ROOT / "config.toml"
-_LOCAL_CONFIG = PROJECT_ROOT / "config.local.toml"
+_DEFAULT_CONFIG = default_config_path()
+PROJECT_ROOT = project_root()
+_LOCAL_CONFIG = local_config_path()
 
 
 def resolve_project_path(path: str | Path) -> Path:

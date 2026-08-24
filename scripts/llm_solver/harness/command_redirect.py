@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Pattern
 
+from .._shared.paths import package_data_path
+
 
 log = logging.getLogger(__name__)
 _READ_SIDE_TOOLS = frozenset({"read", "grep", "glob"})
@@ -107,7 +109,9 @@ def load_redirect_rules(path: Path | None = None) -> list[RedirectRule]:
     from .._shared.toml_compat import tomllib
 
     if path is None:
-        path = Path(__file__).parents[1] / "bash_quirks" / "forbidden.toml"
+        path = package_data_path(
+            f"{__package__.rsplit('.', 1)[0]}.bash_quirks", "forbidden.toml"
+        )
     if not path.is_file():
         return []
     with path.open("rb") as stream:

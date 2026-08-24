@@ -17,9 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .._shared.paths import package_data_path
+
 log = logging.getLogger(__name__)
 
-FORMATS_DIR = Path(__file__).parent
+FORMATS_DIR = package_data_path(__package__)
+
 
 @dataclass(frozen=True)
 class RunnerDescriptor:

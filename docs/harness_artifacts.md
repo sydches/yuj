@@ -40,8 +40,10 @@ The installed command keeps most records outside the target repository.
     └── <session_id>/
 ```
 
-The normal `assist_home` is `<yuj-installation>/.llm_assist`. Set
-`HARNESS_ASSIST_HOME` to use another directory.
+For an installed package, the normal `assist_home` is
+`$XDG_STATE_HOME/yuj`, or `~/.local/state/yuj` when `XDG_STATE_HOME` is
+unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
+`HARNESS_ASSIST_HOME` to use an exact alternative.
 
 | File | What it means |
 | --- | --- |

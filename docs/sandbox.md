@@ -216,8 +216,9 @@ An in-sandbox timer also stops the code if the container client disconnects.
 The sandbox controls shell commands that the model asks Yuj to run.
 
 Yuj itself writes the trace, checkpoints, metrics, and session data. These
-writes do not pass through the model shell. In normal CLI use, Yuj saves them
-under `.llm_assist/` in the Yuj installation.
+writes do not pass through the model shell. An installed package uses
+`$XDG_STATE_HOME/yuj`, or `~/.local/state/yuj`; an editable/source checkout
+uses its `.llm_assist/` directory. `HARNESS_ASSIST_HOME` overrides either.
 
 Some Yuj-owned processes use different boundaries:
 

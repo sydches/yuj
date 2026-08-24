@@ -665,13 +665,27 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
     _quirk_hashes: dict[str, str] = {}
     try:
         import hashlib as _hashlib
-        from ... import bash_quirks as _bq
-        from ... import tool_quirks as _tq
+
+        from ..._shared.paths import package_data_path
+
+        solver_package = __package__.split(".harness", 1)[0]
         for label, path in (
-            ("bash_quirks/forbidden.toml", Path(_bq.__file__).parent / "forbidden.toml"),
-            ("bash_quirks/redactions.toml", Path(_bq.__file__).parent / "redactions.toml"),
-            ("bash_quirks/universal_rewrites.toml", Path(_bq.__file__).parent / "universal_rewrites.toml"),
-            ("tool_quirks/glob.toml", Path(_tq.__file__).parent / "glob.toml"),
+            (
+                "bash_quirks/forbidden.toml",
+                package_data_path(f"{solver_package}.bash_quirks", "forbidden.toml"),
+            ),
+            (
+                "bash_quirks/redactions.toml",
+                package_data_path(f"{solver_package}.bash_quirks", "redactions.toml"),
+            ),
+            (
+                "bash_quirks/rewrites.toml",
+                package_data_path(f"{solver_package}.bash_quirks", "rewrites.toml"),
+            ),
+            (
+                "tool_quirks/glob.toml",
+                package_data_path(f"{solver_package}.tool_quirks", "glob.toml"),
+            ),
         ):
             if path.is_file():
                 _quirk_hashes[label] = _hashlib.sha256(path.read_bytes()).hexdigest()[:12]

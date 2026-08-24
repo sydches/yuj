@@ -24,5 +24,48 @@ jobs:
           cache: pip
       - name: Install Yuj and its tests
         run: python -m pip install -e '.[test]'
+      - name: Smoke editable command surfaces
+        run: |
+          yuj --help >/dev/null
+          yuj code --help >/dev/null
+          yuj config --json --agent research >/dev/null
       - name: Run the public test suite
         run: python -m pytest -q
+
+  standalone-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install build
+          python -m build --outdir "$RUNNER_TEMP/yuj-dist"
+      - name: Enforce the distribution member contract
+        run: >-
+          python tests/distribution_contract.py
+          "$RUNNER_TEMP"/yuj-dist/*.whl
+          "$RUNNER_TEMP"/yuj-dist/*.tar.gz
+      - name: Install and smoke outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/yuj-install"
+          "$RUNNER_TEMP/yuj-install/bin/python" -m pip install "$RUNNER_TEMP"/yuj-dist/*.whl
+          mkdir -p "$RUNNER_TEMP/yuj-outside"
+          printf '[tools]\nsandbox_bash = false\nsandbox_required = false\n' > "$RUNNER_TEMP/yuj-outside/no-sandbox.toml"
+          cd "$RUNNER_TEMP/yuj-outside"
+          unset PYTHONPATH YUJ_CONFIG YUJ_CONFIG_LOCAL
+          "$RUNNER_TEMP/yuj-install/bin/python" -I -c 'from pathlib import Path; import scripts; source = Path("${{ github.workspace }}").resolve(); installed = Path(scripts.__file__).resolve(); assert source not in installed.parents, installed; print(f"import-origin: {installed}")'
+          "$RUNNER_TEMP/yuj-install/bin/yuj" --help >/dev/null
+          "$RUNNER_TEMP/yuj-install/bin/yuj" code --help >/dev/null
+          "$RUNNER_TEMP/yuj-install/bin/yuj" config >/dev/null
+          "$RUNNER_TEMP/yuj-install/bin/yuj" config --json --agent research > config.json
+          "$RUNNER_TEMP/yuj-install/bin/python" -I -c 'import json; data=json.load(open("config.json")); resources=data["references"]["runtime_resources"]; assert data["success"] is True; assert resources["origin"] == "installed-package"; assert resources["root_resource_count"] == 56; assert resources["package_resource_count"] == 10'
+          "$RUNNER_TEMP/yuj-install/bin/yuj" code --dry-run --cwd "$RUNNER_TEMP/yuj-outside" --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" "standalone install preflight" > startup.txt
+          grep -F 'Yuj startup preflight: ready' startup.txt
+          grep -F 'Runtime resources: installed-package (56 root, 10 package)' startup.txt
+          grep -F 'Model network: not contacted' startup.txt

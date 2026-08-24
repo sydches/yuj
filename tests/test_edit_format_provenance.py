@@ -155,6 +155,7 @@ def test_installed_cli_persists_edit_format_override(tmp_path: Path) -> None:
 
     with (
         patch("scripts.llm_assist.__main__.SessionStore", return_value=store),
+        patch("scripts.llm_assist.__main__.preflight_assistant_startup"),
         patch(
             "scripts.llm_assist.__main__.resolve_served_model",
             return_value=("served", ["served"]),
