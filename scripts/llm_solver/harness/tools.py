@@ -266,6 +266,9 @@ _DISPATCH = {
     "load_tools": lambda args, cwd, cfg: (
         "ERROR: load_tools requires a live session tool surface"
     ),
+    "task": lambda args, cwd, cfg: (
+        "ERROR: task tool is unavailable outside a configured Session"
+    ),
     "done": lambda args, cwd, cfg: "done",
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),

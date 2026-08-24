@@ -218,6 +218,15 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_background_poll_timeout": d.get("tools", {}).get(
             "background_poll_timeout", 300.0
         ),
+        "tools_task_enabled": d.get("tools", {}).get(
+            "task_enabled", False
+        ),
+        "tools_subagent_depth": d.get("tools", {}).get(
+            "subagent_depth", 1
+        ),
+        "tools_subagent_max_turns": d.get("tools", {}).get(
+            "subagent_max_turns", 20
+        ),
         "tools_exec_cell_enabled": d.get("tools", {}).get(
             "exec_cell_enabled", False
         ),
@@ -777,6 +786,27 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.background_poll_timeout must be a finite "
             "number >= 0."
+        )
+    if not isinstance(cfg.tools_task_enabled, bool):
+        raise ValueError(
+            "config error: tools.task_enabled must be a boolean."
+        )
+    if (
+        isinstance(cfg.tools_subagent_depth, bool)
+        or not isinstance(cfg.tools_subagent_depth, int)
+        or cfg.tools_subagent_depth < 0
+    ):
+        raise ValueError(
+            "config error: tools.subagent_depth must be a non-negative "
+            "integer."
+        )
+    if (
+        isinstance(cfg.tools_subagent_max_turns, bool)
+        or not isinstance(cfg.tools_subagent_max_turns, int)
+        or cfg.tools_subagent_max_turns < 1
+    ):
+        raise ValueError(
+            "config error: tools.subagent_max_turns must be an integer >= 1."
         )
     if not isinstance(cfg.tools_exec_cell_enabled, bool):
         raise ValueError(

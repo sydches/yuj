@@ -99,9 +99,15 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=17,
     ),
     ToolSpec(
-        "done",
+        "task",
+        profile_gate_attr="tools_task_enabled",
         cap_immune=True,
         schema_order=18,
+    ),
+    ToolSpec(
+        "done",
+        cap_immune=True,
+        schema_order=19,
         schema_surface="both",
     ),
     ToolSpec(

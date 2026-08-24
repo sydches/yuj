@@ -184,6 +184,7 @@ def test_tool_specs_drive_surface_metadata():
         "lsp": "lsp_tool_enabled",
         "bash_poll": "tools_background_enabled",
         "bash_kill": "tools_background_enabled",
+        "task": "tools_task_enabled",
         "think": "tools_think_enabled",
         "write_todos": "tools_todos_enabled",
         "list_functions": "tools_exec_cell_enabled",

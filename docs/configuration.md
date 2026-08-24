@@ -156,6 +156,9 @@ order in the
 | `[tools].background_enabled` | Add asynchronous `bash`, `bash_poll`, and `bash_kill` behavior. Off by default. |
 | `[tools].background_max_procs` | Limit live background children in one session. |
 | `[tools].background_poll_timeout` | Cap one poll wait in seconds. |
+| `[tools].task_enabled` | Add the sequential named-agent `task` tool. Off by default. |
+| `[tools].subagent_depth` | Cap nested `task` calls by child edges from the root session. Defaults to `1`. |
+| `[tools].subagent_max_turns` | Cap each named agent's descriptor-level turn limit. Defaults to `20`. |
 | `[tools].exec_cell_enabled` | Replace the native tool schemas with the code-mode meta surface. Off by default. |
 | `[tools].exec_cell_timeout` | Bound one Python cell, including all inner calls, in seconds. |
 | `[injections].enabled` | Load Markdown injection rules from `[injections].dir`. Off by default. |
@@ -676,9 +679,10 @@ entry can set a baseline which a later exact-tool entry overrides.
 Each tool has one canonical match value. `bash` uses `cmd`; `read`, `write`,
 `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, and `lsp` use `path`
 (`glob` and `grep` default it to `.`); `apply_patch` and `udiff` use `patch`;
-`done` uses `message`; `think` uses `thought`; `bash_poll`/`bash_kill` use
-`proc_id`; and `write_todos` uses its canonical todo array. Calls without a
-dedicated field use a canonical sorted JSON argument object.
+`done` uses `message`; `task` uses `agent`; `think` uses `thought`;
+`bash_poll`/`bash_kill` use `proc_id`; and `write_todos` uses its canonical
+todo array. Calls without a dedicated field use a canonical sorted JSON
+argument object.
 
 In assistant mode, `ask` writes `approval_request.json`, pauses, and can be
 continued with `yuj approve` or refused with `yuj reject`. `--always` stores a
@@ -711,6 +715,38 @@ raw `proc_poll` trace row is written. Yuj terminates every live process group
 when the session ends. Raw `proc_*` lifecycle rows are not copied to
 `.solver/state.json`; its ordinary `tool_call` row carries the admitted poll
 result.
+
+### Run named subagents
+
+The `task` tool is absent unless an overlay enables it:
+
+```toml
+[tools]
+task_enabled = true
+subagent_depth = 1
+subagent_max_turns = 20
+```
+
+A call has the shape `task(agent, prompt)`. The agent name selects
+`agents/<name>.toml`. Each descriptor names a model profile, a tool allowlist,
+a Markdown system-prompt file, and its own `max_turns`. The effective turn
+limit is the smaller of that value and `tools.subagent_max_turns`. See
+[`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
+for the descriptor format.
+
+The root session is depth `0`; each `task` call adds one edge. At the configured
+depth cap, Yuj removes `task` from the child's tool surface and rejects a direct
+nested call. Agents are read-only unless their descriptor explicitly says
+otherwise. A read-only descriptor cannot allow mutation tools, and its `bash`
+calls pass through a fail-closed inspection-command allowlist.
+
+Children run one at a time in the parent's task directory and with the same
+sandbox policy. Each child has a fresh conversation and a separate model
+client. The parent receives only the child's final text. Yuj saves the child's
+trace at `<run_dir>/subagents/<id>/.trace.jsonl`; replay reads that terminal
+result instead of calling the child model again. Child usage is included in
+the ordinary token totals, `tokens_by_role`, and the `metrics.subagents`
+summary.
 
 The main `config.toml` leaves `tokenizer_id` empty. Yuj then estimates one
 token for every four characters. This avoids a model-specific download during

@@ -30,6 +30,7 @@ person types into a terminal.
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `task` | `agent`, `prompt` | None | Run one named agent in a separate context and return its final text. |
 | `udiff` | `patch` | None | Apply a checked standard unified diff with safe unique-context recovery. |
 | `list_functions` | None | None | In code mode, list the function names injected into `exec_cell`. |
 | `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
@@ -50,7 +51,7 @@ schema, description, or result rule.
 | `edit` | Selected by the shipped profile's `exact` edit format. |
 | `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
-| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
+| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `task` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
@@ -67,6 +68,7 @@ think_enabled = true
 think_keep_turns = 4
 edit_format = "apply_patch"
 background_enabled = true
+task_enabled = true
 todos_enabled = true
 checkpoint_enabled = true
 
@@ -229,6 +231,22 @@ names a nonzero `next_page`. This mode requires the separately disabled
 dependencies provide Python, JavaScript/TypeScript, Go, Rust, and Java
 grammars locally; a missing backend returns a setup error instead of
 downloading during the tool call.
+
+## Named subagents
+
+With `[tools].task_enabled = true`, `task(agent, prompt)` selects a checked-in
+`agents/<name>.toml` descriptor. The descriptor owns the child's model profile,
+tool allowlist, system prompt, turn limit, and read-only status. Named agents
+are read-only by default. See [Configuration](configuration.html#run-named-subagents)
+and [`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md)
+for the exact settings and descriptor format.
+
+A child uses the same task directory and sandbox policy but a fresh
+conversation and model client. Calls run sequentially; the tool does not use
+the background-process facility. `tools.subagent_depth` bounds nesting, and
+`tools.subagent_max_turns` caps every descriptor's own limit. The parent sees
+only the final text. Yuj saves a separate child trace for audit and replay and
+adds child usage to post-run metrics.
 
 ## Argument schema rejection
 

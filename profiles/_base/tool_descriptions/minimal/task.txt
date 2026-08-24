@@ -1,0 +1,1 @@
+Run one named agent in a separate context and return only its final text. The agent name selects agents/<name>.toml. Runs sequentially; do not use it for work you can do directly.

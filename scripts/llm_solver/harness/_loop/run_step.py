@@ -399,6 +399,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
             err_reason = getattr(session, "_last_chat_error_reason", None) or "error"
             return SessionResult(turn, err_reason, done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
         content = chat_result.content
+        session._last_assistant_content = (
+            content if isinstance(content, str) else ""
+        )
         tool_calls = chat_result.tool_calls
         reason = chat_result.finish_reason
         prompt_tokens = chat_result.usage.prompt_tokens

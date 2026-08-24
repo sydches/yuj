@@ -48,6 +48,7 @@ Each saved file has one role:
 | File | What replay reads from it |
 | --- | --- |
 | `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls, and saved tool results. |
+| `subagents/<id>/.trace.jsonl` | The exact terminal result and accounting for the matching parent `subagent` event. |
 | Transcript | The saved pre-profile request tool array from each input block, when present, and the saved model reply from each `=== turn NNN output ===` block. |
 | `.solver/state.json` | Nothing directly. This file is a view built from `.trace.jsonl`. |
 | `session.json` | The current replay loader reads the model, config paths, and context mode. It ignores the other settings in this file. |
@@ -65,7 +66,8 @@ Replay joins the parts and gives their turns one continuous order.
 1. When the saved input has a `tools` array, the replay client compares its
    ordered tool names with the current request's ordered tool names.
 2. The replay client returns the saved model reply.
-3. Yuj sends each saved tool call through the normal tool code and sandbox.
+3. Yuj sends each saved tool call through the normal tool code and sandbox,
+   except for the recorded execution exceptions described below.
 4. Yuj updates the normal guard counters.
 5. Yuj writes a fresh trace.
 6. When `state.writer_enabled` is true, Yuj writes `.solver/state.json`.
@@ -101,6 +103,14 @@ stream. Replay validates the recorded start command hash, returns each saved
 poll result byte-for-byte, and consumes recorded kills without starting an
 operating-system process. The ordinary replay fidelity check still compares
 the associated `tool_call` result seen by the model.
+
+Named subagents are the other execution exception. For a replayed `task` call,
+Yuj consumes the next parent `subagent` event, reads
+`subagents/<id>/.trace.jsonl`, and verifies the child identity, result length
+and hash, turns, and tokens. It returns that recorded final text and copies the
+child trace into the replay run when the source and destination differ. It
+does not create a model client or run the child loop again. The ordinary
+tool-call fidelity check still compares the admitted `task` result.
 
 The replay run writes a new transcript. For each replayed turn, the input block
 holds `messages` and `tools` from before model-profile conversion. The output

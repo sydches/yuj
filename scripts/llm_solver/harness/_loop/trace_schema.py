@@ -90,6 +90,29 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "subagent",
+        frozenset({
+            "session_number", "turn_number", "id", "agent", "turns",
+            "tokens", "result_chars",
+        }),
+    ),
+    TraceEventSpec(
+        "subagent_start",
+        frozenset({
+            "id", "agent", "parent_session_number", "parent_turn_number",
+            "depth", "model_profile", "tools", "read_only", "max_turns",
+        }),
+    ),
+    TraceEventSpec(
+        "subagent_result",
+        frozenset({
+            "id", "agent", "turns", "prompt_tokens",
+            "completion_tokens", "own_prompt_tokens",
+            "own_completion_tokens", "tokens", "finish_reason", "done",
+            "result", "result_chars", "result_sha256",
+        }),
+    ),
+    TraceEventSpec(
         "advisor_note",
         frozenset({"session_number", "turn", "severity", "chars"}),
         frozenset({"turn_number", "ordinal", "note_sha256"}),

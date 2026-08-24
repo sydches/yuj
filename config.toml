@@ -337,6 +337,12 @@ todos_max_items = 20
 background_enabled = false
 background_max_procs = 4
 background_poll_timeout = 300  # seconds; caps each bash_poll wait
+# Sequential named subagents. Enabling task adds the model-facing tool; each
+# agents/<name>.toml descriptor supplies its profile, allowlist, prompt, and
+# smaller per-agent turn limit. Children never run in the background.
+task_enabled = false
+subagent_depth = 1
+subagent_max_turns = 20
 # Python code mode. When enabled, send a compact meta-tool surface instead of
 # the full native schema catalog. Cells always fail closed unless they can run
 # inside the selected shell sandbox.

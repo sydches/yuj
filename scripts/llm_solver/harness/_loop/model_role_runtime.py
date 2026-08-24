@@ -193,6 +193,43 @@ def build_model_role_runtime(
         return role_client
 
     router = ModelRoleRouter(resolver, make_client, fallback_controller)
+
+    def make_subagent_client(parent: Any, spec: Any, task_id: str):
+        """Build a fresh client so child transcripts cannot replace parent IO."""
+        from ..subagents import SubagentModelBinding
+
+        parent_client = _stored_attr(parent, "client", parent)
+        active_cfg = _stored_attr(parent_client, "cfg", cfg)
+        current = _stored_attr(parent_client, "_model_role_resolution")
+        base_target = current.target if current is not None else resolver.main.target
+        resolution = resolver.resolve_explicit_target(
+            f"subagent.{spec.name}",
+            ModelTarget(
+                profile_name=spec.model_profile,
+                model=base_target.model,
+                base_url=base_target.base_url,
+                api_key=base_target.api_key,
+                context_size=base_target.context_size,
+            ),
+        )
+        child_cfg = _target_config(active_cfg, resolution)
+        child_client = client_factory(child_cfg, resolution.profile)
+        parent_session_id = str(
+            _stored_attr(parent_client, "_session_id", "") or ""
+        )
+        if parent_session_id and hasattr(child_client, "set_session_id"):
+            child_client.set_session_id(
+                f"{parent_session_id}:subagent:{task_id}"
+            )
+        _attach_runtime(child_client, router, token_ledger, resolution)
+        return SubagentModelBinding(
+            client=child_client,
+            config=child_cfg,
+            resolution=resolution,
+            dedicated=True,
+        )
+
+    router.subagent_client_factory = make_subagent_client
     _attach_runtime(main_client, router, token_ledger, resolver.main)
     return ModelRoleRuntime(resolver, router, token_ledger, fallback_controller)
 
@@ -241,6 +278,9 @@ def _attach_runtime(
     client._model_role_router = router
     client._role_token_ledger = ledger
     client._model_role_resolution = resolution
+    subagent_factory = getattr(router, "subagent_client_factory", None)
+    if subagent_factory is not None:
+        client._subagent_client_factory = subagent_factory
 
 
 def consumer_role_client(owner: Any, role: str = "weak") -> ConsumerRoleClient:
