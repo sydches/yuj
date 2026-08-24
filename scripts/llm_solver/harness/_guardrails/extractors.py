@@ -187,13 +187,13 @@ def _mutation_signature(
 ) -> tuple[str, str]:
     if tc_name not in MUTATION_TOOLS or not isinstance(tc_args, dict):
         return "", ""
-    if tc_name == "apply_patch":
-        # apply_patch is multi-file by construction — no single `path`
+    if tc_name in {"apply_patch", "udiff"}:
+        # Patch dialects are multi-file by construction — no single `path`
         # argument. Sign over the patch text itself; target is "<patch>"
         # as a stable label so digest replay tools can group repeats.
         payload = str(tc_args.get("patch", ""))
         digest = hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
-        return f"apply_patch:{digest}", "<patch>"
+        return f"{tc_name}:{digest}", "<patch>"
     raw_path = tc_args.get("path") or tc_args.get("file_path") or focus_display
     path = raw_path if isinstance(raw_path, str) else ""
     if not _is_concrete_file_path(path):

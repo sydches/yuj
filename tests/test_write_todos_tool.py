@@ -287,6 +287,47 @@ def test_trace_replay_projects_only_the_latest_todos_event(
     assert project(events, max_result_chars=20_000)["todos"] == []
 
 
+def test_rewind_restores_todos_from_the_selected_active_prefix() -> None:
+    checkpoint_todos = [_todo("Keep this plan", "in_progress")]
+    abandoned_todos = [_todo("Discarded exploration", "blocked")]
+    replacement_todos = [_todo("Continue after rewind", "pending")]
+    events = [
+        {
+            "event": "todos",
+            "session_number": 1,
+            "turn_number": 0,
+            "todos": checkpoint_todos,
+        },
+        {
+            "event": "todos",
+            "session_number": 1,
+            "turn_number": 2,
+            "todos": abandoned_todos,
+        },
+        {
+            "event": "rewind",
+            "session_number": 1,
+            "from_turn": 2,
+            "to_turn": 0,
+            "report_chars": 12,
+        },
+    ]
+
+    rewound = project(events, max_result_chars=20_000)
+    assert rewound["todos"] == checkpoint_todos
+    assert rewound["todos"] is not checkpoint_todos
+
+    events.append(
+        {
+            "event": "todos",
+            "session_number": 1,
+            "turn_number": 3,
+            "todos": replacement_todos,
+        }
+    )
+    assert project(events, max_result_chars=20_000)["todos"] == replacement_todos
+
+
 def test_session_emits_todos_after_tool_call_and_refreshes_state(
     tmp_path: Path,
 ) -> None:

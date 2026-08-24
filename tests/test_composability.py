@@ -147,6 +147,7 @@ def test_tool_specs_drive_surface_metadata():
     from scripts.llm_solver.harness.schemas import get_tool_schemas
     from scripts.llm_solver.harness.tool_specs import (
         ACTIVE_TOOL_NAMES,
+        CODE_MODE_SCHEMA_TOOL_NAMES,
         GUARDRAIL_MUTATION_TOOL_NAMES,
         NATIVE_ENVELOPE_PREFIXES,
         PARALLEL_READ_SAFE_TOOL_NAMES,
@@ -160,23 +161,36 @@ def test_tool_specs_drive_surface_metadata():
         schema["function"]["name"]
         for schema in get_tool_schemas("minimal")
     }
-    assert set(ACTIVE_TOOL_NAMES) == schema_names
+    code_schema_names = {
+        schema["function"]["name"]
+        for schema in get_tool_schemas("minimal", code_mode=True)
+    }
+    assert set(ACTIVE_TOOL_NAMES) == schema_names | code_schema_names
     assert tuple(
         schema["function"]["name"] for schema in get_tool_schemas("minimal")
     ) == SCHEMA_TOOL_NAMES
+    assert tuple(
+        schema["function"]["name"]
+        for schema in get_tool_schemas("minimal", code_mode=True)
+    ) == CODE_MODE_SCHEMA_TOOL_NAMES
     assert tuple(build_tool_registry().handlers) == ACTIVE_TOOL_NAMES
     assert PARALLEL_READ_SAFE_TOOL_NAMES == frozenset({"read", "glob", "grep"})
     assert GUARDRAIL_MUTATION_TOOL_NAMES == frozenset(
-        {"write", "edit", "apply_patch", "str_replace"}
+        {"write", "edit", "apply_patch", "udiff", "str_replace"}
     )
     assert PROFILE_GATE_ATTRS == {
         "run_tests": "tools_run_tests_enabled",
         "list_definitions": "tools_list_definitions_enabled",
-        "apply_patch": "tools_apply_patch_enabled",
         "lsp": "lsp_tool_enabled",
         "bash_poll": "tools_background_enabled",
         "bash_kill": "tools_background_enabled",
         "write_todos": "tools_todos_enabled",
+        "list_functions": "tools_exec_cell_enabled",
+        "get_function_details": "tools_exec_cell_enabled",
+        "exec_cell": "tools_exec_cell_enabled",
+        "load_tools": "tools_lazy_loading_enabled",
+        "checkpoint": "tools_checkpoint_enabled",
+        "rewind": "tools_checkpoint_enabled",
     }
     assert NATIVE_ENVELOPE_PREFIXES == (
         "<test_results",

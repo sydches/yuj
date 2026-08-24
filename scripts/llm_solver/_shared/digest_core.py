@@ -16,7 +16,7 @@ _SR_RE = re.compile(r"<(?:search_result|file_content|test_results|tool_result)[^
 _SR_CLOSE_RE = re.compile(r"</(?:search_result|file_content|test_results|tool_result)>")
 _HARNESS_RE = re.compile(r"\[HARNESS:[^\]]*\]")
 _OUTSIDE_CWD_RE = re.compile(r"(?<![\w])/(?:home/(?!task)[^/\s'\"`]+|usr/|etc/|proc/|sys/|var/|root/|opt/)")
-_WRITE_TOOLS = {"write", "edit", "str_replace", "create"}
+_WRITE_TOOLS = {"write", "edit", "str_replace", "create", "apply_patch", "udiff"}
 
 # Sandbox-denial keyword set ported from Codex
 # (codex-rs/core/src/exec.rs::is_likely_sandbox_denied). Surfacing escape

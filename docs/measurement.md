@@ -136,6 +136,7 @@ Use only one of `--prompt-file` and `--prompt-text`.
 | --- | --- |
 | `--config PATH`, `-c PATH` | Apply this settings file. Repeat the option to apply more files from left to right. |
 | `--context NAME` | Use a registered context mode. The default is `full`. |
+| `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--max-sessions N` | Set the largest number of run segments for each task. |
 | `--prompt-addendum TEXT` | Add this text to the task prompt. |
 | `--variant-name NAME` | Save this name with the result. |
@@ -194,8 +195,8 @@ effect.
 | `--replay-watch-turns N` | Pass the intended live-turn limit. `0` makes no change. The current loop does not enforce the limit. |
 | `--replay-extra-config PATH` | Add a measurement-only settings file after the source settings. Repeatable. |
 
-Do not add `--model` or `--config` with `--replay-from`. Replay loads those
-values from the source run.
+Do not add `--model`, `--config`, or `--edit-format` with `--replay-from`.
+Replay loads those values from the source run.
 
 Current replay also requires the source `session.json` to list at least one
 config path. A run made without `--config` lists none and cannot be a replay

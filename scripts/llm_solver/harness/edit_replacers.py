@@ -288,6 +288,97 @@ class Candidate:
     line_number: int
 
 
+def _xml_attr(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def format_candidates_block(text: str, candidates, path: str) -> str:
+    """Render the canonical ranked-candidate error block.
+
+    Both exact-string edits and unified-diff hunks use this byte shape so a
+    model can repair either kind of failed edit without learning two error
+    protocols.
+    """
+    if not candidates:
+        return ""
+    top = candidates[0]
+    cause_map = {
+        "exact": "multiple_matches",
+        "whitespace_normalized": "whitespace_drift",
+        "line_trimmed": "trailing_whitespace",
+        "indentation_flexible": "indent_drift",
+        "escape_normalized": "escape_artifact",
+        "trimmed_boundary": "boundary_whitespace",
+        "block_anchor": "interior_drift",
+    }
+    cause = cause_map.get(top.strategy, top.strategy)
+    lines = [
+        f'<candidates total="{len(candidates)}" cause_hint="{cause}" '
+        f'path="{_xml_attr(path)}">'
+    ]
+    for rank, candidate in enumerate(candidates, start=1):
+        snippet = text[candidate.start:candidate.end]
+        lines.append(
+            f'  <candidate rank="{rank}" strategy="{candidate.strategy}" '
+            f'similarity="{candidate.similarity:.2f}" '
+            f'line="{candidate.line_number}">'
+        )
+        lines.append(snippet)
+        lines.append("  </candidate>")
+    lines.append("</candidates>")
+    return "\n".join(lines)
+
+
+def fuzzy_line_matches(
+    file_lines: list[str], old_lines: list[str],
+) -> tuple[str, list[int]] | None:
+    """Return uniquely classifiable whitespace-drift line windows.
+
+    Unified-diff application consumes whole lines, so this companion to the
+    character-span cascade deliberately keeps the hunk line count fixed.
+    Non-whitespace tokens and their order must remain exact.
+    """
+    width = len(old_lines)
+    if width <= 0 or width > len(file_lines):
+        return None
+
+    def _line_trimmed(lines: list[str]) -> tuple[str, ...]:
+        return tuple(line.strip() for line in lines)
+
+    def _indentation_flexible(lines: list[str]) -> tuple[str, ...]:
+        return tuple(line.lstrip(" \t") for line in lines)
+
+    def _whitespace_normalized(lines: list[str]) -> tuple[str, ...]:
+        return tuple(" ".join(line.split()) for line in lines)
+
+    def _escape_normalized(lines: list[str]) -> tuple[str, ...]:
+        return tuple(_unescape(line) for line in lines)
+
+    strategies = (
+        ("whitespace_normalized", _whitespace_normalized),
+        ("line_trimmed", _line_trimmed),
+        ("indentation_flexible", _indentation_flexible),
+        ("escape_normalized", _escape_normalized),
+    )
+    for name, normalize in strategies:
+        expected = normalize(old_lines)
+        matches = [
+            start
+            for start in range(len(file_lines) - width + 1)
+            if normalize(file_lines[start:start + width]) == expected
+            and file_lines[start:start + width] != old_lines
+        ]
+        if matches:
+            return name, matches
+    return None
+
+
 def _line_number(text: str, offset: int) -> int:
     """1-based line index for a byte offset in ``text``."""
     return text.count("\n", 0, offset) + 1

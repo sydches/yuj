@@ -13,6 +13,7 @@ from .state import (
     TURN_PRE_DISPATCH_ORDER,
     guardrail_order_for_phase,
     init_guardrail_state,
+    rewind_on,
 )
 from .extractors import (
     _arm_recovery_mode,

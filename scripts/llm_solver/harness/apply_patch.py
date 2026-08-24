@@ -42,7 +42,7 @@ Output:
   Success → <apply_patch ok="true" ops="N">…per-op summaries…</apply_patch>
   Failure → ERROR: <category>: <details> (no <apply_patch> envelope)
 
-The DSL is opt-in through tools_apply_patch_enabled and defaults to false.
+The DSL is selected through the effective ``apply_patch`` edit format.
 """
 from __future__ import annotations
 

@@ -234,6 +234,10 @@ class Config:
     resume_length: str
     resume_last_n_actions: int
     tool_desc: str = "minimal"
+    # Operator/guardrail rewind of the canonical model-facing conversation
+    # together with its shadow-Git workspace checkpoint. Off by default.
+    rewind_enabled: bool = False
+    rewind_max_per_session: int = 1
     interrupted_turn_mode: str = "mechanical"
     length_continue_max: int = 0
     project_docs_enabled: bool = False
@@ -243,6 +247,17 @@ class Config:
     project_doc_global_dir: str = "~/.config/yuj"
     imports_enabled: bool = True
     imports_max_depth: int = 5
+    skills_enabled: bool = False
+    skills_dirs: tuple[str, ...] = (
+        "~/.pi/agent/skills",
+        "~/.agents/skills",
+        ".pi/skills",
+        ".agents/skills",
+    )
+    skill_paths: tuple[str, ...] = ()
+    # Effective, validated roots fixed by startup discovery. This is not a
+    # user knob: it lets read and shell sandboxes expose only loaded skills.
+    skills_readable_dirs: tuple[str, ...] = ()
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
@@ -268,7 +283,7 @@ class Config:
     # and by the sink-and-surface mechanism in loop.py. Kept in config per
     # the SoD anti-pattern "prompt text in harness code" — harness code
     # should carry no model-facing text directly.
-    done_reject_no_mutation: str = "REJECTED: No code changes since session start. Use write, edit, or apply_patch to modify the code, then call done."
+    done_reject_no_mutation: str = "REJECTED: No code changes since session start. Use the selected file-edit tool to modify the code, then call done."
     done_reject_no_verify: str = "REJECTED: No successful verification since the last code change. Either run_tests must report status=\"passed\", or a bash command must exit 0 with substantial output (>200 chars). Then call done."
     done_loop_abort_after: int = 5
     done_loop_abort_text: str = "Session ended: {n} consecutive done() rejections. Your current code has been preserved as the final patch."
@@ -276,8 +291,8 @@ class Config:
     done_reject_parity_still_failing: str = "REJECTED: pretest-failing tests not yet passing: {shown}{extra}"
     done_reject_parity_regression: str = "REJECTED: regression — previously-passing tests now failing: {shown}{extra}"
     done_reject_parity_streak: str = "REJECTED: pretest parity observed {count} time(s); need {required}. Run tests again to confirm."
-    rumination_gate_grace_prefix: str = "[HARNESS: Gate armed. Next call must be write or edit — all else blocked.]"
-    pre_mutation_gate: str = "[HARNESS: {turn_number} read-only turns elapsed without a write or edit; the next tool call must be write / edit / str_replace / apply_patch, a bash command that mutates a source file, or done(). This call was not executed.]"
+    rumination_gate_grace_prefix: str = "[HARNESS: Gate armed. Next call must mutate a file — all else blocked.]"
+    pre_mutation_gate: str = "[HARNESS: {turn_number} read-only turns elapsed without a file mutation; the next tool call must use the selected file-edit tool, run a bash command that mutates a source file, or call done(). This call was not executed.]"
     sink_pointer: str = '<tool_result_meta truncated="true" original_bytes="{chars}" original_lines="{lines}" full_path="{path}"/>'
     # Head/tail slice sizes around the sink marker — prompt literals
     # previously hardcoded in loop.py::_filter_bash_output live here
@@ -318,7 +333,7 @@ class Config:
     contract_invalid_repeat_abort_after: int = 0  # End session after N repeated blocked contract violations with the same target/signature (0 = disabled).
     contract_abort_min_turns_since_commit_arm: int = 0  # Minimum calls after commit mode starts before abort (0 = disabled).
     contract_abort_min_turns_since_recovery_arm: int = 0  # Minimum calls after recovery starts before abort (0 = disabled).
-    contract_abort_requires_zero_mutation: bool = False  # If True, contract abort is allowed only before the first successful write/edit.
+    contract_abort_requires_zero_mutation: bool = False  # If True, contract abort is allowed only before the first successful mutation.
     contract_equivalent_action_classes_enabled: bool = False  # Collapse semantically-equivalent off-contract moves into one violation class.
     mutation_repeat_warn_after: int = 0  # Warn when repeating the same successful mutation N times in a row (0 = disabled).
     mutation_repeat_block_after: int = 0  # Block when repeating the same successful mutation N times in a row (0 = disabled).
@@ -326,14 +341,13 @@ class Config:
     duplicate_warn_count: int = 0  # append warning text at N identical consecutive calls (0 = disabled)
     duplicate_warn: str = "[harness: {count} identical tool calls in a row. Change approach — session ends at {abort} identical.]"
     error_abort_threshold: int = 0  # end session after N consecutive errors of any kind (0 = disabled)
-    error_same_class_threshold: int = 0  # end session after N errors with the same signature (exit code or first-token error string), regardless of interleaved non-error turns. 0 = disabled. Catches the "model repeats the same wrong fix" pattern that error_abort_threshold misses because intervening write/edit calls reset its counter.
+    error_same_class_threshold: int = 0  # end session after N errors with the same signature (exit code or first-token error string), regardless of interleaved non-error turns. 0 = disabled. Catches the "model repeats the same wrong fix" pattern that error_abort_threshold misses because intervening mutation calls reset its counter.
     intent_abort_threshold: int = 0  # end session after N consecutive silent intent-gate rejections (0 = disabled)
     # ── Guardrail enabled flags (default True = preserve current behaviour).
     # Set a flag to False in a config overlay to disable that guardrail.
     # ``require_intent`` remains the intent-gate setting.
     duplicate_guard_enabled: bool = True
-    # Post-edit validation (runs per-extension check cmd after each
-    # edit/write). Map keyed on extension (dot-prefixed). Off by default.
+    # Post-edit validation runs per-extension checks after matching mutations.
     post_edit_check_enabled: bool = False
     post_edit_check_timeout: int = 10
     # List of declared check dicts. Each dict has: name, trigger,
@@ -342,6 +356,10 @@ class Config:
     # Model-callable run_tests tool (pytest with deterministic flags
     # inside the sandbox). Filtered from the schema list when disabled
     # so the model does not see a tool it cannot use.
+    tools_lazy_loading_enabled: bool = False
+    tools_active_default: tuple[str, ...] = (
+        "bash", "read", "edit", "glob", "grep", "done",
+    )
     tools_run_tests_enabled: bool = False
     # Allow long package setup and collection before a test run times out.
     tools_run_tests_timeout: int = 240
@@ -359,6 +377,9 @@ class Config:
     # Optional repository-wide tree-sitter symbol definition/reference mode.
     tools_ast_search_enabled: bool = False
     tools_ast_search_max_rows: int = 1000
+    # Conversation checkpoint/rewind pair. Both model tools share this one
+    # default-off gate and operate on context only, never workspace files.
+    tools_checkpoint_enabled: bool = False
     # Independent shadow-Git checkpoints after every potentially mutating
     # model tool call. The store is outside the task cwd and restore remains
     # a harness/operator function, never a model-facing tool.
@@ -384,6 +405,10 @@ class Config:
     tools_background_enabled: bool = False
     tools_background_max_procs: int = 4
     tools_background_poll_timeout: float = 300.0
+    # Code mode replaces the native schema catalog with three meta-tools and
+    # executes model-written Python inside the selected fail-closed sandbox.
+    tools_exec_cell_enabled: bool = False
+    tools_exec_cell_timeout: int = 30
     # First-class shell sandbox backend. Container mode creates one ephemeral
     # Docker/Podman container per command and preserves the absolute cwd.
     sandbox_backend: str = "bwrap"
@@ -411,9 +436,14 @@ class Config:
     lsp_diagnostics_timeout_s: float = 2.0
     lsp_min_severity: str = "error"
     lsp_tool_enabled: bool = False
-    # apply_patch tool — Codex-style multi-file DSL. Disabled by default.
-    # Enable it when the selected settings allow multi-file patches.
+    # Compatibility selector for old overlays. New settings use
+    # tools.edit_format = "apply_patch" instead.
     tools_apply_patch_enabled: bool = False
+    # Per-run override for the profile's edit dialect. Empty inherits the
+    # selected model profile. `effective_edit_format` is filled mechanically
+    # after profile resolution and is never a user-authored setting.
+    tools_edit_format: str = ""
+    effective_edit_format: str = ""
     # Unified <tool_result> envelope. When
     # true, every dispatched tool result is wrapped in
     #   <tool_result tool_name="..." status="..." [error_kind="..."]>
@@ -483,7 +513,14 @@ class Config:
     digest_compaction_safety_margin: float = 0.05
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
+    # Ranked repository symbol map appended to the stable task message.
+    # Zero preserves the existing prompt exactly.  The refresh policy owns
+    # only the run-private structural cache; one rendered map stays immutable
+    # for the lifetime of a solver session so prompt-prefix reuse is stable.
+    repo_map_tokens: int = 0
+    repo_map_refresh: str = "auto"
     compaction_method: str = "digest"
+    compaction_hook: str = ""
     checkpoint_keep_recent_tokens: int = 0
     checkpoint_max_summary_tokens: int = 4000
     # Optional model-written fresh-session handoff. The existing mechanical
@@ -527,15 +564,17 @@ class Config:
     # restore the files from any recorded step.
     turn_snapshots_enabled: bool = True
     # Parallel read-only tool dispatch. When enabled and the turn's
-    # tool_calls are all read-only (>1 call, no write/edit/bash),
+    # tool_calls are all read-only (>1 call, no mutation/bash),
     # dispatch() runs concurrently via a ThreadPoolExecutor. Guardrail
     # state still updates sequentially per-tc after concurrent I/O.
     parallel_readonly_enabled: bool = False
     parallel_max_workers: int = 4
-    # Injection subsystem (keyword-triggered markdown fragments).
+    # Injection subsystem (keyword/path-triggered markdown fragments).
     # Off by default; data-directory convention .harness/injections/.
     injections_enabled: bool = False
     injections_dir: str = ".harness/injections"
+    injections_path_rules_enabled: bool = False
+    injections_path_rule_repeat: bool = False
     loop_detect_recovery: str = (
         "<system-reminder>Loop detected: the last {streak} tool calls all "
         "have identical name and arguments. Stop repeating. Re-read the "
@@ -558,7 +597,7 @@ class Config:
     # ── Guardrail internals surfaced from hardcoded values.
     rumination_gate_grace_calls: int = 1       # warned non-write calls allowed before full blocking
     rumination_min_threshold: int = 6          # absolute floor on the derived rumination nudge threshold
-    done_require_mutation: bool = True         # done_guard: accept only after at least one successful write/edit
+    done_require_mutation: bool = True         # done_guard: accept only after at least one successful mutation
     done_require_verify: bool = True           # done_guard: accept only after verified_since_mutation flipped
     done_verified_bash_min_chars: int = 200    # content-blind threshold for "substantial" bash run that counts as verification
     done_require_pretest_parity: bool = False  # done_guard: accept only when latest test run matches the pretest-failing set now PASSED and no pretest-passing regressed (requires [output_parser])

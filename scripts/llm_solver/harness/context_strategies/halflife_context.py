@@ -7,6 +7,7 @@ views. Full raw output remains in the trace/transcript artifacts.
 """
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 
 from ..context import ContextManager, chars_div_4
@@ -110,6 +111,20 @@ class HalfLifeContext(ContextManager):
 
     def replace_all_messages(self, new_messages: list[dict]) -> bool:
         self._messages = list(new_messages)
+        self._invalidate()
+        return True
+
+    def snapshot_messages(self) -> list[dict]:
+        """Snapshot the undecayed append log, never a rendered decay view."""
+        return copy.deepcopy(self._messages)
+
+    def rewind_messages(self, new_messages: list[dict]) -> bool:
+        self._messages = copy.deepcopy(list(new_messages))
+        self._turn_count = sum(
+            message.get("role") == "assistant" for message in self._messages
+        )
+        self._first_decay_turn = None
+        self._decay_render_count = 0
         self._invalidate()
         return True
 
