@@ -117,6 +117,8 @@ order in the
 | `[prompts].skill_paths` | Load these exact `SKILL.md` files or skill directories before directory discovery. |
 | `[context].compaction_hook` | Import one trusted synchronous `module:function` that can delegate, cancel, or replace a threshold-triggered compaction. Empty uses only the built-in path. |
 | `[tools].bash_timeout` | Limit the time for one shell command. |
+| `[tools].lazy_loading_enabled` | Send only the initial active tool subset and let the model activate other registered tools with `load_tools`. Off by default. |
+| `[tools].active_default` | Choose the tools visible at the start of each harness session when lazy loading is enabled. `load_tools` and `done` remain visible. |
 | `[tools].sandbox_bash` | Turn the shell sandbox on or off. |
 | `[tools].sandbox_required` | Stop if Yuj cannot start the selected shell sandbox. |
 | `[sandbox].backend` | Select the first-class `bwrap` or `container` command backend. |
@@ -426,6 +428,59 @@ profile-filtered tool set. Matching is compound-aware: quoted operators and
 leading `NAME=value` assignments are preserved, while a pipe stage consuming
 stdin is not redirected. Aggregate uses such as `grep -c`, `rg --count`, and
 `cat FILE | wc -l` remain shell commands.
+
+### Defer tools until the model needs them
+
+Deferred tool loading is off by default, so existing runs keep their fixed
+tool list. Enable it with a small overlay:
+
+```toml
+[tools]
+lazy_loading_enabled = true
+active_default = ["bash", "read", "edit", "glob", "grep", "done"]
+```
+
+Yuj first applies ordinary tool enable switches and the selected model
+profile's schema simplification. It keeps every resulting schema registered,
+then sends only the names in `active_default`, plus the cap-immune
+`load_tools` and `done` tools.
+A name in `active_default` must be a shipped tool name. An optional tool still
+needs its own enable switch before it can be active or loaded. The profile's
+`max_tools` remains the maximum active count; `load_tools` rejects an atomic
+request that would exceed it. With deferred loading off, the profile cap keeps
+its historical fixed-surface behavior.
+
+The model activates hidden registered tools additively:
+
+```json
+{"names":["write","run_tests"]}
+```
+
+The `load_tools` result lists newly activated, already-active, and full active
+names. Yuj rebuilds the next request's `tools` array from that active set. A
+second tool call from the same model response still uses the tool surface that
+was visible for that response; it cannot bypass the loader by appearing after
+`load_tools` in the same batch. A direct call to a hidden tool does not run. It
+returns an `ERROR` envelope with type `tool_not_active` and explicitly names
+`load_tools`.
+
+The active set starts from `active_default` for each fresh harness session.
+Each successful loader call writes a raw `tools_activated` trace event. The
+event records requested names, the additive change, already-active names, and
+the resulting full set. `.solver/state.json` mechanically projects the
+current set and the session's activation rows under `tools`; the trace remains
+authoritative. Replay compares the exact recorded request tool-name order on
+every turn where the source transcript contains a `tools` array, so a missing
+or mistimed activation is a replay divergence.
+
+`metrics.json` reports the initial block under
+`metrics.tool_loading.default_tool_block_tokens`, together with its names and
+count method. With `[model].tokenizer_id`, Yuj uses the rendered chat-template
+delta. Without it, Yuj reports the declared `chars_div_4` estimate over the
+compact schema JSON. Activating a tool changes the request prefix and may
+change KV-cache reuse. Align a `tools_activated` row with the following
+`turn` row's `cached_tokens` and `cache_hit_ratio`; unavailable cache telemetry
+stays unknown.
 
 ### Search definitions and references across a repository
 

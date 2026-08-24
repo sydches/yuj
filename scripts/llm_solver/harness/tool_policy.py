@@ -43,6 +43,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "glob": ("path", "."),
         "grep": ("path", "."),
         "list_definitions": ("path", ""),
+        "load_tools": ("names", ()),
         "lsp": ("path", ""),
         "read": ("path", ""),
         "rewind": ("report", ""),

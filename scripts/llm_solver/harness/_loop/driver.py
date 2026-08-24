@@ -41,8 +41,10 @@ from ._session_setup import build_context_manager, inject_resume_messages
 from .handoff_integration import apply_pending_handoff, maybe_prepare_boundary_handoff
 from .interrupted_turn import RecoveryPlan, recover_interrupted_trace
 from . import model_role_runtime
+from .profile_resolution import build_tool_surface
 from .resume import _load_trace_events, _next_session_number, build_resume_prompt_from_trace
 from .trace_schema import emit_trace_event as _emit_trace_event
+from ..tool_loading import estimate_tool_block_tokens
 
 if TYPE_CHECKING:
     from ..loop import SessionResult, TaskSpec
@@ -232,6 +234,9 @@ def solve_task(
     # Count sessions that start with a corrupt trace mirror.
     agg_trace_corrupt = 0
     agg_length_continuations = 0
+    agg_tool_activation_events = 0
+    agg_activated_tools: set[str] = set()
+    tool_loading_metrics: dict[str, object] | None = None
     cache_usage = CacheUsageAccumulator()
     role_usage = model_role_runtime.role_token_ledger(client)
     done_loop_aborted = False
@@ -478,6 +483,9 @@ def solve_task(
                 skills_readable_dirs=cfg.skills_readable_dirs,
             )
             thinking_fields = thinking_trace_fields(session_cfg, session_client)
+            session_start_tool_surface = build_tool_surface(
+                session_cfg, session_client
+            )
             local_tokenizer = None
             if int(getattr(session_cfg, "repo_map_tokens", 0) or 0) > 0:
                 from ..local_tokenizer import load as load_local_tokenizer
@@ -520,6 +528,18 @@ def solve_task(
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
                 sandbox_env_names=list(effective_env),
+                tool_lazy_loading_enabled=(
+                    session_start_tool_surface.lazy_loading_enabled
+                ),
+                tool_active_limit=(
+                    session_start_tool_surface.max_active_tools
+                ),
+                registered_tools=list(
+                    session_start_tool_surface.registered_names
+                ),
+                active_tools=list(
+                    session_start_tool_surface.default_active_names
+                ),
                 **repo_map.trace_fields(),
                 **prompt_metadata.trace_fields(),
                 **thinking_fields,
@@ -564,6 +584,25 @@ def solve_task(
                 allow_login_shell=allow_login_shell,
                 local_tokenizer=local_tokenizer,
             )
+            if tool_loading_metrics is None:
+                default_tokens, count_method = estimate_tool_block_tokens(
+                    session._tool_schemas,
+                    tokenizer=getattr(session, "_tokenizer", None),
+                )
+                tool_loading_metrics = {
+                    "lazy_loading_enabled": bool(
+                        session._tool_surface.lazy_loading_enabled
+                    ),
+                    "active_tool_limit": session._tool_surface.max_active_tools,
+                    "registered_tools": list(
+                        session._tool_surface.registered_names
+                    ),
+                    "default_active_tools": list(
+                        session._tool_surface.default_active_names
+                    ),
+                    "default_tool_block_tokens": default_tokens,
+                    "token_count_method": count_method,
+                }
             session._cache_usage_accumulator = cache_usage
             model_role_runtime.bind_session_model_roles(
                 session, session_client, role_usage,
@@ -618,6 +657,12 @@ def solve_task(
             agg_turns += result.turns
             agg_length_continuations += int(
                 getattr(session, "_length_continuation_count", 0) or 0
+            )
+            agg_tool_activation_events += int(
+                getattr(session, "_tool_activation_events", 0) or 0
+            )
+            agg_activated_tools.update(
+                getattr(session, "_activated_tool_names", set()) or set()
             )
             _guards = getattr(session, "_guards", None)
             if _guards is not None:
@@ -740,6 +785,26 @@ def solve_task(
     metrics.update(cache_usage.metrics_fields())
     metrics.update(role_usage.metrics_fields())
     metrics.update(model_role_runtime.model_fallback_metrics(client))
+    if tool_loading_metrics is None:
+        fallback_surface = build_tool_surface(cfg, client)
+        default_tokens, count_method = estimate_tool_block_tokens(
+            fallback_surface.active_schemas
+        )
+        tool_loading_metrics = {
+            "lazy_loading_enabled": fallback_surface.lazy_loading_enabled,
+            "active_tool_limit": fallback_surface.max_active_tools,
+            "registered_tools": list(fallback_surface.registered_names),
+            "default_active_tools": list(
+                fallback_surface.default_active_names
+            ),
+            "default_tool_block_tokens": default_tokens,
+            "token_count_method": count_method,
+        }
+    tool_loading_metrics.update({
+        "activation_events": agg_tool_activation_events,
+        "activated_tools": sorted(agg_activated_tools),
+    })
+    metrics["tool_loading"] = tool_loading_metrics
     metrics["file_checkpoints"] = (
         checkpoint_store.metrics_payload()
         if checkpoint_store is not None

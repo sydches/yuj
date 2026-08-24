@@ -28,6 +28,7 @@ person types into a terminal.
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
+| `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Present only when deferred loading is enabled. |
 | `done` | None | `message` | Ask Yuj to end the task. |
 
 The exact parameter shapes live in
@@ -40,6 +41,7 @@ schema, description, or result rule.
 | Tool | Shipped setting |
 | --- | --- |
 | `read`, `glob`, `grep`, `write`, `edit`, `bash`, `done` | On |
+| `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `checkpoint`, `rewind`, `list_definitions`, `apply_patch`, `run_tests`, `lsp`, `bash_poll`, `bash_kill` | Off |
 
 Turn on the optional tools in a small settings file:
@@ -73,7 +75,25 @@ When `bash` is on, the model can run a test command through `bash` even when
 structured result.
 
 A model profile can also limit how many enabled tools Yuj sends to the model.
-The `done` tool is not removed by that limit.
+The `done` tool is not removed by that limit. When deferred loading is on,
+`load_tools` is also not removed.
+
+## Deferred tool loading
+
+When `[tools].lazy_loading_enabled = true`, Yuj sends only
+`[tools].active_default` plus `load_tools` and `done` at the start of a harness
+session. Other enabled, profile-shaped tools stay registered but hidden.
+Call `load_tools(names=[...])` to add exact names. Activation never removes a
+tool and takes effect on the next model request. A model profile's `max_tools`
+limits the active count, not the registry; an activation that would exceed the
+limit is rejected atomically.
+
+A hidden tool call returns a typed error naming `load_tools` and does not
+reach schema validation, permission policy, approval, or its handler. The
+ordinary error ladder and turn-level loop guards still count the
+rejection. A disabled tool is not loadable.
+See [Configuration](configuration.html#defer-tools-until-the-model-needs-them)
+for knobs, trace/state behavior, replay fidelity, and token metrics.
 
 `checkpoint` and `rewind` share one setting and survive a profile tool-count
 cap as a pair. A checkpoint is session-scoped. `rewind` consumes it and
@@ -100,7 +120,8 @@ The `bash` tool follows the active sandbox and approval settings. Read
 Docker socket.
 
 `[permissions].rules` can allow, ask for approval, or deny a tool by its
-canonical command/path argument. The last matching `*`/`?` rule wins. Empty
+canonical command/path argument (`load_tools` uses its `names` array). The
+last matching `*`/`?` rule wins. Empty
 rules allow current behavior, and an allow still passes through bash-specific
 forbidden rules. Assistant `ask` decisions use `yuj approve|reject`; measurement
 runs deny them. See

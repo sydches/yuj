@@ -22,7 +22,15 @@ Schema (target of the projection, consumed by SolverStateContext):
       "gates":     [],
       "evidence":  [{"step": int, "action": str, "result": str,
                      "verdict": "OK"|"FAIL", "gate_blocked": bool}, ...],
-      "inference": []
+      "inference": [],
+      "tools":     {"lazy_loading_enabled": bool,
+                     "active_limit": int|null,
+                     "registered": [str, ...], "active": [str, ...],
+                     "activations": [{"session": int, "turn": int,
+                                      "requested": [str, ...],
+                                      "activated": [str, ...],
+                                      "already_active": [str, ...],
+                                      "active": [str, ...]}, ...]}
     }
 
 Content-blind by construction: the projection never inspects tool results
@@ -493,6 +501,13 @@ def project(events: list[dict], *, max_result_chars: int,
     state: dict = {}
     trace: list[dict] = []
     evidence: list[dict] = []
+    tools: dict = {
+        "lazy_loading_enabled": False,
+        "active_limit": None,
+        "registered": [],
+        "active": [],
+        "activations": [],
+    }
 
     step = 0
     for ev in logical_events:
@@ -578,6 +593,26 @@ def project(events: list[dict], *, max_result_chars: int,
             if "hook_outcome" in ev:
                 last_compaction["hook_outcome"] = ev.get("hook_outcome")
             state["last_compaction"] = last_compaction
+        elif et == "session_start" and "active_tools" in ev:
+            tools = {
+                "lazy_loading_enabled": bool(
+                    ev.get("tool_lazy_loading_enabled", False)
+                ),
+                "active_limit": ev.get("tool_active_limit"),
+                "registered": list(ev.get("registered_tools") or []),
+                "active": list(ev.get("active_tools") or []),
+                "activations": [],
+            }
+        elif et == "tools_activated":
+            tools["active"] = list(ev.get("active_tools") or [])
+            tools["activations"].append({
+                "session": ev.get("session_number"),
+                "turn": ev.get("turn_number"),
+                "requested": list(ev.get("requested") or []),
+                "activated": list(ev.get("activated") or []),
+                "already_active": list(ev.get("already_active") or []),
+                "active": list(ev.get("active_tools") or []),
+            })
         elif et == "rewind":
             if any(
                 field in ev
@@ -609,7 +644,6 @@ def project(events: list[dict], *, max_result_chars: int,
                         "goal": ev["goal"],
                         "report": ev["report"],
                     }
-        # session_start: no state mutation.
 
     state.setdefault("current_attempt", "")
     state.setdefault("last_verify", "")
@@ -637,6 +671,7 @@ def project(events: list[dict], *, max_result_chars: int,
         # without descending into the existing sections.
         "meta": meta,
         "state": state,
+        "tools": tools,
         "trace": trace,
         "gates": [],
         "evidence": evidence,
@@ -653,6 +688,9 @@ def project_from_trace(trace_path: Path, *, max_result_chars: int,
     trace_path = Path(trace_path)
     if not trace_path.is_file():
         return {"state": {"current_attempt": "", "last_verify": "", "next_action": ""},
+                "tools": {"lazy_loading_enabled": False, "active_limit": None,
+                          "registered": [],
+                          "active": [], "activations": []},
                 "trace": [], "gates": [], "evidence": [], "inference": []}
     events = []
     with open(trace_path) as f:

@@ -357,6 +357,10 @@ class Config:
     # Model-callable run_tests tool (pytest with deterministic flags
     # inside the sandbox). Filtered from the schema list when disabled
     # so the model does not see a tool it cannot use.
+    tools_lazy_loading_enabled: bool = False
+    tools_active_default: tuple[str, ...] = (
+        "bash", "read", "edit", "glob", "grep", "done",
+    )
     tools_run_tests_enabled: bool = False
     # Allow long package setup and collection before a test run times out.
     tools_run_tests_timeout: int = 240

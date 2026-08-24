@@ -130,4 +130,12 @@ def build_context_contract(
             "source": "live_workspace_structural_index",
         },
         "budgets": _budget_snapshot(metadata, cfg),
+        "tool_loading": {
+            "lazy_loading_enabled": bool(
+                _get(cfg, "tools_lazy_loading_enabled")
+            ),
+            "active_default": list(_get(cfg, "tools_active_default")),
+            "loader_tool": "load_tools",
+            "activation_event": "tools_activated",
+        },
     }

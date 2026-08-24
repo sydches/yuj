@@ -15,6 +15,7 @@ from scripts.llm_solver.harness._tools.read import read
 from scripts.llm_solver.harness._tools.write import write
 from scripts.llm_solver.harness._loop.profile_resolution import (
     apply_profile_to_schemas,
+    build_tool_surface,
 )
 from scripts.llm_solver.harness.loop import solve_task
 from scripts.llm_solver.harness.schemas import get_tool_schemas
@@ -125,6 +126,14 @@ def test_skills_prioritize_read_under_profile_tool_cap() -> None:
         "done",
         "bash",
     ]
+    assert build_tool_surface(
+        make_config(
+            skills_enabled=True,
+            skills_readable_dirs=("/opt/yuj-test-skill",),
+        ),
+        client,
+        schemas,
+    ).active_names == ("done", "read")
 
 
 def test_skills_reject_profile_cap_that_cannot_retain_read() -> None:
@@ -139,6 +148,15 @@ def test_skills_reject_profile_cap_that_cannot_retain_read() -> None:
                 skills_readable_dirs=("/opt/yuj-test-skill",),
             ),
             client,
+        )
+    with pytest.raises(ValueError, match="skills_enabled requires the read tool"):
+        build_tool_surface(
+            make_config(
+                skills_enabled=True,
+                skills_readable_dirs=("/opt/yuj-test-skill",),
+            ),
+            client,
+            get_tool_schemas("minimal"),
         )
 
 
