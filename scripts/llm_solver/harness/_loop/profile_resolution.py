@@ -141,6 +141,26 @@ def _apply_profile_schema_simplify(tool_schemas: list[dict], client) -> list[dic
     return [_simplify_tool_schema(schema) for schema in tool_schemas]
 
 
+def _skills_active(cfg) -> bool:
+    """Return whether this run has a model-visible Agent Skills catalog."""
+    return bool(
+        getattr(cfg, "skills_enabled", False)
+        and tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+    )
+
+
+def _require_skills_read(tool_schemas: list[dict], *, skills_active: bool) -> None:
+    """Fail when a profile cap removed the only skill-body loading seam."""
+    if skills_active and not any(
+        schema.get("function", {}).get("name", "") == "read"
+        for schema in tool_schemas
+    ):
+        raise ValueError(
+            "skills_enabled requires the read tool in the effective profile; "
+            "increase profile max_tools"
+        )
+
+
 def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict]:
     """Apply the full profile-shaping triple-stack to tool schemas.
 
@@ -149,10 +169,7 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
     for both Session.__init__ and _record_session_start_costs. The same
     composition was once open-coded in two places and could drift.
     """
-    skills_active = bool(
-        getattr(cfg, "skills_enabled", False)
-        and tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
-    )
+    skills_active = _skills_active(cfg)
     output = _apply_profile_tool_cap(
         _apply_profile_schema_simplify(
             _filter_disabled_tools(tool_schemas, cfg),
@@ -161,14 +178,7 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
         client,
         priority_tools=frozenset({"read"}) if skills_active else frozenset(),
     )
-    if skills_active and not any(
-        schema.get("function", {}).get("name", "") == "read"
-        for schema in output
-    ):
-        raise ValueError(
-            "skills_enabled requires the read tool in the effective profile; "
-            "increase profile max_tools"
-        )
+    _require_skills_read(output, skills_active=skills_active)
     return output
 
 
@@ -196,7 +206,15 @@ def build_tool_surface(
     lazy = bool(getattr(cfg, "tools_lazy_loading_enabled", False))
     registered = _build_registered_tool_schemas(cfg, client, tool_schemas)
     if not lazy:
-        registered = _apply_profile_tool_cap(registered, client)
+        skills_active = _skills_active(cfg)
+        registered = _apply_profile_tool_cap(
+            registered,
+            client,
+            priority_tools=(
+                frozenset({"read"}) if skills_active else frozenset()
+            ),
+        )
+        _require_skills_read(registered, skills_active=skills_active)
     return ToolSurface(
         registered,
         lazy_loading_enabled=lazy,
