@@ -85,6 +85,10 @@ thinking_level = "off"        # off | minimal | low | medium | high | xhigh | ma
 [loop]
 max_turns = 200             # hard cap on tool-call turns per session before forced session end
 max_sessions = 10           # max session restarts (each session gets fresh context)
+# Conversation + workspace rewind. Rewind snapshots are harness-owned and
+# require [tools].file_checkpoints_enabled so messages and files move together.
+rewind_enabled = false
+rewind_max_per_session = 1
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
 length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries

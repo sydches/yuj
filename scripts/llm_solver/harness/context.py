@@ -111,6 +111,38 @@ class ContextManager(ABC):
         """
         return self.replace_all_messages(new_messages)
 
+    def get_history_messages(self) -> list[dict]:
+        """Return the canonical append-log behind the model projection.
+
+        Rewind snapshots need both this lossless history and
+        :meth:`get_messages`, which may be a compact projection.  Current
+        strategies deliberately share one of the two storage names below;
+        keeping the lookup here gives future strategies one public contract
+        to override instead of making rewind depend on their implementation.
+        """
+        for attribute in ("_all_messages", "_messages"):
+            messages = getattr(self, attribute, None)
+            if isinstance(messages, list):
+                return messages
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement get_history_messages()"
+        )
+
+    def pin_model_messages(self, new_messages: list[dict]) -> bool:
+        """Pin the exact projection restored from a rewind snapshot.
+
+        Projection strategies invalidate this cache on their next mutation,
+        at which point their normally derived view resumes from the restored
+        canonical history.  FullTranscript has no projection cache, so exact
+        equality with its restored append-log is the required condition.
+        """
+        if hasattr(self, "_msg_cache"):
+            self._msg_cache = copy.deepcopy(new_messages)
+            if hasattr(self, "_tok_cache"):
+                self._tok_cache = None
+            return True
+        return self.get_messages() == new_messages
+
     def set_token_estimator(
         self,
         token_estimator: Callable[[list[dict]], int],

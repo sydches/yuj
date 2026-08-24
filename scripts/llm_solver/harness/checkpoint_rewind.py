@@ -179,31 +179,14 @@ def rewind_context(context, checkpoint: ContextCheckpoint, report: str) -> list[
 def logical_trace_events(events: Iterable[Mapping[str, object]]) -> list[dict]:
     """Return the model-state view while preserving the raw event stream.
 
-    A rewind event removes earlier events in ``(to_turn, from_turn]`` for its
-    own session from this derived view only.  The rewind row itself remains so
-    later projections retain its report and provenance.
+    Both public rewind forms share the same branch-selection rule.  The state
+    writer owns persistent turn lineage so a later conversation/workspace
+    rewind may select a turn from a previously discarded branch; model-tool
+    report restoration must consume that same active view.
     """
-    visible: list[dict] = []
-    for source_event in events:
-        event = dict(source_event)
-        if event.get("event") != "rewind":
-            visible.append(event)
-            continue
-        session_number = event.get("session_number")
-        from_turn = event.get("from_turn")
-        to_turn = event.get("to_turn")
-        if isinstance(from_turn, int) and isinstance(to_turn, int):
-            visible = [
-                prior
-                for prior in visible
-                if not (
-                    prior.get("session_number") == session_number
-                    and isinstance(prior.get("turn_number"), int)
-                    and to_turn < int(prior["turn_number"]) <= from_turn
-                )
-            ]
-        visible.append(event)
-    return visible
+    from .state_writer import active_events
+
+    return active_events([dict(event) for event in events])
 
 
 def restore_rewind_reports(context, events: Iterable[Mapping[str, object]]) -> int:

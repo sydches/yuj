@@ -70,8 +70,19 @@ Replay joins the parts and gives their turns one continuous order.
 Replay does not restore a saved working tree. It runs the saved actions again
 on the fresh task copy.
 
+An enabled in-session conversation/workspace `rewind` is part of that action
+stream. At the recorded
+`from_turn` boundary, replay saves the fresh run's own conversation/checkpoint
+pair, calls the normal rewind path with the recorded target and reason, and
+continues from the restored messages and tree. It compares `from_turn`,
+`to_turn`, reason, and delivery mode. It does not compare the shadow-Git commit
+hash because a fresh replay creates new Git objects. Assistant-shell
+`delivery=next_session` rewind remains subject to the multi-segment replay
+limits below.
+
 When `[tools].checkpoint_enabled` was active, replay also executes the saved
-`checkpoint` and `rewind` calls through the normal session handlers. The
+model-facing `checkpoint` and `rewind(report)` calls through the normal session
+handlers. The
 checkpoint becomes active only after its complete tool-call turn; rewind then
 rebuilds the model-facing conversation from that prefix plus the retained
 user-role report. The replay trace remains append-only, and replay does not

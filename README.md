@@ -117,6 +117,7 @@ own repository.
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj show` | Show settings and recent session activity. |
 | `yuj resume` | Continue a paused session. |
+| `yuj rewind SESSION TURN` | Restore an enabled session's conversation and files to an earlier completed turn. |
 | `yuj approve` | Allow a shell action that needs approval. |
 | `yuj reject` | Refuse a shell action that needs approval. |
 | `yuj sessions` | List saved sessions. |

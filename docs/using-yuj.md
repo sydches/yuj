@@ -39,6 +39,7 @@ Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj sessions` | List saved sessions. |
 | `yuj resume` | Continue a paused session. |
+| `yuj rewind` | Restore a stopped session to an earlier conversation and tree turn. |
 | `yuj worktree rm` | Remove a retained session worktree and branch. |
 | `yuj approve` | Allow a shell action that needs approval. |
 | `yuj reject` | Refuse a shell action that needs approval. |
@@ -400,6 +401,37 @@ saved sessions.
 
 ## Resume a session
 
+### Rewind before resuming
+
+For a session started with conversation rewind and file checkpoints enabled,
+restore an earlier completed turn with:
+
+```bash
+yuj rewind SESSION TURN
+```
+
+Use `--reason TEXT` to record an operator reason. The session must be unlocked,
+the turn must be earlier than the latest turn in the newest run segment, and
+the saved conversation must match its shadow-Git checkpoint. The command
+restores the files immediately, appends a `rewind` event without truncating the
+trace, rebuilds the state view, and pauses the session. Run the printed
+`yuj resume SESSION` command to continue with the exact messages saved at that
+turn. The configured per-session rewind limit still applies.
+
+Enable this capability in a settings overlay before the session starts:
+
+```toml
+[loop]
+rewind_enabled = true
+rewind_max_per_session = 1
+
+[tools]
+file_checkpoints_enabled = true
+```
+
+Without a rewind, resume continues to use the ordinary mechanical summary
+described below.
+
 Resume the session that Yuj selects:
 
 ```bash
@@ -419,7 +451,7 @@ Yuj keeps the files already changed in the target repository. It starts a new
 model context with the original task and a short summary built from the most
 recent ended run segment in the trace.
 
-Yuj does not restore the full prior conversation. If an interrupt leaves no
+Ordinary resume does not restore the full prior conversation. If an interrupt leaves no
 end event, the summary may be absent. The new context then starts from the
 original task and the current files.
 

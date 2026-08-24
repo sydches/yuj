@@ -118,9 +118,18 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "rewind",
         frozenset({
             "session_number", "turn_number", "from_turn", "to_turn",
-            "report_chars",
         }),
-        frozenset({"checkpoint_message_count", "goal", "report"}),
+        frozenset({
+            "reason", "commit", "rewind_count", "rewind_id", "delivery",
+            "report_chars", "checkpoint_message_count", "goal", "report",
+        }),
+    ),
+    TraceEventSpec(
+        "rewind_resume",
+        frozenset({
+            "session_number", "rewind_id", "target_session_number",
+            "to_turn", "commit",
+        }),
     ),
     TraceEventSpec(
         "tool_start",
@@ -267,8 +276,20 @@ def _validate_event(event_type: str, fields_keys) -> None:
     if event_type not in KNOWN_TRACE_EVENT_TYPES:
         log.warning("trace: unknown event_type %r — emitted with reduced validation", event_type)
         return
+    field_names = set(fields_keys)
     required = TRACE_EVENT_REQUIRED_FIELDS.get(event_type, frozenset())
-    missing = required - set(fields_keys)
+    if event_type == "rewind":
+        workspace_fields = frozenset({
+            "reason", "commit", "rewind_count", "rewind_id", "delivery",
+        })
+        report_fields = frozenset({"report_chars"})
+        if field_names & workspace_fields:
+            required = required | workspace_fields
+        elif field_names & frozenset({
+            "report_chars", "checkpoint_message_count", "goal", "report",
+        }):
+            required = required | report_fields
+    missing = required - field_names
     if missing:
         log.warning("trace: %s event missing required fields: %s",
                     event_type, sorted(missing))
