@@ -59,7 +59,7 @@ from .tool_validation import ToolSchemaSet
 from .tool_policy import PermissionPolicy
 from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
-from .state_writer import write_state_from_events, write_state_from_trace
+from .state_writer import active_events, write_state_from_events, write_state_from_trace
 from .tools import (
     ToolRegistry, _bash_readable_paths, _bash_unreadable_paths,
     admit_tool_output,
@@ -794,7 +794,7 @@ class Session:
         self._stale_guard = StaleFileGuard.from_trace(
             cwd=self.cwd,
             mode=getattr(cfg, "tools_stale_guard_mode", "warn"),
-            events=self._trace_events,
+            events=active_events(self._trace_events),
             event_sink=_stale_guard_event_sink,
         )
 

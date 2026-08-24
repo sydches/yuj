@@ -412,6 +412,7 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
             trace_path=trace_path,
         )
         _record_turn(session, checkpoint_store, workspace, 0, "turn zero\n")
+        session._stale_guard.observe_read("value.txt")
         _record_turn(
             session,
             checkpoint_store,
@@ -420,6 +421,7 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
             "turn one\n",
             create_later_file=True,
         )
+        session._stale_guard.observe_mutation("value.txt", source="write")
         session._emit(
             "rewind",
             session_number=1,
@@ -475,11 +477,13 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
             session_number=2,
         )
         restored = apply_pending_rewind_resume(resumed)
+        assert json.loads(trace_path.read_text().splitlines()[-1])["event"] == "rewind_resume"
+        stale_decision = resumed._stale_guard.check_edit("value.txt")
     assert restored is not None
     assert resumed.context.get_messages() == expected_messages
     assert (workspace / "value.txt").read_text() == "turn zero\n"
     assert load_pending_rewind(snapshot_root)["applied_session_number"] == 2
-    assert json.loads(trace_path.read_text().splitlines()[-1])["event"] == "rewind_resume"
+    assert stale_decision.reason == "fresh"
 
 
 def test_config_and_guardrail_rewind_surface(tmp_path):
