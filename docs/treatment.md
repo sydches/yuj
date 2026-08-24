@@ -9,8 +9,8 @@ nav_order: 10
 Yuj calls its default group of long-task and recovery settings the treatment
 base. The `--treatment` option selects this base.
 
-Activate the Yuj virtual environment before you run a command on this page.
-Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
+Activate the environment where Yuj is installed before you run a command on
+this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Use the default base
 

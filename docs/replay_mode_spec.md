@@ -249,12 +249,13 @@ result, it does not restore source values set with `--system-prompt`, `--port`,
 `--require-intent`, `--prompt-addendum`, `--variant-name`, or `--tool-desc`.
 Do not claim config parity when the source run used one of these values.
 
-The loader also does not generally restore the source task prompt or resume inputs. The
-new replay command can supply different `--prompt-text`, `--prompt-file`,
+The loader normally does not restore the source task prompt or resume inputs.
+The new replay command can supply different `--prompt-text`, `--prompt-file`,
 `--resume`, or `--resume-message-file` values. These values can change the
 model input. Supply the same input manually, and record what you supplied.
-The narrow clarification path is an exception: it takes the exact request
-messages after the recorded answer from the next transcript segment.
+
+A recorded clarification is one narrow exception. Replay takes the exact
+request messages after the recorded answer from the next transcript segment.
 
 Use `--replay-extra-config PATH` only for measurement code that does not change
 what the model sees. Repeat the option to add more than one file. A

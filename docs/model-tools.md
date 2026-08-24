@@ -170,6 +170,8 @@ The operator answer is information, not authorization. It cannot approve a
 tool, satisfy an approval request, change a permission rule, or bypass the
 sandbox. The next resume sends the recorded answer once. Measurement mode
 never sends the `ask_user` schema and never enters `input_required`.
+Read [Answer a clarification question](using-yuj.html#answer-a-clarification-question)
+for the operator commands.
 
 ### Code mode
 

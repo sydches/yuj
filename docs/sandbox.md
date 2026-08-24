@@ -12,8 +12,8 @@ Docker or Podman container for each command.
 
 You do not need Docker for normal use.
 
-Activate the Yuj virtual environment before you run a command on this page.
-Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
+Activate the environment where Yuj is installed before you run a command on
+this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Choose a mode
 

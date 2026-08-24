@@ -27,10 +27,12 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 | You want to | Read |
 | --- | --- |
 | Find an installed `yuj` command or option | [CLI reference](using-yuj.html) |
+| Sign in to Claude or Codex | [Getting started](getting-started.html#use-a-claude-or-codex-credential) |
+| Answer a model clarification question | [CLI reference](using-yuj.html#answer-a-clarification-question) |
 | See what tools the model can use | [Model tools](model-tools.html) |
 | Start a local model server | [Run a local model](serving_overlay.html) |
 | Understand the default and plain settings | [Treatment](treatment.html) |
-| Change a model, time limit, or context mode | [Configuration](configuration.html) |
+| Inspect or change a model, time limit, or context mode | [Configuration](configuration.html) |
 | Add a model, profile, rule, or named agent | [Extend Yuj with TOML files](extending-yuj.html) |
 | Add trusted Python at the compaction boundary | [Compaction hooks](compaction.html) |
 | Control shell access | [Sandbox](sandbox.html) |
@@ -41,7 +43,8 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 
 ## First commands
 
-Install Yuj and connect a model first.
+Install Yuj and connect a model first. Activate the environment where you
+installed Yuj, or replace `yuj` below with that environment's `bin/yuj` path.
 
 Move to the Git repository that the model may edit:
 
@@ -49,23 +52,22 @@ Move to the Git repository that the model may edit:
 cd /path/to/your-project
 ```
 
-Replace `/path/to/yuj` with the path to your Yuj clone:
-
 ```bash
-/path/to/yuj/.venv/bin/yuj doctor
-/path/to/yuj/.venv/bin/yuj smoke
-/path/to/yuj/.venv/bin/yuj code "Fix the failing tests"
-/path/to/yuj/.venv/bin/yuj status
-/path/to/yuj/.venv/bin/yuj show
+yuj config
+yuj doctor
+yuj smoke
+yuj code "Fix the failing tests"
+yuj status
+yuj show
 ```
 
-Use `/path/to/yuj/.venv/bin/yuj approve` or
-`/path/to/yuj/.venv/bin/yuj reject` when a tool action needs your choice.
-Use `/path/to/yuj/.venv/bin/yuj resume` after you approve, reject, or stop a
+Use `yuj approve` or `yuj reject` when a tool action needs your choice. If the
+model asks a clarification question, run the exact `yuj answer` command shown
+by `yuj status`. Run `yuj resume` after you approve, reject, answer, or stop a
 session.
 
-The [CLI reference](using-yuj.html) also covers `setup`, `models`, `run`,
-`current`, `sessions`, every option, session selection, and exit statuses.
+The [CLI reference](using-yuj.html) covers every command and option, including
+provider sign-in, session selection, and exit statuses.
 
 ## What the study compares
 

@@ -13,8 +13,8 @@ This page explains settings files and their order. Read
 [Extend Yuj with TOML files](extending-yuj.html) when you want to add a model
 runtime, model profile, test runner, or tool rule.
 
-Activate the Yuj virtual environment before you run a command on this page.
-Otherwise, replace `yuj` with `/path/to/yuj/.venv/bin/yuj`.
+Activate the environment where Yuj is installed before you run a command on
+this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Save model settings
 
@@ -101,12 +101,15 @@ A later value replaces an earlier value for the same field.
 This order keeps local keys out of Git. It also lets you change one setting
 without copying the full main file.
 
-The main runtime root has its own deterministic precedence. `YUJ_CONFIG`
-names an exact main file; its parent must contain any relative profiles,
-agents, bases, and other runtime resources that file references. Without that
-variable, an editable/source checkout wins. A non-editable install uses its
-immutable package resource bundle. Yuj does not copy package defaults into a
-task or user directory.
+Yuj chooses its main runtime root in this order:
+
+1. If `YUJ_CONFIG` is set, use that exact main file and its parent directory.
+   Keep every relative profile, agent, base, and runtime file that it names
+   under that directory.
+2. Otherwise, use an editable source checkout when one is active.
+3. Otherwise, use the installed package's immutable runtime bundle.
+
+Yuj does not copy package defaults into a task or user directory.
 
 `YUJ_CONFIG_LOCAL` names an exact machine-local file. Otherwise, a
 `YUJ_CONFIG` tree and a source checkout use `config.local.toml` beside the
@@ -188,6 +191,7 @@ overlay and the limits that matter for that choice.
 
 | You want to | Read |
 | --- | --- |
+| Check which settings and source layers will apply | [Inspect the resolved settings](#inspect-the-resolved-settings) |
 | Choose a service or model | [Save model settings](#save-model-settings) |
 | Require a plan, correct a known response pattern, or choose an edit format | [Shape the model's work](#shape-the-models-work) |
 | Select a sandbox, control command variables, or hide paths | [Control the command boundary](#control-the-command-boundary) |

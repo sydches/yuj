@@ -40,7 +40,7 @@ curl -fsS http://localhost:8080/v1/models
 Save that exact ID:
 
 ```bash
-.venv/bin/yuj setup --provider local --model YOUR_SERVED_MODEL_ID
+yuj setup --provider local --model YOUR_SERVED_MODEL_ID
 ```
 
 Add `--base-url` when the server does not use

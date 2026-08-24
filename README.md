@@ -49,12 +49,10 @@ check. A built-package user can install `pytest` separately before using that
 command. `command -v bwrap` shows the path to `bwrap`. `yuj --help` shows the
 Yuj help text.
 
-The package contains the checked-in defaults and bases, treatment data,
-profiles and inherited profile files, named-agent descriptors and prompts,
-tool schemas and descriptions, language and shell rules, and the security
-pattern registry. It does not contain paper, study, benchmark, session, trace,
-or private campaign material. See [Getting started](docs/getting-started.md)
-for resource precedence and writable settings locations.
+The package contains the public runtime files that Yuj needs. It does not
+contain paper, study, benchmark, session, trace, or private campaign material.
+See [Getting started](docs/getting-started.md) for the complete package
+boundary and the writable settings locations.
 
 ## Connect a model
 
@@ -125,6 +123,8 @@ continue through more than one run segment.
 - The model can read files, change code, run commands, and run tests.
 - Yuj normally runs model shell commands through Linux `bubblewrap`.
 - You can inspect, pause, approve, reject, and resume a session.
+- The model can pause once for a missing fact. You can record one answer and
+  resume the same session.
 - Yuj can shorten old command output when the model nears its input limit.
 - Yuj can suggest a next step when the model repeats a known failed step.
 - Yuj can ask an isolated, read-only model to review a completed turn.
@@ -160,6 +160,7 @@ own repository.
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj show` | Show settings and recent session activity. |
 | `yuj resume` | Continue a paused session. |
+| `yuj answer SESSION REQUEST_ID "ANSWER"` | Record one answer for a pending clarification. |
 | `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |
 | `yuj approve` | Allow a tool action that needs approval. |
 | `yuj reject` | Refuse a tool action that needs approval. |
@@ -198,7 +199,7 @@ Read the [treatment guide](docs/treatment.md) for the runtime rules. Read the
 | [Model tools](docs/model-tools.md) | The tools that Yuj can give the model and each tool's inputs |
 | [Run a local model](docs/serving_overlay.md) | Start `llama-server` or vLLM from a released runtime file |
 | [Treatment](docs/treatment.md) | The default base, the plain base, and the paper boundary |
-| [Configuration](docs/configuration.md) | Setting order, model services, context modes, and environment variables |
+| [Configuration](docs/configuration.md) | Inspect resolved settings; configure model services, context modes, and environment variables |
 | [Extend Yuj with TOML files](docs/extending-yuj.md) | Model runtime files, profiles, test runners, tool rules, and their code limits |
 | [Compaction hooks](docs/compaction.md) | Trusted Python hook input, return, validation, and trace contract |
 | [Sandbox](docs/sandbox.md) | `bwrap`, container modes, path access, and how to turn the sandbox off |

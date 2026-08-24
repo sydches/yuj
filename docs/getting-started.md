@@ -70,11 +70,10 @@ path until you move to the repository that the model will edit.
 
 ### What the installed package carries
 
-The wheel carries one immutable runtime bundle containing `config.toml`, the
-treatment and plain bases, treatment dictionaries and overlays, profiles and
-their inheritance/rules/templates, named-agent definitions and prompts, tool
-schemas and descriptions, and the security pattern registry. Language, shell,
-and tool rule TOML stays beside the package code that loads it.
+The wheel carries one immutable runtime bundle. It includes `config.toml`, the
+treatment and plain bases, treatment data, model profiles, named-agent files,
+tool schemas and descriptions, language and shell rules, and the security
+pattern registry.
 
 Paper and study files, benchmarks, CI/tests, sessions, traces, caches, local
 settings, and private campaign or release material are not in the wheel. The
@@ -109,18 +108,21 @@ yuj code --dry-run --cwd /path/to/target \
 ```
 
 `config` reports the runtime-resource origin and validates the shipped
-resources. `code --dry-run` performs ordinary local startup through profile,
-agent, tool, prompt, project-file, language-rule, security, and sandbox
-validation, then stops at the model-network boundary. It creates no coding
-session or run artifact and prints `Model network: not contacted`.
+resources. `code --dry-run` follows the ordinary local startup path. It
+validates the selected profile, tool surface, sandbox, and each enabled agent,
+project-file, skill, injection, stream-rule, language-rule, and security
+feature. It then stops before model discovery. It creates no coding session or
+run artifact and prints `Model network: not contacted`.
 
 Read the [sandbox guide](sandbox.html) if another container already limits
 shell access. The guide also explains how to run without `bwrap`.
 
 ## Connect an online model service
 
-Yuj has settings for OpenAI, Anthropic, OpenRouter, and Z.AI. Keep the API key
-in an environment variable.
+### Use an ordinary API key
+
+Yuj has ordinary API-key settings for OpenAI, Anthropic, OpenRouter, and Z.AI.
+Keep the key in an environment variable.
 
 For OpenAI, run:
 
@@ -151,6 +153,39 @@ Use `--api-key-env` when you can. Yuj then saves only
 
 The `--api-key` option saves the key itself in that local file. Git ignores
 the file, but an environment variable gives the key less exposure.
+
+### Use a Claude or Codex credential
+
+Use `claude` or `codex` when you want Yuj to keep one provider-scoped
+credential outside `config.local.toml`. Both choices accept an API key. They
+also support browser sign-in for an eligible Claude or ChatGPT subscription.
+
+For subscription sign-in, run the command for your provider:
+
+```bash
+yuj setup --provider claude --auth subscription --model YOUR_MODEL_ID
+yuj setup --provider codex --auth subscription --model YOUR_MODEL_ID
+```
+
+For an API key, name its environment variable:
+
+```bash
+yuj setup --provider claude --auth api-key --model YOUR_MODEL_ID \
+  --api-key-env ANTHROPIC_API_KEY
+yuj setup --provider codex --auth api-key --model YOUR_MODEL_ID \
+  --api-key-env OPENAI_API_KEY
+```
+
+Yuj stores the selected credential under `$XDG_CONFIG_HOME/yuj/auth`, or
+`~/.config/yuj/auth` when `XDG_CONFIG_HOME` is unset. It keeps credential
+values out of the target repository, model messages, session records, traces,
+logs, and model-command environment.
+
+Run `yuj auth-status` to show the active provider and authentication method
+without showing a secret. Use `yuj login` to replace a credential without
+changing model settings. Use `yuj logout` to remove one. Read the
+[CLI reference](using-yuj.html#yuj-login-yuj-auth-status-and-yuj-logout) for
+those commands and their failure behavior.
 
 ## Connect a local model
 
@@ -206,7 +241,7 @@ yuj smoke
 
 `smoke` creates a throwaway directory with one broken function. It asks the
 model to fix the function. Yuj then checks the code change, runs one test, and
-checks that no approval is waiting.
+checks that neither an approval nor a clarification remains unresolved.
 
 Yuj prints the directory path and keeps the directory after the check. Do not
 give `--root` a directory that contains work you need.
@@ -242,8 +277,8 @@ compare these settings.
 
 ## Continue
 
-Read the [CLI reference](using-yuj.html) to inspect, pause, approve, reject, or
-resume a session.
+Read the [CLI reference](using-yuj.html) to inspect, pause, answer, approve,
+reject, or resume a session.
 
 Read [Saved files](harness_artifacts.html) to learn what Yuj records and when
 another tool may use each file.

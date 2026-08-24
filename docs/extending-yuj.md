@@ -168,11 +168,11 @@ The public data files have separate jobs.
 
 Do not mix these jobs in one file.
 
-A wheel maps the runtime-owned logical paths in this table into its immutable
-package resource bundle; language, shell, and tool TOML remains beside package
-code. Do not edit an installed bundle in `site-packages`. Use an external
-settings overlay for per-run changes, or use an editable checkout when adding
-or contributing profiles, agents, or rules.
+An installed wheel keeps these runtime files in its immutable package bundle.
+Language, shell, and tool TOML files remain beside the package code that loads
+them.
+Do not edit `site-packages`. Apply an external `--config` file for a run, or
+use an editable checkout when you add or contribute a profile, agent, or rule.
 
 ## Add another model
 

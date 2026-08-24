@@ -110,11 +110,11 @@ repository without contacting the model service:
 yuj code --dry-run "check local startup"
 ```
 
-This runs the same local preflight that an ordinary start completes before
-model discovery. It loads settings and all shipped resources, resolves the
-profile, tools, agents, task-repository instructions, skills, injections,
-stream rules, language rules, security registry, and sandbox state. It writes
-no session or run artifact and exits after printing
+This follows the same local startup path as an ordinary session. It loads the
+settings and shipped resources. It validates the selected profile, tool
+surface, sandbox, and each enabled agent, project-file, skill, injection,
+stream-rule, language-rule, and security feature. It writes no session or run
+artifact. It exits before model discovery and prints
 `Model network: not contacted`.
 
 ### Model tools
@@ -304,14 +304,20 @@ yuj login --provider claude --auth subscription
 yuj login --provider codex --auth api-key --api-key-env OPENAI_API_KEY
 ```
 
-Run `yuj auth-status` to print only the active provider, authentication
-method, and whether its credential record exists. Run one of these commands
-to remove exactly one provider credential:
+`login` uses `subscription` when you omit `--auth`. Run `yuj auth-status` to
+print only the active provider, authentication method, and whether its
+credential record exists. The command returns status `1` when no credential is
+selected or the selected record is invalid.
+
+Name the provider when you remove a credential:
 
 ```bash
 yuj logout --provider claude
 yuj logout --provider codex
 ```
+
+Omit `--provider` to remove the active provider's credential. `logout` never
+removes the other provider's file.
 
 Subscription credentials refresh when they approach expiration. Missing,
 malformed, expired without a usable refresh token, revoked, ineligible, and
@@ -523,6 +529,33 @@ saved sessions.
 | `completed` | The model finished successfully or declared the task done. |
 | `error` | Yuj recorded an error as the final status. |
 
+## Answer a clarification question
+
+When the model needs one missing fact, it can pause the run segment with one
+exact question. Inspect the session:
+
+```bash
+yuj status SESSION
+yuj show SESSION
+```
+
+Both commands print the question, request ID, and exact next command. Record
+one answer with the displayed IDs:
+
+```bash
+yuj answer SESSION REQUEST_ID 'ANSWER'
+```
+
+Yuj records the `ANSWER` argument exactly. Quote it when it contains spaces or
+shell characters. There is no default or interactive prompt. Yuj refuses an
+empty answer, a wrong session or request ID, a second answer, and an answer
+when no question is pending. A refusal leaves the clarification records and
+trace unchanged.
+
+The answer supplies information only. It does not approve any tool action.
+If an approval request is also pending, use `yuj approve` or `yuj reject`
+separately.
+
 ## Resume a session
 
 Resume the session that Yuj selects:
@@ -597,39 +630,6 @@ number of successful rewinds.
 A rewind marks any pending or answered-but-unconsumed clarification as
 rewound. Its durable records remain available for audit, but the answer cannot
 enter the conversation after the rewind.
-
-## Answer a clarification question
-
-When the model needs one missing fact, it can pause the run segment with one
-exact question. Inspect the session:
-
-```bash
-yuj status SESSION
-yuj show SESSION
-```
-
-Both commands print the question, request ID, and exact next command. Record
-one answer with the displayed IDs:
-
-```bash
-yuj answer SESSION REQUEST_ID 'ANSWER'
-```
-
-Yuj records the `ANSWER` argument exactly. Quote it when it contains spaces or
-shell characters. There is no default or interactive prompt. Yuj refuses an
-empty answer, a wrong session or request ID, a second answer, and an answer
-when no question is pending. A refusal leaves the clarification records and
-trace unchanged.
-
-Resume after the answer:
-
-```bash
-yuj resume SESSION
-```
-
-The answer supplies information only. It does not approve any tool action.
-If an approval request is also pending, use `yuj approve` or `yuj reject`
-separately before resume.
 
 ## Remove an isolated session worktree
 
