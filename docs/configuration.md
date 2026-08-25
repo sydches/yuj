@@ -1063,6 +1063,36 @@ smaller native-tool cap.
 
 ## Route model requests
 
+### Declare image input support
+
+Assistant image input fails closed. A model profile inherits this default:
+
+```text
+[model]
+supports_image_inputs = false
+```
+
+Yuj recognizes image input for directly hosted OpenAI general-purpose
+`gpt-4o`, `gpt-4.1`, and GPT-5 models, full `o1` and `o3` models, and
+`o4-mini`, including their dated snapshots. It does not infer support for
+text-only or specialized IDs that merely share one of those prefixes, such as
+`o1-mini`, `o3-mini`, or GPT-4o audio, realtime, search, and transcription
+models. Yuj also recognizes directly hosted Anthropic IDs in the Claude 3 or
+Claude 4 families. It treats other providers and model IDs as unsupported
+unless the selected model profile explicitly sets
+`supports_image_inputs = true`.
+
+Use the explicit profile declaration only after testing that exact model and
+OpenAI-compatible endpoint. The declaration applies to request content, not
+authentication: API-key and subscription access through the same transport
+receive the same image blocks. A false or missing declaration stops an image
+task before model work. It does not change text-only requests.
+
+An image-bearing session stays on the selected primary model target. It does
+not enter a configured model fallback chain, because a fallback must not drop
+the saved visual evidence or send it to an unchecked transport. Text-only
+sessions keep the configured fallback behavior.
+
 ### Configure auxiliary model roles
 
 Named roles let Yuj send side requests to another model without changing the

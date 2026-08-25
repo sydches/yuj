@@ -181,6 +181,32 @@ yuj code --cwd /path/to/project "Update the parser and its tests."
 
 `--cwd` also sets the repository that session-selection commands prefer.
 
+### Attach local images
+
+Attach one or more images to the task text with a repeated `--image` option:
+
+```bash
+yuj code --image ./failure.png --image ./expected.webp \
+  "Compare these screens and fix the rendering error."
+```
+
+Yuj accepts PNG, JPEG, GIF, and WebP files. It detects the media type from the
+file bytes, not the file name. Each path must name a readable regular file;
+the selected file itself cannot be a symbolic link. The limits are 20 images,
+5 MiB for one image, 20 MiB across the coding session, and 8,000 pixels on
+either dimension.
+
+The selected provider and model must declare image support. Yuj stops before
+the coding session or model request when the image, limit, provider, or model
+check fails. Read [Image-capable models](configuration.html#declare-image-input-support)
+for the capability rule.
+
+Yuj copies the validated bytes into the session directory before model work.
+Every request uses that session-owned copy. Changing or removing the source
+path later does not change a resume or replay. `status` and `show` print the
+saved name, detected media type, byte count, dimensions, and SHA-256 digest.
+They do not print the source path or image bytes.
+
 ### Options for `code` and `run`
 
 Yuj calls the starting group of settings a base.
@@ -191,6 +217,7 @@ Yuj calls the starting group of settings a base.
 | `--cwd PATH` | Edit this repository. The current directory is the default. |
 | `--prompt-text TEXT` | Use this text as the task. |
 | `--prompt-file PATH` | Read the task from this file. |
+| `--image PATH` | Attach this local image. Repeat for more images. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |
@@ -468,8 +495,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | Command | What it shows |
 | --- | --- |
 | `yuj current` | The active or newest session for the current repository. If that repository has no session, the newest saved session. |
-| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, attachment evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Up to `N` recent sessions from all repositories; the default is 20 |
 
@@ -631,6 +658,18 @@ Resume a named session:
 yuj resume SESSION
 ```
 
+Attach new visual evidence to a resume with new follow-up text:
+
+```bash
+yuj resume SESSION --prompt-text "This screen shows the remaining error." \
+  --image ./remaining-error.png
+```
+
+Use `--prompt-file PATH` instead of `--prompt-text TEXT` for a longer
+follow-up. The resume command requires images and exactly one follow-up text
+source together. Repeat `--image` for more images. It validates and saves the
+new segment before the first resumed model request.
+
 The command accepts a full ID, short ID, unique ID start, `latest`, or
 `last`.
 
@@ -648,7 +687,9 @@ Yuj moves the preceding model transcript to the next
 `transcript.pre_seg_N.log` file. `checkpoint.json` and `metrics.json` describe
 only the newest run segment because a resume replaces them.
 
-`resume` does not accept new model, context, or settings options.
+`resume` does not accept new model, context, or settings options. Its only new
+task input is the paired follow-up text and image form above. Ordinary resume
+without those options keeps its existing behavior.
 
 `resume` refuses a session whose clarification still lacks an answer. When an
 answer is ready, resume adds the exact answer to one model request and records
@@ -822,8 +863,9 @@ checkout it is `<checkout>/.llm_assist`. Set `HARNESS_ASSIST_HOME` to use an
 exact alternative.
 
 The session directory can contain the task text, settings, trace, segmented
-model messages, `.solver/state.json`, clarification evidence, approvals,
-final status, metrics, and context-saving records.
+model messages, session-owned image attachments and their digest manifest,
+`.solver/state.json`, clarification evidence, approvals, final status,
+metrics, and context-saving records.
 
 Most Yuj records stay in the session directory. Large kept tool output can
 also appear under `.tool_output/` in the target repository.

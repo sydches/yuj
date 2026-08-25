@@ -34,8 +34,9 @@ from ..llm_solver.harness.workspace_checkpoints import (
     WorkspaceCheckpointStore,
     default_shadow_dir,
 )
-from ..llm_solver.models import resolve_model
+from ..llm_solver.models import model_supports_image_inputs, resolve_model
 from ..llm_solver.server import LlamaClient, load_profile
+from ..llm_solver.server.types import ImageInput
 from ._anthropic import AnthropicClient
 from ._auth import (
     AccountIneligibleError,
@@ -48,6 +49,7 @@ from ._auth import (
     validate_auth_endpoint,
 )
 from ._codex import CodexSubscriptionClient
+from ._images import ImageInputError, load_session_images
 from .store import SessionRecord, SessionStore
 
 
@@ -249,7 +251,13 @@ def prepare_smoke_repo(root: Path | None = None) -> Path:
     return root
 
 
-def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> tuple[bool, str | None]:
+def run_session(
+    store: SessionStore,
+    record: SessionRecord,
+    *,
+    resume: bool,
+    resume_prompt_text: str | None = None,
+) -> tuple[bool, str | None]:
     """Run exactly one harness outer session for an assistant record."""
     artifact_dir = record.artifact_path
     clarification = clarification_state(artifact_dir)
@@ -276,6 +284,12 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
         auth_store.require_outside_target(Path(record.cwd))
     cfg = _protect_auth_environment(cfg, auth_binding, store=auth_store)
     profile = _load_profile(cfg)
+    stored_images = load_session_images(artifact_dir)
+    if stored_images:
+        _require_image_capability(cfg, profile, auth_binding=auth_binding)
+        # Image evidence belongs to the selected primary transport. Do not
+        # let a fallback silently drop it or send it to an unchecked target.
+        cfg = replace(cfg, model_fallback_chain={})
     client = _make_client(
         cfg,
         profile,
@@ -284,6 +298,11 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
     )
     if hasattr(client, "set_session_id"):
         client.set_session_id(record.session_id)
+    if stored_images:
+        client.set_image_inputs([
+            ImageInput(media_type=image.media_type, data=image.data)
+            for image in stored_images
+        ])
     cfg = _apply_effective_context(cfg, client)
     client.cfg = cfg
     build_model_role_runtime(
@@ -321,6 +340,12 @@ def run_session(store: SessionStore, record: SessionRecord, *, resume: bool) -> 
                 + "\n\n"
                 + f"Operator note: the previously blocked action was rejected ({reason}). "
                 + f"Do not re-issue it unchanged: {args_summary}"
+            )
+        if resume_prompt_text is not None:
+            prompt_text = (
+                prompt_text.rstrip()
+                + "\n\nOperator follow-up:\n"
+                + resume_prompt_text
             )
 
     success = solve_task(
@@ -1234,6 +1259,65 @@ def _is_remote_transport(config_overrides: dict | None) -> bool:
     if provider == "anthropic":
         return True
     return "base_url" in config_overrides
+
+
+def validate_image_capability(
+    config_paths: list[Path],
+    *,
+    model: str,
+    config_overrides: dict | None = None,
+    auth_binding: AuthBinding | None = None,
+) -> None:
+    """Fail closed unless the selected transport and model accept images."""
+    overrides = {
+        "runtime_mode": "assistant",
+        "max_sessions": 1,
+        "model": model,
+        **(config_overrides or {}),
+    }
+    cfg = load_config(user_config=config_paths, overrides=overrides)
+    require_runtime_mode(cfg, expected="assistant", caller="scripts.llm_assist")
+    _require_image_capability(
+        cfg,
+        _load_profile(cfg),
+        auth_binding=auth_binding,
+    )
+
+
+def _require_image_capability(
+    cfg,
+    profile,
+    *,
+    auth_binding: AuthBinding | None,
+) -> None:
+    provider = _image_capability_provider(cfg, auth_binding)
+    profile_support = bool(
+        getattr(profile, "supports_image_inputs", False)
+    )
+    if model_supports_image_inputs(
+        cfg.model,
+        provider=provider,
+        profile_supports_image_inputs=profile_support,
+    ):
+        return
+    raise ImageInputError(
+        f"model {cfg.model!r} on provider {provider!r} "
+        "does not declare image input support"
+    )
+
+
+def _image_capability_provider(
+    cfg,
+    auth_binding: AuthBinding | None,
+) -> str:
+    if auth_binding is not None:
+        return "anthropic" if auth_binding.provider == "claude" else "openai"
+    if getattr(cfg, "provider", "") == "anthropic":
+        return "anthropic"
+    hostname = (urlparse(str(getattr(cfg, "base_url", ""))).hostname or "").lower()
+    if hostname == "api.openai.com":
+        return "openai"
+    return "openai-compatible"
 
 
 def _load_profile(cfg):

@@ -268,7 +268,7 @@ def _to_anthropic_payload(payload: dict, *, subscription: bool = False) -> dict:
             _append_anthropic_message(
                 messages,
                 "user",
-                [{"type": "text", "text": str(content or "")}],
+                _to_anthropic_user_content(content),
             )
 
     flush_tool_results()
@@ -316,6 +316,46 @@ def _to_anthropic_payload(payload: dict, *, subscription: bool = False) -> dict:
             for tool in tools
         ]
     return out
+
+
+def _to_anthropic_user_content(content: object) -> list[dict]:
+    if not isinstance(content, list):
+        return [{"type": "text", "text": str(content or "")}]
+    blocks: list[dict] = []
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("user content part must be an object")
+        part_type = part.get("type")
+        if part_type == "text":
+            blocks.append({"type": "text", "text": str(part.get("text") or "")})
+            continue
+        if part_type != "image_url":
+            raise ValueError(f"unsupported user content part: {part_type!r}")
+        image_url = part.get("image_url")
+        url = image_url.get("url") if isinstance(image_url, dict) else image_url
+        if not isinstance(url, str) or not url.startswith("data:"):
+            raise ValueError("image content requires a base64 data URL")
+        header, separator, encoded = url.partition(",")
+        media_type, marker, encoding = header[5:].partition(";")
+        if (
+            not separator
+            or marker != ";"
+            or encoding != "base64"
+            or media_type not in {
+                "image/png", "image/jpeg", "image/gif", "image/webp"
+            }
+            or not encoded
+        ):
+            raise ValueError("image content has an invalid base64 data URL")
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": encoded,
+            },
+        })
+    return blocks
 
 
 def _append_anthropic_message(
@@ -469,29 +509,38 @@ class AnthropicClient(LlamaClient):
             headers["X-Api-Key"] = credential.token
         return headers
 
-    def _call_api(self, payload: dict):
+    def _call_api(
+        self, payload: dict, *, record_transcript: bool = True
+    ):
         # Mirrors LlamaClient._call_api's transcript contract, minus the
         # streaming branch — the Messages adapter is request/response only.
-        self._transcript_call_n += 1
-        n = self._transcript_call_n
-        self._write_transcript(
-            f"turn {n:03d} input",
-            json.dumps(payload, default=str),
-        )
+        n = 0
+        if record_transcript:
+            self._transcript_call_n += 1
+            n = self._transcript_call_n
+            self._write_transcript(
+                f"turn {n:03d} input",
+                json.dumps(payload, default=str),
+            )
         try:
             resp = self._call_anthropic_api(payload)
         except ProviderAuthError as e:
             self._last_provider_auth_error = e
-            self._write_transcript(
-                f"turn {n:03d} output", f"{type(e).__name__}: {e}"
-            )
+            if record_transcript:
+                self._write_transcript(
+                    f"turn {n:03d} output", f"{type(e).__name__}: {e}"
+                )
             raise
         except Exception as e:
-            self._write_transcript(
-                f"turn {n:03d} output", f"{type(e).__name__}: {e}"
-            )
+            if record_transcript:
+                self._write_transcript(
+                    f"turn {n:03d} output", f"{type(e).__name__}: {e}"
+                )
             raise
-        self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
+        if record_transcript:
+            self._write_transcript(
+                f"turn {n:03d} output", resp.model_dump_json()
+            )
         return resp
 
     def _call_anthropic_api(self, payload: dict) -> _CompatResponse:

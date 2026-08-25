@@ -41,9 +41,14 @@ def _to_responses_payload(payload: dict, *, session_id: str) -> dict:
 
         text_type = "input_text" if role == "user" else "output_text"
         if content is not None:
+            wire_content = (
+                _to_responses_user_content(content)
+                if role == "user"
+                else [{"type": text_type, "text": str(content)}]
+            )
             input_items.append({
                 "role": role,
-                "content": [{"type": text_type, "text": str(content)}],
+                "content": wire_content,
             })
         if role == "assistant":
             for call in message.get("tool_calls") or []:
@@ -73,6 +78,30 @@ def _to_responses_payload(payload: dict, *, session_id: str) -> dict:
     if session_id:
         request["prompt_cache_key"] = session_id
     return request
+
+
+def _to_responses_user_content(content: object) -> list[dict]:
+    if not isinstance(content, list):
+        return [{"type": "input_text", "text": str(content)}]
+    blocks: list[dict] = []
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("user content part must be an object")
+        part_type = part.get("type")
+        if part_type == "text":
+            blocks.append({
+                "type": "input_text",
+                "text": str(part.get("text") or ""),
+            })
+            continue
+        if part_type != "image_url":
+            raise ValueError(f"unsupported user content part: {part_type!r}")
+        image_url = part.get("image_url")
+        url = image_url.get("url") if isinstance(image_url, dict) else image_url
+        if not isinstance(url, str) or not url.startswith("data:image/"):
+            raise ValueError("image content requires a data URL")
+        blocks.append({"type": "input_image", "image_url": url})
+    return blocks
 
 
 def _to_responses_tool(tool: dict) -> dict:

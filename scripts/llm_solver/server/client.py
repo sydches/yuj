@@ -1,6 +1,7 @@
 """LlamaClient — OpenAI SDK wrapper with profile-based normalize/denormalize."""
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 from ._streaming import StreamRuleInterrupt, assemble_stream
 from . import request_controls
-from .types import SideRequestResult, ToolCall, TurnResult, Usage
+from .types import ImageInput, SideRequestResult, ToolCall, TurnResult, Usage
 
 
 def _streaming_enabled() -> bool:
@@ -93,6 +94,7 @@ class LlamaClient:
         # behavior while exposing SSE deltas to the owning harness layer.
         self._stream_observer = None
         self._last_call_streamed = False
+        self._image_inputs: tuple[ImageInput, ...] = ()
         _ = self.thinking_resolution
 
     @property
@@ -112,6 +114,48 @@ class LlamaClient:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session_id must be a non-empty string")
         self._session_id = session_id
+
+    def set_image_inputs(
+        self, images: list[ImageInput] | tuple[ImageInput, ...]
+    ) -> None:
+        """Bind validated images to assistant conversation requests."""
+        selected = tuple(images)
+        for image in selected:
+            if not isinstance(image, ImageInput):
+                raise TypeError("image inputs must be ImageInput values")
+        self._image_inputs = selected
+
+    def _messages_with_image_inputs(self, messages: list[dict]) -> list[dict]:
+        """Attach images to the latest text user turn, preserving its text."""
+        images = self._image_inputs
+        if not images:
+            return messages
+        selected_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+                and isinstance(messages[index].get("content"), str)
+            ),
+            None,
+        )
+        if selected_index is None:
+            raise ValueError("image inputs require a text user message")
+        wire_messages = list(messages)
+        selected_message = dict(wire_messages[selected_index])
+        content: list[dict] = []
+        for image in images:
+            encoded = base64.b64encode(image.data).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image.media_type};base64,{encoded}",
+                },
+            })
+        content.append({"type": "text", "text": selected_message["content"]})
+        selected_message["content"] = content
+        wire_messages[selected_index] = selected_message
+        return wire_messages
 
     def _attach_request_controls(
         self,
@@ -448,6 +492,7 @@ class LlamaClient:
             raise RuntimeError("profile request preparation requires a profile")
         log.debug("DENORM_IN messages=%d tools=%d", len(messages), len(tools))
         wire_messages = profile.denormalize_messages(messages)
+        wire_messages = self._messages_with_image_inputs(wire_messages)
         log.debug("DENORM_OUT messages=%d", len(wire_messages))
         request = {
             "model": self.cfg.model,
@@ -584,7 +629,7 @@ class LlamaClient:
 
         payload = self._attach_request_controls({
             "model": self.cfg.model,
-            "messages": messages,
+            "messages": self._messages_with_image_inputs(messages),
             "tools": tools,
             "tool_choice": "auto",
             "max_tokens": self.cfg.max_tokens,

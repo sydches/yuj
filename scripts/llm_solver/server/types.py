@@ -3,6 +3,14 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 
+@dataclass(frozen=True)
+class ImageInput:
+    """One validated raster image bound to an assistant request."""
+
+    media_type: str
+    data: bytes
+
+
 class ToolCall(NamedTuple):
     id: str
     name: str

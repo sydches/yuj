@@ -49,6 +49,8 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 | --- | --- |
 | `sessions.sqlite3` | Index of coding sessions, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. Credential IDs are internal and are not printed by session commands. |
 | `<session_id>/prompt.txt` | Original task text. |
+| `<session_id>/attachments.json` | Bounded attachment manifest. For each image it records the run segment, display name, detected media type, byte count, dimensions, SHA-256 digest, session-relative saved path, and the associated user-text digest and sizes. It stores no source path or image bytes. |
+| `<session_id>/attachments/segment-NNNN/image-NNNN.<ext>` | Exact validated image bytes copied from an explicit `code`, `run`, or `resume` input. Both numbers use four digits, starting at `0001`. These permission-restricted files are the source for model requests and replay-safe resumes; Yuj does not reopen the original path. |
 | `<session_id>/session.json` | Model, original target repository, provider and authentication method when pinned, context mode, starting config paths and their available SHA-256 hashes, and retained worktree path/branch/base commit when enabled. It never contains a credential value or credential ID. A later `provider.toml` for that coding session is not added to this file in the current code. |
 | `<session_id>/provider.toml` | Model-service, thinking-level, plan-mode, permission-preset, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
 | `<session_id>/.trace.jsonl` | Append-only event record across run segments, including one assistant-only `session_usage` fact for each newly ended run segment. |
@@ -73,6 +75,34 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 | `<session_id>/shell_interrupt.json` | Time and reason for the latest user interrupt. Resume clears it when the new run segment starts. |
 | `<session_id>/llm_hurdle_detector.jsonl` | Detector results when the selected treatment enables that file. |
 | `<session_id>/adaptive_control_ledger.jsonl` | Controller actions when the selected treatment enables that file. |
+
+### Image attachment evidence
+
+`attachments.json` uses schema `yuj.assistant-attachments`, version `1`. Its
+top-level `segments` list contains these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `segment_number` | Positive run-segment number. It is unique in the manifest. |
+| `user_text.sha256` | SHA-256 digest of the exact UTF-8 follow-up or task text. |
+| `user_text.utf8_bytes` | Byte count of that UTF-8 text. |
+| `user_text.chars` | Python character count of that text. |
+| `images` | Nonempty image list in command-line order. |
+
+Each image entry records `image_number`, `display_name`, `media_type`,
+`size_bytes`, `sha256`, `width`, `height`, and `relative_path`. The display
+name is a printable source basename limited to 96 characters. The media type
+is one of `image/png`, `image/jpeg`, `image/gif`, or `image/webp`. The relative
+path must exactly match the four-digit segment and image numbers plus the
+detected media type's extension.
+
+The manifest admits at most 20 images and 20 MiB of saved image bytes. Each
+file admits at most 5 MiB and 8,000 pixels on either dimension. Before a model
+request, the assistant runner reads only the exact manifest paths and checks
+their type, byte count, SHA-256 digest, media type, and dimensions. A missing,
+changed, symbolically linked, malformed, or excessive file stops the request.
+Inspection reads the bounded manifest only and never reads the saved image
+files.
 
 Yuj may write `<target_repository>/.tool_output/*.log` when a kept tool result
 is too large for the current model input. This is the main Yuj record that can
@@ -144,9 +174,11 @@ folder does not change them.
 | File | Writer | What it holds | Ready | Context | Detector | Audit | Scoring | Limits |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `<task_cwd>/prompt.txt`, `<session_dir>/prompt.txt`, or `TaskSpec.prompt_text` | launcher / caller | task prompt supplied to solver | `run-start` | Yes, as the task message. | Only if a detector contract names it as fixed setup. | Yes. | No, except to group results for the same task. | Do not use it as evidence of the model's behavior or result. |
+| `<session_dir>/attachments.json` | assistant image-input writer | Bounded metadata and digests for explicit image-bearing task and resume segments. | `run-start` for each saved segment. | No. The assistant runner reads it only to verify and bind the matching saved bytes. | No. | Yes. | No. | It contains no source path, prompt body, or image bytes. `status` and `show` read only this manifest. Measurement mode does not create or read it. |
+| `<session_dir>/attachments/segment-NNNN/image-NNNN.<ext>` | assistant image-input writer | Exact validated bytes copied from one explicit local image. Both numbers use four digits, starting at `0001`. | `run-start` for the saved segment. | Yes only through the primary assistant client's image request. Normal context modes do not read it. | No. | Yes. | No. | The manifest must name the exact session-relative file and match its media type, size, dimensions, and SHA-256 digest. Missing, changed, linked, or oversized evidence stops before a model request. Measurement mode does not create or read it. |
 | `<task_cwd>/.trace.jsonl` or `<session_dir>/.trace.jsonl` | harness trace writer (`_loop/trace_schema.py`) | Append-only events for model turns, tools, controls, recovery, and run provenance. | `live-prefix` | Yes, but only through a projection of the current prefix. | Yes, but only through the current turn and for fields named by the detector contract. | Yes. | Yes, for post-run behavior and cost checks. | Use only rows through the current turn for a live decision. See [Trace event fields](#trace-event-fields). |
 | `<run_dir>/subagents/<id>/.trace.jsonl` or `<session_dir>/subagents/<id>/.trace.jsonl` | named-subagent runtime (`harness/subagents.py`) | Child events and exact terminal result, hash, outcome, and token counts. | `live-prefix`; terminal result is ready when the child ends. | No. Replay may read the matching terminal result. | No. | Yes. | Yes, for post-run child costs. | The parent trace stores only summary metadata and the `task` result returned to the model. Replay verifies the child record and does not call the model. |
-| `<run_dir>/transcripts/<task>.log`, `<run_dir>/harness_run/transcripts/<task>.log`, `<session_dir>/transcript.log`, `<session_dir>/transcript.pre_seg_N.log`, child `transcript.log`, or legacy `<task_cwd>/transcript.log` | model client transcript writer | Saved model requests and responses. | `live-prefix`; only audit, explicit resume, or replay may read it. | No for normal context. | No. | Yes. | No. | Assistant resume moves the preceding parent transcript to the next numbered segment. Streaming records are reconstructed client evidence, not exact wire bytes. A stream-rule interrupt keeps the partial response and injection needed for replay. |
+| `<run_dir>/transcripts/<task>.log`, `<run_dir>/harness_run/transcripts/<task>.log`, `<session_dir>/transcript.log`, `<session_dir>/transcript.pre_seg_N.log`, child `transcript.log`, or legacy `<task_cwd>/transcript.log` | model client transcript writer | Saved model requests and responses. | `live-prefix`; only audit, explicit resume, or replay may read it. | No for normal context. | No. | Yes. | No. | Assistant resume moves the preceding parent transcript to the next numbered segment. An image request includes its transport-encoded image content here; normal inspection commands do not print it. Streaming records are reconstructed client evidence, not exact wire bytes. A stream-rule interrupt keeps the partial response and injection needed for replay. |
 | `<session_dir>/clarification_request.json` | clarification state writer | One exact model question and its conversation identity. | `live-prefix`; final after it becomes `rewound` or its answer is consumed. | Only explicit resume reads it to label the recorded answer. | No. | Yes. | No. | One file and one request per coding session. It is separate from approval state. |
 | `<session_dir>/clarification_answer.json` | `yuj answer` | One exact operator answer and its SHA-256 hash. | Ready after the answer command succeeds. | Yes, exactly once on the next assistant resume. Replay reads it only with matching request, consumption, and trace evidence. | No. | Yes. | No. | Operator evidence only. It cannot grant permission, and normal state projections do not copy it. |
 | `<session_dir>/clarification_consumption.json` | assistant resume boundary | The answer hash and the model-facing destination. | Ready immediately before the one resumed model request. | No. It prevents another delivery. | No. | Yes. | No. | Stores no answer text. Replay validates it but creates no clarification files in the measurement destination. |

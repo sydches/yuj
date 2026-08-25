@@ -53,9 +53,17 @@ from ._auth import (
     browser_sign_in,
     provider_spec,
 )
+from ._images import (
+    ImageInputError,
+    PendingImage,
+    image_evidence,
+    read_image_inputs,
+    save_image_segment,
+)
 from .progress import TraceFollower
 from .runner import (
     _make_client,
+    _record_auth_binding,
     approval_request_path,
     create_session,
     derive_live_state,
@@ -74,6 +82,7 @@ from .runner import (
     session_trace_tail,
     session_turn_count,
     session_turn_tail,
+    validate_image_capability,
 )
 from .store import AmbiguousSessionRefError, SessionLockedError, SessionStore
 from .startup import preflight_assistant_startup, render_startup_preflight
@@ -146,6 +155,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         p.add_argument("--prompt-text", help="literal task prompt")
         p.add_argument("--prompt-file", type=Path, help="read task prompt from file")
+        p.add_argument(
+            "--image",
+            type=Path,
+            action="append",
+            default=[],
+            help="local image to attach; repeat for more images",
+        )
         p.add_argument("--model", "-m", help="model name or short alias")
         p.add_argument(
             "--thinking", choices=THINKING_LEVELS,
@@ -418,6 +434,17 @@ def main(argv: list[str] | None = None) -> int:
         default="latest",
         help="coding-session ID or 'latest' (default: latest incomplete session)",
     )
+    resume_parser.add_argument("--prompt-text", help="literal follow-up text")
+    resume_parser.add_argument(
+        "--prompt-file", type=Path, help="read follow-up text from file"
+    )
+    resume_parser.add_argument(
+        "--image",
+        type=Path,
+        action="append",
+        default=[],
+        help="local image to attach to the follow-up; repeat for more images",
+    )
     resume_parser.set_defaults(func=cmd_resume)
 
     answer_parser = sub.add_parser(
@@ -559,9 +586,12 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except ProviderAuthError as exc:
         raise SystemExit(f"{exc.code}: {exc}") from exc
+    except ImageInputError as exc:
+        raise SystemExit(f"image input error: {exc}") from exc
 
 
 def cmd_run(args) -> int:
+    pending_images = read_image_inputs(args.image)
     if not args.dry_run:
         _maybe_offer_first_run_setup(args)
     prompt_text, prompt_source = _resolve_prompt_input(args)
@@ -573,6 +603,24 @@ def cmd_run(args) -> int:
     transport_overrides = _transport_overrides_from_args(
         args, auth_binding=auth_binding
     )
+    if pending_images:
+        provisional_overrides = {
+            "runtime_mode": "assistant",
+            "max_sessions": 1,
+            **transport_overrides,
+        }
+        if args.model:
+            provisional_overrides["model"] = resolve_model(args.model)
+        provisional_model = load_config(
+            user_config=config_paths,
+            overrides=provisional_overrides,
+        ).model
+        validate_image_capability(
+            config_paths,
+            model=provisional_model,
+            config_overrides=transport_overrides,
+            auth_binding=auth_binding,
+        )
     try:
         preflight = preflight_assistant_startup(
             config_paths=config_paths,
@@ -598,6 +646,13 @@ def cmd_run(args) -> int:
         auth_binding=auth_binding,
         auth_store=auth_store,
     )
+    if pending_images:
+        validate_image_capability(
+            config_paths,
+            model=model,
+            config_overrides=transport_overrides,
+            auth_binding=auth_binding,
+        )
     record = create_session(
         store,
         cwd=args.cwd.resolve(),
@@ -615,6 +670,13 @@ def cmd_run(args) -> int:
         base_config_paths=config_paths,
         transport_overrides=transport_overrides,
     )
+    if pending_images:
+        save_image_segment(
+            record.artifact_path,
+            segment_number=1,
+            prompt_text=prompt_text,
+            images=pending_images,
+        )
     _print_session_start(
         record,
         action="starting",
@@ -820,6 +882,7 @@ def _smoke_acceptance_check(smoke_root: Path, record) -> tuple[bool, list[str]]:
 
 
 def cmd_resume(args) -> int:
+    resume_prompt_text, pending_images = _resolve_resume_image_input(args)
     store = SessionStore()
     record = _resolve_session_record(store, args.session_id, selector="resumable")
     try:
@@ -840,13 +903,38 @@ def cmd_resume(args) -> int:
             f"{CLI_NAME} approve {record.session_id} first"
         )
     if record.status == "completed":
+        if pending_images:
+            raise SystemExit("cannot attach images to a completed session")
         _print_session_result(record, True, record.last_finish_reason)
         return 0
+    if pending_images:
+        validate_image_capability(
+            [Path(path) for path in record.config_paths],
+            model=record.model,
+            auth_binding=_record_auth_binding(record),
+        )
     store.set_active_session(record.cwd, record.session_id)
     _print_session_start(record, action="resuming")
     try:
         with _session_lock(store, record), TraceFollower(record.artifact_path):
-            success, finish_reason = run_session(store, record, resume=True)
+            if pending_images:
+                live = derive_live_state(record.artifact_path)
+                save_image_segment(
+                    record.artifact_path,
+                    segment_number=max(1, live.session_number + 1),
+                    prompt_text=resume_prompt_text,
+                    images=pending_images,
+                )
+                success, finish_reason = run_session(
+                    store,
+                    record,
+                    resume=True,
+                    resume_prompt_text=resume_prompt_text,
+                )
+            else:
+                success, finish_reason = run_session(
+                    store, record, resume=True
+                )
     except KeyboardInterrupt:
         return _handle_keyboard_interrupt(store, record)
     refreshed = store.get_session(record.session_id)
@@ -1291,6 +1379,7 @@ def cmd_status(args) -> int:
     if record.provider:
         print(f"provider: {record.provider}")
         print(f"authentication: {record.auth_method}")
+    _print_image_evidence(record.artifact_path)
     if approval is not None and approval.get("status") == "pending":
         print("approval: pending")
     else:
@@ -1357,6 +1446,7 @@ def cmd_show(args) -> int:
     if record.provider:
         print(f"provider: {record.provider}")
         print(f"authentication: {record.auth_method}")
+    _print_image_evidence(record.artifact_path)
     print(f"context: {record.context_mode}")
     print(f"prompt_source: {record.prompt_source}")
     if record.system_prompt_path:
@@ -1428,6 +1518,26 @@ def cmd_show(args) -> int:
     for line in trace_lines:
         print(f"  {line}")
     return 0
+
+
+def _print_image_evidence(artifact_dir: Path) -> None:
+    evidence = image_evidence(artifact_dir)
+    if not evidence:
+        return
+    total_bytes = sum(item.size_bytes for item in evidence)
+    noun = "image" if len(evidence) == 1 else "images"
+    print(f"attachments: {len(evidence)} {noun}, {total_bytes} bytes")
+    for item in evidence:
+        print(
+            "attachment: "
+            f"segment={item.segment_number} "
+            f"image={item.image_number} "
+            f"name={item.display_name} "
+            f"media_type={item.media_type} "
+            f"bytes={item.size_bytes} "
+            f"sha256={item.sha256} "
+            f"dimensions={item.width}x{item.height}"
+        )
 
 
 def cmd_usage(args) -> int:
@@ -1520,6 +1630,29 @@ def _resolve_prompt_input(args) -> tuple[str, str]:
     if has_prompt_text:
         return args.prompt_text, "inline"
     return " ".join(args.task).strip(), "inline-positional"
+
+
+def _resolve_resume_image_input(
+    args,
+) -> tuple[str | None, tuple[PendingImage, ...]]:
+    paths = tuple(getattr(args, "image", ()) or ())
+    prompt_text = getattr(args, "prompt_text", None)
+    prompt_file = getattr(args, "prompt_file", None)
+    has_text = prompt_text is not None or prompt_file is not None
+    if bool(paths) != has_text:
+        raise SystemExit("resume images and follow-up text must be provided together")
+    if not paths:
+        return None, ()
+    if prompt_text is not None and prompt_file is not None:
+        raise SystemExit("provide exactly one resume follow-up text source")
+    resolved_text = (
+        Path(prompt_file).resolve().read_text()
+        if prompt_file is not None
+        else str(prompt_text)
+    )
+    if not resolved_text.strip():
+        raise SystemExit("resume image follow-up text must not be empty")
+    return resolved_text, read_image_inputs(paths)
 
 
 def _config_local_path() -> Path:
