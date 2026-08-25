@@ -35,7 +35,8 @@ create table if not exists sessions (
     provider text,
     auth_method text,
     credential_id text,
-    label text
+    label text,
+    archived_at text
 );
 
 create table if not exists active_sessions (
@@ -91,6 +92,7 @@ class SessionRecord:
     auth_method: str | None = None
     credential_id: str | None = None
     label: str | None = None
+    archived_at: str | None = None
 
     @property
     def artifact_path(self) -> Path:
@@ -127,6 +129,10 @@ class AmbiguousSessionRefError(RuntimeError):
 
 
 class SessionLabelError(ValueError):
+    pass
+
+
+class SessionArchiveError(RuntimeError):
     pass
 
 
@@ -179,6 +185,11 @@ class SessionStore:
         if read_only:
             if not self.db_path.is_file():
                 raise FileNotFoundError(f"session store does not exist: {self.db_path}")
+            with self._connect() as conn:
+                self._has_archive_column = any(
+                    str(row["name"]) == "archived_at"
+                    for row in conn.execute("pragma table_info(sessions)").fetchall()
+                )
             return
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "sessions").mkdir(parents=True, exist_ok=True)
@@ -199,6 +210,7 @@ class SessionStore:
                 "auth_method",
                 "credential_id",
                 "label",
+                "archived_at",
             ):
                 if name not in columns:
                     conn.execute(f"alter table sessions add column {name} text")
@@ -208,6 +220,7 @@ class SessionStore:
                 on sessions(label) where label is not null
                 """
             )
+        self._has_archive_column = True
 
     def _connect(self) -> sqlite3.Connection:
         if self.read_only:
@@ -293,11 +306,25 @@ class SessionStore:
             ).fetchone()
         return _row_to_record(row) if row is not None else None
 
-    def list_sessions(self, *, limit: int = 50) -> list[SessionRecord]:
+    def list_sessions(
+        self,
+        *,
+        limit: int = 50,
+        archived: bool = False,
+    ) -> list[SessionRecord]:
+        if not self._has_archive_column and archived:
+            return []
+        if not self._has_archive_column:
+            archive_filter = ""
+        elif archived:
+            archive_filter = "where archived_at is not null"
+        else:
+            archive_filter = "where archived_at is null"
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 select * from sessions
+                {archive_filter}
                 order by updated_at desc
                 limit ?
                 """,
@@ -371,6 +398,74 @@ class SessionStore:
             if cursor.rowcount != 1:
                 raise SessionLabelError(f"unknown session: {session_id}")
 
+    def archive_session(self, session_id: str) -> tuple[SessionRecord, bool]:
+        """Archive one inactive, unlocked session by changing only its timestamp."""
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                "select * from sessions where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise SessionArchiveError(f"unknown session: {session_id}")
+            record = _row_to_record(row)
+            if record.archived_at is not None:
+                return record, False
+            active = conn.execute(
+                "select 1 from active_sessions where session_id = ? limit 1",
+                (session_id,),
+            ).fetchone()
+            if active is not None:
+                raise SessionArchiveError(
+                    "cannot archive the active session; start another session first"
+                )
+            lock_row = conn.execute(
+                "select * from session_locks where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if lock_row is not None:
+                lock = _row_to_lock(lock_row)
+                if not _is_stale_lock(lock):
+                    raise SessionArchiveError(
+                        "cannot archive a locked session; "
+                        f"pid {lock.owner_pid} on {lock.owner_host} holds the lock"
+                    )
+            archived_at = _utc_now()
+            conn.execute(
+                "update sessions set archived_at = ? where session_id = ?",
+                (archived_at, session_id),
+            )
+            updated = conn.execute(
+                "select * from sessions where session_id = ?",
+                (session_id,),
+            ).fetchone()
+        assert updated is not None
+        return _row_to_record(updated), True
+
+    def unarchive_session(self, session_id: str) -> tuple[SessionRecord, bool]:
+        """Restore one archived session without changing any other metadata."""
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                "select * from sessions where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise SessionArchiveError(f"unknown session: {session_id}")
+            record = _row_to_record(row)
+            if record.archived_at is None:
+                return record, False
+            conn.execute(
+                "update sessions set archived_at = null where session_id = ?",
+                (session_id,),
+            )
+            updated = conn.execute(
+                "select * from sessions where session_id = ?",
+                (session_id,),
+            ).fetchone()
+        assert updated is not None
+        return _row_to_record(updated), True
+
     def set_active_session(self, cwd: Path | str, session_id: str) -> None:
         now = _utc_now()
         resolved_cwd = str(Path(cwd).resolve())
@@ -414,8 +509,10 @@ class SessionStore:
         if session_id is None:
             return None
         record = self.get_session(session_id)
-        if record is not None:
+        if record is not None and record.archived_at is None:
             return record
+        if record is not None:
+            return None
         if self.read_only:
             return None
         self.clear_active_session(cwd, session_id=session_id)
@@ -590,6 +687,9 @@ def _row_to_record(row: sqlite3.Row) -> SessionRecord:
             row["credential_id"] if "credential_id" in optional else None
         ),
         label=row["label"] if "label" in optional else None,
+        archived_at=(
+            row["archived_at"] if "archived_at" in optional else None
+        ),
     )
 
 
@@ -631,6 +731,7 @@ __all__ = [
     "SESSION_LABEL_MAX_LENGTH",
     "SessionLock",
     "AmbiguousSessionRefError",
+    "SessionArchiveError",
     "SessionLabelError",
     "SessionLockedError",
     "SessionRecord",

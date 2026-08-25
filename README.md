@@ -122,7 +122,8 @@ continue through more than one run segment.
 
 - The model can read files, change code, run commands, and run tests.
 - Yuj normally runs model shell commands through Linux `bubblewrap`.
-- You can inspect, pause, approve, reject, and resume a session.
+- You can inspect, pause, approve, reject, resume, archive, and unarchive a
+  session.
 - You can inspect persisted token and cache use without contacting the model
   service. Yuj reports cost and quota only when saved evidence supports them.
 - The model can pause once for a missing fact. You can record one answer and
@@ -158,7 +159,7 @@ own repository.
 | `yuj code "task"` | Start a coding session. |
 | `yuj run "task"` | Run the same command as `yuj code`. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
-| `yuj current` | Show the active or newest session for this repository. If it has none, show the newest saved session. |
+| `yuj current` | Show the active or newest unarchived session for this repository. If it has none, show the newest unarchived saved session. |
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj show` | Show settings and recent session activity. |
 | `yuj usage` | Show persisted token, cache, cost, and quota evidence without contacting a model. |
@@ -167,9 +168,11 @@ own repository.
 | `yuj answer SESSION REQUEST_ID "ANSWER"` | Record one answer for a pending clarification. |
 | `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |
 | `yuj label SESSION LABEL` | Set or replace one manual label on a saved session. Add `--clear` instead of `LABEL` to remove it. |
+| `yuj archive SESSION` | Hide one stopped session from ordinary lists and automatic selection without changing its evidence. |
+| `yuj unarchive SESSION` | Restore one archived session to ordinary selection. |
 | `yuj approve` | Allow a tool action that needs approval. |
 | `yuj reject` | Refuse a tool action that needs approval. |
-| `yuj sessions` | List saved sessions. |
+| `yuj sessions` | List unarchived saved sessions. Add `--archived` to list archived sessions instead. |
 
 The [CLI reference](docs/using-yuj.md) lists every option for the installed
 `yuj` command. It also explains how Yuj selects a session, what each status

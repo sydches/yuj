@@ -95,6 +95,7 @@ from .runner import (
 )
 from .store import (
     AmbiguousSessionRefError,
+    SessionArchiveError,
     SessionLabelError,
     SessionLockedError,
     SessionStore,
@@ -542,7 +543,30 @@ def main(argv: list[str] | None = None) -> int:
         "--limit", type=int, default=20,
         help="number of recent sessions to list (default: 20)",
     )
+    sessions_parser.add_argument(
+        "--archived",
+        action="store_true",
+        help="list archived sessions instead of ordinary sessions",
+    )
     sessions_parser.set_defaults(func=cmd_sessions)
+
+    archive_parser = sub.add_parser(
+        "archive", help="hide one stopped saved session from ordinary selection"
+    )
+    archive_parser.add_argument(
+        "session_id",
+        help="coding-session ID, exact label, or unique ID prefix",
+    )
+    archive_parser.set_defaults(func=cmd_archive)
+
+    unarchive_parser = sub.add_parser(
+        "unarchive", help="restore one archived session to ordinary selection"
+    )
+    unarchive_parser.add_argument(
+        "session_id",
+        help="coding-session ID, exact label, or unique ID prefix",
+    )
+    unarchive_parser.set_defaults(func=cmd_unarchive)
 
     label_parser = sub.add_parser(
         "label", help="set, replace, or clear a saved session label"
@@ -1448,9 +1472,14 @@ def cmd_doctor(args) -> int:
 
 def cmd_sessions(args) -> int:
     store = SessionStore()
-    sessions = store.list_sessions(limit=args.limit)
+    sessions = store.list_sessions(limit=args.limit, archived=bool(args.archived))
     if not sessions:
-        print("(no assistant sessions)")
+        noun = (
+            "archived assistant sessions"
+            if args.archived
+            else "assistant sessions"
+        )
+        print(f"(no {noun})")
         return 0
     current_cwd = str(Path.cwd().resolve())
     active_ids = store.list_active_session_ids()
@@ -1467,6 +1496,8 @@ def cmd_sessions(args) -> int:
             flags.append("locked")
         if record.cwd == current_cwd:
             flags.append("cwd")
+        if record.archived_at is not None:
+            flags.append("archived")
         flag_text = ",".join(flags) if flags else "-"
         label_text = record.label if record.label is not None else "-"
         print(
@@ -1475,6 +1506,75 @@ def cmd_sessions(args) -> int:
         )
         if record.last_finish_reason:
             print(f"    last_finish_reason={record.last_finish_reason}")
+        if record.archived_at is not None:
+            print(f"    archived_at={record.archived_at}")
+    return 0
+
+
+def cmd_archive(args) -> int:
+    if args.session_id.lower() in _LATEST_SESSION_TOKENS:
+        raise SystemExit("archive requires an explicit session reference")
+    store = SessionStore()
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
+    if record.archived_at is None:
+        live = derive_live_state(record.artifact_path)
+        if (live.status or record.status) == "running":
+            raise SystemExit("cannot archive a running session")
+        approval = load_approval_request(record.artifact_path)
+        if approval is not None and approval.get("status") == "pending":
+            raise SystemExit("cannot archive a session with a pending approval")
+        try:
+            clarification = clarification_state(record.artifact_path)
+        except ClarificationStateError as exc:
+            raise SystemExit(f"invalid clarification evidence: {exc}") from exc
+        if clarification.phase in {"input_required", "input_ready"}:
+            raise SystemExit(
+                "cannot archive a session with a pending clarification"
+            )
+        try:
+            correction = _correction_state_for_record(record)
+        except CorrectionStateError as exc:
+            raise SystemExit(f"invalid correction evidence: {exc}") from exc
+        if correction.phase == "pending":
+            raise SystemExit("cannot archive a session with a pending correction")
+    try:
+        archived, changed = store.archive_session(record.session_id)
+    except SessionArchiveError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"session_id: {archived.session_id}")
+    print(f"session_ref: {archived.short_id}")
+    print("archive: archived")
+    print(f"archived_at: {archived.archived_at}")
+    print(f"changed: {'yes' if changed else 'no'}")
+    print(f"next: {CLI_NAME} unarchive {archived.short_id}")
+    return 0
+
+
+def cmd_unarchive(args) -> int:
+    if args.session_id.lower() in _LATEST_SESSION_TOKENS:
+        raise SystemExit("unarchive requires an explicit session reference")
+    store = SessionStore()
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
+    try:
+        unarchived, changed = store.unarchive_session(record.session_id)
+    except SessionArchiveError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"session_id: {unarchived.session_id}")
+    print(f"session_ref: {unarchived.short_id}")
+    print("archive: unarchived")
+    print("archived_at: -")
+    print(f"changed: {'yes' if changed else 'no'}")
+    print("next: none")
     return 0
 
 
@@ -1547,7 +1647,12 @@ def cmd_reject(args) -> int:
 
 def cmd_status(args) -> int:
     store = SessionStore()
-    record = _resolve_session_record(store, args.session_id, selector="latest")
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
     live = derive_live_state(record.artifact_path)
     status = live.status or record.status
     finish_reason = live.finish_reason if live.status else record.last_finish_reason
@@ -1565,6 +1670,9 @@ def cmd_status(args) -> int:
     print(f"label: {record.label if record.label is not None else '-'}")
     print(f"session_ref: {record.short_id}")
     print(f"status: {status}")
+    print(f"archived: {'yes' if record.archived_at is not None else 'no'}")
+    if record.archived_at is not None:
+        print(f"archived_at: {record.archived_at}")
     if finish_reason:
         print(f"finish_reason: {finish_reason}")
     print(f"turns: {turns}")
@@ -1599,7 +1707,9 @@ def cmd_status(args) -> int:
     else:
         print("interrupt: none")
 
-    if clarification.phase == "input_required":
+    if record.archived_at is not None:
+        print(f"next: {CLI_NAME} unarchive {record.short_id}")
+    elif clarification.phase == "input_required":
         assert clarification.request is not None
         print(
             f"next: {CLI_NAME} answer {record.short_id} "
@@ -1623,7 +1733,12 @@ def cmd_current(_args) -> int:
 
 def cmd_show(args) -> int:
     store = SessionStore()
-    record = _resolve_session_record(store, args.session_id, selector="latest")
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
     turns = session_turn_count(record.artifact_path)
     live = derive_live_state(record.artifact_path)
     status = live.status or record.status
@@ -1632,6 +1747,9 @@ def cmd_show(args) -> int:
     print(f"label: {record.label if record.label is not None else '-'}")
     print(f"session_ref: {record.short_id}")
     print(f"status: {status}")
+    print(f"archived: {'yes' if record.archived_at is not None else 'no'}")
+    if record.archived_at is not None:
+        print(f"archived_at: {record.archived_at}")
     if live.session_number:
         print(f"current_session: {live.session_number}")
     print(f"created_at: {record.created_at}")
@@ -1682,7 +1800,9 @@ def cmd_show(args) -> int:
             "clarification_question: "
             f"{clarification.request['question']}"
         )
-    if clarification.phase == "input_required":
+    if record.archived_at is not None:
+        print(f"next: {CLI_NAME} unarchive {record.short_id}")
+    elif clarification.phase == "input_required":
         assert clarification.request is not None
         print(
             f"next: {CLI_NAME} answer {record.short_id} "
@@ -1783,7 +1903,12 @@ def cmd_usage(args) -> int:
         store = SessionStore(read_only=True)
     except FileNotFoundError as exc:
         raise SystemExit("no assistant sessions found") from exc
-    record = _resolve_session_record(store, args.session_id, selector="latest")
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
     try:
         usage = aggregate_session_usage([record.artifact_path / ".trace.jsonl"])
     except UsageEvidenceError as exc:
@@ -2324,7 +2449,13 @@ def _session_lock(store: SessionStore, record):
         store.release_session_lock(record.session_id)
 
 
-def _resolve_session_record(store: SessionStore, session_ref: str, *, selector: str):
+def _resolve_session_record(
+    store: SessionStore,
+    session_ref: str,
+    *,
+    selector: str,
+    allow_archived: bool = False,
+):
     if session_ref.lower() not in _LATEST_SESSION_TOKENS:
         try:
             record = store.resolve_session_ref(session_ref)
@@ -2332,6 +2463,11 @@ def _resolve_session_record(store: SessionStore, session_ref: str, *, selector: 
             raise SystemExit(str(exc)) from exc
         if record is None:
             raise SystemExit(f"unknown session: {session_ref}")
+        if record.archived_at is not None and not allow_archived:
+            raise SystemExit(
+                "session is archived; run "
+                f"{CLI_NAME} unarchive {record.short_id} first"
+            )
         return record
 
     current_cwd = Path.cwd().resolve()

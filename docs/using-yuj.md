@@ -38,12 +38,14 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
 | `yuj code` | Start a coding session. |
 | `yuj run` | Run the same command as `yuj code`. |
-| `yuj current` | Run `yuj status latest`. |
+| `yuj current` | Run `yuj status latest` over unarchived sessions. |
 | `yuj status` | Show one session's status and the next user action. |
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
-| `yuj sessions` | List saved sessions. |
+| `yuj sessions` | List unarchived sessions, or list archived sessions with `--archived`. |
 | `yuj label` | Set, replace, or clear one manual session label. |
+| `yuj archive` | Hide one stopped session from ordinary selection without changing its evidence. |
+| `yuj unarchive` | Restore one archived session to ordinary selection. |
 | `yuj resume` | Continue a paused session. |
 | `yuj correct` | Record one exact correction for a stopped session. |
 | `yuj answer` | Record one exact answer for a pending clarification. |
@@ -496,11 +498,12 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 
 | Command | What it shows |
 | --- | --- |
-| `yuj current` | The immutable ID, optional label, and status details for the active or newest session in the current repository. If that repository has no session, show the newest saved session. |
-| `yuj status [SESSION]` | Immutable ID, optional label, status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Immutable ID, optional label, status, times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj current` | The immutable ID, optional label, and status details for the active or newest unarchived session in the current repository. If that repository has no unarchived session, show the newest unarchived saved session. |
+| `yuj status [SESSION]` | Immutable ID, optional label, status, archive state and time, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Immutable ID, optional label, status, archive state and time, other times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
-| `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent sessions from all repositories; the default is 20 |
+| `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
+| `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |
 
 Use `yuj show --turns N --trace-lines N [SESSION]` to choose how many recent
 turns and trace events to print.
@@ -513,9 +516,12 @@ turns and trace events to print.
 | `yuj show` | `--trace-lines N` | Show this many recent trace events. The default is 10. |
 | `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
+| `yuj sessions` | `--archived` | List archived sessions instead of unarchived sessions. |
 | `yuj label` | `SESSION` | Select the saved session to change. |
 | `yuj label` | `LABEL` | Set or replace the exact manual label. |
 | `yuj label` | `--clear` | Clear the label instead of setting one. |
+| `yuj archive` | `SESSION` | Select the stopped session to archive. |
+| `yuj unarchive` | `SESSION` | Select the archived session to restore. |
 
 The current parser accepts any integer for these three options. A value of
 `0` prints no matching rows. A negative `--turns` or `--trace-lines` value
@@ -603,6 +609,50 @@ the session ID, saved files, trace, replay, repository, worktree, approval,
 clarification, correction, or archive status. The command makes no model
 request, and labels do not enter model input or measurement mode.
 
+### Archive a session
+
+Archive one stopped session by full ID, exact label, short ID, or unique ID
+start:
+
+```bash
+yuj archive SESSION
+```
+
+Archive is reversible operator metadata. It is not deletion, compression,
+relocation, or export. It frees no storage. Yuj leaves the session ID, label,
+repository, retained worktree identity, session directory, trace, replay
+input, and every other saved byte unchanged.
+
+Yuj refuses to archive the active-session pointer, a running or locked
+session, or a session with a pending approval, clarification, or correction.
+A refusal changes nothing. Stop the running work, resolve the pending input,
+or start another session as the refusal directs.
+
+Ordinary `sessions` output and automatic `current`, `latest`, `last`,
+`resume`, `approve`, and `reject` selection skip archived sessions. List only
+archived sessions with:
+
+```bash
+yuj sessions --archived
+```
+
+Give an archived session's explicit reference to `status`, `show`, or `usage`
+to inspect it without restoring it. `status` and `show` print `archived: yes`,
+the archive time, and the exact `unarchive` command. Other commands that
+change a session refuse an archived session and print that same instruction.
+
+Restore the session with:
+
+```bash
+yuj unarchive SESSION
+```
+
+Unarchive returns the session to the ordinary selection order that its
+unchanged metadata defines. Repeating `archive` or `unarchive` reports
+`changed: no` and leaves the current state unchanged. Both commands are local
+SQLite changes. They make no model request, run no model tool, and do not
+change measurement mode.
+
 ### Select a session
 
 A session has a full ID, a short ID, and at most one manual label. Give an
@@ -611,6 +661,11 @@ session.
 
 Use `latest` or `last` to let Yuj choose. If you omit the ID, Yuj uses
 `latest`.
+
+Automatic selection and ordinary `sessions` output exclude archived
+sessions. Use `sessions --archived` to list them. An explicit reference still
+uses the complete session index, so `status`, `show`, and `usage` can inspect
+an archived session.
 
 For `status`, `show`, and `usage`, Yuj chooses in this order:
 
@@ -647,6 +702,9 @@ full ID, exact label, short ID, or unique ID start checks the complete session
 index through one resolver.
 
 ### Session statuses
+
+Archive state is separate from session status. `status` and `show` keep the
+last run status and print archive state on another line.
 
 | Status | Meaning |
 | --- | --- |
@@ -947,6 +1005,9 @@ Yuj stores each session here:
 
 The optional manual label exists only in `sessions.sqlite3`. The label does
 not appear in the session directory or any model-facing record.
+
+The optional archive time also exists only in `sessions.sqlite3`. Archiving
+does not change or move the session directory, and it frees no storage.
 
 For an installed package, `<assist_home>` is `$XDG_STATE_HOME/yuj`, or
 `~/.local/state/yuj` when `XDG_STATE_HOME` is unset. For an editable/source
