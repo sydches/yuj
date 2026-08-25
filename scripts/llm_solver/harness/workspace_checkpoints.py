@@ -4,6 +4,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -500,3 +501,55 @@ def restore_checkpoint(
     return WorkspaceCheckpointStore(
         workspace, shadow_dir=shadow_dir, excludes=excludes
     ).restore_checkpoint(turn)
+
+
+def rebind_checkpoint_workspace(
+    shadow_dir: Path,
+    *,
+    source_workspace: Path,
+    child_workspace: Path,
+) -> None:
+    """Retarget one copied checkpoint store without sharing its mutable files."""
+    shadow_dir = Path(shadow_dir).resolve()
+    config_path = shadow_dir / "config"
+    try:
+        metadata = os.lstat(config_path)
+    except OSError as exc:
+        raise WorkspaceCheckpointError(
+            "copied checkpoint store has no readable config"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise WorkspaceCheckpointError(
+            "copied checkpoint config must be a regular file"
+        )
+    try:
+        config_text = config_path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise WorkspaceCheckpointError(
+            "copied checkpoint config is not readable text"
+        ) from exc
+    if re.search(r"(?im)^\s*\[\s*include(?:if)?\b", config_text):
+        raise WorkspaceCheckpointError(
+            "copied checkpoint config cannot include external files"
+        )
+    for relative in (
+        "objects/info/alternates",
+        "objects/info/http-alternates",
+        "info/grafts",
+    ):
+        if (shadow_dir / relative).exists():
+            raise WorkspaceCheckpointError(
+                f"copied checkpoint store cannot use {relative}"
+            )
+
+    source_store = WorkspaceCheckpointStore(
+        Path(source_workspace), shadow_dir=shadow_dir
+    )
+    source_store._ensure_initialized()
+    source_store._git(
+        ["config", "yuj.workspace", str(Path(child_workspace).resolve())]
+    )
+    child_store = WorkspaceCheckpointStore(
+        Path(child_workspace), shadow_dir=shadow_dir
+    )
+    child_store._ensure_initialized()

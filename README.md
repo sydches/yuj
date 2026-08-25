@@ -122,8 +122,8 @@ continue through more than one run segment.
 
 - The model can read files, change code, run commands, and run tests.
 - Yuj normally runs model shell commands through Linux `bubblewrap`.
-- You can inspect, pause, approve, reject, resume, archive, and unarchive a
-  session.
+- You can inspect, pause, approve, reject, resume, fork, archive, and unarchive
+  a session.
 - You can inspect persisted token and cache use without contacting the model
   service. Yuj reports cost and quota only when saved evidence supports them.
 - The model can pause once for a missing fact. You can record one answer and
@@ -168,6 +168,7 @@ own repository.
 | `yuj answer SESSION REQUEST_ID "ANSWER"` | Record one answer for a pending clarification. |
 | `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |
 | `yuj label SESSION LABEL` | Set or replace one manual label on a saved session. Add `--clear` instead of `LABEL` to remove it. |
+| `yuj fork SESSION` | Create an independent child from one stopped saved session. |
 | `yuj archive SESSION` | Hide one stopped session from ordinary lists and automatic selection without changing its evidence. |
 | `yuj unarchive SESSION` | Restore one archived session to ordinary selection. |
 | `yuj approve` | Allow a tool action that needs approval. |

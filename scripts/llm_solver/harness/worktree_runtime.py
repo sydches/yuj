@@ -6,6 +6,8 @@ import json
 import os
 import re
 import secrets
+import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -381,6 +383,200 @@ def inspect_session_worktree(repo_cwd: Path, run_id: str) -> WorktreeRuntimeInfo
         metadata=metadata,
         reused=True,
     )
+
+
+def fork_session_worktree(
+    repo_cwd: Path,
+    *,
+    source_run_id: str,
+    child_run_id: str,
+) -> WorktreeRuntimeInfo:
+    """Copy one owned worktree endpoint into a distinct child worktree."""
+    source = inspect_session_worktree(repo_cwd, source_run_id)
+    source_snapshot = _worktree_snapshot(source.worktree_path)
+    endpoint_commit = _git(
+        source.worktree_path, "rev-parse", "--verify", "HEAD^{commit}"
+    ).stdout.strip()
+    child: WorktreeRuntimeInfo | None = None
+    try:
+        child = create_session_worktree(
+            repo_cwd,
+            mode="auto",
+            run_id=child_run_id,
+            base_commit=endpoint_commit,
+            reuse=False,
+            require_clean=False,
+        )
+        assert child is not None
+        _replace_worktree_contents(
+            source.worktree_path,
+            child.worktree_path,
+            source_snapshot,
+        )
+        if _worktree_snapshot(source.worktree_path) != source_snapshot:
+            raise WorktreeRuntimeError(
+                "source worktree changed while its child endpoint was copied"
+            )
+        if _worktree_snapshot(child.worktree_path) != source_snapshot:
+            raise WorktreeRuntimeError(
+                "child worktree does not match the selected source endpoint"
+            )
+        return child
+    except BaseException as exc:
+        if child is not None:
+            try:
+                remove_session_worktree(repo_cwd, child_run_id, force=True)
+            except Exception as cleanup_exc:
+                raise WorktreeRuntimeError(
+                    f"{exc}; child worktree cleanup also failed: {cleanup_exc}"
+                ) from exc
+        if isinstance(exc, WorktreeRuntimeError):
+            raise
+        if not isinstance(exc, Exception):
+            raise
+        raise WorktreeRuntimeError(str(exc)) from exc
+
+
+def _worktree_snapshot(root: Path) -> dict[str, tuple[str, str, int]]:
+    """Return a byte-and-mode snapshot without following workspace links."""
+    root = Path(root)
+    entries: dict[str, tuple[str, str, int]] = {}
+
+    def visit(directory: Path) -> None:
+        try:
+            children = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError as exc:
+            raise WorktreeRuntimeError(
+                f"cannot inspect source worktree directory: {directory}"
+            ) from exc
+        for entry in children:
+            path = Path(entry.path)
+            relative = path.relative_to(root)
+            if relative == Path(".git"):
+                continue
+            if ".git" in relative.parts:
+                raise WorktreeRuntimeError(
+                    f"source worktree contains nested Git metadata: {relative}"
+                )
+            try:
+                metadata = os.lstat(path)
+            except OSError as exc:
+                raise WorktreeRuntimeError(
+                    f"cannot inspect source worktree path: {relative}"
+                ) from exc
+            mode = stat.S_IMODE(metadata.st_mode)
+            name = relative.as_posix()
+            if stat.S_ISLNK(metadata.st_mode):
+                raise WorktreeRuntimeError(
+                    f"source worktree contains a symbolic link: {relative}"
+                )
+            if stat.S_ISDIR(metadata.st_mode):
+                entries[name] = ("dir", hashlib.sha256(b"").hexdigest(), mode)
+                visit(path)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise WorktreeRuntimeError(
+                    f"source worktree contains an unsupported file: {relative}"
+                )
+            payload = _read_regular_bytes(path, metadata)
+            entries[name] = ("file", hashlib.sha256(payload).hexdigest(), mode)
+    visit(root)
+    return entries
+
+
+def _read_regular_bytes(path: Path, expected: os.stat_result) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise WorktreeRuntimeError(f"cannot read source worktree file: {path}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != expected.st_dev
+            or opened.st_ino != expected.st_ino
+            or opened.st_size != expected.st_size
+        ):
+            raise WorktreeRuntimeError(
+                f"source worktree file changed while opening: {path}"
+            )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev != opened.st_dev
+            or after.st_ino != opened.st_ino
+            or after.st_size != opened.st_size
+            or after.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise WorktreeRuntimeError(
+                f"source worktree file changed while reading: {path}"
+            )
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _replace_worktree_contents(
+    source: Path,
+    child: Path,
+    expected: dict[str, tuple[str, str, int]],
+) -> None:
+    for entry in os.scandir(child):
+        if entry.name == ".git":
+            continue
+        path = Path(entry.path)
+        if entry.is_dir(follow_symlinks=False):
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    directories = sorted(
+        (
+            (relative, details)
+            for relative, details in expected.items()
+            if details[0] == "dir"
+        ),
+        key=lambda item: (len(Path(item[0]).parts), item[0]),
+    )
+    for relative, _details in directories:
+        (child / relative).mkdir(mode=0o700)
+
+    files = sorted(
+        (
+            (relative, details)
+            for relative, details in expected.items()
+            if details[0] == "file"
+        ),
+        key=lambda item: item[0],
+    )
+    for relative, (_kind, expected_hash, mode) in files:
+        source_path = source / relative
+        metadata = os.lstat(source_path)
+        payload = _read_regular_bytes(source_path, metadata)
+        if hashlib.sha256(payload).hexdigest() != expected_hash:
+            raise WorktreeRuntimeError(
+                f"source worktree file changed while copying: {relative}"
+            )
+        target = child / relative
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(target, flags, mode or 0o600)
+        try:
+            _write_all(descriptor, payload)
+            os.fchmod(descriptor, mode)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    for relative, (_kind, _digest, mode) in reversed(directories):
+        os.chmod(child / relative, mode)
 
 
 def remove_session_worktree(

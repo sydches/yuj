@@ -35,6 +35,7 @@ create table if not exists sessions (
     provider text,
     auth_method text,
     credential_id text,
+    parent_session_id text,
     label text,
     archived_at text
 );
@@ -68,6 +69,7 @@ _SHORT_SESSION_ID_PATTERN = re.compile(
 )
 _RESERVED_SESSION_LABELS = frozenset({"last", "latest"})
 _SESSION_LABEL_INDEX = "sessions_label_unique"
+_PARENT_ID_TRIGGER = "sessions_parent_session_id_immutable"
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,7 @@ class SessionRecord:
     provider: str | None = None
     auth_method: str | None = None
     credential_id: str | None = None
+    parent_session_id: str | None = None
     label: str | None = None
     archived_at: str | None = None
 
@@ -209,6 +212,7 @@ class SessionStore:
                 "provider",
                 "auth_method",
                 "credential_id",
+                "parent_session_id",
                 "label",
                 "archived_at",
             ):
@@ -218,6 +222,16 @@ class SessionStore:
                 f"""
                 create unique index if not exists {_SESSION_LABEL_INDEX}
                 on sessions(label) where label is not null
+                """
+            )
+            conn.execute(
+                f"""
+                create trigger if not exists {_PARENT_ID_TRIGGER}
+                before update of parent_session_id on sessions
+                when new.parent_session_id is not old.parent_session_id
+                begin
+                    select raise(abort, 'parent_session_id is immutable');
+                end
                 """
             )
         self._has_archive_column = True
@@ -247,7 +261,7 @@ class SessionStore:
         credential_id: str | None = None,
     ) -> SessionRecord:
         now = _utc_now()
-        session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        session_id = _new_session_id()
         artifact_dir = self.root / "sessions" / session_id
         record = SessionRecord(
             session_id=session_id,
@@ -274,8 +288,8 @@ class SessionStore:
                     session_id, created_at, updated_at, cwd, artifact_dir, model, status,
                     last_finish_reason, prompt_text, prompt_source, context_mode,
                     system_prompt_path, config_paths_json, provider, auth_method,
-                    credential_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    credential_id, parent_session_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.session_id,
@@ -294,9 +308,166 @@ class SessionStore:
                     record.provider,
                     record.auth_method,
                     record.credential_id,
+                    record.parent_session_id,
                 ),
             )
         return record
+
+    def prepare_forked_session(
+        self,
+        source: SessionRecord,
+        *,
+        config_paths: list[Path],
+        system_prompt_path: Path | None,
+        worktree_path: Path | None = None,
+        worktree_branch: str | None = None,
+        worktree_base_commit: str | None = None,
+    ) -> SessionRecord:
+        """Build, but do not publish, one child identity for a saved source."""
+        now = _utc_now()
+        session_id = _new_session_id()
+        artifact_dir = self.root / "sessions" / session_id
+        return SessionRecord(
+            session_id=session_id,
+            created_at=now,
+            updated_at=now,
+            cwd=source.cwd,
+            artifact_dir=str(artifact_dir),
+            model=source.model,
+            status="paused",
+            last_finish_reason="forked",
+            prompt_text=source.prompt_text,
+            prompt_source=source.prompt_source,
+            context_mode=source.context_mode,
+            system_prompt_path=(
+                str(Path(system_prompt_path).resolve())
+                if system_prompt_path is not None
+                else None
+            ),
+            config_paths_json=json.dumps(
+                [str(Path(path).resolve()) for path in config_paths]
+            ),
+            worktree_path=(
+                str(Path(worktree_path).resolve())
+                if worktree_path is not None
+                else None
+            ),
+            worktree_branch=worktree_branch,
+            worktree_base_commit=worktree_base_commit,
+            provider=source.provider,
+            auth_method=source.auth_method,
+            credential_id=source.credential_id,
+            parent_session_id=source.session_id,
+        )
+
+    def insert_forked_session(
+        self,
+        record: SessionRecord,
+        *,
+        expected_parent: SessionRecord,
+    ) -> None:
+        """Atomically publish one fully staged child after rechecking its parent."""
+        if record.parent_session_id != expected_parent.session_id:
+            raise RuntimeError("fork child does not name its selected parent")
+        expected_artifact = self.root / "sessions" / record.session_id
+        if Path(record.artifact_dir) != expected_artifact:
+            raise RuntimeError("fork child artifact path is outside the session store")
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            parent_row = conn.execute(
+                "select * from sessions where session_id = ?",
+                (expected_parent.session_id,),
+            ).fetchone()
+            if parent_row is None:
+                raise RuntimeError("fork source disappeared before publication")
+            if _row_to_record(parent_row) != expected_parent:
+                raise RuntimeError("fork source metadata changed during the copy")
+            if expected_parent.archived_at is not None:
+                raise RuntimeError("fork source became archived during the copy")
+            active = conn.execute(
+                "select 1 from active_sessions where session_id = ? limit 1",
+                (expected_parent.session_id,),
+            ).fetchone()
+            if active is not None:
+                raise RuntimeError("fork source became active during the copy")
+            lock_row = conn.execute(
+                "select * from session_locks where session_id = ?",
+                (expected_parent.session_id,),
+            ).fetchone()
+            if lock_row is None or not _is_same_owner(
+                _row_to_lock(lock_row), socket.gethostname(), os.getpid()
+            ):
+                raise RuntimeError("fork source lock changed during the copy")
+            conn.execute(
+                """
+                insert into sessions (
+                    session_id, created_at, updated_at, cwd, artifact_dir,
+                    model, status, last_finish_reason, prompt_text,
+                    prompt_source, context_mode, system_prompt_path,
+                    config_paths_json, worktree_path, worktree_branch,
+                    worktree_base_commit, provider, auth_method, credential_id,
+                    parent_session_id, label, archived_at
+                ) values (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?
+                )
+                """,
+                (
+                    record.session_id,
+                    record.created_at,
+                    record.updated_at,
+                    record.cwd,
+                    record.artifact_dir,
+                    record.model,
+                    record.status,
+                    record.last_finish_reason,
+                    record.prompt_text,
+                    record.prompt_source,
+                    record.context_mode,
+                    record.system_prompt_path,
+                    record.config_paths_json,
+                    record.worktree_path,
+                    record.worktree_branch,
+                    record.worktree_base_commit,
+                    record.provider,
+                    record.auth_method,
+                    record.credential_id,
+                    record.parent_session_id,
+                    None,
+                    None,
+                ),
+            )
+
+    def discard_unreturned_fork(self, record: SessionRecord) -> None:
+        """Remove a child row when its creating command has not returned."""
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                "select * from sessions where session_id = ?",
+                (record.session_id,),
+            ).fetchone()
+            if row is None:
+                return
+            if _row_to_record(row) != record:
+                raise RuntimeError(
+                    "cannot clean up a fork child whose metadata changed"
+                )
+            active = conn.execute(
+                "select 1 from active_sessions where session_id = ? limit 1",
+                (record.session_id,),
+            ).fetchone()
+            lock = conn.execute(
+                "select 1 from session_locks where session_id = ? limit 1",
+                (record.session_id,),
+            ).fetchone()
+            if active is not None or lock is not None:
+                raise RuntimeError(
+                    "cannot clean up a fork child that another command claimed"
+                )
+            conn.execute(
+                "delete from sessions where session_id = ?",
+                (record.session_id,),
+            )
 
     def get_session(self, session_id: str) -> SessionRecord | None:
         with self._connect() as conn:
@@ -686,6 +857,11 @@ def _row_to_record(row: sqlite3.Row) -> SessionRecord:
         credential_id=(
             row["credential_id"] if "credential_id" in optional else None
         ),
+        parent_session_id=(
+            row["parent_session_id"]
+            if "parent_session_id" in optional
+            else None
+        ),
         label=row["label"] if "label" in optional else None,
         archived_at=(
             row["archived_at"] if "archived_at" in optional else None
@@ -725,6 +901,10 @@ def _session_id_ref_matches(session_id: str, session_ref: str) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _new_session_id() -> str:
+    return f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
 __all__ = [

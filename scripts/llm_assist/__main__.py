@@ -69,6 +69,7 @@ from ._images import (
     read_image_inputs,
     save_image_segment,
 )
+from .forking import ForkSessionError, fork_saved_session, validate_correction_owner
 from .progress import TraceFollower
 from .runner import (
     _make_client,
@@ -549,6 +550,15 @@ def main(argv: list[str] | None = None) -> int:
         help="list archived sessions instead of ordinary sessions",
     )
     sessions_parser.set_defaults(func=cmd_sessions)
+
+    fork_parser = sub.add_parser(
+        "fork", help="create an isolated child of one stopped saved session"
+    )
+    fork_parser.add_argument(
+        "session_id",
+        help="coding-session ID, exact label, or unique ID prefix",
+    )
+    fork_parser.set_defaults(func=cmd_fork)
 
     archive_parser = sub.add_parser(
         "archive", help="hide one stopped saved session from ordinary selection"
@@ -1555,6 +1565,36 @@ def cmd_archive(args) -> int:
     return 0
 
 
+def cmd_fork(args) -> int:
+    if args.session_id.lower() in _LATEST_SESSION_TOKENS:
+        raise SystemExit("fork requires an explicit session reference")
+    store = SessionStore()
+    source = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
+    try:
+        result = fork_saved_session(store, source)
+    except ForkSessionError as exc:
+        raise SystemExit(str(exc)) from exc
+    child = result.child
+    print(f"forked: {child.session_id}")
+    print(f"session_ref: {child.short_id}")
+    print(f"parent_session_id: {source.session_id}")
+    print(f"parent_session_ref: {source.short_id}")
+    print(f"status: {child.status}")
+    print(f"cwd: {child.cwd}")
+    print(f"artifacts: {child.artifact_dir}")
+    if child.worktree_path is not None:
+        print(f"worktree: {child.worktree_path}")
+        print(f"worktree_branch: {child.worktree_branch}")
+    print(f"source_artifacts_sha256: {result.source_artifact_sha256}")
+    print(f"resume with: {CLI_NAME} resume {child.short_id}")
+    return 0
+
+
 def cmd_unarchive(args) -> int:
     if args.session_id.lower() in _LATEST_SESSION_TOKENS:
         raise SystemExit("unarchive requires an explicit session reference")
@@ -1667,6 +1707,8 @@ def cmd_status(args) -> int:
     interrupt = load_interrupt_marker(record.artifact_path)
 
     print(f"session_id: {record.session_id}")
+    if record.parent_session_id is not None:
+        print(f"parent_session_id: {record.parent_session_id}")
     print(f"label: {record.label if record.label is not None else '-'}")
     print(f"session_ref: {record.short_id}")
     print(f"status: {status}")
@@ -1744,6 +1786,8 @@ def cmd_show(args) -> int:
     status = live.status or record.status
     finish_reason = live.finish_reason if live.status else record.last_finish_reason
     print(f"session_id: {record.session_id}")
+    if record.parent_session_id is not None:
+        print(f"parent_session_id: {record.parent_session_id}")
     print(f"label: {record.label if record.label is not None else '-'}")
     print(f"session_ref: {record.short_id}")
     print(f"status: {status}")
@@ -1863,11 +1907,7 @@ def _print_image_evidence(artifact_dir: Path) -> None:
 
 def _correction_state_for_record(record) -> CorrectionState:
     state = validate_correction_trace(record.artifact_path)
-    if (
-        state.correction is not None
-        and state.correction["session_id"] != record.session_id
-    ):
-        raise CorrectionStateError("correction belongs to another session")
+    validate_correction_owner(record, state)
     return state
 
 

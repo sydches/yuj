@@ -47,11 +47,11 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 
 | File | What it means |
 | --- | --- |
-| `sessions.sqlite3` | Index of coding sessions, manual labels, archive times, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. A nullable `archived_at` value is reversible local operator metadata. Labels and archive times do not enter session files, model input, replay, or measurement mode. Credential IDs are internal and are not printed by session commands. |
+| `sessions.sqlite3` | Index of coding sessions, immutable parent-session IDs, manual labels, archive times, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. A nullable `parent_session_id` identifies the immediate source of an explicit fork and cannot be changed. A nullable `archived_at` value is reversible local operator metadata. Labels and archive times do not enter session files, model input, replay, or measurement mode. Credential IDs are internal and are not printed by session commands. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/attachments.json` | Bounded attachment manifest. For each image it records the run segment, display name, detected media type, byte count, dimensions, SHA-256 digest, session-relative saved path, and the associated user-text digest and sizes. It stores no source path or image bytes. |
 | `<session_id>/attachments/segment-NNNN/image-NNNN.<ext>` | Exact validated image bytes copied from an explicit `code`, `run`, or `resume` input. Both numbers use four digits, starting at `0001`. These permission-restricted files are the source for model requests and replay-safe resumes; Yuj does not reopen the original path. |
-| `<session_id>/session.json` | Model, original target repository, provider and authentication method when pinned, context mode, starting config paths and their available SHA-256 hashes, and retained worktree path/branch/base commit when enabled. It never contains a credential value or credential ID. A later `provider.toml` for that coding session is not added to this file in the current code. |
+| `<session_id>/session.json` | Immutable session ID, nullable immediate parent-session ID, model, original target repository, provider and authentication method when pinned, context mode, starting config paths and their available SHA-256 hashes, and retained worktree path/branch/base commit when enabled. It never contains a credential value or credential ID. A later `provider.toml` for that coding session is not added to this file in the current code. |
 | `<session_id>/provider.toml` | Model-service, thinking-level, plan-mode, permission-preset, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
 | `<session_id>/.trace.jsonl` | Append-only event record across run segments, including one assistant-only `session_usage` fact for each newly ended run segment. |
 | `<session_id>/subagents/<id>/.trace.jsonl` | Separate append-only event record for one named child, including its exact terminal result and token counts. |
@@ -81,6 +81,15 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 `yuj archive` changes only `sessions.sqlite3`. It does not delete, compress,
 move, or rewrite the session directory or a retained worktree. It frees no
 storage. `yuj unarchive` clears only the same archive value.
+
+`yuj fork` validates and copies one stopped session directory into a new
+child-owned directory. It rejects symbolic links, non-regular files, and
+saved paths that escape the source directory. The copy uses new files, not
+hard links or shared writable storage. Yuj verifies the source bytes and
+source index row again before it publishes the child row. It then rewrites
+only the private child metadata and adds a `session_fork` row to the child's
+trace. A handled failure removes staged child files and any new managed
+worktree. Measurement mode does not run or read this assistant command.
 
 ### Image attachment evidence
 
@@ -238,6 +247,7 @@ context or `.solver/state.json` shows a shorter active view.
 | `proc_start`, `proc_poll`, `proc_kill` | Background-process lifecycle and poll bytes returned to the model. | State does not copy these rows. |
 | `turn` | Prompt tokens, cached tokens, hit ratio, and effective role. | Missing cache data stays null. |
 | `session_usage` | Assistant run-segment number, all-response scope, input, output, and cached tokens, plus typed cost and quota evidence or null. | The row does not enter model input or measurement traces. A report counts one matching row per segment and fails on conflicting duplicates. |
+| `session_fork` | Child session ID, immediate parent-session ID, creation time, and the verified source-artifact digest. | The row belongs only to the child's copied trace. It does not enter model input or measurement traces. |
 | `length_continue` | Attempt number and completion-token count. | Stores no request or response text. |
 | `checkpoint` | Shadow-Git commit and capture time, files, and bytes. | State does not copy it. |
 | `tool_start`, `session_exit`, `turn_aborted` | Pending calls and recovery facts. | These rows do not claim a tool outcome. |

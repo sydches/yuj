@@ -435,6 +435,14 @@ Yuj keeps the worktree after every exit so `resume` can return to the same
 files. It records the path, branch, and base commit, and refuses a resume when
 they no longer match.
 
+An explicit `yuj fork SESSION` of a session that owns a managed worktree
+creates a distinct retained worktree and branch for the child. It starts from
+the source worktree's recorded `HEAD` and copies its current tracked,
+uncommitted, and untracked files into child-owned files. The source worktree
+keeps its path, branch, and bytes. Yuj refuses the fork before publishing a
+child session when it cannot validate or create the independent worktree. A
+source without a managed worktree does not gain one during a fork.
+
 Remove an assistant worktree after you merge or save its work:
 
 ```bash

@@ -44,6 +44,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List unarchived sessions, or list archived sessions with `--archived`. |
 | `yuj label` | Set, replace, or clear one manual session label. |
+| `yuj fork` | Create an independent child from one stopped saved session. |
 | `yuj archive` | Hide one stopped session from ordinary selection without changing its evidence. |
 | `yuj unarchive` | Restore one archived session to ordinary selection. |
 | `yuj resume` | Continue a paused session. |
@@ -499,8 +500,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | Command | What it shows |
 | --- | --- |
 | `yuj current` | The immutable ID, optional label, and status details for the active or newest unarchived session in the current repository. If that repository has no unarchived session, show the newest unarchived saved session. |
-| `yuj status [SESSION]` | Immutable ID, optional label, status, archive state and time, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Immutable ID, optional label, status, archive state and time, other times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj status [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, other times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
 | `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |
@@ -520,6 +521,7 @@ turns and trace events to print.
 | `yuj label` | `SESSION` | Select the saved session to change. |
 | `yuj label` | `LABEL` | Set or replace the exact manual label. |
 | `yuj label` | `--clear` | Clear the label instead of setting one. |
+| `yuj fork` | `SESSION` | Select the stopped source session. This argument is required. |
 | `yuj archive` | `SESSION` | Select the stopped session to archive. |
 | `yuj unarchive` | `SESSION` | Select the archived session to restore. |
 
@@ -608,6 +610,49 @@ label. A label changes only the local SQLite session index. It does not change
 the session ID, saved files, trace, replay, repository, worktree, approval,
 clarification, correction, or archive status. The command makes no model
 request, and labels do not enter model input or measurement mode.
+
+### Fork a saved session
+
+Create an independent child from one stopped saved session:
+
+```bash
+yuj fork SESSION
+```
+
+Give a full ID, exact label, short ID, or unique ID start. The argument is
+required. `latest` and `last` are not accepted because forking is an explicit
+one-time action.
+
+The source must be unarchived, unlocked, not selected as the active session,
+and free of unresolved approval, clarification, or correction input. If the
+source is archived, run the exact `yuj unarchive SESSION` command printed by
+the refusal before trying again. A fork makes no model request.
+
+The child receives a new immutable session ID and records the source immutable
+ID as its parent. Its status is `paused`, its finish reason is `forked`, and it
+starts without a label or archive time. `status` and `show` print the parent
+ID. Run the exact `yuj resume CHILD` command printed by `fork` to continue.
+
+Yuj verifies and privately copies the source endpoint, including its prompt,
+settings, trace, state, checkpoints, provider settings, attachments, and other
+session evidence. Every mutable file belongs to the child. New model turns,
+tool events, approvals, answers, corrections, labels, archive changes, and
+artifacts can change only the child. Later changes or removal on either side
+do not change the other side. The parent ID remains historical metadata.
+
+Forking rejects symbolic links, malformed saved paths, and evidence that does
+not belong to the source session directory. It verifies the source files and
+source index row again before publishing the child index row. A handled
+failure removes staged child files and any child worktree. Because the index
+row is published last, an interruption cannot leave a half-created child that
+session commands can resolve.
+
+If the source owns a managed worktree, the child receives a distinct retained
+worktree and branch at the source endpoint. Yuj copies the source worktree's
+current files, including uncommitted and untracked files, without changing the
+source path, branch, or files. It refuses the fork before publishing the child
+when it cannot validate or create that independent worktree. Forking a source
+that does not own a managed worktree does not create one.
 
 ### Archive a session
 
@@ -1008,6 +1053,10 @@ not appear in the session directory or any model-facing record.
 
 The optional archive time also exists only in `sessions.sqlite3`. Archiving
 does not change or move the session directory, and it frees no storage.
+
+A forked session's immutable parent ID exists in `sessions.sqlite3` and
+`session.json`. The parent link is identification only. It does not share
+writable state between session directories.
 
 For an installed package, `<assist_home>` is `$XDG_STATE_HOME/yuj`, or
 `~/.local/state/yuj` when `XDG_STATE_HOME` is unset. For an editable/source

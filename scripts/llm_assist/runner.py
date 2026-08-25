@@ -54,6 +54,7 @@ from ._auth import (
 )
 from ._codex import CodexSubscriptionClient
 from ._images import ImageInputError, load_session_images
+from .forking import validate_correction_owner
 from .store import SessionRecord, SessionStore
 
 
@@ -265,11 +266,7 @@ def run_session(
     """Run exactly one harness outer session for an assistant record."""
     artifact_dir = record.artifact_path
     correction = validate_correction_trace(artifact_dir)
-    if (
-        correction.correction is not None
-        and correction.correction["session_id"] != record.session_id
-    ):
-        raise CorrectionStateError("correction belongs to another session")
+    validate_correction_owner(record, correction)
     clarification = clarification_state(artifact_dir)
     if clarification.phase == "input_required":
         raise RuntimeError(
@@ -707,6 +704,8 @@ def derive_live_state(artifact_dir: Path) -> LiveState:
     last_lifecycle_index = -1
     last_rewind: dict | None = None
     last_rewind_index = -1
+    last_fork: dict | None = None
+    last_fork_index = -1
     for index, ev in enumerate(events):
         if ev.get("event") in {"session_start", "session_end"}:
             last_lifecycle = ev
@@ -714,6 +713,9 @@ def derive_live_state(artifact_dir: Path) -> LiveState:
         elif ev.get("event") == "rewind":
             last_rewind = ev
             last_rewind_index = index
+        elif ev.get("event") == "session_fork":
+            last_fork = ev
+            last_fork_index = index
     session_number = (
         int(last_lifecycle.get("session_number", 0) or 0)
         if last_lifecycle is not None
@@ -764,6 +766,15 @@ def derive_live_state(artifact_dir: Path) -> LiveState:
             finish_reason="rewind",
             session_number=int(
                 last_rewind.get("session_number", session_number) or 0
+            ),
+        )
+
+    if last_fork is not None and last_fork_index > last_lifecycle_index:
+        return LiveState(
+            status="paused",
+            finish_reason="forked",
+            session_number=int(
+                last_fork.get("session_number", session_number) or 0
             ),
         )
 
@@ -951,15 +962,25 @@ def _seed_session_artifacts(record: SessionRecord) -> None:
     _write_session_metadata(record)
 
 
-def _write_session_metadata(record: SessionRecord) -> None:
-    artifact_dir = record.artifact_path
+def _write_session_metadata(
+    record: SessionRecord,
+    *,
+    artifact_dir: Path | None = None,
+) -> None:
+    artifact_dir = Path(artifact_dir or record.artifact_path)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     config_path_hashes = {}
     for raw_path in record.config_paths:
         path = Path(raw_path)
-        if path.is_file():
+        try:
+            relative = path.relative_to(record.artifact_path)
+        except ValueError:
+            readable_path = path
+        else:
+            readable_path = artifact_dir / relative
+        if readable_path.is_file():
             config_path_hashes[raw_path] = hashlib.sha256(
-                path.read_bytes()
+                readable_path.read_bytes()
             ).hexdigest()
     meta = {
         "session_id": record.session_id,
@@ -967,6 +988,7 @@ def _write_session_metadata(record: SessionRecord) -> None:
         "model": record.model,
         "provider": record.provider,
         "authentication": record.auth_method,
+        "parent_session_id": record.parent_session_id,
         "prompt_source": record.prompt_source,
         "context_mode": record.context_mode,
         "system_prompt_path": record.system_prompt_path,
@@ -1008,6 +1030,10 @@ def _format_trace_event(event: dict) -> str:
         finish_reason = event.get("finish_reason")
         turns = event.get("turns")
         return f"session_end session={session} finish_reason={finish_reason} turns={turns}"
+    if et == "session_fork":
+        child = event.get("session_id") or "?"
+        parent = event.get("parent_session_id") or "?"
+        return f"session_fork child={child} parent={parent}"
     if et == "adaptive_phase_switch":
         turn = event.get("turn_number")
         phase = event.get("phase")
