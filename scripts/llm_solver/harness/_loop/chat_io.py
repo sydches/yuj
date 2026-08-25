@@ -159,6 +159,24 @@ def _has_fallback(session: "Session") -> bool:
     return bool(controller is not None and controller.has_next("main"))
 
 
+def _release_protected_correction(
+    session: "Session", outgoing: list[dict]
+) -> None:
+    """Validate the exact correction tail, then end its special boundary."""
+    text = getattr(session, "_protected_correction_text", None)
+    if not isinstance(text, str) or not text:
+        return
+    if (
+        not outgoing
+        or outgoing[-1].get("role") != "user"
+        or outgoing[-1].get("content") != text
+    ):
+        raise RuntimeError(
+            "pending correction changed before its model request"
+        )
+    session._protected_correction_text = None
+
+
 def _emit_api_error(session: "Session", turn: int, exc: Exception, *, kind: str) -> None:
     """Record API failure details in the trace. Never raise."""
     try:
@@ -189,6 +207,7 @@ def chat_with_retry(session: "Session", turn: int):
                 outgoing = maybe_compact_messages(
                     session, session.context.get_messages()
                 )
+                _release_protected_correction(session, outgoing)
                 length_continue_max = _length_continue_max(cfg)
                 runtime = getattr(session, "_stream_rule_runtime", None)
                 if runtime is not None:

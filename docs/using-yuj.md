@@ -44,6 +44,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List saved sessions. |
 | `yuj resume` | Continue a paused session. |
+| `yuj correct` | Record one exact correction for a stopped session. |
 | `yuj answer` | Record one exact answer for a pending clarification. |
 | `yuj rewind` | Restore a stopped session to an earlier conversation and tree turn. |
 | `yuj worktree rm` | Remove a retained session worktree and branch. |
@@ -495,8 +496,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | Command | What it shows |
 | --- | --- |
 | `yuj current` | The active or newest session for the current repository. If that repository has no session, the newest saved session. |
-| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, attachment evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Up to `N` recent sessions from all repositories; the default is 20 |
 
@@ -597,6 +598,9 @@ the other sessions in its 200-session search.
 `answer` requires both an explicit session reference and the exact request ID.
 It does not choose a pending question automatically.
 
+`correct` also requires an explicit session reference. It does not select a
+session automatically.
+
 Yuj stops with an error if an ID matches no session or more than one session.
 
 Automatic selection checks the active-session pointer first when the command
@@ -644,6 +648,38 @@ The answer supplies information only. It does not approve any tool action.
 If an approval request is also pending, use `yuj approve` or `yuj reject`
 separately.
 
+## Correct a stopped session
+
+Record one exact correction before you resume a stopped session:
+
+```bash
+yuj correct SESSION 'CORRECTION'
+```
+
+Yuj records the `CORRECTION` argument exactly. Quote it when it contains
+spaces or shell characters. The command requires an explicit full ID, short
+ID, or unique ID start. It refuses an empty correction, an unknown or unclear
+session, an active or locked session, and a session that cannot resume. It
+also refuses a second correction. A refusal leaves the correction files and
+trace unchanged.
+
+`status` and `show` print `correction: pending` until resume consumes the
+correction. They also print its ID, SHA-256 hash, character count, and a
+bounded JSON-quoted preview. They do not label it as an approval or a
+clarification answer.
+
+A correction supplies ordinary task input only. It does not approve or reject
+a tool action, answer a clarification, change a permission rule, or change the
+sandbox. You may record it while an approval or clarification is pending, but
+you must resolve that separate request before resume can continue.
+
+On resume, Yuj adds the exact correction as the last user message before the
+first model request. It records consumption immediately before transport. A
+later resume, interrupt recovery, or rewind does not add the consumed text
+again. An unknown transport result also does not reopen it. If that resume
+has image input, the images stay on their own text prompt; the correction
+remains a separate text-only user message.
+
 ## Resume a session
 
 Resume the session that Yuj selects:
@@ -687,13 +723,22 @@ Yuj moves the preceding model transcript to the next
 `transcript.pre_seg_N.log` file. `checkpoint.json` and `metrics.json` describe
 only the newest run segment because a resume replaces them.
 
-`resume` does not accept new model, context, or settings options. Its only new
-task input is the paired follow-up text and image form above. Ordinary resume
-without those options keeps its existing behavior.
+`resume` does not accept new model, context, or settings options. Its only
+direct command-line task input is the paired follow-up text and image form
+above. A prior `correct` command may have recorded one separate text input for
+the next resume. Ordinary resume without either form keeps its existing
+behavior.
 
 `resume` refuses a session whose clarification still lacks an answer. When an
 answer is ready, resume adds the exact answer to one model request and records
 its consumption before transport. A later resume does not add it again.
+
+When a correction is pending, resume adds it only after any resume-time
+conversation restore and pre-model hook. This keeps the exact correction as
+the last user message. If the context needs compaction at this boundary, Yuj
+uses the content-blind digest path. It does not run a checkpoint model or a
+compaction hook before the correction reaches the main model. Approval and
+clarification checks remain authoritative.
 
 If you name a completed coding session, `resume` prints its result and exits
 without starting another run segment.
@@ -732,6 +777,10 @@ number of successful rewinds.
 A rewind marks any pending or answered-but-unconsumed clarification as
 rewound. Its durable records remain available for audit, but the answer cannot
 enter the conversation after the rewind.
+
+Yuj refuses `rewind` while a correction is pending. Resume and consume that
+correction first. You may record a correction after a successful rewind; the
+next resume adds it after restoring the saved conversation.
 
 ## Remove an isolated session worktree
 
@@ -864,8 +913,8 @@ exact alternative.
 
 The session directory can contain the task text, settings, trace, segmented
 model messages, session-owned image attachments and their digest manifest,
-`.solver/state.json`, clarification evidence, approvals, final status,
-metrics, and context-saving records.
+`.solver/state.json`, correction evidence, clarification evidence, approvals,
+final status, metrics, and context-saving records.
 
 Most Yuj records stay in the session directory. Large kept tool output can
 also appear under `.tool_output/` in the target repository.

@@ -95,6 +95,7 @@ class LlamaClient:
         self._stream_observer = None
         self._last_call_streamed = False
         self._image_inputs: tuple[ImageInput, ...] = ()
+        self._image_target_correction: str | None = None
         _ = self.thinking_resolution
 
     @property
@@ -125,17 +126,34 @@ class LlamaClient:
                 raise TypeError("image inputs must be ImageInput values")
         self._image_inputs = selected
 
+    def preserve_image_target_before_correction(self, text: str) -> None:
+        """Keep one correction from becoming the image-bearing user turn."""
+        if not isinstance(text, str) or not text:
+            raise ValueError("correction text must be a non-empty string")
+        self._image_target_correction = text
+
     def _messages_with_image_inputs(self, messages: list[dict]) -> list[dict]:
-        """Attach images to the latest text user turn, preserving its text."""
+        """Attach images to the latest eligible text user turn."""
         images = self._image_inputs
         if not images:
             return messages
+        correction_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+                and messages[index].get("content")
+                == self._image_target_correction
+            ),
+            None,
+        )
         selected_index = next(
             (
                 index
                 for index in range(len(messages) - 1, -1, -1)
                 if messages[index].get("role") == "user"
                 and isinstance(messages[index].get("content"), str)
+                and index != correction_index
             ),
             None,
         )

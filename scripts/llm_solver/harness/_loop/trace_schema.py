@@ -373,6 +373,27 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         }),
     ),
     TraceEventSpec(
+        "correction_created",
+        frozenset({
+            "session_number", "correction_id", "text_sha256", "text_chars",
+        }),
+    ),
+    TraceEventSpec(
+        "correction_consumed",
+        frozenset({
+            "session_number", "turn_number", "correction_id", "text_sha256",
+            "transcript_segment", "delivery",
+        }),
+    ),
+    TraceEventSpec(
+        "correction_replayed",
+        frozenset({
+            "session_number", "turn_number", "correction_id", "text_sha256",
+            "source_session_number", "source_turn_number",
+            "source_transcript_segment",
+        }),
+    ),
+    TraceEventSpec(
         "permission",
         frozenset({
             "session_number", "turn_number", "tool", "rule", "decision",

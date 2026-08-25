@@ -118,6 +118,26 @@ def test_reclip_never_touches_initial_user_or_assistant():
     assert len(msgs[2]["content"]) == 8000
 
 
+def test_reclip_never_changes_a_protected_pending_correction():
+    correction = "c" * 8000
+    sess = _stub_session(1000, [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task prompt"},
+        {"role": "tool", "tool_call_id": "c1", "content": "x" * 6000},
+        {"role": "user", "content": correction},
+    ])
+    sess._protected_correction_text = correction
+
+    info = preflight_reclip_oversized(sess)
+
+    assert info is not None
+    assert info["index"] == 2
+    assert sess.context.get_messages()[-1] == {
+        "role": "user",
+        "content": correction,
+    }
+
+
 def test_reclip_noop_when_no_message_exceeds_half_context():
     sess = _stub_session(100000, [
         {"role": "system", "content": "sys"},

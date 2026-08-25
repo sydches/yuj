@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import json
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 from ..llm_solver.config import (
@@ -42,6 +44,13 @@ from ..llm_solver.harness.clarifications import (
     clarification_answer_path,
     clarification_state,
     record_clarification_answer,
+)
+from ..llm_solver.harness.corrections import (
+    CorrectionState,
+    CorrectionStateError,
+    correction_path,
+    create_correction,
+    validate_correction_trace,
 )
 from ..llm_solver.harness._loop.interrupted_turn import append_trace_event_fsync
 from ..llm_solver.harness._loop.trace_schema import TRACE_SCHEMA_VERSION
@@ -446,6 +455,17 @@ def main(argv: list[str] | None = None) -> int:
         help="local image to attach to the follow-up; repeat for more images",
     )
     resume_parser.set_defaults(func=cmd_resume)
+
+    correct_parser = sub.add_parser(
+        "correct", help="record one correction for a stopped session"
+    )
+    correct_parser.add_argument(
+        "session_id", help="coding-session ID or unique session reference"
+    )
+    correct_parser.add_argument(
+        "correction", help="exact operator correction to send on resume"
+    )
+    correct_parser.set_defaults(func=cmd_correct)
 
     answer_parser = sub.add_parser(
         "answer", help="record one answer for a pending clarification"
@@ -886,6 +906,10 @@ def cmd_resume(args) -> int:
     store = SessionStore()
     record = _resolve_session_record(store, args.session_id, selector="resumable")
     try:
+        _correction_state_for_record(record)
+    except CorrectionStateError as exc:
+        raise SystemExit(f"invalid correction evidence: {exc}") from exc
+    try:
         clarification = clarification_state(record.artifact_path)
     except ClarificationStateError as exc:
         raise SystemExit(f"invalid clarification evidence: {exc}") from exc
@@ -940,6 +964,93 @@ def cmd_resume(args) -> int:
     refreshed = store.get_session(record.session_id)
     _print_session_result(refreshed or record, success, finish_reason)
     return 0 if success else 1
+
+
+def cmd_correct(args) -> int:
+    if args.session_id.lower() in _LATEST_SESSION_TOKENS:
+        raise SystemExit("correct requires an explicit session reference")
+    store = SessionStore()
+    record = _resolve_session_record(
+        store, args.session_id, selector="latest"
+    )
+    try:
+        with _session_lock(store, record):
+            state = _correction_state_for_record(record)
+            if state.phase == "pending":
+                raise CorrectionStateError(
+                    "session already has a pending correction"
+                )
+            if state.phase == "consumed":
+                raise CorrectionStateError(
+                    "this session already has a correction"
+                )
+            if record.status == "completed":
+                raise CorrectionStateError(
+                    "cannot correct a completed session"
+                )
+            if record.status == "archived":
+                raise CorrectionStateError(
+                    "cannot correct an archived session"
+                )
+            known_resumable_rows = {
+                "paused",
+                "error",
+                "approval_pending",
+                "input_required",
+                "input_ready",
+                "running",
+            }
+            if record.status not in known_resumable_rows:
+                raise CorrectionStateError(
+                    f"session status {record.status!r} is not resumable"
+                )
+            live = derive_live_state(record.artifact_path)
+            status = live.status or record.status
+            if status == "running":
+                raise CorrectionStateError(
+                    "cannot correct an active session"
+                )
+            if status not in {
+                "paused",
+                "error",
+                "approval_pending",
+                "input_required",
+                "input_ready",
+            }:
+                raise CorrectionStateError(
+                    f"session status {status!r} is not resumable"
+                )
+            if live.session_number <= 0:
+                raise CorrectionStateError(
+                    "session has no stopped run boundary to correct"
+                )
+            correction = create_correction(
+                record.artifact_path,
+                correction_id=f"corr-{uuid.uuid4().hex[:12]}",
+                session_id=record.session_id,
+                after_session_number=live.session_number,
+                text=args.correction,
+            )
+            append_trace_event_fsync(
+                record.artifact_path / ".trace.jsonl",
+                {
+                    "event": "correction_created",
+                    "trace_schema_version": TRACE_SCHEMA_VERSION,
+                    "session_number": live.session_number,
+                    "correction_id": correction["correction_id"],
+                    "text_sha256": correction["text_sha256"],
+                    "text_chars": len(correction["text"]),
+                },
+            )
+    except CorrectionStateError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"corrected: {record.session_id}")
+    print(f"session_ref: {record.short_id}")
+    print("correction: pending")
+    print(f"correction_id: {correction['correction_id']}")
+    print(f"correction_file: {correction_path(record.artifact_path)}")
+    print(f"resume with: {CLI_NAME} resume {record.short_id}")
+    return 0
 
 
 def cmd_answer(args) -> int:
@@ -1000,13 +1111,18 @@ def cmd_rewind(args) -> int:
     )
     try:
         with _session_lock(store, record):
+            correction = _correction_state_for_record(record)
+            if correction.phase == "pending":
+                raise CorrectionStateError(
+                    "session has a pending correction; resume it before rewind"
+                )
             event = rewind_session(
                 store,
                 record,
                 turn=args.turn,
                 reason=args.reason,
             )
-    except (RuntimeError, WorktreeRuntimeError) as exc:
+    except (CorrectionStateError, RuntimeError, WorktreeRuntimeError) as exc:
         raise SystemExit(str(exc)) from exc
     print(f"rewound: {record.session_id}")
     print(f"session_ref: {record.short_id}")
@@ -1365,6 +1481,10 @@ def cmd_status(args) -> int:
     turns = session_turn_count(record.artifact_path)
     approval = load_approval_request(record.artifact_path)
     clarification = clarification_state(record.artifact_path)
+    try:
+        correction = _correction_state_for_record(record)
+    except CorrectionStateError as exc:
+        raise SystemExit(f"invalid correction evidence: {exc}") from exc
     lock = store.get_session_lock(record.session_id)
     interrupt = load_interrupt_marker(record.artifact_path)
 
@@ -1380,6 +1500,7 @@ def cmd_status(args) -> int:
         print(f"provider: {record.provider}")
         print(f"authentication: {record.auth_method}")
     _print_image_evidence(record.artifact_path)
+    _print_correction_evidence(correction)
     if approval is not None and approval.get("status") == "pending":
         print("approval: pending")
     else:
@@ -1456,6 +1577,10 @@ def cmd_show(args) -> int:
     print(f"turns: {turns}")
     approval = load_approval_request(record.artifact_path)
     clarification = clarification_state(record.artifact_path)
+    try:
+        correction = _correction_state_for_record(record)
+    except CorrectionStateError as exc:
+        raise SystemExit(f"invalid correction evidence: {exc}") from exc
     lock = store.get_session_lock(record.session_id)
     interrupt = load_interrupt_marker(record.artifact_path)
     if approval is None:
@@ -1464,6 +1589,7 @@ def cmd_show(args) -> int:
         print(f"approval: {approval.get('status')}")
         print(f"approval_reason: {approval.get('reason')}")
         print(f"approval_action: {approval.get('tool_name')}({approval.get('args_summary') or approval.get('cmd') or ''})")
+    _print_correction_evidence(correction)
     if clarification.phase == "none":
         print("clarification: none")
     else:
@@ -1538,6 +1664,42 @@ def _print_image_evidence(artifact_dir: Path) -> None:
             f"sha256={item.sha256} "
             f"dimensions={item.width}x{item.height}"
         )
+
+
+def _correction_state_for_record(record) -> CorrectionState:
+    state = validate_correction_trace(record.artifact_path)
+    if (
+        state.correction is not None
+        and state.correction["session_id"] != record.session_id
+    ):
+        raise CorrectionStateError("correction belongs to another session")
+    return state
+
+
+def _print_correction_evidence(state: CorrectionState) -> None:
+    if state.phase == "none":
+        print("correction: none")
+        return
+    assert state.correction is not None
+    correction = state.correction
+    print(f"correction: {state.phase}")
+    print(f"correction_id: {correction['correction_id']}")
+    print(f"correction_sha256: {correction['text_sha256']}")
+    print(f"correction_chars: {len(correction['text'])}")
+    print(f"correction_preview: {_bounded_correction_preview(correction['text'])}")
+
+
+def _bounded_correction_preview(text: str, *, max_chars: int = 160) -> str:
+    rendered = json.dumps(text, ensure_ascii=False)
+    if len(rendered) <= max_chars:
+        return rendered
+    preview = ""
+    for character in text:
+        candidate = json.dumps(preview + character + "...", ensure_ascii=False)
+        if len(candidate) > max_chars:
+            break
+        preview += character
+    return json.dumps(preview + "...", ensure_ascii=False)
 
 
 def cmd_usage(args) -> int:

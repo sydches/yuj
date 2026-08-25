@@ -215,6 +215,27 @@ def _head_tail_truncate(text: str, char_budget: int, head_ratio: float = 0.4,
     return f"{head}\n[... {omitted} chars omitted by compaction overflow guard ...]\n{tail}"
 
 
+def _protected_correction_text(session: "Session") -> str | None:
+    text = getattr(session, "_protected_correction_text", None)
+    return text if isinstance(text, str) and text else None
+
+
+def _ensure_protected_correction_tail(
+    session: "Session", messages: list[dict]
+) -> list[dict]:
+    """Keep the pending correction exact and final after compaction."""
+    text = _protected_correction_text(session)
+    if text is None:
+        return messages
+    if (
+        messages
+        and messages[-1].get("role") == "user"
+        and messages[-1].get("content") == text
+    ):
+        return messages
+    return [*messages, {"role": "user", "content": text}]
+
+
 def preflight_reclip_oversized(session) -> dict | None:
     """Invariant backstop: re-clip the single largest oversized message
     in token space so a pre-flight overflow gets one chance to recover
@@ -266,12 +287,20 @@ def preflight_reclip_oversized(session) -> dict | None:
         return len(str(m)) // 4
 
     budget_pt = ctx_size // 2
+    protected_correction = _protected_correction_text(session)
     first_user_seen = False
     best_i, best_pt = -1, 0
     for i, m in enumerate(msgs):
         role = m.get("role")
         if role == "user" and not first_user_seen:
             first_user_seen = True  # initial task prompt — never clipped
+            continue
+        if (
+            i == len(msgs) - 1
+            and role == "user"
+            and protected_correction is not None
+            and m.get("content") == protected_correction
+        ):
             continue
         if role not in ("tool", "user"):
             continue
@@ -415,11 +444,31 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     """
     cfg = session.cfg
     configured_method = str(getattr(cfg, "compaction_method", "digest"))
-    requested_method = str(
-        getattr(session, "_compaction_method_override", "") or configured_method
+    protected_correction = _protected_correction_text(session)
+    protected_archive_tracking = bool(
+        protected_correction is not None
+        and (
+            configured_method == "checkpoint"
+            or str(getattr(cfg, "compaction_hook", "") or "").strip()
+        )
     )
-    hook_reference, hook = _session_compaction_hook(session)
-    if requested_method == "checkpoint" or hook is not None:
+    if protected_correction is not None:
+        # The correction must reach the next model request before any other
+        # model work. Use only the content-blind digest path at this boundary;
+        # a checkpoint model or operator hook may run again on later turns.
+        requested_method = "digest"
+        hook_reference, hook = "", None
+    else:
+        requested_method = str(
+            getattr(session, "_compaction_method_override", "")
+            or configured_method
+        )
+        hook_reference, hook = _session_compaction_hook(session)
+    if (
+        requested_method == "checkpoint"
+        or hook is not None
+        or protected_archive_tracking
+    ):
         _sync_checkpoint_archive(session, messages)
     # Route through the bound method so test mocks patching
     # `Session._get_server_ctx` continue to intercept this call site.
@@ -721,6 +770,9 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     # retained tool messages while preserving assistant structure, then
     # recount once more. If still over, raise a typed error so the session
     # ends with a debuggable reason instead of a server 400.
+    new_messages = _ensure_protected_correction_tail(
+        session, new_messages
+    )
     final_count = _recount_tokens(new_messages, tokenizer, tools=tool_schemas)
     if final_count > 0 and final_count > budget:
         tool_indices = [i for i, m in enumerate(new_messages)
@@ -789,7 +841,11 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     ctx = getattr(session, "context", None)
     if ctx is not None:
         ctx.replace_all_messages(new_messages)
-    if requested_method == "checkpoint" or hook is not None:
+    if (
+        requested_method == "checkpoint"
+        or hook is not None
+        or protected_archive_tracking
+    ):
         session._checkpoint_visible_message_count = len(new_messages)
     # Invalidate the output-dedup cache: its entries reference prior
     # turn numbers whose tool-result content has just been folded into

@@ -17,6 +17,7 @@ directly. Same pattern as ``_run_in_sandbox`` in PR #1.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,7 @@ from ..clarifications import (
     consume_clarification_answer,
     create_clarification_request,
 )
+from ..corrections import consume_correction
 from ..plan_mode import effective_model_tool_schemas
 from ..tool_validation import SchemaViolation, ToolArgumentValidation
 from .._tool_filters import resolve_tool_permission
@@ -235,6 +237,160 @@ def _consume_pending_clarification(session: "Session", *, turn: int) -> None:
         delivery=consumption["delivery"],
     )
     session._pending_clarification_delivery = None
+
+
+def _consume_pending_correction(session: "Session", *, turn: int) -> None:
+    pending = getattr(session, "_pending_correction_delivery", None)
+    if pending is None:
+        return
+    if not pending.get("injected"):
+        raise RuntimeError("pending correction was not added before consumption")
+    _require_exact_final_user_correction(session, pending["text"])
+    consumption = consume_correction(
+        session._artifact_dir,
+        correction_id=pending["correction_id"],
+        session_number=session._session_number,
+        turn_number=turn,
+        delivery="resume",
+    )
+    session._emit(
+        "correction_consumed",
+        session_number=session._session_number,
+        turn_number=turn,
+        correction_id=consumption["correction_id"],
+        text_sha256=consumption["text_sha256"],
+        transcript_segment=consumption["transcript_segment"],
+        delivery=consumption["delivery"],
+    )
+    _correction_trace_barrier(session)
+    session._pending_correction_delivery = None
+
+
+def _inject_pending_correction(session: "Session") -> None:
+    pending = getattr(session, "_pending_correction_delivery", None)
+    if pending is None or pending.get("injected"):
+        return
+    # Keep the exact operator bytes as their own final user message. They are
+    # ordinary task input, not permission or a structured clarification
+    # answer. Delay this step until after resume-time rewind restoration and
+    # pre-model hooks so neither can replace or follow the correction.
+    preserve_image_target = getattr(
+        session.client, "preserve_image_target_before_correction", None
+    )
+    if callable(preserve_image_target):
+        preserve_image_target(pending["text"])
+    session.context.add_user(pending["text"])
+    session._protected_correction_text = pending["text"]
+    pending["injected"] = True
+
+
+def _require_exact_final_user_correction(
+    session: "Session", text: str
+) -> None:
+    user_messages = [
+        message
+        for message in session.context.get_messages()
+        if message.get("role") == "user"
+    ]
+    if not user_messages or user_messages[-1].get("content") != text:
+        raise RuntimeError(
+            "pending correction changed before its transport boundary"
+        )
+
+
+def _correction_trace_barrier(session: "Session") -> None:
+    writer = getattr(session, "_async_trace_writer", None)
+    if writer is not None:
+        writer.barrier()
+        return
+    trace_file = getattr(session, "_trace_file", None)
+    if trace_file is None:
+        return
+    trace_file.flush()
+    try:
+        os.fsync(trace_file.fileno())
+    except (AttributeError, OSError):
+        # In-memory test sinks have no kernel durability boundary.
+        pass
+
+
+def _apply_replay_correction(session: "Session", *, turn: int) -> None:
+    if getattr(session, "_pending_replay_correction", None) is not None:
+        return
+    if getattr(session.client, "is_replay", False) is not True:
+        return
+    replay_correction = getattr(
+        session.client, "replay_correction_before_next_request", None
+    )
+    if not callable(replay_correction):
+        return
+    exchange = replay_correction()
+    if exchange is None:
+        return
+    correction = exchange["correction"]
+    messages = session.context.get_messages()
+    if (
+        not messages
+        or messages[-1].get("role") != "user"
+        or messages[-1].get("content") != correction["text"]
+    ):
+        session.context.add_user(correction["text"])
+    session._protected_correction_text = correction["text"]
+    session._pending_replay_correction = exchange
+
+
+def _consume_replay_correction(session: "Session", *, turn: int) -> None:
+    exchange = getattr(session, "_pending_replay_correction", None)
+    if exchange is None:
+        return
+    _require_exact_final_user_correction(
+        session, exchange["correction"]["text"]
+    )
+    mark_replayed = getattr(session.client, "mark_replayed_correction", None)
+    if not callable(mark_replayed):
+        raise RuntimeError("replay correction has no consumption boundary")
+    marked = mark_replayed()
+    if (
+        marked["correction"]["correction_id"]
+        != exchange["correction"]["correction_id"]
+    ):
+        raise RuntimeError("replay correction identity changed before consumption")
+    correction = exchange["correction"]
+    consumption = exchange["consumption"]
+    common = {
+        "correction_id": correction["correction_id"],
+        "text_sha256": correction["text_sha256"],
+        "replayed": True,
+    }
+    session._emit(
+        "correction_created",
+        session_number=session._session_number,
+        text_chars=len(correction["text"]),
+        source_session_number=correction["after_session_number"],
+        **common,
+    )
+    session._emit(
+        "correction_consumed",
+        session_number=session._session_number,
+        turn_number=turn,
+        transcript_segment=consumption["transcript_segment"],
+        delivery="replay",
+        source_session_number=consumption["session_number"],
+        source_turn_number=consumption["turn_number"],
+        source_transcript_segment=consumption["transcript_segment"],
+        **common,
+    )
+    session._pending_replay_correction = None
+    session._emit(
+        "correction_replayed",
+        session_number=session._session_number,
+        turn_number=turn,
+        source_session_number=consumption["session_number"],
+        source_turn_number=consumption["turn_number"],
+        source_transcript_segment=consumption["transcript_segment"],
+        **common,
+    )
+    _correction_trace_barrier(session)
 
 
 def _defer_guard_end_during_active_watch(
@@ -536,6 +692,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 total_prompt_tokens=total_prompt,
                 total_completion_tokens=total_completion,
             )
+        # Resume-time rewind restoration and pre-model hooks have finished.
+        # Add a live or replayed correction now so it is the final exact user
+        # input before request preflight and transport.
+        _inject_pending_correction(session)
+        _apply_replay_correction(session, turn=turn)
         # ─── 0. GUARDRAIL: context fill (PRE-FLIGHT) ──────────────────
         # The post-flight check at the end of step 2 catches overflow
         # that develops during the response, but a tool result added
@@ -633,6 +794,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Mark the exact operator answer consumed before transport. An
         # ambiguous transport failure must not deliver it a second time.
         _consume_pending_clarification(session, turn=turn)
+        _consume_replay_correction(session, turn=turn)
+        # Use the same fail-closed boundary for a correction. Once transport
+        # can observe it, no later resume may inject it again silently.
+        _consume_pending_correction(session, turn=turn)
         # ─── 1. API call (with transient-error retry) ────────────────
         _chat_t0 = time.perf_counter()
         chat_result = session._chat_with_retry(turn)

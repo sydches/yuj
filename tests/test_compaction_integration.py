@@ -156,6 +156,24 @@ def test_checkpoint_branch_replaces_context_and_emits_exact_trace(tmp_path):
     assert event["first_kept_turn"] >= 0
 
 
+def test_pending_correction_uses_deterministic_compaction_and_stays_exact_tail(
+    tmp_path,
+):
+    session, calls, emitted = _session(tmp_path, _summary())
+    correction = "Use PostgreSQL, not SQLite. Keep this exact."
+    session.context.add_user(correction)
+    session._protected_correction_text = correction
+
+    compacted = maybe_compact_messages(
+        session, session.context.get_messages()
+    )
+
+    assert calls == []
+    assert compacted[-1] == {"role": "user", "content": correction}
+    assert session.context.get_messages()[-1] == compacted[-1]
+    assert emitted[-1]["method"] == "digest"
+
+
 def test_bad_checkpoint_uses_digest_and_records_fallback(tmp_path):
     session, calls, emitted = _session(tmp_path, "## Long-term goal\nmissing")
 

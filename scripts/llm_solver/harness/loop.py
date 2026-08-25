@@ -602,6 +602,8 @@ class Session:
         self.context.add_system(system_prompt)
         self.context.add_user(initial_message)
         self._pending_clarification_delivery: dict | None = None
+        self._pending_correction_delivery: dict | None = None
+        self._protected_correction_text: str | None = None
         if (
             getattr(cfg, "runtime_mode", "measurement") == "assistant"
             and self._subagent_level == 0
@@ -624,6 +626,24 @@ class Session:
                 self._pending_clarification_delivery = {
                     "request_id": clarification.request["request_id"],
                     "answer_sha256": clarification.answer["answer_sha256"],
+                }
+            from .corrections import (
+                CorrectionStateError,
+                validate_correction_trace,
+            )
+
+            correction = validate_correction_trace(self._artifact_dir)
+            if correction.phase == "pending":
+                assert correction.correction is not None
+                if correction.correction["session_id"] != self._artifact_dir.name:
+                    raise CorrectionStateError(
+                        "correction belongs to another session"
+                    )
+                self._pending_correction_delivery = {
+                    "correction_id": correction.correction["correction_id"],
+                    "text_sha256": correction.correction["text_sha256"],
+                    "text": correction.correction["text"],
+                    "injected": False,
                 }
         # All thrash-control state lives in one place. See harness/guardrails.py.
         # Session is the orchestrator; the guardrails own their own state

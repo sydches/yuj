@@ -20,6 +20,10 @@ import re
 from pathlib import Path
 
 from ..harness.clarifications import clarification_state
+from ..harness.corrections import (
+    CorrectionStateError,
+    validate_correction_trace,
+)
 from ._streaming import StreamRuleInterrupt
 from .types import ToolCall, TurnResult, Usage
 
@@ -236,17 +240,25 @@ class ReplayClient:
             segments.append(tp.parent / f"{stem}.pre_seg_{n}.log")
             n += 1
         segments.append(tp)
+        self._segment_turns: dict[int, tuple[int, ...]] = {}
         if len(segments) == 1:
             self._bodies = parse_transcript_turns(tp)
+            self._segment_turns[1] = tuple(
+                sorted({turn for turn, _kind in self._bodies})
+            )
         else:
             bodies: dict = {}
             offset = 0
-            for seg in segments:
+            for segment_number, seg in enumerate(segments, start=1):
                 seg_bodies = parse_transcript_turns(seg)
                 max_no = 0
                 for (no, kind), body in seg_bodies.items():
                     bodies[(no + offset, kind)] = body
                     max_no = max(max_no, no)
+                self._segment_turns[segment_number] = tuple(
+                    offset + turn
+                    for turn in sorted({turn for turn, _kind in seg_bodies})
+                )
                 offset += max_no
             self._bodies = bodies
             log.info("replay source is segmented: %d segments, %d turns total",
@@ -281,6 +293,10 @@ class ReplayClient:
         self._clarification_events: list[dict] = []
         self._clarification_exchange: dict | None = None
         self._clarification_replayed = False
+        self._correction_events: list[dict] = []
+        self._correction_exchange: dict | None = None
+        self._correction_replayed = False
+        self._correction_turn_no: int | None = None
         if self.source_trace_path is not None and self.source_trace_path.is_file():
             for line in self.source_trace_path.read_text().splitlines():
                 line = line.strip()
@@ -309,7 +325,10 @@ class ReplayClient:
                     self._rewind_events.setdefault(key, []).append(ev)
                 elif str(ev.get("event") or "").startswith("clarification_"):
                     self._clarification_events.append(ev)
+                elif str(ev.get("event") or "").startswith("correction_"):
+                    self._correction_events.append(ev)
         self._load_clarification_exchange()
+        self._load_correction_exchange()
 
     def _load_clarification_exchange(self) -> None:
         """Validate the one durable exchange needed by offline replay."""
@@ -376,6 +395,67 @@ class ReplayClient:
             "consumption": consumption,
         }
 
+    def _load_correction_exchange(self) -> None:
+        """Validate the one consumed correction needed by offline replay."""
+        if self.source_trace_path is None:
+            return
+        artifact_dir = self.source_trace_path.parent
+        correction_path = artifact_dir / "correction.json"
+        consumption_path = artifact_dir / "correction_consumption.json"
+        if (
+            not self._correction_events
+            and not correction_path.is_file()
+            and not consumption_path.is_file()
+        ):
+            return
+        try:
+            state = validate_correction_trace(artifact_dir)
+        except CorrectionStateError as exc:
+            raise ReplayDivergence(
+                f"invalid recorded correction evidence: {exc}"
+            ) from exc
+        if state.phase != "consumed":
+            raise ReplayDivergence(
+                "offline replay requires a recorded and consumed correction"
+            )
+        assert state.correction is not None
+        assert state.consumption is not None
+        correction = state.correction
+        consumption = state.consumption
+        transcript_segment = consumption["transcript_segment"]
+        segment_turns = self._segment_turns.get(transcript_segment)
+        if not segment_turns:
+            raise ReplayDivergence(
+                "recorded correction transcript segment is missing"
+            )
+        correction_turn = segment_turns[0]
+        body = self._bodies.get((correction_turn, "input"))
+        try:
+            messages = json.loads(body or "").get("messages")
+        except (json.JSONDecodeError, AttributeError) as exc:
+            raise ReplayDivergence(
+                "recorded correction input is not valid JSON"
+            ) from exc
+        if not isinstance(messages, list):
+            raise ReplayDivergence(
+                "recorded correction input has no messages list"
+            )
+        if (
+            not messages
+            or not isinstance(messages[-1], dict)
+            or messages[-1].get("role") != "user"
+            or messages[-1].get("content") != correction["text"]
+        ):
+            raise ReplayDivergence(
+                "recorded correction is not the exact final user message at "
+                "its transcript boundary"
+            )
+        self._correction_turn_no = correction_turn
+        self._correction_exchange = {
+            "correction": correction,
+            "consumption": consumption,
+        }
+
     # -- helpers -------------------------------------------------------------
 
     def _recorded_request_tool_tail(self, turn_no: int) -> list[str] | None:
@@ -422,7 +502,10 @@ class ReplayClient:
         )
         if live == recorded:
             return
-        if self._clarification_exchange is not None:
+        if (
+            self._clarification_exchange is not None
+            or self._correction_exchange is not None
+        ):
             recorded_without_question = tuple(
                 name for name in recorded if name != "ask_user"
             )
@@ -647,6 +730,44 @@ class ReplayClient:
     def has_recorded_clarification(self) -> bool:
         """Return whether replay owns one validated clarification exchange."""
         return self._clarification_exchange is not None
+
+    def replay_correction_before_next_request(self) -> dict | None:
+        """Stage a recorded correction only at its exact resume request."""
+        exchange = self._correction_exchange
+        if exchange is None or self._correction_replayed:
+            return None
+        if self._idx >= len(self._turns):
+            raise ReplayDivergence(
+                "recorded correction has no resumed model request"
+            )
+        next_turn = self._turns[self._idx]
+        assert self._correction_turn_no is not None
+        if next_turn < self._correction_turn_no:
+            return None
+        if next_turn > self._correction_turn_no:
+            raise ReplayDivergence(
+                "replay passed the recorded correction boundary"
+            )
+        return copy.deepcopy(exchange)
+
+    def mark_replayed_correction(self) -> dict:
+        """Consume the staged replay correction immediately before transport."""
+        exchange = self._correction_exchange
+        if exchange is None:
+            raise ReplayDivergence("replay has no recorded correction")
+        if self._correction_replayed:
+            raise ReplayDivergence("recorded correction was replayed more than once")
+        if self._idx >= len(self._turns):
+            raise ReplayDivergence(
+                "recorded correction has no resumed model request"
+            )
+        assert self._correction_turn_no is not None
+        if self._turns[self._idx] != self._correction_turn_no:
+            raise ReplayDivergence(
+                "replay correction consumption is at the wrong request"
+            )
+        self._correction_replayed = True
+        return copy.deepcopy(exchange)
 
     def verify_executed_turn(self, live_event: dict) -> None:
         """Trace-level fidelity gate for a just-executed tool_call event.

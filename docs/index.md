@@ -66,8 +66,9 @@ yuj usage
 
 Use `yuj approve` or `yuj reject` when a tool action needs your choice. If the
 model asks a clarification question, run the exact `yuj answer` command shown
-by `yuj status`. Run `yuj resume` after you approve, reject, answer, or stop a
-session.
+by `yuj status`. Run `yuj correct SESSION "CORRECTION"` to add one exact user
+message before you resume a stopped session. Run `yuj resume` after you
+approve, reject, answer, correct, or stop a session.
 
 The [CLI reference](using-yuj.html) covers every command and option, including
 provider sign-in, session selection, and exit statuses.

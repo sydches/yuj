@@ -23,6 +23,10 @@ from ..llm_solver.harness.clarifications import (
     clarification_state,
     supersede_clarification_for_rewind,
 )
+from ..llm_solver.harness.corrections import (
+    CorrectionStateError,
+    validate_correction_trace,
+)
 from ..llm_solver.harness._loop.model_role_runtime import build_model_role_runtime
 from ..llm_solver.harness.loop import _load_trace_events
 from ..llm_solver.harness.worktree_runtime import (
@@ -260,6 +264,12 @@ def run_session(
 ) -> tuple[bool, str | None]:
     """Run exactly one harness outer session for an assistant record."""
     artifact_dir = record.artifact_path
+    correction = validate_correction_trace(artifact_dir)
+    if (
+        correction.correction is not None
+        and correction.correction["session_id"] != record.session_id
+    ):
+        raise CorrectionStateError("correction belongs to another session")
     clarification = clarification_state(artifact_dir)
     if clarification.phase == "input_required":
         raise RuntimeError(
@@ -1019,6 +1029,13 @@ def _format_trace_event(event: dict) -> str:
     if et in {"clarification_answer", "clarification_consumed"}:
         request_id = event.get("request_id") or "?"
         return f"{et} request={request_id}"
+    if et == "correction_created":
+        correction_id = event.get("correction_id") or "?"
+        chars = event.get("text_chars")
+        return f"correction_created correction={correction_id} chars={chars}"
+    if et in {"correction_consumed", "correction_replayed"}:
+        correction_id = event.get("correction_id") or "?"
+        return f"{et} correction={correction_id}"
     if et == "regression":
         n_regressed = event.get("n_regressed")
         return f"regression n_regressed={n_regressed}"
