@@ -78,6 +78,7 @@ no model request and writes no session artifacts.
 | `--model NAME`, `-m NAME` | Apply this model override last. |
 | `--thinking LEVEL` | Apply this reasoning-effort override last. |
 | `--plan-mode MODE` | Apply this planning-mode override last. |
+| `--permission-preset NAME` | Expand this fixed assistant permission preset. |
 | `--edit-format FORMAT` | Apply this profile edit-format override last. |
 | `--provider NAME` | Apply this model-service choice last. |
 | `--base-url URL` | Apply this service address last. |
@@ -193,6 +194,7 @@ Yuj calls the starting group of settings a base.
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |
+| `--permission-preset NAME` | Use `read-only`, `ask-before-changes`, or `allow-edits` for this session. |
 | `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--provider NAME` | Use `local`, `claude`, `codex`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
@@ -207,9 +209,13 @@ Yuj calls the starting group of settings a base.
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
 
-`--provider`, `--base-url`, `--api-key-env`, `--thinking`, `--plan-mode`, and
-`--edit-format` change only the new session. Yuj saves these settings in the
-session's `provider.toml`.
+`--provider`, `--base-url`, `--api-key-env`, `--thinking`, `--plan-mode`,
+`--permission-preset`, and `--edit-format` change only the new session. Yuj
+saves these settings in the session's `provider.toml`.
+
+Read [Fixed assistant permission presets](configuration.html#select-a-fixed-assistant-permission-preset)
+for the one exact mapping and its precedence rules. A preset does not skip
+plan mode, approval, command, runtime-mode, or sandbox checks.
 
 When you use `--api-key-env`, `provider.toml` stores the variable name. It
 does not store the key.
@@ -282,6 +288,7 @@ ignores it. `YUJ_CONFIG_LOCAL` selects an exact alternative path.
 | `--provider NAME` | Save `local`, `claude`, `codex`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--auth METHOD` | With `claude` or `codex`, use `api-key` or `subscription`. |
 | `--model NAME`, `-m NAME` | Save the default model ID. |
+| `--permission-preset NAME` | Save `read-only`, `ask-before-changes`, or `allow-edits` as the assistant default. |
 | `--base-url URL` | Save the API base address. `custom` requires it. |
 | `--api-key-env NAME` | Save `$ENV:NAME`. Yuj reads the key from that variable when a command starts. |
 | `--api-key VALUE` | Save a key. Claude and Codex keep it in their provider credential file; other service choices keep it in `config.local.toml`. |
@@ -415,6 +422,7 @@ The command prints the throwaway path and keeps it after the check.
 | `--root PATH` | Use this throwaway directory instead of a new temporary directory. Yuj writes `calc.py` and `tests/test_calc.py` there. |
 | `--assist-home PATH` | Save the smoke session under this session root. |
 | `--model NAME`, `-m NAME` | Use this model ID or known short name. |
+| `--permission-preset NAME` | Use a fixed assistant permission preset for the smoke session. |
 | `--edit-format FORMAT` | Override the model profile with `exact`, `apply_patch`, `udiff`, or `whole`. |
 | `--provider NAME` | Use a model service setting. |
 | `--base-url URL` | Use this API base address. |
@@ -691,8 +699,9 @@ automatically.
 
 ## Approve or reject a tool action
 
-A permission rule can require approval for any tool. Yuj also applies a fixed
-approval check to risky shell commands.
+A permission rule, including one supplied by a fixed preset, can require
+approval for any tool. Yuj also applies a fixed approval check to risky shell
+commands.
 
 Yuj checks each shell segment in a `bash` command. It pauses when a segment
 starts with one of these command forms:

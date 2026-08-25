@@ -27,6 +27,7 @@ from ._config_layers import (
     expand_environment_references,
     resolve_toml_layers,
 )
+from ._permission_presets import expand_assistant_permission_preset
 
 VALID_RUNTIME_MODES = ("measurement", "assistant")
 
@@ -255,6 +256,9 @@ class Config:
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
+    # Derived assistant-only base table. Configuration expansion owns this
+    # value; user-declared rules remain separate and compile after it.
+    permissions_preset_rules: dict[str, object] = field(default_factory=dict)
     permissions_rules: dict[str, object] = field(default_factory=dict)
     permissions_ask_fallback: str = "deny"
     # Pattern-based scan at the untrusted tool/prompt boundary. ``flag`` is
@@ -811,6 +815,7 @@ class ResolvedConfig:
 # those real overrides update the owning TOML leaf and provenance before field
 # extraction instead of being guessed after the fact.
 _OVERRIDE_SETTING_PATHS: dict[str, SettingPath] = {
+    "assistant_permission_preset": ("assistant", "permission_preset"),
     "api_key": ("server", "api_key"),
     "base_url": ("server", "base_url"),
     "duplicate_abort": ("loop", "duplicate_abort"),
@@ -895,7 +900,13 @@ def resolve_config(
             )
 
     expanded, environment_references = expand_environment_references(data)
+    resolved_layers = (*layered.layers, command_line_source)
     try:
+        resolved_layers = expand_assistant_permission_preset(
+            expanded,
+            provenance,
+            resolved_layers,
+        )
         flat = _extract_config_fields(expanded)
         for field_name, value in effective_overrides.items():
             if field_name in _OVERRIDE_SETTING_PATHS:
@@ -943,7 +954,7 @@ def resolve_config(
         data=expanded,
         provenance=provenance,
         environment_references=environment_references,
-        layers=(*layered.layers, command_line_source),
+        layers=resolved_layers,
     )
 
 
@@ -990,5 +1001,8 @@ def dump_config(cfg: Config) -> dict:
     from dataclasses import asdict
     from ._config_redaction import redact_config_value
 
-    redacted, _changed, _reasons = redact_config_value(asdict(cfg))
+    snapshot = asdict(cfg)
+    if not snapshot.get("permissions_preset_rules"):
+        snapshot.pop("permissions_preset_rules", None)
+    redacted, _changed, _reasons = redact_config_value(snapshot)
     return redacted  # type: ignore[return-value]

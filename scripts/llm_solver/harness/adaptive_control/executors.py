@@ -276,12 +276,19 @@ def _prepare_guardrail_state(session, new_cfg, changed: set[str]):
 
 
 def _prepare_permission_policy(new_cfg, changed: set[str]):
-    if not changed & {"permissions_rules", "permissions_ask_fallback"}:
+    if not changed & {
+        "permissions_preset_rules",
+        "permissions_rules",
+        "permissions_ask_fallback",
+    }:
         return None
     from ..tool_policy import PermissionPolicy, normalize_ask_fallback
 
     normalize_ask_fallback(new_cfg.permissions_ask_fallback)
-    return PermissionPolicy.from_rule_tables(new_cfg.permissions_rules)
+    return PermissionPolicy.from_rule_tables(
+        new_cfg.permissions_preset_rules,
+        new_cfg.permissions_rules,
+    )
 
 
 def _commit_guardrail_state(prepared) -> tuple[str, ...]:

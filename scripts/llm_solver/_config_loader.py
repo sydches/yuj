@@ -760,6 +760,9 @@ def _extract_config_fields(d: dict) -> dict:
         "permissions_rules": copy.deepcopy(
             d.get("permissions", {}).get("rules", {})
         ),
+        "permissions_preset_rules": copy.deepcopy(
+            d.get("permissions", {}).get("preset_rules", {})
+        ),
         "permissions_ask_fallback": d.get("permissions", {}).get(
             "ask_fallback", "deny"
         ),
@@ -965,7 +968,10 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         PermissionPolicy,
         normalize_ask_fallback,
     )
-    PermissionPolicy.from_rule_tables(cfg.permissions_rules)
+    PermissionPolicy.from_rule_tables(
+        cfg.permissions_preset_rules,
+        cfg.permissions_rules,
+    )
     normalize_ask_fallback(cfg.permissions_ask_fallback)
     from .harness.hooks import validate_hook_settings
 

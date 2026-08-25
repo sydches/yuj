@@ -258,6 +258,7 @@ class Session:
             self._compaction_hook_reference
         )
         self._permission_policy = PermissionPolicy.from_rule_tables(
+            getattr(cfg, "permissions_preset_rules", {}),
             getattr(cfg, "permissions_rules", {})
         )
         self.client = client

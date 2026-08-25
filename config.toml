@@ -519,6 +519,14 @@ block_classes = [
 ]
 
 # ---------------------------------------------------------------------------
+# Assistant-only permission preset selection. Empty preserves the ordinary
+# plan-mode and permission settings below. A selected preset expands before
+# the existing permission policy is compiled.
+# ---------------------------------------------------------------------------
+[assistant]
+permission_preset = ""  # read-only | ask-before-changes | allow-edits
+
+# ---------------------------------------------------------------------------
 # Declarative per-tool permission policy. Empty rules preserve allow-by-default
 # behavior. Later matching entries win; assistant-only "ask" pauses for an
 # operator, while measurement runs resolve "ask" to deny.

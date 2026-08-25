@@ -157,8 +157,8 @@ yuj config --no-treatment \
 
 `--config` remains repeatable and applies left-to-right. The command also
 accepts the `code` settings `--treatment`/`--no-treatment`, `--context`,
-`--model`, `--thinking`, `--plan-mode`, `--edit-format`, `--provider`,
-`--base-url`, and `--api-key-env`.
+`--model`, `--thinking`, `--plan-mode`, `--permission-preset`,
+`--edit-format`, `--provider`, `--base-url`, and `--api-key-env`.
 
 Use JSON for automation:
 
@@ -198,7 +198,7 @@ overlay and the limits that matter for that choice.
 | Use a worktree, save file checkpoints, or rewind | [Isolate and restore work](#isolate-and-restore-work) |
 | Add diagnostics, search, a scratchpad, schema checks, or todos | [Configure model tools](#configure-model-tools) |
 | Run background commands, named agents, or Python cells | [Run background work, agents, or code cells](#run-background-work-agents-or-code-cells) |
-| Set permissions, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
+| Select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
 | Route side requests, ask an advisor, or fall back to another model | [Route model requests](#route-model-requests) |
 | Control prompt caching or reasoning effort | [Tune model requests](#tune-model-requests) |
 | Choose, compact, or continue context | [Choose a context mode](#choose-a-context-mode) |
@@ -737,6 +737,58 @@ modes show the list on later turns. `todos_char_budget` limits only the block
 sent to the model; it does not cut the trace or saved state.
 
 ## Add policy and trusted automation
+
+### Select a fixed assistant permission preset
+
+Use a preset when you want a fixed starting policy without writing every rule.
+Select one preset for a coding session:
+
+```bash
+yuj code --permission-preset ask-before-changes "Inspect, plan, and make the change."
+```
+
+Save one as the machine setting with `yuj setup --permission-preset NAME`, or
+put it in a settings file:
+
+```toml
+[assistant]
+permission_preset = "ask-before-changes"
+```
+
+An empty value selects no preset and preserves the ordinary `loop.plan_mode`,
+`permissions.ask_fallback`, and `permissions.rules` behavior. Yuj provides
+these three presets. The allow-exception column lists every rule that Yuj adds
+after the catch-all rule.
+
+| Preset | `loop.plan_mode` | `permissions.ask_fallback` | Catch-all rule | Allow exceptions | Policy result for `read` / `edit` / `bash` after any required plan phase |
+| --- | --- | --- | --- | --- | --- |
+| `read-only` | `off` | `deny` | `* = deny` | `read`, `glob`, `grep`, `list_definitions`, `list_functions`, `get_function_details`, `lsp`, `ask_user`, `checkpoint`, `done`, `exit_plan_mode`, `load_tools`, `think`, `write_todos` | `allow` / `deny` / `deny` |
+| `ask-before-changes` | `required` | `deny` | `* = ask` | `read`, `glob`, `grep`, `list_definitions`, `list_functions`, `get_function_details`, `lsp`, `ask_user`, `checkpoint`, `done`, `exit_plan_mode`, `load_tools`, `think`, `write_todos` | `allow` / `ask` / `ask` |
+| `allow-edits` | `off` | `deny` | `* = ask` | `read`, `glob`, `grep`, `list_definitions`, `list_functions`, `get_function_details`, `lsp`, `ask_user`, `checkpoint`, `done`, `exit_plan_mode`, `load_tools`, `think`, `write_todos`, `apply_patch`, `edit`, `udiff`, `write` | `allow` / `allow` / `ask` |
+
+A preset expands only when `runtime.mode = "assistant"`. Measurement mode
+validates the name but does not apply its plan or permission values.
+
+Yuj expands the preset in the configuration layer before it compiles the
+ordinary permission policy. An explicit `loop.plan_mode` or
+`permissions.ask_fallback` value replaces the preset value. Yuj inserts the
+preset rules first and then applies configured `permissions.rules` in their
+existing order. A matching configured rule therefore wins, including an
+explicit `deny` over a preset `allow`.
+
+Plan mode still checks an action before permission dispatch. An `ask` still
+uses the normal approval request. An `allow` still passes through command
+checks and the sandbox. No preset changes or skips those checks.
+With `ask-before-changes`, the allowed `.solver/plan.md` write also matches
+`ask`, so Yuj requests approval before it writes the plan.
+
+Run `yuj config --permission-preset NAME` to inspect the result. The human and
+JSON views show `assistant.permission_preset`, each expanded effective rule,
+and the source of each value. They place expanded rules under
+`permissions.preset_rules` and configured rules under `permissions.rules` so
+their order remains visible. Expanded values use the
+`assistant-permission-preset` source layer. Configured values keep the source
+layer that supplied them.
 
 ### Apply per-tool permission rules
 

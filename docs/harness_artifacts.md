@@ -50,7 +50,7 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 | `sessions.sqlite3` | Index of coding sessions, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. Credential IDs are internal and are not printed by session commands. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/session.json` | Model, original target repository, provider and authentication method when pinned, context mode, starting config paths and their available SHA-256 hashes, and retained worktree path/branch/base commit when enabled. It never contains a credential value or credential ID. A later `provider.toml` for that coding session is not added to this file in the current code. |
-| `<session_id>/provider.toml` | Model-service, thinking-level, plan-mode, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
+| `<session_id>/provider.toml` | Model-service, thinking-level, plan-mode, permission-preset, or edit-format overrides given on the `code`, `run`, or `smoke` command. Present only when that command adds one of those overrides. |
 | `<session_id>/.trace.jsonl` | Append-only event record across run segments, including one assistant-only `session_usage` fact for each newly ended run segment. |
 | `<session_id>/subagents/<id>/.trace.jsonl` | Separate append-only event record for one named child, including its exact terminal result and token counts. |
 | `<session_id>/subagents/<id>/transcript.log` | Model messages for one live named child. |
