@@ -275,10 +275,15 @@ Yuj uses the treatment base by default. Add `--no-treatment` only when you
 want the plain comparison base. Read [Treatment](treatment.html) before you
 compare these settings.
 
+Add `--permission-preset read-only`, `ask-before-changes`, or `allow-edits`
+when you want a fixed assistant permission policy. Read
+[Configuration](configuration.html#select-a-fixed-assistant-permission-preset)
+for the exact tool decisions and precedence rules.
+
 ## Continue
 
-Read the [CLI reference](using-yuj.html) to inspect, pause, answer, approve,
-reject, or resume a session.
+Read the [CLI reference](using-yuj.html) to inspect usage, pause, answer,
+approve, reject, or resume a session.
 
 Read [Saved files](harness_artifacts.html) to learn what Yuj records and when
 another tool may use each file.

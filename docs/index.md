@@ -29,6 +29,8 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 | Find an installed `yuj` command or option | [CLI reference](using-yuj.html) |
 | Sign in to Claude or Codex | [Getting started](getting-started.html#use-a-claude-or-codex-credential) |
 | Answer a model clarification question | [CLI reference](using-yuj.html#answer-a-clarification-question) |
+| Inspect token, cache, cost, or quota evidence | [CLI reference](using-yuj.html#inspect-usage) |
+| Choose a fixed assistant permission preset | [Configuration](configuration.html#select-a-fixed-assistant-permission-preset) |
 | See what tools the model can use | [Model tools](model-tools.html) |
 | Start a local model server | [Run a local model](serving_overlay.html) |
 | Understand the default and plain settings | [Treatment](treatment.html) |
@@ -59,6 +61,7 @@ yuj smoke
 yuj code "Fix the failing tests"
 yuj status
 yuj show
+yuj usage
 ```
 
 Use `yuj approve` or `yuj reject` when a tool action needs your choice. If the

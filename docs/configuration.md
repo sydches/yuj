@@ -757,14 +757,24 @@ permission_preset = "ask-before-changes"
 
 An empty value selects no preset and preserves the ordinary `loop.plan_mode`,
 `permissions.ask_fallback`, and `permissions.rules` behavior. Yuj provides
-these three presets. The allow-exception column lists every rule that Yuj adds
-after the catch-all rule.
+these three presets. All three set `permissions.ask_fallback = "deny"`.
 
-| Preset | `loop.plan_mode` | `permissions.ask_fallback` | Catch-all rule | Allow exceptions | Policy result for `read` / `edit` / `bash` after any required plan phase |
-| --- | --- | --- | --- | --- | --- |
-| `read-only` | `off` | `deny` | `* = deny` | `read`, `glob`, `grep`, `list_definitions`, `list_functions`, `get_function_details`, `lsp`, `ask_user`, `checkpoint`, `done`, `exit_plan_mode`, `load_tools`, `think`, `write_todos` | `allow` / `deny` / `deny` |
-| `ask-before-changes` | `required` | `deny` | `* = ask` | `read`, `glob`, `grep`, `list_definitions`, `list_functions`, `get_function_details`, `lsp`, `ask_user`, `checkpoint`, `done`, `exit_plan_mode`, `load_tools`, `think`, `write_todos` | `allow` / `ask` / `ask` |
-| `allow-edits` | `off` | `deny` | `* = ask` | `read`, `glob`, `grep`, `list_definitions`, `list_functions`, `get_function_details`, `lsp`, `ask_user`, `checkpoint`, `done`, `exit_plan_mode`, `load_tools`, `think`, `write_todos`, `apply_patch`, `edit`, `udiff`, `write` | `allow` / `allow` / `ask` |
+| Preset | Plan mode | Catch-all rule | Explicitly allowed groups | Common result for `read` / `edit` / `bash` after planning |
+| --- | --- | --- | --- | --- |
+| `read-only` | `off` | `deny` | Inspection and session control | `allow` / `deny` / `deny` |
+| `ask-before-changes` | `required` | `ask` | Inspection and session control | `allow` / `ask` / `ask` |
+| `allow-edits` | `off` | `ask` | Inspection, session control, and file edit | `allow` / `allow` / `ask` |
+
+The groups expand to these exact tool names:
+
+- Inspection: `read`, `glob`, `grep`, `list_definitions`, `list_functions`,
+  `get_function_details`, and `lsp`.
+- Session control: `ask_user`, `checkpoint`, `done`, `exit_plan_mode`,
+  `load_tools`, `think`, and `write_todos`.
+- File edit: `apply_patch`, `edit`, `udiff`, and `write`.
+
+Yuj adds an `allow` rule for every tool in the listed groups after the preset's
+catch-all rule. Every tool outside those groups keeps the catch-all result.
 
 A preset expands only when `runtime.mode = "assistant"`. Measurement mode
 validates the name but does not apply its plan or permission values.
@@ -778,9 +788,9 @@ explicit `deny` over a preset `allow`.
 
 Plan mode still checks an action before permission dispatch. An `ask` still
 uses the normal approval request. An `allow` still passes through command
-checks and the sandbox. No preset changes or skips those checks.
-With `ask-before-changes`, the allowed `.solver/plan.md` write also matches
-`ask`, so Yuj requests approval before it writes the plan.
+checks and the sandbox. No preset changes or skips those checks. With
+`ask-before-changes`, the `.solver/plan.md` write also matches `ask`, so Yuj
+requests approval before it writes the plan.
 
 Run `yuj config --permission-preset NAME` to inspect the result. The human and
 JSON views show `assistant.permission_preset`, each expanded effective rule,

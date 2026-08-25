@@ -123,6 +123,8 @@ continue through more than one run segment.
 - The model can read files, change code, run commands, and run tests.
 - Yuj normally runs model shell commands through Linux `bubblewrap`.
 - You can inspect, pause, approve, reject, and resume a session.
+- You can inspect persisted token and cache use without contacting the model
+  service. Yuj reports cost and quota only when saved evidence supports them.
 - The model can pause once for a missing fact. You can record one answer and
   resume the same session.
 - Yuj can shorten old command output when the model nears its input limit.

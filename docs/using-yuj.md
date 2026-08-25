@@ -498,6 +498,20 @@ Show the usage evidence for one coding session:
 yuj usage [SESSION]
 ```
 
+The report uses this shape:
+
+```text
+session_id: SESSION_ID
+session_ref: SHORT_ID
+segments: 2
+input_tokens: 300
+output_tokens: 50
+cached_tokens: 120
+cache_ratio: 40.00%
+cost: unknown
+quota: unknown
+```
+
 The command reads the session index and trace without changing either one. It
 does not create a model client, read a credential, refresh authentication, or
 contact a service. Repeating the command against unchanged files prints the
@@ -517,6 +531,8 @@ Quota needs a remaining amount, limit, unit, and scope in every fact. Yuj does
 not derive either value from the model name, service address, credential, or a
 price table. Missing evidence makes only the affected report field
 `unknown`. Incompatible currencies or quota meanings also produce `unknown`.
+The current provider writers do not supply owned cost or quota evidence, so
+both fields currently report `unknown`.
 
 Older run segments do not have the all-response usage fact. If one coding
 session mixes an older segment with a new segment, Yuj keeps aggregate fields
