@@ -13,7 +13,7 @@ Use these terms in this guide:
 | Term | Meaning |
 | --- | --- |
 | Task | The request that you give Yuj. |
-| Coding session | One saved task record with one session ID. A coding session can continue after a resume. |
+| Coding session | One saved task record with one session ID and, optionally, one manual label. A coding session can continue after a resume. |
 | Run segment | Model work between a start or resume and the next end, pause, or interrupt. |
 | Target repository | The Git repository that the model may change. |
 | Session directory | The directory where Yuj saves records for one coding session. |
@@ -43,6 +43,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List saved sessions. |
+| `yuj label` | Set, replace, or clear one manual session label. |
 | `yuj resume` | Continue a paused session. |
 | `yuj correct` | Record one exact correction for a stopped session. |
 | `yuj answer` | Record one exact answer for a pending clarification. |
@@ -464,8 +465,8 @@ The command prints the throwaway path and keeps it after the check.
 Do not give `--root` a directory that contains work you need.
 
 Later commands have no `--assist-home` option. Set `HARNESS_ASSIST_HOME` to
-the same path before you run `status`, `show`, `usage`, `answer`, `approve`,
-`reject`, or `resume` for that smoke session.
+the same path before you run `status`, `show`, `usage`, `label`, `answer`,
+`approve`, `reject`, or `resume` for that smoke session.
 
 ## Understand Git changes
 
@@ -495,11 +496,11 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 
 | Command | What it shows |
 | --- | --- |
-| `yuj current` | The active or newest session for the current repository. If that repository has no session, the newest saved session. |
-| `yuj status [SESSION]` | Status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Status, times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj current` | The immutable ID, optional label, and status details for the active or newest session in the current repository. If that repository has no session, show the newest saved session. |
+| `yuj status [SESSION]` | Immutable ID, optional label, status, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Immutable ID, optional label, status, times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
-| `yuj sessions --limit N` | Up to `N` recent sessions from all repositories; the default is 20 |
+| `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent sessions from all repositories; the default is 20 |
 
 Use `yuj show --turns N --trace-lines N [SESSION]` to choose how many recent
 turns and trace events to print.
@@ -512,6 +513,9 @@ turns and trace events to print.
 | `yuj show` | `--trace-lines N` | Show this many recent trace events. The default is 10. |
 | `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
+| `yuj label` | `SESSION` | Select the saved session to change. |
+| `yuj label` | `LABEL` | Set or replace the exact manual label. |
+| `yuj label` | `--clear` | Clear the label instead of setting one. |
 
 The current parser accepts any integer for these three options. A value of
 `0` prints no matching rows. A negative `--turns` or `--trace-lines` value
@@ -568,10 +572,42 @@ unknown instead of joining narrower turn data with all-response data. Read
 [Saved files](harness_artifacts.html#trace-event-fields) for the exact trace
 field contract.
 
+### Label a session
+
+Set or replace one manual label on a saved session:
+
+```bash
+yuj label SESSION LABEL
+```
+
+Clear it with:
+
+```bash
+yuj label SESSION --clear
+```
+
+A label has 1 to 64 ASCII characters. Its first character must be a letter.
+The remaining characters may be ASCII letters, digits, `.`, `_`, or `-`.
+Yuj stores the label exactly as entered. Labels are case-sensitive, so
+`Release.One` and `release.one` are different labels.
+
+The values `latest` and `last`, in any letter case, are reserved selectors.
+A label also cannot look like a full session ID or an eight-character
+hexadecimal short ID. Yuj rejects a duplicate label or a label that can
+already select a session by ID prefix. It leaves the old label unchanged after
+any rejection.
+
+`sessions`, `status`, `current`, and `show` print `-` when a session has no
+label. A label changes only the local SQLite session index. It does not change
+the session ID, saved files, trace, replay, repository, worktree, approval,
+clarification, correction, or archive status. The command makes no model
+request, and labels do not enter model input or measurement mode.
+
 ### Select a session
 
-A session has a full ID and a short ID. You can also give a unique start of
-either ID.
+A session has a full ID, a short ID, and at most one manual label. Give an
+exact label or a unique start of either ID. Label prefixes do not select a
+session.
 
 Use `latest` or `last` to let Yuj choose. If you omit the ID, Yuj uses
 `latest`.
@@ -601,12 +637,14 @@ It does not choose a pending question automatically.
 `correct` also requires an explicit session reference. It does not select a
 session automatically.
 
-Yuj stops with an error if an ID matches no session or more than one session.
+Yuj stops with an error if a reference matches no session or can select more
+than one session. This also covers a label that conflicts with the prefix of a
+session created later. Use the immutable full ID to resolve that conflict.
 
 Automatic selection checks the active-session pointer first when the command
-uses that pointer. It then searches the 200 newest saved sessions. A full ID
-uses a direct lookup. A short ID or unique ID start searches the 1,000 newest
-saved sessions.
+uses that pointer. It then searches the 200 newest saved sessions. An explicit
+full ID, exact label, short ID, or unique ID start checks the complete session
+index through one resolver.
 
 ### Session statuses
 
@@ -657,11 +695,11 @@ yuj correct SESSION 'CORRECTION'
 ```
 
 Yuj records the `CORRECTION` argument exactly. Quote it when it contains
-spaces or shell characters. The command requires an explicit full ID, short
-ID, or unique ID start. It refuses an empty correction, an unknown or unclear
-session, an active or locked session, and a session that cannot resume. It
-also refuses a second correction. A refusal leaves the correction files and
-trace unchanged.
+spaces or shell characters. The command requires an explicit full ID, exact
+label, short ID, or unique ID start. It refuses an empty correction, an
+unknown or unclear session, an active or locked session, and a session that
+cannot resume. It also refuses a second correction. A refusal leaves the
+correction files and trace unchanged.
 
 `status` and `show` print `correction: pending` until resume consumes the
 correction. They also print its ID, SHA-256 hash, character count, and a
@@ -706,8 +744,8 @@ follow-up. The resume command requires images and exactly one follow-up text
 source together. Repeat `--image` for more images. It validates and saves the
 new segment before the first resumed model request.
 
-The command accepts a full ID, short ID, unique ID start, `latest`, or
-`last`.
+The command accepts a full ID, exact label, short ID, unique ID start,
+`latest`, or `last`.
 
 Yuj keeps the files already changed in the target repository. It starts a new
 model context with the original task and a short summary built from the most
@@ -786,7 +824,8 @@ next resume adds it after restoring the saved conversation.
 
 When `[runtime].worktree` is enabled, Yuj keeps the session's worktree and
 branch after every exit so `resume` sees exactly the same files. Remove it by
-session ID or unique reference only when you no longer need that workspace:
+full ID, exact label, short ID, or unique ID start only when you no longer
+need that workspace:
 
 ```bash
 yuj worktree rm SESSION
@@ -906,6 +945,9 @@ Yuj stores each session here:
 <assist_home>/sessions/<session_id>/
 ```
 
+The optional manual label exists only in `sessions.sqlite3`. The label does
+not appear in the session directory or any model-facing record.
+
 For an installed package, `<assist_home>` is `$XDG_STATE_HOME/yuj`, or
 `~/.local/state/yuj` when `XDG_STATE_HOME` is unset. For an editable/source
 checkout it is `<checkout>/.llm_assist`. Set `HARNESS_ASSIST_HOME` to use an
@@ -931,8 +973,8 @@ uses.
 | 2 | The option parser rejected the command form or option combination. |
 | 130 | You stopped an active session with Ctrl-C, and Yuj paused it. |
 
-An unknown or unclear session ID also returns a nonzero status and prints the
-reason.
+An unknown or unclear session reference also returns a nonzero status and
+prints the reason.
 
 ## Measurements and replay
 

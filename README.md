@@ -166,6 +166,7 @@ own repository.
 | `yuj correct SESSION "CORRECTION"` | Record one exact correction before resume. |
 | `yuj answer SESSION REQUEST_ID "ANSWER"` | Record one answer for a pending clarification. |
 | `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |
+| `yuj label SESSION LABEL` | Set or replace one manual label on a saved session. Add `--clear` instead of `LABEL` to remove it. |
 | `yuj approve` | Allow a tool action that needs approval. |
 | `yuj reject` | Refuse a tool action that needs approval. |
 | `yuj sessions` | List saved sessions. |

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sqlite3
 import uuid
@@ -33,7 +34,8 @@ create table if not exists sessions (
     worktree_base_commit text,
     provider text,
     auth_method text,
-    credential_id text
+    credential_id text,
+    label text
 );
 
 create table if not exists active_sessions (
@@ -49,6 +51,22 @@ create table if not exists session_locks (
     acquired_at text not null
 )
 """
+
+SESSION_LABEL_MAX_LENGTH = 64
+_SESSION_LABEL_PATTERN = re.compile(
+    rf"[A-Za-z][A-Za-z0-9._-]{{0,{SESSION_LABEL_MAX_LENGTH - 1}}}\Z",
+    re.ASCII,
+)
+_FULL_SESSION_ID_PATTERN = re.compile(
+    r"[0-9]{8}_[0-9]{6}_[0-9a-f]{8}\Z",
+    re.IGNORECASE | re.ASCII,
+)
+_SHORT_SESSION_ID_PATTERN = re.compile(
+    r"[0-9a-f]{8}\Z",
+    re.IGNORECASE | re.ASCII,
+)
+_RESERVED_SESSION_LABELS = frozenset({"last", "latest"})
+_SESSION_LABEL_INDEX = "sessions_label_unique"
 
 
 @dataclass(frozen=True)
@@ -72,6 +90,7 @@ class SessionRecord:
     provider: str | None = None
     auth_method: str | None = None
     credential_id: str | None = None
+    label: str | None = None
 
     @property
     def artifact_path(self) -> Path:
@@ -107,6 +126,33 @@ class AmbiguousSessionRefError(RuntimeError):
     pass
 
 
+class SessionLabelError(ValueError):
+    pass
+
+
+def validate_session_label(label: str) -> str:
+    """Validate one exact, case-sensitive operator label without rewriting it."""
+    if not label:
+        raise SessionLabelError("session label must not be empty")
+    if len(label) > SESSION_LABEL_MAX_LENGTH:
+        raise SessionLabelError(
+            f"session label must be at most {SESSION_LABEL_MAX_LENGTH} characters"
+        )
+    if (
+        _FULL_SESSION_ID_PATTERN.fullmatch(label)
+        or _SHORT_SESSION_ID_PATTERN.fullmatch(label)
+    ):
+        raise SessionLabelError("session label must not look like a session ID")
+    if label.lower() in _RESERVED_SESSION_LABELS:
+        raise SessionLabelError(f"session label {label!r} is reserved")
+    if _SESSION_LABEL_PATTERN.fullmatch(label) is None:
+        raise SessionLabelError(
+            "session label must start with an ASCII letter and contain only "
+            "ASCII letters, digits, '.', '_', or '-'"
+        )
+    return label
+
+
 def assist_home() -> Path:
     """Return the assistant-state root."""
     raw = os.environ.get("HARNESS_ASSIST_HOME")
@@ -137,7 +183,10 @@ class SessionStore:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "sessions").mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
+            conn.execute("begin immediate")
+            for statement in _SCHEMA.split(";"):
+                if statement.strip():
+                    conn.execute(statement)
             columns = {
                 str(row["name"])
                 for row in conn.execute("pragma table_info(sessions)").fetchall()
@@ -149,9 +198,16 @@ class SessionStore:
                 "provider",
                 "auth_method",
                 "credential_id",
+                "label",
             ):
                 if name not in columns:
                     conn.execute(f"alter table sessions add column {name} text")
+            conn.execute(
+                f"""
+                create unique index if not exists {_SESSION_LABEL_INDEX}
+                on sessions(label) where label is not null
+                """
+            )
 
     def _connect(self) -> sqlite3.Connection:
         if self.read_only:
@@ -250,31 +306,70 @@ class SessionStore:
         return [_row_to_record(row) for row in rows]
 
     def resolve_session_ref(self, session_ref: str) -> SessionRecord | None:
-        exact = self.get_session(session_ref)
-        if exact is not None:
-            return exact
-
-        records = self.list_sessions(limit=1000)
-        short_exact = [record for record in records if record.short_id == session_ref]
-        if len(short_exact) == 1:
-            return short_exact[0]
-        if len(short_exact) > 1:
-            raise AmbiguousSessionRefError(
-                f"session ref '{session_ref}' matches multiple sessions; use a longer prefix or the full id"
-            )
-
-        prefix_matches = [
+        with self._connect() as conn:
+            rows = conn.execute("select * from sessions").fetchall()
+        records = [_row_to_record(row) for row in rows]
+        label_matches = [
+            record for record in records if record.label == session_ref
+        ]
+        id_matches = [
             record
             for record in records
-            if record.session_id.startswith(session_ref) or record.short_id.startswith(session_ref)
+            if _session_id_ref_matches(record.session_id, session_ref)
         ]
-        if len(prefix_matches) == 1:
-            return prefix_matches[0]
-        if len(prefix_matches) > 1:
+        matches = {
+            record.session_id: record for record in (*label_matches, *id_matches)
+        }
+        if len(matches) == 1:
+            return next(iter(matches.values()))
+        if len(matches) > 1:
+            if label_matches:
+                raise AmbiguousSessionRefError(
+                    f"session ref '{session_ref}' is ambiguous between an exact "
+                    "label and a session ID prefix; use the full session ID"
+                )
             raise AmbiguousSessionRefError(
                 f"session ref '{session_ref}' matches multiple sessions; use a longer prefix or the full id"
             )
         return None
+
+    def set_session_label(self, session_id: str, label: str) -> None:
+        exact_label = validate_session_label(label)
+        try:
+            with self._connect() as conn:
+                conn.execute("begin immediate")
+                rows = conn.execute(
+                    "select session_id from sessions"
+                ).fetchall()
+                session_ids = [str(row["session_id"]) for row in rows]
+                if session_id not in session_ids:
+                    raise SessionLabelError(f"unknown session: {session_id}")
+                if any(
+                    _session_id_ref_matches(candidate, exact_label)
+                    for candidate in session_ids
+                ):
+                    raise SessionLabelError(
+                        f"session label {exact_label!r} conflicts with an "
+                        "existing session ID selector"
+                    )
+                conn.execute(
+                    "update sessions set label = ? where session_id = ?",
+                    (exact_label, session_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise SessionLabelError(
+                f"session label {exact_label!r} is already assigned to another session"
+            ) from exc
+
+    def clear_session_label(self, session_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            cursor = conn.execute(
+                "update sessions set label = null where session_id = ?",
+                (session_id,),
+            )
+            if cursor.rowcount != 1:
+                raise SessionLabelError(f"unknown session: {session_id}")
 
     def set_active_session(self, cwd: Path | str, session_id: str) -> None:
         now = _utc_now()
@@ -494,6 +589,7 @@ def _row_to_record(row: sqlite3.Row) -> SessionRecord:
         credential_id=(
             row["credential_id"] if "credential_id" in optional else None
         ),
+        label=row["label"] if "label" in optional else None,
     )
 
 
@@ -522,15 +618,23 @@ def _is_stale_lock(lock: SessionLock) -> bool:
     return False
 
 
+def _session_id_ref_matches(session_id: str, session_ref: str) -> bool:
+    short_id = session_id.rsplit("_", 1)[-1]
+    return session_id.startswith(session_ref) or short_id.startswith(session_ref)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 __all__ = [
+    "SESSION_LABEL_MAX_LENGTH",
     "SessionLock",
     "AmbiguousSessionRefError",
+    "SessionLabelError",
     "SessionLockedError",
     "SessionRecord",
     "SessionStore",
     "assist_home",
+    "validate_session_label",
 ]

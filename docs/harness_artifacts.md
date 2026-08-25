@@ -47,7 +47,7 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 
 | File | What it means |
 | --- | --- |
-| `sessions.sqlite3` | Index of coding sessions, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. Credential IDs are internal and are not printed by session commands. |
+| `sessions.sqlite3` | Index of coding sessions, manual labels, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. Manual labels are local operator metadata and do not enter session files or model input. Credential IDs are internal and are not printed by session commands. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/attachments.json` | Bounded attachment manifest. For each image it records the run segment, display name, detected media type, byte count, dimensions, SHA-256 digest, session-relative saved path, and the associated user-text digest and sizes. It stores no source path or image bytes. |
 | `<session_id>/attachments/segment-NNNN/image-NNNN.<ext>` | Exact validated image bytes copied from an explicit `code`, `run`, or `resume` input. Both numbers use four digits, starting at `0001`. These permission-restricted files are the source for model requests and replay-safe resumes; Yuj does not reopen the original path. |

@@ -93,7 +93,12 @@ from .runner import (
     session_turn_tail,
     validate_image_capability,
 )
-from .store import AmbiguousSessionRefError, SessionLockedError, SessionStore
+from .store import (
+    AmbiguousSessionRefError,
+    SessionLabelError,
+    SessionLockedError,
+    SessionStore,
+)
 from .startup import preflight_assistant_startup, render_startup_preflight
 from .usage import (
     UsageEvidenceError,
@@ -441,7 +446,10 @@ def main(argv: list[str] | None = None) -> int:
         "session_id",
         nargs="?",
         default="latest",
-        help="coding-session ID or 'latest' (default: latest incomplete session)",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest incomplete session)"
+        ),
     )
     resume_parser.add_argument("--prompt-text", help="literal follow-up text")
     resume_parser.add_argument(
@@ -460,7 +468,8 @@ def main(argv: list[str] | None = None) -> int:
         "correct", help="record one correction for a stopped session"
     )
     correct_parser.add_argument(
-        "session_id", help="coding-session ID or unique session reference"
+        "session_id",
+        help="coding-session ID, exact label, or unique ID prefix",
     )
     correct_parser.add_argument(
         "correction", help="exact operator correction to send on resume"
@@ -471,7 +480,8 @@ def main(argv: list[str] | None = None) -> int:
         "answer", help="record one answer for a pending clarification"
     )
     answer_parser.add_argument(
-        "session_id", help="coding-session ID or unique session reference"
+        "session_id",
+        help="coding-session ID, exact label, or unique ID prefix",
     )
     answer_parser.add_argument(
         "request_id", help="exact clarification request ID shown by status"
@@ -487,7 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     rewind_parser.add_argument(
         "session_id",
-        help="coding-session ID or unique session reference",
+        help="coding-session ID, exact label, or unique ID prefix",
     )
     rewind_parser.add_argument("turn", type=int, help="completed turn to restore")
     rewind_parser.add_argument(
@@ -502,7 +512,10 @@ def main(argv: list[str] | None = None) -> int:
         "session_id",
         nargs="?",
         default="latest",
-        help="coding-session ID or 'latest' (default: latest waiting request)",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest waiting request)"
+        ),
     )
     approve_parser.add_argument("--always", action="store_true",
                                 help="approve the exact same tool and command in this session")
@@ -513,7 +526,10 @@ def main(argv: list[str] | None = None) -> int:
         "session_id",
         nargs="?",
         default="latest",
-        help="coding-session ID or 'latest' (default: latest waiting request)",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest waiting request)"
+        ),
     )
     reject_parser.add_argument("--reason", default="operator rejected the action",
                                help="reason shown to the model after resume")
@@ -528,12 +544,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     sessions_parser.set_defaults(func=cmd_sessions)
 
+    label_parser = sub.add_parser(
+        "label", help="set, replace, or clear a saved session label"
+    )
+    label_parser.add_argument(
+        "session_id",
+        help="coding-session ID, exact label, or unique ID prefix",
+    )
+    label_parser.add_argument(
+        "label",
+        nargs="?",
+        help="exact manual label to set",
+    )
+    label_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="clear the current label",
+    )
+    label_parser.set_defaults(func=cmd_label)
+
     status_parser = sub.add_parser("status", help="show the status of one coding session")
     status_parser.add_argument(
         "session_id",
         nargs="?",
         default="latest",
-        help="coding-session ID or 'latest' (default: latest session)",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest session)"
+        ),
     )
     status_parser.set_defaults(func=cmd_status)
     current_parser = sub.add_parser(
@@ -547,7 +585,10 @@ def main(argv: list[str] | None = None) -> int:
         "session_id",
         nargs="?",
         default="latest",
-        help="coding-session ID or 'latest' (default: latest session)",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest session)"
+        ),
     )
     show_parser.add_argument("--turns", type=int, default=5,
                              help="number of recent turns to show")
@@ -562,7 +603,10 @@ def main(argv: list[str] | None = None) -> int:
         "session_id",
         nargs="?",
         default="latest",
-        help="coding-session ID or 'latest' (default: latest session)",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest session)"
+        ),
     )
     usage_parser.set_defaults(func=cmd_usage)
 
@@ -577,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     worktree_rm.add_argument(
         "session_id",
-        help="coding-session ID or unique session reference",
+        help="coding-session ID, exact label, or unique ID prefix",
     )
     worktree_rm.add_argument(
         "--force",
@@ -1411,7 +1455,10 @@ def cmd_sessions(args) -> int:
     current_cwd = str(Path.cwd().resolve())
     active_ids = store.list_active_session_ids()
     locked_ids = store.list_locked_session_ids()
-    print("session_id                             status     ref       flags               model  cwd")
+    print(
+        "session_id                             status     "
+        "label                 ref       flags               model  cwd"
+    )
     for record in sessions:
         flags: list[str] = []
         if record.session_id in active_ids:
@@ -1421,12 +1468,38 @@ def cmd_sessions(args) -> int:
         if record.cwd == current_cwd:
             flags.append("cwd")
         flag_text = ",".join(flags) if flags else "-"
+        label_text = record.label if record.label is not None else "-"
         print(
-            f"{record.session_id}  {record.status:9s}  "
+            f"{record.session_id}  {record.status:9s}  {label_text:20s}  "
             f"{record.short_id:8s}  {flag_text:18s}  {record.model}  {record.cwd}"
         )
         if record.last_finish_reason:
             print(f"    last_finish_reason={record.last_finish_reason}")
+    return 0
+
+
+def cmd_label(args) -> int:
+    if args.clear and args.label is not None:
+        raise SystemExit("label value and --clear are mutually exclusive")
+    if not args.clear and args.label is None:
+        raise SystemExit("provide a label or --clear")
+
+    store = SessionStore()
+    record = _resolve_session_record(store, args.session_id, selector="latest")
+    try:
+        if args.clear:
+            store.clear_session_label(record.session_id)
+            print(f"label_cleared: {record.session_id}")
+            print(f"session_ref: {record.short_id}")
+            print("label: -")
+            return 0
+        assert args.label is not None
+        store.set_session_label(record.session_id, args.label)
+    except SessionLabelError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"labeled: {record.session_id}")
+    print(f"session_ref: {record.short_id}")
+    print(f"label: {args.label}")
     return 0
 
 
@@ -1489,6 +1562,7 @@ def cmd_status(args) -> int:
     interrupt = load_interrupt_marker(record.artifact_path)
 
     print(f"session_id: {record.session_id}")
+    print(f"label: {record.label if record.label is not None else '-'}")
     print(f"session_ref: {record.short_id}")
     print(f"status: {status}")
     if finish_reason:
@@ -1555,6 +1629,7 @@ def cmd_show(args) -> int:
     status = live.status or record.status
     finish_reason = live.finish_reason if live.status else record.last_finish_reason
     print(f"session_id: {record.session_id}")
+    print(f"label: {record.label if record.label is not None else '-'}")
     print(f"session_ref: {record.short_id}")
     print(f"status: {status}")
     if live.session_number:
