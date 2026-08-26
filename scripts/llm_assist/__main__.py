@@ -122,9 +122,19 @@ from .store import (
     SessionLockedError,
     SessionPurgeInProgressError,
     SessionStore,
+    assist_home,
     is_full_session_id,
 )
 from .startup import preflight_assistant_startup, render_startup_preflight
+from .trust import (
+    WorkspaceTrustError,
+    discover_workspace_behavior,
+    render_workspace_behavior,
+    require_saved_workspace_trust,
+    require_trust_store_outside_workspace,
+    save_workspace_trust,
+    workspace_trust_state,
+)
 from .usage import (
     UsageEvidenceError,
     aggregate_session_usage,
@@ -186,6 +196,17 @@ def main(argv: list[str] | None = None) -> int:
         description="Run a secondary Yuj command",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    def _attach_workspace_trust_arg(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--trust-workspace",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help=(
+                "trust or refuse repository-provided startup behavior for "
+                "the selected workspace"
+            ),
+        )
 
     def _attach_run_args(p: argparse.ArgumentParser) -> None:
         p.add_argument(
@@ -274,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             action="store_true",
             help="validate local startup through the model-network boundary, then exit",
         )
+        _attach_workspace_trust_arg(p)
         p.add_argument(
             "-V", "--version",
             action="version",
@@ -485,6 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="context mode (default: halflife with treatment, full without)",
     )
+    _attach_workspace_trust_arg(smoke_parser)
     smoke_parser.set_defaults(func=cmd_smoke)
 
     resume_parser = sub.add_parser("resume", help="continue a saved coding session")
@@ -510,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="local image to attach to the follow-up; repeat for more images",
     )
+    _attach_workspace_trust_arg(resume_parser)
     resume_parser.set_defaults(func=cmd_resume)
 
     correct_parser = sub.add_parser(
@@ -631,6 +655,27 @@ def main(argv: list[str] | None = None) -> int:
         help="choose one matching session in an interactive terminal",
     )
     sessions_parser.set_defaults(func=cmd_sessions)
+
+    trust_parser = sub.add_parser(
+        "trust", help="inspect or revoke workspace startup trust"
+    )
+    trust_sub = trust_parser.add_subparsers(
+        dest="trust_command", required=True
+    )
+    trust_status = trust_sub.add_parser(
+        "status", help="show the saved trust decision for one workspace"
+    )
+    trust_status.add_argument(
+        "-C", "--cwd", type=Path, default=Path.cwd(), metavar="DIR"
+    )
+    trust_status.set_defaults(func=cmd_trust_status)
+    trust_revoke = trust_sub.add_parser(
+        "revoke", help="remove the saved trust decision for one workspace"
+    )
+    trust_revoke.add_argument(
+        "-C", "--cwd", type=Path, default=Path.cwd(), metavar="DIR"
+    )
+    trust_revoke.set_defaults(func=cmd_trust_revoke)
 
     fork_parser = sub.add_parser(
         "fork", help="create an isolated child of one stopped saved session"
@@ -849,11 +894,170 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"{exc.code}: {exc}") from exc
     except ImageInputError as exc:
         raise SystemExit(f"image input error: {exc}") from exc
+    except WorkspaceTrustError as exc:
+        raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except KeyboardInterrupt:
         sys.stderr.write("\n")
         return 130
     except EOFError:
         raise SystemExit("input closed") from None
+
+
+def _assistant_config_for_workspace_trust(
+    config_paths: list[Path],
+    *,
+    requested_model: str | None,
+    config_overrides: dict[str, object] | None = None,
+):
+    overrides: dict[str, object] = {
+        "runtime_mode": "assistant",
+        "max_sessions": 1,
+        **dict(config_overrides or {}),
+    }
+    if requested_model:
+        overrides["model"] = resolve_model(requested_model)
+    return load_config(
+        user_config=config_paths,
+        overrides=overrides,
+        # Repository configuration must be inspectable before an in-process
+        # extension named by that configuration is imported.
+        resolve_runtime_extensions=False,
+    )
+
+
+def _session_repository_config_paths(record) -> list[Path]:
+    package_bases = {
+        _TREATMENT_CONFIG.resolve(),
+        _PLAIN_CONFIG.resolve(),
+    }
+    return [
+        path
+        for value in record.config_paths
+        if (path := Path(value).expanduser().resolve()) not in package_bases
+    ]
+
+
+def _record_behavior_root(record) -> Path:
+    identity = (
+        record.worktree_path,
+        record.worktree_branch,
+        record.worktree_base_commit,
+    )
+    if any(identity) and not all(identity):
+        raise WorkspaceTrustError("saved session has incomplete worktree identity")
+    if not record.worktree_path:
+        return Path(record.cwd).resolve()
+    try:
+        inspected = inspect_session_worktree(Path(record.cwd), record.session_id)
+    except WorktreeRuntimeError as exc:
+        raise WorkspaceTrustError(str(exc)) from exc
+    expected = (
+        Path(str(record.worktree_path)).resolve(),
+        str(record.worktree_branch),
+        str(record.worktree_base_commit),
+    )
+    actual = (
+        inspected.worktree_path.resolve(),
+        inspected.branch,
+        inspected.base_commit,
+    )
+    if actual != expected:
+        raise WorkspaceTrustError(
+            "saved worktree identity does not match the owned Git worktree"
+        )
+    return inspected.session_cwd
+
+
+def _gate_workspace_behavior(
+    manifest,
+    *,
+    decision: bool | None,
+    store: SessionStore | None = None,
+) -> str:
+    if not manifest.items:
+        return "not_required"
+    root = store.root if store is not None else assist_home()
+    require_trust_store_outside_workspace(root, manifest.workspace)
+    trust_store = store or SessionStore()
+    state = workspace_trust_state(trust_store, manifest)
+    if decision is False:
+        raise SystemExit(
+            render_workspace_behavior(manifest, state=state)
+            + "workspace trust refused by --no-trust-workspace"
+        )
+    if state == "trusted":
+        return state
+
+    rendered = render_workspace_behavior(manifest, state=state)
+    controls = (
+        "Sandboxing, permissions, secret handling, and security scanning "
+        "remain active after trust.\n"
+    )
+    if decision is True:
+        save_workspace_trust(trust_store, manifest)
+        sys.stdout.write(rendered)
+        sys.stdout.write(controls)
+        print("workspace_trust_recorded: yes")
+        return "trusted"
+    if not _is_interactive():
+        raise SystemExit(
+            rendered
+            + controls
+            + "workspace trust is required; rerun with --trust-workspace "
+            "or inspect with `yuj trust status -C DIR`"
+        )
+    sys.stdout.write(rendered)
+    sys.stdout.write(controls)
+    answer = input(
+        "Trust this workspace and allow the listed behavior? [y/N]: "
+    )
+    if answer.strip().lower() not in {"y", "yes"}:
+        raise SystemExit("workspace trust declined")
+    save_workspace_trust(trust_store, manifest)
+    print("workspace_trust_recorded: yes")
+    return "trusted"
+
+
+def _require_current_workspace_behavior_trust(
+    manifest,
+    *,
+    store: SessionStore | None = None,
+) -> None:
+    if not manifest.items:
+        return
+    root = store.root if store is not None else assist_home()
+    require_trust_store_outside_workspace(root, manifest.workspace)
+    if store is None:
+        try:
+            store = SessionStore(read_only=True)
+        except FileNotFoundError as exc:
+            raise WorkspaceTrustError(
+                "workspace behavior has no saved trust decision"
+            ) from exc
+    require_saved_workspace_trust(store, manifest)
+
+
+def _workspace_behavior_startup_guard(
+    *,
+    workspace: Path,
+    config_paths: list[Path],
+    store: SessionStore | None = None,
+):
+    def guard(
+        behavior_root: Path,
+        cfg,
+        system_prompt_file: Path | None,
+    ) -> None:
+        manifest = discover_workspace_behavior(
+            cfg,
+            workspace=workspace,
+            behavior_root=behavior_root,
+            config_paths=config_paths,
+            system_prompt_file=system_prompt_file,
+        )
+        _require_current_workspace_behavior_trust(manifest, store=store)
+
+    return guard
 
 
 def cmd_run(args) -> int:
@@ -869,21 +1073,30 @@ def cmd_run(args) -> int:
     transport_overrides = _transport_overrides_from_args(
         args, auth_binding=auth_binding
     )
+    try:
+        trust_cfg = _assistant_config_for_workspace_trust(
+            config_paths,
+            requested_model=args.model,
+            config_overrides=transport_overrides,
+        )
+        trust_manifest = discover_workspace_behavior(
+            trust_cfg,
+            workspace=args.cwd,
+            config_paths=args.config,
+            system_prompt_file=args.system_prompt,
+        )
+        _gate_workspace_behavior(
+            trust_manifest,
+            decision=getattr(args, "trust_workspace", None),
+        )
+    except WorkspaceTrustError as exc:
+        raise SystemExit(f"workspace trust check failed: {exc}") from exc
+    except Exception as exc:
+        raise SystemExit(f"startup preflight failed: {exc}") from exc
     if pending_images:
-        provisional_overrides = {
-            "runtime_mode": "assistant",
-            "max_sessions": 1,
-            **transport_overrides,
-        }
-        if args.model:
-            provisional_overrides["model"] = resolve_model(args.model)
-        provisional_model = load_config(
-            user_config=config_paths,
-            overrides=provisional_overrides,
-        ).model
         validate_image_capability(
             config_paths,
-            model=provisional_model,
+            model=trust_cfg.model,
             config_overrides=transport_overrides,
             auth_binding=auth_binding,
         )
@@ -897,7 +1110,13 @@ def cmd_run(args) -> int:
             system_prompt_file=args.system_prompt,
             auth_binding=auth_binding,
             auth_store=auth_store,
+            startup_guard=_workspace_behavior_startup_guard(
+                workspace=args.cwd,
+                config_paths=list(args.config),
+            ),
         )
+    except WorkspaceTrustError as exc:
+        raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except Exception as exc:
         raise SystemExit(f"startup preflight failed: {exc}") from exc
     if args.dry_run:
@@ -1072,6 +1291,11 @@ def cmd_config(args) -> int:
 def cmd_smoke(args) -> int:
     _maybe_offer_first_run_setup(args)
     smoke_root = prepare_smoke_repo(args.root)
+    store = (
+        SessionStore(args.assist_home.resolve())
+        if args.assist_home
+        else SessionStore()
+    )
     config_paths, context_mode = _effective_run_settings(args)
     auth_store = CredentialStore()
     auth_store.require_outside_target(smoke_root)
@@ -1079,6 +1303,27 @@ def cmd_smoke(args) -> int:
     transport_overrides = _transport_overrides_from_args(
         args, auth_binding=auth_binding
     )
+    try:
+        trust_cfg = _assistant_config_for_workspace_trust(
+            config_paths,
+            requested_model=args.model,
+            config_overrides=transport_overrides,
+        )
+        trust_manifest = discover_workspace_behavior(
+            trust_cfg,
+            workspace=smoke_root,
+            config_paths=args.config,
+            system_prompt_file=args.system_prompt,
+        )
+        _gate_workspace_behavior(
+            trust_manifest,
+            decision=getattr(args, "trust_workspace", None),
+            store=store,
+        )
+    except WorkspaceTrustError as exc:
+        raise SystemExit(f"workspace trust check failed: {exc}") from exc
+    except Exception as exc:
+        raise SystemExit(f"startup preflight failed: {exc}") from exc
     try:
         preflight_assistant_startup(
             config_paths=config_paths,
@@ -1089,7 +1334,14 @@ def cmd_smoke(args) -> int:
             system_prompt_file=args.system_prompt,
             auth_binding=auth_binding,
             auth_store=auth_store,
+            startup_guard=_workspace_behavior_startup_guard(
+                workspace=smoke_root,
+                config_paths=list(args.config),
+                store=store,
+            ),
         )
+    except WorkspaceTrustError as exc:
+        raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except Exception as exc:
         raise SystemExit(f"startup preflight failed: {exc}") from exc
     model, served = _resolve_smoke_model_or_exit(
@@ -1103,7 +1355,6 @@ def cmd_smoke(args) -> int:
         "Fix the bug in calc.py so tests/test_calc.py passes. "
         "Make the smallest correct code change, run the relevant test, then finish."
     )
-    store = SessionStore(args.assist_home.resolve()) if args.assist_home else SessionStore()
     record = create_session(
         store,
         cwd=smoke_root,
@@ -1225,45 +1476,74 @@ def cmd_resume(args) -> int:
             raise SystemExit("cannot add follow-up input to a completed session")
         _print_session_result(record, True, record.last_finish_reason)
         return 0
-    if pending_images:
-        validate_image_capability(
-            [Path(path) for path in record.config_paths],
-            model=record.model,
-            auth_binding=_record_auth_binding(record),
-        )
-    store.set_active_session(record.cwd, record.session_id)
-    _print_session_start(record, action="resuming")
     try:
-        with _session_lock(store, record), TraceFollower(record.artifact_path):
-            live = derive_live_state(record.artifact_path)
-            next_session_number = max(1, live.session_number + 1)
-            if resume_prompt_text is not None:
-                assert resume_prompt_source is not None
-                _record_resume_prompt_source(
-                    record.artifact_path,
-                    session_number=next_session_number,
-                    prompt_text=resume_prompt_text,
-                    prompt_source=resume_prompt_source,
+        with _session_lock(store, record):
+            try:
+                saved_config_paths = [Path(path) for path in record.config_paths]
+                trust_cfg = _assistant_config_for_workspace_trust(
+                    saved_config_paths,
+                    requested_model=record.model,
                 )
+                trust_manifest = discover_workspace_behavior(
+                    trust_cfg,
+                    workspace=Path(record.cwd),
+                    behavior_root=_record_behavior_root(record),
+                    config_paths=_session_repository_config_paths(record),
+                    system_prompt_file=(
+                        Path(record.system_prompt_path)
+                        if record.system_prompt_path
+                        else None
+                    ),
+                )
+                _gate_workspace_behavior(
+                    trust_manifest,
+                    decision=getattr(args, "trust_workspace", None),
+                    store=store,
+                )
+            except WorkspaceTrustError as exc:
+                raise SystemExit(
+                    f"workspace trust check failed: {exc}"
+                ) from exc
+            except Exception as exc:
+                raise SystemExit(f"startup preflight failed: {exc}") from exc
             if pending_images:
-                assert resume_prompt_text is not None
-                save_image_segment(
-                    record.artifact_path,
-                    segment_number=next_session_number,
-                    prompt_text=resume_prompt_text,
-                    images=pending_images,
+                validate_image_capability(
+                    [Path(path) for path in record.config_paths],
+                    model=record.model,
+                    auth_binding=_record_auth_binding(record),
                 )
-            if resume_prompt_text is not None:
-                success, finish_reason = run_session(
-                    store,
-                    record,
-                    resume=True,
-                    resume_prompt_text=resume_prompt_text,
-                )
-            else:
-                success, finish_reason = run_session(
-                    store, record, resume=True
-                )
+            store.set_active_session(record.cwd, record.session_id)
+            _print_session_start(record, action="resuming")
+            with TraceFollower(record.artifact_path):
+                live = derive_live_state(record.artifact_path)
+                next_session_number = max(1, live.session_number + 1)
+                if resume_prompt_text is not None:
+                    assert resume_prompt_source is not None
+                    _record_resume_prompt_source(
+                        record.artifact_path,
+                        session_number=next_session_number,
+                        prompt_text=resume_prompt_text,
+                        prompt_source=resume_prompt_source,
+                    )
+                if pending_images:
+                    assert resume_prompt_text is not None
+                    save_image_segment(
+                        record.artifact_path,
+                        segment_number=next_session_number,
+                        prompt_text=resume_prompt_text,
+                        images=pending_images,
+                    )
+                if resume_prompt_text is not None:
+                    success, finish_reason = run_session(
+                        store,
+                        record,
+                        resume=True,
+                        resume_prompt_text=resume_prompt_text,
+                    )
+                else:
+                    success, finish_reason = run_session(
+                        store, record, resume=True
+                    )
     except KeyboardInterrupt:
         return _handle_keyboard_interrupt(store, record)
     refreshed = store.get_session(record.session_id)
@@ -1962,6 +2242,63 @@ def _select_session(rows):
         if value.isdigit() and 1 <= int(value) <= len(rows):
             return rows[int(value) - 1]
         print(f"choose a number from 1 to {len(rows)}, or q")
+
+
+def cmd_trust_status(args) -> int:
+    workspace = args.cwd.expanduser().resolve()
+    root = assist_home()
+    try:
+        require_trust_store_outside_workspace(root, workspace)
+    except WorkspaceTrustError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"workspace: {workspace}")
+    try:
+        store = SessionStore(read_only=True)
+    except FileNotFoundError:
+        print("workspace_trust: none")
+        return 0
+    record = store.get_workspace_trust(workspace)
+    if record is None:
+        print("workspace_trust: none")
+        return 0
+    try:
+        manifest = json.loads(record.manifest_json)
+    except json.JSONDecodeError as exc:
+        raise SystemExit("saved workspace trust manifest is invalid") from exc
+    if not isinstance(manifest, dict) or manifest.get("workspace") != str(workspace):
+        raise SystemExit("saved workspace trust manifest has the wrong workspace")
+    categories = manifest.get("categories")
+    items = manifest.get("items")
+    if not isinstance(categories, list) or not isinstance(items, list):
+        raise SystemExit("saved workspace trust manifest is incomplete")
+    print("workspace_trust: recorded")
+    print(f"trusted_at: {record.trusted_at}")
+    print(f"behavior_manifest_sha256: {record.manifest_digest}")
+    print("behavior_categories: " + (", ".join(map(str, categories)) or "none"))
+    for item in items:
+        if not isinstance(item, dict):
+            raise SystemExit("saved workspace trust manifest has an invalid item")
+        category = str(item.get("category") or "unknown")
+        path = str(item.get("path") or "")
+        print(f"behavior: {category} {path}")
+    print("behavior_snapshot: recorded when workspace trust was granted")
+    print("persistence: trusted until `yuj trust revoke -C DIR`")
+    return 0
+
+
+def cmd_trust_revoke(args) -> int:
+    workspace = args.cwd.expanduser().resolve()
+    root = assist_home()
+    try:
+        require_trust_store_outside_workspace(root, workspace)
+    except WorkspaceTrustError as exc:
+        raise SystemExit(str(exc)) from exc
+    store = SessionStore()
+    changed = store.revoke_workspace_trust(workspace)
+    print(f"workspace: {workspace}")
+    print("workspace_trust: none")
+    print(f"changed: {'yes' if changed else 'no'}")
+    return 0
 
 
 def cmd_archive(args) -> int:

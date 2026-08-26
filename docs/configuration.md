@@ -198,7 +198,7 @@ overlay and the limits that matter for that choice.
 | Use a worktree, save file checkpoints, or rewind | [Isolate and restore work](#isolate-and-restore-work) |
 | Add diagnostics, search, a scratchpad, schema checks, or todos | [Configure model tools](#configure-model-tools) |
 | Run background commands, named agents, or Python cells | [Run background work, agents, or code cells](#run-background-work-agents-or-code-cells) |
-| Select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
+| Trust repository startup behavior, select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
 | Route side requests, ask an advisor, or fall back to another model | [Route model requests](#route-model-requests) |
 | Control prompt caching or reasoning effort | [Tune model requests](#tune-model-requests) |
 | Choose, compact, or continue context | [Choose a context mode](#choose-a-context-mode) |
@@ -792,6 +792,64 @@ modes show the list on later turns. `todos_char_budget` limits only the block
 sent to the model; it does not cut the trace or saved state.
 
 ## Add policy and trusted automation
+
+### Trust repository-provided startup behavior
+
+Yuj does not silently put behavior from an unfamiliar repository into a model
+request or run its configured extension points. Before an assistant start,
+smoke run, or resume loads that behavior, Yuj lists its category and exact
+path and asks whether to trust the selected workspace.
+
+The gate covers enabled repository-owned inputs that can change startup or
+model behavior:
+
+- project instruction files and their imports;
+- project Agent Skills;
+- injection and stream-rule files;
+- `.yujignore` and any other configured task-root ignore file;
+- a settings file inside the selected workspace; and
+- lifecycle hooks, compaction hooks, language servers, and post-edit checks
+  enabled by a workspace settings file. A compaction-hook Python source found
+  inside the workspace is also listed before Yuj imports it.
+
+Yuj may parse a repository settings file to enumerate this list, but the
+inspection pass does not import a Python extension, run a hook, or add local
+content to model input. It checks the list again at the ordinary startup
+boundary and immediately before the solver loads repository behavior. A
+retained session worktree uses the trust decision for its original selected
+workspace and checks the files in the owned worktree before model work.
+
+At an interactive terminal, answer the prompt. In a script or redirected
+terminal, make the decision explicitly:
+
+```bash
+yuj --trust-workspace "Fix the issue."
+yuj smoke --trust-workspace
+```
+
+`--no-trust-workspace` refuses repository behavior for that invocation. Yuj
+does not require either option when it finds no enabled repository behavior.
+
+Trust is scoped to the resolved workspace path and persists until revocation.
+Once trusted, normal changes to that repository do not cause repeated prompts.
+Use these commands to inspect the approval-time category and path snapshot or
+to remove the decision:
+
+```bash
+yuj trust status -C /path/to/project
+yuj trust revoke -C /path/to/project
+```
+
+Yuj saves the decision in `sessions.sqlite3` under the assistant-state root,
+not in the target repository. It refuses to save workspace trust when the
+assistant-state root is inside that workspace. Set `HARNESS_ASSIST_HOME` to an
+outside directory before running a source checkout against itself.
+
+Trust is consent to load repository behavior, not proof that the behavior is
+safe. It does not change sandbox selection, tool permissions, approval rules,
+secret handling, or security scanning. Each control still makes its own
+decision after trust. Revocation also changes only the startup trust decision;
+it does not edit the repository or a saved session.
 
 ### Select a fixed assistant permission preset
 
@@ -1455,11 +1513,13 @@ The checkpoint must use the required sections, name every observed modified
 path, fit the budget, and make the prompt smaller. Any failure falls back to
 `digest`.
 
-`compaction_hook` names trusted in-process Python. Yuj imports it before model
-work starts. The hook may use the built-in method, cancel one attempt, or
-return a replacement that passes the same checks. A hook error or bad result
-falls back to `digest`. Read [Compaction hooks](compaction.html) for the Python
-contract. The model-command sandbox does not isolate this code.
+`compaction_hook` names trusted in-process Python. For an assistant coding
+session, Yuj first applies the workspace trust gate, then imports the hook
+before model work starts. The hook may use the built-in method, cancel one
+attempt, or return a replacement that passes the same checks. A hook error or
+bad result falls back to `digest`. Read
+[Compaction hooks](compaction.html) for the Python contract. The model-command
+sandbox does not isolate this code.
 
 The trace and state store compaction metadata, not model-written summary text.
 If two compactions occur within `digest_keep_recent_turns`, Yuj uses `digest`

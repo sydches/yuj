@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from ..llm_solver._shared.paths import project_root
 from ..llm_solver.config import load_config, require_runtime_mode
@@ -71,6 +71,7 @@ def preflight_assistant_startup(
     system_prompt_file: Path | None = None,
     auth_binding: AuthBinding | None = None,
     auth_store: CredentialStore | None = None,
+    startup_guard: Callable[[Path, object, Path | None], None] | None = None,
 ) -> StartupPreflightReport:
     """Run ordinary local discovery and validation without model I/O or writes."""
     target = Path(cwd).expanduser().resolve()
@@ -94,6 +95,8 @@ def preflight_assistant_startup(
         cfg, auth_binding, store=auth_store
     )
     require_runtime_mode(cfg, expected="assistant", caller="yuj startup preflight")
+    if startup_guard is not None:
+        startup_guard(target, cfg, system_prompt_file)
 
     resources = validate_runtime_resources()
     references = validate_configuration_references(cfg)

@@ -108,6 +108,11 @@ start the session. You can also pass the task directly:
 yuj "Fix the failing tests and check the change."
 ```
 
+When enabled repository instructions or extension points are present, Yuj
+lists their categories and paths before it asks you to trust that workspace.
+The sandbox, permission checks, secret handling, and injection scan still
+apply after trust.
+
 Run a small test task before you use a real project:
 
 ```bash
@@ -165,6 +170,7 @@ own repository.
 | `yuj config` | Validate and explain every resolved setting without contacting a model. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
+| `yuj trust status -C DIR` | Inspect the saved startup-trust decision for a workspace. |
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj resume` | Continue a paused session. |
 

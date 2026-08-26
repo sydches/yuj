@@ -49,7 +49,7 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 
 | File | What it means |
 | --- | --- |
-| `sessions.sqlite3` | Session index and local metadata: immutable lineage, manual labels, archive times, active pointers, process locks, purge journals, and non-secret provider authentication identity. Labels, archive state, and purge state do not enter model input, replay, or measurement mode. Session commands never print credential IDs or values. |
+| `sessions.sqlite3` | Session index and local metadata: immutable lineage, manual labels, archive times, active pointers, process locks, purge journals, workspace trust decisions with their approval-time category and path snapshot, and non-secret provider authentication identity. Trust metadata, labels, archive state, and purge state do not enter model input, replay, or measurement mode. Session commands never print credential IDs or values. |
 | `purge-staging/<session_id>/` | Files that remain after an interrupted confirmed purge moves one session out of the live session directory. This path stays under the configured assistant root. A successful purge removes it before removing the session row. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/attachments.json` | Bounded attachment manifest. For each image it records the run segment, display name, detected media type, byte count, dimensions, SHA-256 digest, session-relative saved path, and the associated user-text digest and sizes. It stores no source path or image bytes. |

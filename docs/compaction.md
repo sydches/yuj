@@ -39,11 +39,12 @@ Select it in a small settings overlay:
 compaction_hook = "my_compaction:compact"
 ```
 
-Put the module on Yuj's Python import path. During configuration loading, Yuj
-imports the module and checks the named function. A bad reference, failed
-import, missing name, non-callable value, or async function stops startup
-before model work begins. An empty setting imports nothing and keeps the
-built-in path.
+Put the module on Yuj's Python import path. For an assistant coding session,
+Yuj first inspects repository behavior and obtains workspace trust. It then
+imports the module and checks the named function during ordinary configuration
+loading. A bad reference, failed import, missing name, non-callable value, or
+async function stops startup before model work begins. An empty setting
+imports nothing and keeps the built-in path.
 
 Apply the overlay through the normal command:
 

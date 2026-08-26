@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
@@ -77,6 +78,7 @@ def solve_task(
     artifacts_dir: Path | None = None,
     resume_from_artifacts: bool = False,
     worktree_info=None,
+    startup_guard: Callable[[Path, Config, Path | None], None] | None = None,
 ) -> bool:
     """Outer loop: run sessions until done or max_sessions exhausted.
 
@@ -86,6 +88,10 @@ def solve_task(
     context_class: if provided, instantiate this instead of default SolverStateContext.
     profile_path: optional path to profile.toml for provenance hashing.
     """
+    work_dir = Path(repo_dir)
+    if startup_guard is not None:
+        startup_guard(work_dir, cfg, system_prompt_file)
+
     # Late-bind names that tests patch on the public ``loop`` module.
     # See module docstring; same pattern as run_step.py.
     from .. import loop as _loop_mod
@@ -94,7 +100,7 @@ def solve_task(
     _auto_commit = _loop_mod._auto_commit
     log = _loop_mod.log  # so test patches on loop.log intercept these emits
 
-    work_dir, artifact_dir, trace_path = resolve_run_paths(repo_dir, artifacts_dir)
+    work_dir, artifact_dir, trace_path = resolve_run_paths(work_dir, artifacts_dir)
     subagent_runtime = None
     if getattr(cfg, "tools_task_enabled", False):
         from ..subagents import SubagentRuntime

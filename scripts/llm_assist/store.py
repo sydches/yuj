@@ -67,6 +67,13 @@ create table if not exists session_purges (
     root_ino integer not null,
     failure_detail text,
     completed_at text
+);
+
+create table if not exists workspace_trust (
+    workspace text primary key,
+    manifest_digest text not null,
+    manifest_json text not null,
+    trusted_at text not null
 )
 """
 
@@ -148,6 +155,14 @@ class SessionPurgeJournal:
     root_ino: int
     failure_detail: str | None
     completed_at: str | None
+
+
+@dataclass(frozen=True)
+class WorkspaceTrustRecord:
+    workspace: str
+    manifest_digest: str
+    manifest_json: str
+    trusted_at: str
 
 
 class SessionLockedError(RuntimeError):
@@ -239,6 +254,12 @@ class SessionStore:
                     where type = 'table' and name = 'session_purges'
                     """
                 ).fetchone() is not None
+                self._has_workspace_trust_table = conn.execute(
+                    """
+                    select 1 from sqlite_master
+                    where type = 'table' and name = 'workspace_trust'
+                    """
+                ).fetchone() is not None
             return
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "sessions").mkdir(parents=True, exist_ok=True)
@@ -282,6 +303,7 @@ class SessionStore:
             )
         self._has_archive_column = True
         self._has_purge_table = True
+        self._has_workspace_trust_table = True
 
     def _connect(self) -> sqlite3.Connection:
         if self.read_only:
@@ -523,6 +545,63 @@ class SessionStore:
                 (session_id,),
             ).fetchone()
         return _row_to_record(row) if row is not None else None
+
+    def get_workspace_trust(
+        self,
+        workspace: Path | str,
+    ) -> WorkspaceTrustRecord | None:
+        if not self._has_workspace_trust_table:
+            return None
+        resolved = str(Path(workspace).expanduser().resolve())
+        with self._connect() as conn:
+            row = conn.execute(
+                "select * from workspace_trust where workspace = ?",
+                (resolved,),
+            ).fetchone()
+        return _row_to_workspace_trust(row) if row is not None else None
+
+    def set_workspace_trust(
+        self,
+        workspace: Path | str,
+        *,
+        manifest_digest: str,
+        manifest_json: str,
+    ) -> WorkspaceTrustRecord:
+        if self.read_only:
+            raise RuntimeError("cannot change workspace trust in a read-only store")
+        resolved = str(Path(workspace).expanduser().resolve())
+        trusted_at = _utc_now()
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            conn.execute(
+                """
+                insert into workspace_trust (
+                    workspace, manifest_digest, manifest_json, trusted_at
+                ) values (?, ?, ?, ?)
+                on conflict(workspace) do update set
+                    manifest_digest = excluded.manifest_digest,
+                    manifest_json = excluded.manifest_json,
+                    trusted_at = excluded.trusted_at
+                """,
+                (resolved, manifest_digest, manifest_json, trusted_at),
+            )
+            row = conn.execute(
+                "select * from workspace_trust where workspace = ?",
+                (resolved,),
+            ).fetchone()
+        assert row is not None
+        return _row_to_workspace_trust(row)
+
+    def revoke_workspace_trust(self, workspace: Path | str) -> bool:
+        if self.read_only:
+            raise RuntimeError("cannot change workspace trust in a read-only store")
+        resolved = str(Path(workspace).expanduser().resolve())
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "delete from workspace_trust where workspace = ?",
+                (resolved,),
+            )
+        return cursor.rowcount == 1
 
     def list_sessions(
         self,
@@ -1229,6 +1308,15 @@ def _row_to_purge_journal(row: sqlite3.Row) -> SessionPurgeJournal:
     )
 
 
+def _row_to_workspace_trust(row: sqlite3.Row) -> WorkspaceTrustRecord:
+    return WorkspaceTrustRecord(
+        workspace=str(row["workspace"]),
+        manifest_digest=str(row["manifest_digest"]),
+        manifest_json=str(row["manifest_json"]),
+        trusted_at=str(row["trusted_at"]),
+    )
+
+
 def _is_same_owner(lock: SessionLock, owner_host: str, owner_pid: int) -> bool:
     return lock.owner_host == owner_host and lock.owner_pid == owner_pid
 
@@ -1274,6 +1362,7 @@ __all__ = [
     "SessionPurgeStateError",
     "SessionRecord",
     "SessionStore",
+    "WorkspaceTrustRecord",
     "assist_home",
     "is_full_session_id",
     "validate_session_label",

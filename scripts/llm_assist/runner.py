@@ -61,6 +61,12 @@ from ._codex import CodexSubscriptionClient
 from ._images import ImageInputError, load_session_images
 from .forking import validate_correction_owner
 from .store import SessionRecord, SessionStore
+from .trust import (
+    WorkspaceTrustError,
+    discover_workspace_behavior,
+    require_saved_workspace_trust,
+    require_trust_store_outside_workspace,
+)
 
 
 class _ProviderAPIKeyClient(LlamaClient):
@@ -212,6 +218,46 @@ _EMPTY_STATE = {
 _APPROVAL_REQUEST_FILE = "approval_request.json"
 _APPROVAL_DECISIONS_FILE = "approval_decisions.json"
 _INTERRUPT_MARKER_FILE = "shell_interrupt.json"
+_PACKAGE_ASSISTANT_CONFIGS = frozenset(
+    {
+        (PROJECT_ROOT / "configs/regimes/treatment.toml").resolve(),
+        (
+            PROJECT_ROOT
+            / "configs/regimes/baselines/plain_long_solve.toml"
+        ).resolve(),
+    }
+)
+
+
+def _repository_config_paths(config_paths: list[Path]) -> list[Path]:
+    return [
+        path
+        for raw_path in config_paths
+        if (path := raw_path.expanduser().resolve())
+        not in _PACKAGE_ASSISTANT_CONFIGS
+    ]
+
+
+def _require_workspace_behavior_trust(
+    store: SessionStore,
+    *,
+    cfg,
+    workspace: Path,
+    behavior_root: Path,
+    config_paths: list[Path],
+    system_prompt_file: Path | None,
+) -> None:
+    manifest = discover_workspace_behavior(
+        cfg,
+        workspace=workspace,
+        behavior_root=behavior_root,
+        config_paths=_repository_config_paths(config_paths),
+        system_prompt_file=system_prompt_file,
+    )
+    if not manifest.items:
+        return
+    require_trust_store_outside_workspace(store.root, workspace)
+    require_saved_workspace_trust(store, manifest)
 
 
 def create_session(
@@ -285,6 +331,29 @@ def run_session(
         "max_sessions": 1,
         "model": record.model,
     }
+    system_prompt_file = (
+        Path(record.system_prompt_path) if record.system_prompt_path else None
+    )
+    workspace = Path(record.cwd).resolve()
+    inspection_cfg = load_config(
+        user_config=config_paths,
+        overrides=overrides,
+        resolve_runtime_extensions=False,
+    )
+    require_runtime_mode(
+        inspection_cfg, expected="assistant", caller="scripts.llm_assist"
+    )
+    _require_workspace_behavior_trust(
+        store,
+        cfg=inspection_cfg,
+        workspace=workspace,
+        behavior_root=workspace,
+        config_paths=config_paths,
+        system_prompt_file=system_prompt_file,
+    )
+
+    # Runtime extensions named by repository configuration are resolved only
+    # after the selected workspace has passed its trust gate.
     cfg = load_config(user_config=config_paths, overrides=overrides)
     require_runtime_mode(cfg, expected="assistant", caller="scripts.llm_assist")
     worktree_info, record = _resolve_session_worktree(
@@ -363,16 +432,31 @@ def run_session(
                 + resume_prompt_text
             )
 
+    def startup_guard(
+        work_dir: Path,
+        guarded_cfg,
+        guarded_system_prompt: Path | None,
+    ) -> None:
+        _require_workspace_behavior_trust(
+            store,
+            cfg=guarded_cfg,
+            workspace=workspace,
+            behavior_root=work_dir,
+            config_paths=config_paths,
+            system_prompt_file=guarded_system_prompt,
+        )
+
     success = solve_task(
         worktree_info.session_cwd if worktree_info is not None else Path(record.cwd),
         cfg,
         client,
-        system_prompt_file=Path(record.system_prompt_path) if record.system_prompt_path else None,
+        system_prompt_file=system_prompt_file,
         context_class=resolve_context_class(record.context_mode),
         task_spec=TaskSpec(prompt_text=prompt_text),
         artifacts_dir=artifact_dir,
         resume_from_artifacts=resume,
         worktree_info=worktree_info,
+        startup_guard=startup_guard,
     )
     provider_auth_error = getattr(client, "_last_provider_auth_error", None)
     if isinstance(provider_auth_error, ProviderAuthError):

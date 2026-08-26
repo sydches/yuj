@@ -45,6 +45,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj diff` | Print changes in one retained session worktree. |
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List, filter, or select saved sessions. |
+| `yuj trust` | Inspect or revoke one workspace's startup trust. |
 | `yuj label` | Set, replace, or clear one manual session label. |
 | `yuj fork` | Create an independent child from one stopped saved session. |
 | `yuj archive` | Hide one stopped session from ordinary selection without changing its evidence. |
@@ -122,6 +123,39 @@ The model can read files, change code, run commands, and run tests. Yuj
 continues until the model finishes or a stopping rule ends the session.
 
 Keep the terminal process running while the run segment is active.
+
+### Trust repository behavior
+
+Before Yuj loads behavior supplied by the selected repository, it shows the
+behavior categories and exact paths. This includes enabled project
+instructions, project skills, injections, stream rules, `.yujignore` files,
+repository settings, and configured extension points. An interactive command
+asks once whether to trust that workspace.
+
+For a non-interactive start, make the choice on the command line:
+
+```bash
+yuj --trust-workspace "Fix the failing tests."
+```
+
+`--no-trust-workspace` refuses repository behavior for that invocation. If no
+repository behavior is enabled, Yuj starts without a trust decision.
+
+The decision belongs to the selected workspace and remains in effect until
+you revoke it. Editing an instruction or adding another enabled behavior does
+not produce repeated prompts for a workspace that you already trust. Inspect
+or revoke the decision without loading the repository behavior:
+
+```bash
+yuj trust status -C /path/to/project
+yuj trust revoke -C /path/to/project
+```
+
+Trust allows Yuj to load the listed repository behavior. It does not grant a
+tool action, weaken the sandbox or permission policy, expose a secret, or
+skip prompt-injection scanning. Read
+[Trust repository-provided startup behavior](configuration.html#trust-repository-provided-startup-behavior)
+for the complete boundary.
 
 Use the local startup seam when you want to validate an installation or task
 repository without contacting the model service:
@@ -263,6 +297,7 @@ Yuj calls the starting group of settings a base.
 | `--treatment` | Use the treatment base. This is the default. |
 | `--no-treatment` | Use the plain base. |
 | `--context NAME` | Use this context mode instead of the base default. |
+| `--trust-workspace`, `--no-trust-workspace` | Trust or refuse repository-provided startup behavior for the selected workspace. Non-interactive starts need an explicit `--trust-workspace` until that workspace is trusted. |
 | `--dry-run` | Complete local startup through the model-network boundary, write no session artifacts, and exit. |
 | `-V`, `--version` | Print the installed Yuj version and exit. |
 
@@ -1081,6 +1116,8 @@ only the newest run segment because a resume replaces them.
 one optional follow-up text source for the next model request. A prior
 `correct` command may have recorded one separate correction for the next
 resume. Ordinary resume without either form keeps its existing behavior.
+It also accepts `--trust-workspace` or `--no-trust-workspace` when the saved
+workspace needs an explicit trust choice.
 
 For each follow-up, Yuj records the input source, character count, and content
 hash in the trace. It does not copy the follow-up text into that event.

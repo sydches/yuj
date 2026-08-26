@@ -775,8 +775,13 @@ def _extract_config_fields(d: dict) -> dict:
     }
 
 
-def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
-                       user_set_keys: frozenset[str] = frozenset()) -> None:
+def _validate_coupling(
+    cfg: Config,
+    strict_dial_gates: bool = False,
+    user_set_keys: frozenset[str] = frozenset(),
+    *,
+    resolve_runtime_extensions: bool = True,
+) -> None:
     """Reject config combinations that produce silent fallthrough.
 
     Bucket B toggles have coupling constraints (one feature's effective
@@ -1290,8 +1295,10 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         )
     from .harness.repo_map import normalize_repo_map_refresh
     normalize_repo_map_refresh(cfg.repo_map_refresh)
-    from .harness.compaction_hooks import resolve_compaction_hook
-    resolve_compaction_hook(cfg.compaction_hook)
+    if resolve_runtime_extensions:
+        from .harness.compaction_hooks import resolve_compaction_hook
+
+        resolve_compaction_hook(cfg.compaction_hook)
     if cfg.compaction_method not in {"digest", "checkpoint"}:
         raise ValueError(
             "config error: context.compaction_method must be 'digest' or "

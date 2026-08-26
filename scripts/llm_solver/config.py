@@ -975,6 +975,7 @@ def resolve_config(
     strict_dial_gates: bool = False,
     *,
     layer_specs: Sequence[ConfigLayerSpec] | None = None,
+    resolve_runtime_extensions: bool = True,
 ) -> ResolvedConfig:
     """Resolve, validate, and retain the exact source of every setting leaf."""
     paths = _user_paths(user_config)
@@ -1045,6 +1046,7 @@ def resolve_config(
                 cfg,
                 strict_dial_gates=strict_dial_gates,
                 user_set_keys=layered.user_set_keys,
+                resolve_runtime_extensions=resolve_runtime_extensions,
             )
         except TypeError:
             # Some range/coupling checks necessarily operate before the final
@@ -1087,6 +1089,8 @@ def load_config(
     user_config: Path | list[Path] | None = None,
     overrides: dict | None = None,
     strict_dial_gates: bool = False,
+    *,
+    resolve_runtime_extensions: bool = True,
 ) -> Config:
     """Return the runtime Config from the shared resolved representation.
 
@@ -1101,6 +1105,7 @@ def load_config(
         user_config=user_config,
         overrides=overrides,
         strict_dial_gates=strict_dial_gates,
+        resolve_runtime_extensions=resolve_runtime_extensions,
     ).config
 
 
