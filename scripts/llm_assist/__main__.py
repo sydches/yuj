@@ -5,8 +5,11 @@ import argparse
 import contextlib
 import getpass
 import hashlib
+import io
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import uuid
@@ -686,10 +689,56 @@ def main(argv: list[str] | None = None) -> int:
             "(default: latest session)"
         ),
     )
-    show_parser.add_argument("--turns", type=int, default=5,
-                             help="number of recent turns to show")
-    show_parser.add_argument("--trace-lines", type=int, default=10,
-                             help="number of recent trace events to show")
+    show_parser.add_argument(
+        "--turns",
+        type=int,
+        default=None,
+        help="number of recent turns to show (default: 5, or all with --full)",
+    )
+    show_parser.add_argument(
+        "--trace-lines",
+        type=int,
+        default=None,
+        help=(
+            "number of recent trace events to show "
+            "(default: 10, or all with --full)"
+        ),
+    )
+    show_parser.add_argument(
+        "--full",
+        action="store_true",
+        help="show every saved turn and trace event without shortening text",
+    )
+    show_parser.add_argument(
+        "--reasoning",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include reasoning summaries (default: enabled)",
+    )
+    show_parser.add_argument(
+        "--tools",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include tool calls (default: enabled)",
+    )
+    show_parser.add_argument(
+        "--results",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include tool results (default: enabled)",
+    )
+    show_parser.add_argument(
+        "--trace",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include trace events (default: enabled)",
+    )
+    show_parser.add_argument(
+        "--pager",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="page long terminal output (default: automatic)",
+    )
     show_parser.set_defaults(func=cmd_show)
 
     usage_parser = sub.add_parser(
@@ -2070,6 +2119,14 @@ def cmd_current(_args) -> int:
 
 
 def cmd_show(args) -> int:
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = _render_show(args)
+    _write_operator_output(output.getvalue(), pager=args.pager)
+    return result
+
+
+def _render_show(args) -> int:
     store = SessionStore()
     record = _resolve_session_record(
         store,
@@ -2106,6 +2163,10 @@ def cmd_show(args) -> int:
     _print_image_evidence(record.artifact_path)
     print(f"context: {record.context_mode}")
     print(f"prompt_source: {record.prompt_source}")
+    if args.full:
+        print("task:")
+        for line in record.prompt_text.splitlines() or [""]:
+            print(f"  {line}")
     if record.system_prompt_path:
         print(f"system_prompt: {record.system_prompt_path}")
     if finish_reason:
@@ -2167,14 +2228,33 @@ def cmd_show(args) -> int:
         print("interrupt: none")
     else:
         print(f"interrupt: {interrupt.get('finish_reason')} at {interrupt.get('interrupted_at')}")
-    turn_lines = session_turn_tail(record.artifact_path, limit=args.turns)
+    turn_limit = args.turns if args.turns is not None else (None if args.full else 5)
+    turn_lines = session_turn_tail(
+        record.artifact_path,
+        limit=turn_limit,
+        include_reasoning=args.reasoning,
+        include_tools=args.tools,
+        include_results=args.results,
+        full=args.full,
+    )
     if not turn_lines:
         print("recent_turns: (empty)")
     else:
         print("recent_turns:")
         for line in turn_lines:
             print(f"  {line}")
-    trace_lines = session_trace_tail(record.artifact_path, limit=args.trace_lines)
+    if not args.trace:
+        return 0
+    trace_limit = (
+        args.trace_lines
+        if args.trace_lines is not None
+        else (None if args.full else 10)
+    )
+    trace_lines = session_trace_tail(
+        record.artifact_path,
+        limit=trace_limit,
+        full=args.full,
+    )
     if not trace_lines:
         print("trace_tail: (empty)")
         return 0
@@ -2182,6 +2262,42 @@ def cmd_show(args) -> int:
     for line in trace_lines:
         print(f"  {line}")
     return 0
+
+
+def _write_operator_output(text: str, *, pager: bool | None) -> None:
+    if not text:
+        return
+    if not sys.stdout.isatty():
+        sys.stdout.write(text)
+        return
+    terminal_lines = shutil.get_terminal_size(fallback=(80, 24)).lines
+    use_pager = pager is True or (
+        pager is None and text.count("\n") >= max(1, terminal_lines - 1)
+    )
+    if not use_pager:
+        sys.stdout.write(text)
+        return
+    command = os.environ.get("PAGER", "").strip()
+    if command:
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            sys.stdout.write(text)
+            return
+    elif shutil.which("less"):
+        argv = ["less", "-FRX"]
+    elif shutil.which("more"):
+        argv = ["more"]
+    else:
+        sys.stdout.write(text)
+        return
+    if not argv:
+        sys.stdout.write(text)
+        return
+    try:
+        subprocess.run(argv, input=text, text=True, check=False)
+    except OSError:
+        sys.stdout.write(text)
 
 
 def _print_sandbox_provenance(

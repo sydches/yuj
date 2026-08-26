@@ -4,7 +4,11 @@ from importlib.metadata import version as distribution_version
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.llm_assist.__main__ import _resolve_prompt_input, main
+from scripts.llm_assist.__main__ import (
+    _resolve_prompt_input,
+    _write_operator_output,
+    main,
+)
 from scripts.llm_assist.progress import TraceFollower
 from scripts.llm_assist.runner import (
     approval_request_path,
@@ -161,6 +165,26 @@ def test_session_trace_tail_formats_recent_events(tmp_path: Path):
     ]
 
 
+def test_session_trace_full_does_not_apply_display_shortening(tmp_path: Path):
+    artifact_dir = tmp_path / "session"
+    artifact_dir.mkdir(parents=True)
+    long_result = "result:" + "x" * 240
+    (artifact_dir / ".trace.jsonl").write_text(json.dumps({
+        "event": "tool_call",
+        "session_number": 1,
+        "turn_number": 0,
+        "tool_name": "bash",
+        "args_summary": "cmd='long command'",
+        "result_summary": long_result,
+    }) + "\n")
+
+    summary = session_trace_tail(artifact_dir, limit=None)
+    full = session_trace_tail(artifact_dir, limit=None, full=True)
+
+    assert summary[0].endswith("...")
+    assert full == [f"tool_call turn=0 bash(cmd='long command') => {long_result}"]
+
+
 def test_session_turn_tail_groups_reasoning_and_tools(tmp_path: Path):
     artifact_dir = tmp_path / "session"
     artifact_dir.mkdir(parents=True)
@@ -212,6 +236,60 @@ def test_session_turn_tail_groups_reasoning_and_tools(tmp_path: Path):
         "turn 1 (session 1)",
         "  tool: done()",
         "    result: Session ended by model.",
+    ]
+
+
+def test_session_turn_view_can_expand_and_filter_saved_content(tmp_path: Path):
+    artifact_dir = tmp_path / "session"
+    artifact_dir.mkdir(parents=True)
+    trace_path = artifact_dir / ".trace.jsonl"
+    events = [
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": 0,
+            "tool_name": "read",
+            "args_summary": "path='calc.py'",
+            "result_summary": "first line\n  second line",
+            "reasoning": "Inspect the file.\nKeep the evidence exact.",
+        },
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": 1,
+            "tool_name": "done",
+            "args_summary": "complete",
+            "result_summary": "Session ended by model.",
+        },
+    ]
+    trace_path.write_text("".join(json.dumps(event) + "\n" for event in events))
+
+    full = session_turn_tail(artifact_dir, limit=None, full=True)
+    filtered = session_turn_tail(
+        artifact_dir,
+        limit=None,
+        include_reasoning=False,
+        include_tools=True,
+        include_results=False,
+        full=True,
+    )
+
+    assert full == [
+        "turn 0 (session 1)",
+        "  reasoning: Inspect the file.",
+        "             Keep the evidence exact.",
+        "  tool: read(path='calc.py')",
+        "    result: first line",
+        "              second line",
+        "turn 1 (session 1)",
+        "  tool: done(complete)",
+        "    result: Session ended by model.",
+    ]
+    assert filtered == [
+        "turn 0 (session 1)",
+        "  tool: read(path='calc.py')",
+        "turn 1 (session 1)",
+        "  tool: done(complete)",
     ]
 
 
@@ -268,6 +346,94 @@ def test_show_command_prints_session_details_and_trace_tail(tmp_path, capsys):
     assert "trace_tail:" in captured.out
     assert "tool_call turn=0 read(path='calc.py')" in captured.out
     assert "session_end session=1 finish_reason=stop turns=1" in captured.out
+
+
+def test_show_full_prints_task_and_all_turns_with_independent_sections(
+    tmp_path,
+    capsys,
+):
+    store = SessionStore(tmp_path)
+    record = store.create_session(
+        cwd=tmp_path / "work",
+        model="qwen3-8b",
+        prompt_text="Fix the parser.\nKeep compatibility.",
+        prompt_source="stdin",
+        context_mode="full",
+        system_prompt_path=None,
+        config_paths=[],
+    )
+    artifact_dir = Path(record.artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    events = [
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": turn,
+            "tool_name": "read",
+            "args_summary": f"path='file{turn}.py'",
+            "result_summary": f"result {turn}",
+            "reasoning": f"reason {turn}",
+        }
+        for turn in range(7)
+    ]
+    (artifact_dir / ".trace.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events)
+    )
+
+    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store):
+        rc = main([
+            "show",
+            record.session_id,
+            "--full",
+            "--no-reasoning",
+            "--no-results",
+            "--no-trace",
+            "--no-pager",
+        ])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "task:\n  Fix the parser.\n  Keep compatibility." in captured.out
+    assert "turn 0 (session 1)" in captured.out
+    assert "turn 6 (session 1)" in captured.out
+    assert "tool: read(path='file0.py')" in captured.out
+    assert "reason 0" not in captured.out
+    assert "result 0" not in captured.out
+    assert "trace_tail:" not in captured.out
+
+
+def test_operator_output_pages_only_on_a_terminal(monkeypatch):
+    class TtyBuffer(io.StringIO):
+        def isatty(self):
+            return True
+
+    text = "first\nsecond\n"
+    terminal = TtyBuffer()
+    monkeypatch.setenv("PAGER", "test-pager --plain")
+    with patch("sys.stdout", terminal), patch(
+        "scripts.llm_assist.__main__.subprocess.run"
+    ) as run_mock, patch(
+        "scripts.llm_assist.__main__.shutil.get_terminal_size",
+        return_value=type("TerminalSize", (), {"lines": 2})(),
+    ):
+        _write_operator_output(text, pager=None)
+
+    run_mock.assert_called_once_with(
+        ["test-pager", "--plain"],
+        input=text,
+        text=True,
+        check=False,
+    )
+    assert terminal.getvalue() == ""
+
+    redirected = io.StringIO()
+    with patch("sys.stdout", redirected), patch(
+        "scripts.llm_assist.__main__.subprocess.run"
+    ) as redirected_run:
+        _write_operator_output(text, pager=True)
+
+    redirected_run.assert_not_called()
+    assert redirected.getvalue() == text
 
 
 def test_approve_command_marks_pending_request_approved(tmp_path, capsys):

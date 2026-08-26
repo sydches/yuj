@@ -820,19 +820,32 @@ def session_turn_count(artifact_dir: Path) -> int:
     return 0
 
 
-def session_trace_tail(artifact_dir: Path, *, limit: int = 10) -> list[str]:
+def session_trace_tail(
+    artifact_dir: Path,
+    *,
+    limit: int | None = 10,
+    full: bool = False,
+) -> list[str]:
     """Return a formatted tail of trace events for CLI inspection."""
     events = _load_trace_events(Path(artifact_dir) / ".trace.jsonl")
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         return []
-    tail = events[-limit:]
-    return [_format_trace_event(ev) for ev in tail]
+    tail = events if limit is None else events[-limit:]
+    return [_format_trace_event(ev, full=full) for ev in tail]
 
 
-def session_turn_tail(artifact_dir: Path, *, limit: int = 5) -> list[str]:
+def session_turn_tail(
+    artifact_dir: Path,
+    *,
+    limit: int | None = 5,
+    include_reasoning: bool = True,
+    include_tools: bool = True,
+    include_results: bool = True,
+    full: bool = False,
+) -> list[str]:
     """Return a formatted tail of tool-call turns for CLI inspection."""
     events = _load_trace_events(Path(artifact_dir) / ".trace.jsonl")
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         return []
 
     turns: list[dict] = []
@@ -866,8 +879,17 @@ def session_turn_tail(artifact_dir: Path, *, limit: int = 5) -> list[str]:
         )
 
     rendered: list[str] = []
-    for turn in turns[-limit:]:
-        rendered.extend(_format_turn_block(turn))
+    selected = turns if limit is None else turns[-limit:]
+    for turn in selected:
+        rendered.extend(
+            _format_turn_block(
+                turn,
+                include_reasoning=include_reasoning,
+                include_tools=include_tools,
+                include_results=include_results,
+                full=full,
+            )
+        )
     return rendered
 
 
@@ -1074,7 +1096,7 @@ def _record_auth_binding(record: SessionRecord) -> AuthBinding | None:
     )
 
 
-def _format_trace_event(event: dict) -> str:
+def _format_trace_event(event: dict, *, full: bool = False) -> str:
     et = str(event.get("event") or "?")
     if et == "session_start":
         session = event.get("session_number")
@@ -1082,8 +1104,11 @@ def _format_trace_event(event: dict) -> str:
     if et == "tool_call":
         turn = event.get("turn_number")
         tool = event.get("tool_name") or "?"
-        args = _truncate_text(str(event.get("args_summary") or ""), 100)
-        result = _truncate_text(str(event.get("result_summary") or ""), 120)
+        args = str(event.get("args_summary") or "")
+        result = str(event.get("result_summary") or "")
+        if not full:
+            args = _truncate_text(args, 100)
+            result = _truncate_text(result, 120)
         return f"tool_call turn={turn} {tool}({args}) => {result}"
     if et == "session_end":
         session = event.get("session_number")
@@ -1102,12 +1127,16 @@ def _format_trace_event(event: dict) -> str:
         turn = event.get("turn_number")
         tool = event.get("tool_name") or "?"
         reason = event.get("reason") or ""
-        args = _truncate_text(str(event.get("args_summary") or ""), 100)
+        args = str(event.get("args_summary") or "")
+        if not full:
+            args = _truncate_text(args, 100)
         return f"approval_request turn={turn} {tool}({args}) reason={reason}"
     if et == "clarification_request":
         turn = event.get("turn_number")
         request_id = event.get("request_id") or "?"
-        question = _truncate_text(str(event.get("question") or ""), 160)
+        question = str(event.get("question") or "")
+        if not full:
+            question = _truncate_text(question, 160)
         return (
             f"clarification_request turn={turn} request={request_id} "
             f"question={question}"
@@ -1138,7 +1167,14 @@ def _format_trace_event(event: dict) -> str:
     return f"{et} {summary}".strip()
 
 
-def _format_turn_block(turn: dict) -> list[str]:
+def _format_turn_block(
+    turn: dict,
+    *,
+    include_reasoning: bool = True,
+    include_tools: bool = True,
+    include_results: bool = True,
+    full: bool = False,
+) -> list[str]:
     session = turn.get("session")
     turn_number = turn.get("turn")
     header = f"turn {turn_number}"
@@ -1146,20 +1182,43 @@ def _format_turn_block(turn: dict) -> list[str]:
         header += f" (session {session})"
     lines = [header]
 
-    reasoning = _truncate_text(str(turn.get("reasoning") or ""), 160)
-    if reasoning:
-        lines.append(f"  reasoning: {reasoning}")
+    reasoning = str(turn.get("reasoning") or "")
+    if include_reasoning and reasoning.strip():
+        _append_display_text(
+            lines,
+            prefix="  reasoning: ",
+            text=reasoning,
+            full=full,
+        )
 
-    for tool in turn.get("tools", []):
-        action = f"{tool['tool_name']}({tool['args_summary']})"
-        result = _truncate_text(tool["result_summary"], 160)
-        if tool["gate_blocked"]:
-            lines.append(f"  blocked: {action}")
-        else:
-            lines.append(f"  tool: {action}")
-        if result:
-            lines.append(f"    result: {result}")
+    if include_tools:
+        for tool in turn.get("tools", []):
+            action = f"{tool['tool_name']}({tool['args_summary']})"
+            if tool["gate_blocked"]:
+                lines.append(f"  blocked: {action}")
+            else:
+                lines.append(f"  tool: {action}")
+            result = str(tool["result_summary"])
+            if include_results and result.strip():
+                _append_display_text(
+                    lines,
+                    prefix="    result: ",
+                    text=result,
+                    full=full,
+                )
     return lines
+
+
+def _append_display_text(
+    lines: list[str], *, prefix: str, text: str, full: bool
+) -> None:
+    if not full:
+        lines.append(prefix + _truncate_text(text, 160))
+        return
+    parts = text.splitlines() or [""]
+    lines.append(prefix + parts[0])
+    continuation = " " * len(prefix)
+    lines.extend(continuation + part for part in parts[1:])
 
 
 def _truncate_text(text: str, max_chars: int) -> str:

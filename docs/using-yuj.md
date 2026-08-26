@@ -540,20 +540,39 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | --- | --- |
 | `yuj current` | Status details for the active or newest unarchived session in the current repository. If that repository has none, show the newest unarchived session. |
 | `yuj status [SESSION]` | Session identity, run and archive state, model and sandbox, saved input summaries, pending operator action, and the next command. |
-| `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. |
+| `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. Use `--full` to show the complete saved turn view. |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
 | `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |
 
-Use `yuj show --turns N --trace-lines N [SESSION]` to choose how many recent
-turns and trace events to print.
+The default `show` view shortens reasoning and tool results. It prints the five
+most recent turns and ten most recent trace events. Show every saved turn and
+trace event without shortening their text:
+
+```bash
+yuj show --full SESSION
+```
+
+Use `--turns N` or `--trace-lines N` to set a limit in either view. Use the
+section controls when you need only part of the record:
+
+```bash
+yuj show --full --no-reasoning --no-trace SESSION
+yuj show --no-tools --trace SESSION
+```
 
 | Command | Option | What it does |
 | --- | --- | --- |
 | `yuj status` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj show` | `SESSION` | Select a session. The default is `latest`. |
-| `yuj show` | `--turns N` | Show this many recent turns. The default is 5. |
-| `yuj show` | `--trace-lines N` | Show this many recent trace events. The default is 10. |
+| `yuj show` | `--full` | Show the saved task, every turn, and every trace event without display shortening. Explicit turn and trace limits still apply. |
+| `yuj show` | `--turns N` | Show this many recent turns. The summary default is 5. The full-view default is all turns. |
+| `yuj show` | `--trace-lines N` | Show this many recent trace events. The summary default is 10. The full-view default is all events. |
+| `yuj show` | `--reasoning`, `--no-reasoning` | Include or omit reasoning summaries. |
+| `yuj show` | `--tools`, `--no-tools` | Include or omit tool calls. Omitting calls also omits their results. |
+| `yuj show` | `--results`, `--no-results` | Include or omit tool results while keeping tool calls. |
+| `yuj show` | `--trace`, `--no-trace` | Include or omit trace events. |
+| `yuj show` | `--pager`, `--no-pager` | Force or disable the pager. Long terminal output uses a pager by default. |
 | `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
 | `yuj sessions` | `--archived` | List archived sessions instead of unarchived sessions. |
@@ -570,6 +589,15 @@ The current parser accepts any integer for `--turns`, `--trace-lines`, and
 `--limit`. A value of `0` prints no matching rows. A negative `--turns` or
 `--trace-lines` value also prints no tail. A negative `--limit` removes the
 database row limit. Use a positive value for normal work.
+
+Yuj reads `$PAGER` when it pages a long view. It uses `less -FRX` when `less`
+is available and `$PAGER` is empty. Set `PAGER=cat` or pass `--no-pager` to
+print directly. Yuj never starts a pager when you pipe or redirect the output.
+
+Both views read saved session evidence. They do not contact a model or change
+the session, trace, transcript, or working tree. The full view expands the
+content saved in the trace. The raw provider request log remains in the
+session artifact directory for direct inspection.
 
 ### Inspect usage
 
