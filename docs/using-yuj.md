@@ -42,6 +42,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj current` | Run `yuj status latest` over unarchived sessions. |
 | `yuj status` | Show one session's status and the next user action. |
 | `yuj show` | Show one session's settings and recent activity. |
+| `yuj diff` | Print changes in one retained session worktree. |
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List unarchived sessions, or list archived sessions with `--archived`. |
 | `yuj label` | Set, replace, or clear one manual session label. |
@@ -530,6 +531,37 @@ Yuj does not try this checkpoint when it pauses for approval. An interrupt can
 also stop before the attempt. If Git fails, Yuj logs a warning and leaves the
 working tree as it is.
 
+Inspect the current changes in an isolated session before you continue or
+accept its result:
+
+```bash
+yuj diff SESSION
+```
+
+Give a full ID, exact label, short ID, unique ID start, `latest`, or `last`.
+Yuj compares the retained worktree with the commit from which it created that
+worktree. The patch on standard output includes tracked changes and untracked
+files that Git does not ignore. This includes changes already committed on the
+session branch. Redirect or pipe it like any other unified diff:
+
+```bash
+yuj diff SESSION > session.patch
+yuj diff SESSION | less
+```
+
+Ownership and state go to standard error, so they do not enter the patch.
+`ownership: session-worktree` means that Yuj verified the saved path, branch,
+base commit, Git registration, and worktree metadata. `diff_state: clean`
+means that the verified worktree still matches its base.
+
+A direct session has no start-of-session tree checkpoint that can establish
+ownership. Yuj prints `ownership: unknown`, `baseline: missing`, and
+`diff_state: unavailable` instead of presenting other repository changes as
+the session's work. A removed worktree or missing base commit is also explicit.
+Unavailable results leave standard output empty and return status 2. The
+command does not stage files, refresh the Git index, write session data, or
+make a model request.
+
 ## Inspect sessions
 
 Use these commands instead of reading raw files during normal work.
@@ -541,6 +573,7 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | `yuj current` | Status details for the active or newest unarchived session in the current repository. If that repository has none, show the newest unarchived session. |
 | `yuj status [SESSION]` | Session identity, run and archive state, model and sandbox, saved input summaries, pending operator action, and the next command. |
 | `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. Use `--full` to show the complete saved turn view. |
+| `yuj diff [SESSION]` | A pipeable unified diff for a verified retained worktree, or an explicit reason that ownership cannot be established. |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
 | `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |

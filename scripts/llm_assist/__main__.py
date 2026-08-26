@@ -90,6 +90,7 @@ from .purge import (
     purge_archived_session,
 )
 from .progress import TraceFollower
+from .session_diff import SessionDiffError, build_session_worktree_diff
 from .runner import (
     _make_client,
     _record_auth_binding,
@@ -740,6 +741,20 @@ def main(argv: list[str] | None = None) -> int:
         help="page long terminal output (default: automatic)",
     )
     show_parser.set_defaults(func=cmd_show)
+
+    diff_parser = sub.add_parser(
+        "diff", help="show changes in one retained session worktree"
+    )
+    diff_parser.add_argument(
+        "session_id",
+        nargs="?",
+        default="latest",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest session)"
+        ),
+    )
+    diff_parser.set_defaults(func=cmd_diff)
 
     usage_parser = sub.add_parser(
         "usage", help="show exact persisted usage for one coding session"
@@ -2398,6 +2413,108 @@ def cmd_usage(args) -> int:
     print(f"session_ref: {record.short_id}")
     for line in render_session_usage(usage):
         print(line)
+    return 0
+
+
+def _print_diff_state(record, **fields: object) -> None:
+    print(f"session_id: {record.session_id}", file=sys.stderr)
+    print(f"session_ref: {record.short_id}", file=sys.stderr)
+    for name, value in fields.items():
+        print(f"{name}: {value}", file=sys.stderr)
+
+
+def cmd_diff(args) -> int:
+    """Write one session-owned patch without changing Git or session state."""
+    try:
+        store = SessionStore(read_only=True)
+    except FileNotFoundError as exc:
+        raise SystemExit("no assistant sessions found") from exc
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
+    if not all(
+        (
+            record.worktree_path,
+            record.worktree_branch,
+            record.worktree_base_commit,
+        )
+    ):
+        _print_diff_state(
+            record,
+            ownership="unknown",
+            worktree="none",
+            baseline="missing",
+            diff_state="unavailable",
+            reason=(
+                "session has no isolated-worktree baseline; current repository "
+                "changes cannot be attributed to this session"
+            ),
+        )
+        return 2
+
+    try:
+        inspected = inspect_session_worktree(Path(record.cwd), record.session_id)
+        expected = (
+            Path(str(record.worktree_path)).resolve(),
+            str(record.worktree_branch),
+            str(record.worktree_base_commit),
+        )
+        actual = (
+            inspected.worktree_path.resolve(),
+            inspected.branch,
+            inspected.base_commit,
+        )
+        if actual != expected:
+            raise WorktreeRuntimeError(
+                "saved worktree identity does not match the owned Git worktree"
+            )
+    except WorktreeRuntimeError as exc:
+        missing = "no registered worktree" in str(exc) or "path is missing" in str(exc)
+        _print_diff_state(
+            record,
+            ownership="unverified",
+            worktree="removed" if missing else "unavailable",
+            baseline=str(record.worktree_base_commit),
+            diff_state="unavailable",
+            reason=str(exc),
+        )
+        return 2
+
+    try:
+        result = build_session_worktree_diff(
+            inspected.worktree_path,
+            inspected.base_commit,
+        )
+    except SessionDiffError as exc:
+        _print_diff_state(
+            record,
+            ownership="unverified",
+            worktree=str(inspected.worktree_path),
+            baseline=(
+                "missing"
+                if exc.code == "baseline_missing"
+                else str(inspected.base_commit)
+            ),
+            diff_state="unavailable",
+            reason=str(exc),
+        )
+        return 2
+
+    diff_state = "changes" if result.patch else "clean"
+    _print_diff_state(
+        record,
+        ownership="session-worktree",
+        worktree=str(inspected.worktree_path),
+        baseline=str(inspected.base_commit),
+        diff_state=diff_state,
+        tracked_changes="yes" if result.tracked_changes else "no",
+        untracked_files=result.untracked_files,
+    )
+    if result.patch:
+        sys.stdout.write(result.patch.decode("utf-8", errors="surrogateescape"))
     return 0
 
 
