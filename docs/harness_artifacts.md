@@ -36,6 +36,8 @@ The installed command keeps most records outside the target repository.
 ```text
 <assist_home>/
 ├── sessions.sqlite3
+├── purge-staging/
+│   └── <session_id>/
 └── sessions/
     └── <session_id>/
 ```
@@ -47,7 +49,8 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 
 | File | What it means |
 | --- | --- |
-| `sessions.sqlite3` | Index of coding sessions, immutable parent-session IDs, manual labels, archive times, active-session pointers, process locks, and the non-secret provider/authentication identity pinned to each managed-provider session. A nullable `parent_session_id` identifies the immediate source of an explicit fork and cannot be changed. A nullable `archived_at` value is reversible local operator metadata. Labels and archive times do not enter session files, model input, replay, or measurement mode. Credential IDs are internal and are not printed by session commands. |
+| `sessions.sqlite3` | Index of coding sessions, immutable parent-session IDs, manual labels, archive times, active-session pointers, process locks, purge journals, and the non-secret provider/authentication identity pinned to each managed-provider session. A nullable `parent_session_id` identifies the immediate source of an explicit fork and cannot be changed. A nullable `archived_at` value is reversible local operator metadata. An incomplete purge journal holds the sorted relative entry manifest, file identity fields, logical byte estimate, phase, and bounded failure detail. Completion clears the path manifest but keeps its digest, entry count, byte estimate, and times. Session selection does not treat a purge journal as a session row. Labels, archive times, and purge journals do not enter model input, replay, or measurement mode. Credential IDs are internal and are not printed by session commands. |
+| `purge-staging/<session_id>/` | Remaining owned entries after a confirmed purge moves one exact archived session directory out of the live session namespace. The path comes only from the configured assistant root and full immutable session ID. It is not a repository, worktree, credential store, trash service, or measurement directory. A successful purge removes this directory before it removes the SQLite session row. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/attachments.json` | Bounded attachment manifest. For each image it records the run segment, display name, detected media type, byte count, dimensions, SHA-256 digest, session-relative saved path, and the associated user-text digest and sizes. It stores no source path or image bytes. |
 | `<session_id>/attachments/segment-NNNN/image-NNNN.<ext>` | Exact validated image bytes copied from an explicit `code`, `run`, or `resume` input. Both numbers use four digits, starting at `0001`. These permission-restricted files are the source for model requests and replay-safe resumes; Yuj does not reopen the original path. |
@@ -81,6 +84,41 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 `yuj archive` changes only `sessions.sqlite3`. It does not delete, compress,
 move, or rewrite the session directory or a retained worktree. It frees no
 storage. `yuj unarchive` clears only the same archive value.
+
+`yuj purge FULL_SESSION_ID --preview` reads one archived session row and walks
+only `<assist_home>/sessions/FULL_SESSION_ID/`. It lists sorted relative entry
+names, entry types, and regular-file logical sizes. It reads only the bounded
+identity and pending-input metadata needed to prove the operation. It does not
+print artifact contents, task text, credential values, or credential IDs. The
+preview does not create a journal or staging directory and does not change the
+session row or files.
+
+`yuj purge FULL_SESSION_ID --confirm FULL_SESSION_ID` is irreversible. It
+requires the same full ID twice and refuses labels, ID starts, short IDs,
+implicit selectors, unarchived or locked sessions, unresolved operator input,
+live retained worktrees, malformed metadata, and unproved artifact boundaries.
+After the separate worktree action removes a worktree and branch, its saved
+path, branch, and base commit remain historical identity. Purge derives the
+expected worktree path and verifies that it is no longer registered or present.
+The walker uses no-follow directory and file operations. It rejects symbolic
+links, hard-linked files, mount points, unusual entry types, changed entries,
+and paths or entry counts outside its fixed bounds.
+
+The confirmed command records a SQLite journal before it moves or removes an
+artifact. It atomically moves the exact session directory to
+`purge-staging/<session_id>/` on the same file system, removes each journaled
+entry without following links, removes the staged root, and removes the
+session row last. A stopped operation keeps its current phase and remaining
+files for read-only preview and exact retry. Ordinary session resolution
+refuses an incomplete purge. A successful purge removes the selected row and
+all of its owned artifacts, so labels and ID forms no longer resolve it.
+
+Purge never follows stored absolute paths to expand ownership. It does not
+remove or change a target repository, managed worktree, branch, credential,
+other session, parent, child, or measurement artifact. A retained lineage
+field remains the deleted immutable parent ID as historical evidence. Purge
+makes no model request, runs no model tool, and performs no automatic or bulk
+cleanup.
 
 `yuj fork` validates and copies one stopped session directory into a new
 child-owned directory. It rejects symbolic links, non-regular files, and

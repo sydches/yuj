@@ -366,23 +366,67 @@ def create_session_worktree(
         )
 
 
-def inspect_session_worktree(repo_cwd: Path, run_id: str) -> WorktreeRuntimeInfo:
-    """Inspect a Yuj-owned worktree without changing it."""
+def inspect_session_worktree_presence(
+    repo_cwd: Path,
+    run_id: str,
+) -> tuple[Path, WorktreeRuntimeInfo | None]:
+    """Inspect whether the derived Yuj worktree path is still live."""
     repo_root = _repo_root(Path(repo_cwd))
     resolved_run_id = _validate_run_id(run_id)
     path = repo_root / WORKTREE_DIR_NAME / resolved_run_id
-    registered = _registered_at(repo_root, path)
-    if registered is None:
-        raise WorktreeRuntimeError(f"no registered worktree for run {resolved_run_id}")
-    metadata = _read_metadata(path)
-    if metadata.get("run_id") != resolved_run_id or metadata.get("branch") != registered.branch:
-        raise WorktreeRuntimeError("registered worktree does not match Yuj metadata")
-    return _build_info(
-        repo_root=repo_root,
-        path=path,
-        metadata=metadata,
-        reused=True,
-    )
+    with _GIT_LOCK:
+        try:
+            path_metadata = os.lstat(path)
+        except FileNotFoundError:
+            path_exists = False
+        except OSError as exc:
+            raise WorktreeRuntimeError(
+                f"cannot inspect worktree path for run {resolved_run_id}: {exc}"
+            ) from exc
+        else:
+            path_exists = True
+            if stat.S_ISLNK(path_metadata.st_mode) or not stat.S_ISDIR(
+                path_metadata.st_mode
+            ):
+                raise WorktreeRuntimeError(
+                    f"derived worktree path is not an owned directory for run "
+                    f"{resolved_run_id}"
+                )
+
+        registered = _registered_at(repo_root, path)
+        if registered is None:
+            if path_exists:
+                raise WorktreeRuntimeError(
+                    f"unregistered worktree path still exists for run "
+                    f"{resolved_run_id}: {path}"
+                )
+            return path, None
+        if not path_exists:
+            raise WorktreeRuntimeError(
+                f"registered worktree path is missing for run {resolved_run_id}"
+            )
+        metadata = _read_metadata(path)
+        if (
+            metadata.get("run_id") != resolved_run_id
+            or metadata.get("branch") != registered.branch
+        ):
+            raise WorktreeRuntimeError(
+                "registered worktree does not match Yuj metadata"
+            )
+        return path, _build_info(
+            repo_root=repo_root,
+            path=path,
+            metadata=metadata,
+            reused=True,
+        )
+
+
+def inspect_session_worktree(repo_cwd: Path, run_id: str) -> WorktreeRuntimeInfo:
+    """Inspect a Yuj-owned worktree without changing it."""
+    _path, inspected = inspect_session_worktree_presence(repo_cwd, run_id)
+    if inspected is None:
+        raise WorktreeRuntimeError(f"no registered worktree for run {run_id}")
+    return inspected
 
 
 def fork_session_worktree(

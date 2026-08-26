@@ -47,6 +47,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj fork` | Create an independent child from one stopped saved session. |
 | `yuj archive` | Hide one stopped session from ordinary selection without changing its evidence. |
 | `yuj unarchive` | Restore one archived session to ordinary selection. |
+| `yuj purge` | Preview or permanently remove one archived session and its owned artifacts. |
 | `yuj resume` | Continue a paused session. |
 | `yuj correct` | Record one exact correction for a stopped session. |
 | `yuj answer` | Record one exact answer for a pending clarification. |
@@ -535,6 +536,8 @@ turns and trace events to print.
 | `yuj fork` | `SESSION` | Select the stopped source session. This argument is required. |
 | `yuj archive` | `SESSION` | Select the stopped session to archive. |
 | `yuj unarchive` | `SESSION` | Select the archived session to restore. |
+| `yuj purge` | `FULL_SESSION_ID --preview` | List the owned artifact entries and their logical byte total without changing them. |
+| `yuj purge` | `FULL_SESSION_ID --confirm FULL_SESSION_ID` | Permanently remove the archived session after the two IDs match exactly. |
 
 The current parser accepts any integer for these three options. A value of
 `0` prints no matching rows. A negative `--turns` or `--trace-lines` value
@@ -708,6 +711,74 @@ unchanged metadata defines. Repeating `archive` or `unarchive` reports
 `changed: no` and leaves the current state unchanged. Both commands are local
 SQLite changes. They make no model request, run no model tool, and do not
 change measurement mode.
+
+### Permanently purge an archived session
+
+Purge is irreversible. Archive the stopped session and inspect the preview
+before you confirm deletion.
+
+Use the full immutable session ID for the preview:
+
+```bash
+yuj purge 20260825_120000_deadbeef --preview
+```
+
+The preview is read-only. It lists each directory and regular file in sorted
+session-relative order. It also reports the exact sum of the regular files'
+logical byte sizes. It does not print file contents, task text, credentials,
+or credential IDs.
+
+Repeat the same full ID to confirm permanent deletion:
+
+```bash
+yuj purge 20260825_120000_deadbeef \
+  --confirm 20260825_120000_deadbeef
+```
+
+Purge does not accept a label, a short ID, an ID start, `latest`, or `last`.
+It also rejects a missing or different confirmation ID. These checks happen
+before Yuj starts deletion.
+
+The session must be archived and unlocked. Resolve any pending approval,
+clarification, or correction before you archive and purge it. Purge also
+refuses an active-session pointer, a running status, malformed saved metadata,
+or an artifact boundary that it cannot prove.
+
+Remove a live retained worktree through its separate lifecycle before purge.
+First unarchive the session. Then run `yuj worktree rm FULL_SESSION_ID`, and
+archive the session again. Worktree removal keeps the saved path, branch, and
+base commit as historical identity. Purge derives the expected worktree path
+from the repository and session ID, verifies that Git no longer registers it
+and that the path is absent, and never uses the saved path as deletion
+authority. Purge never removes a repository, worktree, branch, credential,
+another session, or measurement file.
+
+Yuj derives the only deletion boundary from `<assist_home>/sessions/` and the
+confirmed immutable ID. It does not use a saved absolute path as deletion
+authority. It rejects symbolic links, hard-linked files, mount points,
+unsupported entry types, changed entries, and paths that exceed the bounded
+preview limits.
+
+Before deletion, Yuj records a purge journal in `sessions.sqlite3`. It then
+moves the exact session directory to `<assist_home>/purge-staging/` on the same
+file system. Yuj removes only the journaled entries and removes the session row
+last. The completed journal keeps the entry count, estimated bytes, manifest
+digest, and completion time, but clears the path manifest.
+
+If deletion stops, run the same preview command to see the journal phase and
+the remaining entry and byte counts. Ordinary session commands stop resolving
+an incomplete purge. Retry the same confirmed purge command after you fix the
+reported local cause. Yuj checks the remaining staged entries against the
+journal before it continues, so it never reports success while a row or owned
+artifact remains.
+
+Purging a parent does not change its child. Purging a child does not change its
+parent. A retained child's `parent_session_id` remains the deleted immutable
+ID as historical evidence, but that ID no longer resolves to a session.
+
+Purge makes no model request, runs no model tool, and does not change
+measurement mode. It performs no age-based cleanup, bulk cleanup, background
+deletion, or automatic retention action.
 
 ### Select a session
 
@@ -1059,6 +1130,12 @@ Yuj stores each session here:
 <assist_home>/sessions/<session_id>/
 ```
 
+After Yuj stages an incomplete purge, it keeps the remaining files here:
+
+```text
+<assist_home>/purge-staging/<session_id>/
+```
+
 The optional manual label exists only in `sessions.sqlite3`. The label does
 not appear in the session directory or any model-facing record.
 
@@ -1068,6 +1145,11 @@ does not change or move the session directory, and it frees no storage.
 A forked session's immutable parent ID exists in `sessions.sqlite3` and
 `session.json`. The parent link is identification only. It does not share
 writable state between session directories.
+
+The purge journal exists only in `sessions.sqlite3`. It records the bounded
+entry manifest while deletion is incomplete. A completed journal clears that
+manifest and keeps only the summary and completion evidence. Session
+selection does not read completed journals as session records.
 
 For an installed package, `<assist_home>` is `$XDG_STATE_HOME/yuj`, or
 `~/.local/state/yuj` when `XDG_STATE_HOME` is unset. For an editable/source

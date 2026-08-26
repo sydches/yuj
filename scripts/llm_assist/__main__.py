@@ -78,6 +78,12 @@ from ._images import (
     save_image_segment,
 )
 from .forking import ForkSessionError, fork_saved_session, validate_correction_owner
+from .purge import (
+    PurgePreview,
+    PurgeSessionError,
+    preview_session_purge,
+    purge_archived_session,
+)
 from .progress import TraceFollower
 from .runner import (
     _make_client,
@@ -108,7 +114,9 @@ from .store import (
     SessionArchiveError,
     SessionLabelError,
     SessionLockedError,
+    SessionPurgeInProgressError,
     SessionStore,
+    is_full_session_id,
 )
 from .startup import preflight_assistant_startup, render_startup_preflight
 from .usage import (
@@ -595,6 +603,26 @@ def main(argv: list[str] | None = None) -> int:
         help="coding-session ID, exact label, or unique ID prefix",
     )
     unarchive_parser.set_defaults(func=cmd_unarchive)
+
+    purge_parser = sub.add_parser(
+        "purge",
+        help="preview or permanently remove one archived coding session",
+    )
+    purge_parser.add_argument(
+        "session_id",
+        help="one full immutable coding-session ID",
+    )
+    purge_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="list the exact owned entries and estimated bytes without mutation",
+    )
+    purge_parser.add_argument(
+        "--confirm",
+        metavar="FULL_SESSION_ID",
+        help="permanently purge by repeating the exact full session ID",
+    )
+    purge_parser.set_defaults(func=cmd_purge)
 
     label_parser = sub.add_parser(
         "label", help="set, replace, or clear a saved session label"
@@ -1794,6 +1822,60 @@ def cmd_unarchive(args) -> int:
     return 0
 
 
+def cmd_purge(args) -> int:
+    if not is_full_session_id(args.session_id):
+        raise SystemExit("purge requires one full immutable session ID")
+    if args.preview and args.confirm is not None:
+        raise SystemExit("--preview and --confirm are mutually exclusive")
+    if not args.preview and args.confirm is None:
+        raise SystemExit("purge requires --preview or --confirm FULL_SESSION_ID")
+    if args.confirm is not None and args.confirm != args.session_id:
+        raise SystemExit(
+            "purge confirmation must be the same full immutable session ID"
+        )
+
+    try:
+        if args.preview:
+            try:
+                store = SessionStore(read_only=True)
+            except FileNotFoundError as exc:
+                raise SystemExit("no assistant sessions found") from exc
+            preview = preview_session_purge(store, args.session_id)
+            _print_purge_preview(preview, mutation="none")
+            if preview.state != "completed":
+                print(
+                    f"next: {CLI_NAME} purge {args.session_id} "
+                    f"--confirm {args.session_id}"
+                )
+            return 0
+
+        store = SessionStore()
+        preview = purge_archived_session(store, args.session_id)
+    except PurgeSessionError as exc:
+        if exc.preview is not None:
+            _print_purge_preview(exc.preview, mutation="incomplete")
+        raise SystemExit(str(exc)) from exc
+
+    print(f"purged: {preview.session_id}")
+    _print_purge_preview(preview, mutation="completed")
+    return 0
+
+
+def _print_purge_preview(preview: PurgePreview, *, mutation: str) -> None:
+    print(f"session_id: {preview.session_id}")
+    print(f"purge_state: {preview.state}")
+    print(f"artifact_entries: {preview.entry_count}")
+    print(f"estimated_bytes: {preview.estimated_bytes}")
+    print(f"remaining_entries: {preview.remaining_entries}")
+    print(f"remaining_bytes: {preview.remaining_bytes}")
+    if preview.failure_detail is not None:
+        print(f"last_failure: {preview.failure_detail}")
+    for entry in preview.entries:
+        relative = json.dumps(entry.relative, ensure_ascii=True)
+        print(f"artifact: {entry.kind} {relative} bytes={entry.size}")
+    print(f"mutation: {mutation}")
+
+
 def cmd_label(args) -> int:
     if args.clear and args.label is not None:
         raise SystemExit("label value and --clear are mutually exclusive")
@@ -2720,7 +2802,7 @@ def _resolve_session_record(
     if session_ref.lower() not in _LATEST_SESSION_TOKENS:
         try:
             record = store.resolve_session_ref(session_ref)
-        except AmbiguousSessionRefError as exc:
+        except (AmbiguousSessionRefError, SessionPurgeInProgressError) as exc:
             raise SystemExit(str(exc)) from exc
         if record is None:
             raise SystemExit(f"unknown session: {session_ref}")

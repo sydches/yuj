@@ -51,6 +51,21 @@ create table if not exists session_locks (
     owner_host text not null,
     owner_pid integer not null,
     acquired_at text not null
+);
+
+create table if not exists session_purges (
+    session_id text primary key,
+    created_at text not null,
+    updated_at text not null,
+    phase text not null,
+    manifest_json text not null,
+    manifest_digest text not null,
+    entry_count integer not null,
+    estimated_bytes integer not null,
+    root_dev integer not null,
+    root_ino integer not null,
+    failure_detail text,
+    completed_at text
 )
 """
 
@@ -118,6 +133,22 @@ class SessionLock:
     acquired_at: str
 
 
+@dataclass(frozen=True)
+class SessionPurgeJournal:
+    session_id: str
+    created_at: str
+    updated_at: str
+    phase: str
+    manifest_json: str
+    manifest_digest: str
+    entry_count: int
+    estimated_bytes: int
+    root_dev: int
+    root_ino: int
+    failure_detail: str | None
+    completed_at: str | None
+
+
 class SessionLockedError(RuntimeError):
     def __init__(self, lock: SessionLock):
         self.lock = lock
@@ -136,6 +167,14 @@ class SessionLabelError(ValueError):
 
 
 class SessionArchiveError(RuntimeError):
+    pass
+
+
+class SessionPurgeInProgressError(RuntimeError):
+    pass
+
+
+class SessionPurgeStateError(RuntimeError):
     pass
 
 
@@ -193,6 +232,12 @@ class SessionStore:
                     str(row["name"]) == "archived_at"
                     for row in conn.execute("pragma table_info(sessions)").fetchall()
                 )
+                self._has_purge_table = conn.execute(
+                    """
+                    select 1 from sqlite_master
+                    where type = 'table' and name = 'session_purges'
+                    """
+                ).fetchone() is not None
             return
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "sessions").mkdir(parents=True, exist_ok=True)
@@ -235,6 +280,7 @@ class SessionStore:
                 """
             )
         self._has_archive_column = True
+        self._has_purge_table = True
 
     def _connect(self) -> sqlite3.Connection:
         if self.read_only:
@@ -491,11 +537,25 @@ class SessionStore:
             archive_filter = "where archived_at is not null"
         else:
             archive_filter = "where archived_at is null"
+        purge_filter = (
+            "and session_id not in ("
+            "select session_id from session_purges"
+            ")"
+            if self._has_purge_table and archive_filter
+            else (
+                "where session_id not in ("
+                "select session_id from session_purges"
+                ")"
+                if self._has_purge_table
+                else ""
+            )
+        )
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
                 select * from sessions
                 {archive_filter}
+                {purge_filter}
                 order by updated_at desc
                 limit ?
                 """,
@@ -519,7 +579,19 @@ class SessionStore:
             record.session_id: record for record in (*label_matches, *id_matches)
         }
         if len(matches) == 1:
-            return next(iter(matches.values()))
+            record = next(iter(matches.values()))
+            journal = self.get_session_purge(record.session_id)
+            if journal is not None:
+                if journal.phase == "completed":
+                    raise SessionPurgeInProgressError(
+                        "session purge state is inconsistent; a completed "
+                        "journal still has a session row"
+                    )
+                raise SessionPurgeInProgressError(
+                    "session purge is incomplete; inspect it with "
+                    f"yuj purge {record.session_id} --preview"
+                )
+            return record
         if len(matches) > 1:
             if label_matches:
                 raise AmbiguousSessionRefError(
@@ -530,6 +602,249 @@ class SessionStore:
                 f"session ref '{session_ref}' matches multiple sessions; use a longer prefix or the full id"
             )
         return None
+
+    def get_session_purge(
+        self,
+        session_id: str,
+    ) -> SessionPurgeJournal | None:
+        if not self._has_purge_table:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return _row_to_purge_journal(row) if row is not None else None
+
+    def prepare_session_purge(
+        self,
+        record: SessionRecord,
+        *,
+        manifest_json: str,
+        manifest_digest: str,
+        entry_count: int,
+        estimated_bytes: int,
+        root_dev: int,
+        root_ino: int,
+    ) -> SessionPurgeJournal:
+        """Publish the durable pre-deletion journal after atomic rechecks."""
+        now = _utc_now()
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            existing = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (record.session_id,),
+            ).fetchone()
+            if existing is not None:
+                journal = _row_to_purge_journal(existing)
+                if journal.phase == "completed":
+                    raise SessionPurgeStateError(
+                        "completed purge journal still has a session row"
+                    )
+                return journal
+            row = conn.execute(
+                "select * from sessions where session_id = ?",
+                (record.session_id,),
+            ).fetchone()
+            if row is None or _row_to_record(row) != record:
+                raise SessionPurgeStateError(
+                    "session metadata changed before purge preparation"
+                )
+            if record.archived_at is None:
+                raise SessionPurgeStateError("session must be archived before purge")
+            if record.status == "running":
+                raise SessionPurgeStateError("cannot purge a running session")
+            active = conn.execute(
+                "select 1 from active_sessions where session_id = ? limit 1",
+                (record.session_id,),
+            ).fetchone()
+            if active is not None:
+                raise SessionPurgeStateError(
+                    "cannot purge a session with an active-session pointer"
+                )
+            lock_row = conn.execute(
+                "select * from session_locks where session_id = ?",
+                (record.session_id,),
+            ).fetchone()
+            if lock_row is None or not _is_same_owner(
+                _row_to_lock(lock_row), socket.gethostname(), os.getpid()
+            ):
+                raise SessionPurgeStateError(
+                    "purge no longer owns the selected session lock"
+                )
+            conn.execute(
+                """
+                insert into session_purges (
+                    session_id, created_at, updated_at, phase, manifest_json,
+                    manifest_digest, entry_count, estimated_bytes, root_dev,
+                    root_ino, failure_detail, completed_at
+                ) values (?, ?, ?, 'prepared', ?, ?, ?, ?, ?, ?, null, null)
+                """,
+                (
+                    record.session_id,
+                    now,
+                    now,
+                    manifest_json,
+                    manifest_digest,
+                    entry_count,
+                    estimated_bytes,
+                    root_dev,
+                    root_ino,
+                ),
+            )
+            created = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (record.session_id,),
+            ).fetchone()
+        assert created is not None
+        return _row_to_purge_journal(created)
+
+    def transition_session_purge(
+        self,
+        session_id: str,
+        *,
+        expected: set[str],
+        phase: str,
+    ) -> SessionPurgeJournal:
+        now = _utc_now()
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise SessionPurgeStateError("purge journal is missing")
+            current = _row_to_purge_journal(row)
+            if current.phase not in expected:
+                raise SessionPurgeStateError(
+                    f"purge phase is {current.phase}, expected "
+                    + ", ".join(sorted(expected))
+                )
+            conn.execute(
+                """
+                update session_purges
+                set phase = ?, updated_at = ?, failure_detail = null
+                where session_id = ?
+                """,
+                (phase, now, session_id),
+            )
+            updated = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (session_id,),
+            ).fetchone()
+        assert updated is not None
+        return _row_to_purge_journal(updated)
+
+    def record_session_purge_failure(
+        self,
+        session_id: str,
+        detail: str,
+    ) -> None:
+        if not self._has_purge_table:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                update session_purges
+                set updated_at = ?, failure_detail = ?
+                where session_id = ? and phase != 'completed'
+                """,
+                (_utc_now(), detail, session_id),
+            )
+
+    def finalize_session_purge(
+        self,
+        expected_record: SessionRecord,
+    ) -> SessionPurgeJournal:
+        """Remove the indexed identity and complete its journal atomically."""
+        session_id = expected_record.session_id
+        now = _utc_now()
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            journal_row = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if journal_row is None:
+                raise SessionPurgeStateError("purge journal is missing")
+            journal = _row_to_purge_journal(journal_row)
+            if journal.phase == "completed":
+                row = conn.execute(
+                    "select 1 from sessions where session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is not None:
+                    raise SessionPurgeStateError(
+                        "completed purge journal still has a session row"
+                    )
+                return journal
+            if journal.phase != "artifacts_removed":
+                raise SessionPurgeStateError(
+                    "cannot remove a session row before its artifacts"
+                )
+            row = conn.execute(
+                "select * from sessions where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise SessionPurgeStateError(
+                    "session row disappeared before purge finalization"
+                )
+            record = _row_to_record(row)
+            if record != expected_record:
+                raise SessionPurgeStateError(
+                    "session metadata changed before purge finalization"
+                )
+            if record.archived_at is None:
+                raise SessionPurgeStateError(
+                    "session became unarchived during purge"
+                )
+            if record.status == "running":
+                raise SessionPurgeStateError(
+                    "session became running during purge"
+                )
+            active = conn.execute(
+                "select 1 from active_sessions where session_id = ? limit 1",
+                (session_id,),
+            ).fetchone()
+            if active is not None:
+                raise SessionPurgeStateError(
+                    "session gained an active-session pointer during purge"
+                )
+            lock_row = conn.execute(
+                "select * from session_locks where session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if lock_row is None or not _is_same_owner(
+                _row_to_lock(lock_row), socket.gethostname(), os.getpid()
+            ):
+                raise SessionPurgeStateError(
+                    "purge no longer owns the selected session lock"
+                )
+            conn.execute(
+                "delete from sessions where session_id = ?",
+                (session_id,),
+            )
+            conn.execute(
+                "delete from session_locks where session_id = ?",
+                (session_id,),
+            )
+            conn.execute(
+                """
+                update session_purges
+                set phase = 'completed', updated_at = ?, manifest_json = '[]',
+                    failure_detail = null, completed_at = ?
+                where session_id = ?
+                """,
+                (now, now, session_id),
+            )
+            completed = conn.execute(
+                "select * from session_purges where session_id = ?",
+                (session_id,),
+            ).fetchone()
+        assert completed is not None
+        return _row_to_purge_journal(completed)
 
     def set_session_label(self, session_id: str, label: str) -> None:
         exact_label = validate_session_label(label)
@@ -680,6 +995,8 @@ class SessionStore:
         if session_id is None:
             return None
         record = self.get_session(session_id)
+        if record is not None and self.get_session_purge(record.session_id) is not None:
+            return None
         if record is not None and record.archived_at is None:
             return record
         if record is not None:
@@ -749,7 +1066,7 @@ class SessionStore:
         lock = _row_to_lock(row)
         if _is_stale_lock(lock):
             if self.read_only:
-                return lock
+                return None
             with self._connect() as conn:
                 conn.execute(
                     "delete from session_locks where session_id = ?",
@@ -878,6 +1195,31 @@ def _row_to_lock(row: sqlite3.Row) -> SessionLock:
     )
 
 
+def _row_to_purge_journal(row: sqlite3.Row) -> SessionPurgeJournal:
+    return SessionPurgeJournal(
+        session_id=str(row["session_id"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        phase=str(row["phase"]),
+        manifest_json=str(row["manifest_json"]),
+        manifest_digest=str(row["manifest_digest"]),
+        entry_count=int(row["entry_count"]),
+        estimated_bytes=int(row["estimated_bytes"]),
+        root_dev=int(row["root_dev"]),
+        root_ino=int(row["root_ino"]),
+        failure_detail=(
+            str(row["failure_detail"])
+            if row["failure_detail"] is not None
+            else None
+        ),
+        completed_at=(
+            str(row["completed_at"])
+            if row["completed_at"] is not None
+            else None
+        ),
+    )
+
+
 def _is_same_owner(lock: SessionLock, owner_host: str, owner_pid: int) -> bool:
     return lock.owner_host == owner_host and lock.owner_pid == owner_pid
 
@@ -899,6 +1241,10 @@ def _session_id_ref_matches(session_id: str, session_ref: str) -> bool:
     return session_id.startswith(session_ref) or short_id.startswith(session_ref)
 
 
+def is_full_session_id(value: str) -> bool:
+    return _FULL_SESSION_ID_PATTERN.fullmatch(value) is not None
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -910,12 +1256,16 @@ def _new_session_id() -> str:
 __all__ = [
     "SESSION_LABEL_MAX_LENGTH",
     "SessionLock",
+    "SessionPurgeJournal",
     "AmbiguousSessionRefError",
     "SessionArchiveError",
     "SessionLabelError",
     "SessionLockedError",
+    "SessionPurgeInProgressError",
+    "SessionPurgeStateError",
     "SessionRecord",
     "SessionStore",
     "assist_home",
+    "is_full_session_id",
     "validate_session_label",
 ]
