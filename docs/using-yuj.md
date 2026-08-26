@@ -1266,6 +1266,22 @@ Inspect the request before you choose:
 yuj show
 ```
 
+For `write` and exact `edit` requests, `show` compares the current workspace
+file with the proposed content. For `apply_patch` and `udiff`, it shows the
+exact proposed patch. The preview names every displayed path and labels the
+content as proposed and not applied. Generating or viewing it does not change
+the workspace.
+
+Yuj stores at most the first 120 lines and 16,000 escaped characters. A
+truncation marker gives the displayed and original character counts. It also
+escapes terminal control characters. If the source, proposal, or path cannot
+be represented safely, `show` says that the preview is unavailable instead
+of displaying an invented diff. Shell commands receive this result because
+their file effects can depend on runtime behavior.
+
+Use `yuj show --pager` when you want to force a pager. Automatic paging remains
+the default at a terminal.
+
 Approve the action:
 
 ```bash
@@ -1309,7 +1325,9 @@ Yuj does not resume while a request is waiting. Approve or reject the request
 first.
 
 An approval or rejection records your choice. Run `resume` to continue the
-session.
+session. Rejection does not run the proposed tool. After an approved mutation
+runs in an isolated session worktree, use `yuj diff SESSION` to inspect the
+ordinary accumulated workspace diff.
 
 The approval check does not replace the sandbox.
 

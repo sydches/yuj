@@ -175,6 +175,12 @@ def approval_decision(
         "reason": reason,
         "requested_at": time.time(),
     }
+    from .approval_preview import build_approval_preview
+    payload["preview"] = build_approval_preview(
+        cwd=cwd,
+        tool_name=tool_name,
+        tool_args=tool_args,
+    )
     if tool_name == "bash":
         payload["cmd"] = cmd
     if permission_rule is not None:

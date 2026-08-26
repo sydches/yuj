@@ -39,6 +39,7 @@ from ..llm_solver._shared.paths import local_config_path
 from ..llm_solver.models import resolve_model
 from ..llm_solver.runtime_resources import validate_runtime_resources
 from ..llm_solver.server.request_controls import THINKING_LEVELS
+from ..llm_solver.harness.approval_preview import render_approval_preview
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
     inspect_session_worktree,
@@ -2747,6 +2748,7 @@ def _render_show(args) -> int:
         print(f"approval: {approval.get('status')}")
         print(f"approval_reason: {approval.get('reason')}")
         print(f"approval_action: {approval.get('tool_name')}({approval.get('args_summary') or approval.get('cmd') or ''})")
+        print(render_approval_preview(approval.get("preview")))
     _print_correction_evidence(correction)
     if clarification.phase == "none":
         print("clarification: none")

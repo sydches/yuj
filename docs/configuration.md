@@ -991,6 +991,12 @@ identity for any tool. If the session cannot write an approval request,
 `ask_fallback` decides whether to allow or deny. Measurement runs always deny
 `ask` and never create an approval request.
 
+Run `yuj show` before deciding. File-mutation requests include a bounded,
+read-only preview generated from the exact action awaiting approval. The
+preview is local operator evidence; it is not a tool result and does not apply
+the mutation. See [Approve or reject a tool action](using-yuj.html#approve-or-reject-a-tool-action)
+for the preview limits and unsupported cases.
+
 An `allow` rule does not bypass other controls. Yuj applies schema validation,
 permissions, operator approval, shell redirects and refusals, then the tool
 handler. An enabled `pre_tool` hook runs before this chain, so Yuj checks any
