@@ -32,6 +32,7 @@ from scripts.llm_solver.config_inspection import (
 from scripts.llm_solver.harness.approvals import approval_decision
 from scripts.llm_solver.harness.loop import Session
 from scripts.llm_solver.harness.plan_mode import PlanModeController
+from scripts.llm_solver.harness.sandbox._preflight import bwrap_preflight
 from scripts.llm_solver.harness.tool_policy import PermissionPolicy
 from scripts.llm_solver.harness.tools import dispatch
 
@@ -51,6 +52,7 @@ EXPECTED_PLAN_MODES = {
     "ask-before-changes": "required",
     "allow-edits": "off",
 }
+BWRAP_AVAILABLE, BWRAP_FAILURE = bwrap_preflight("/usr/bin/bwrap")
 
 
 def _without_machine_local(
@@ -304,6 +306,8 @@ def test_public_json_view_reports_cli_selection_and_expansion_sources(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _without_machine_local(monkeypatch, tmp_path)
+    overlay = tmp_path / "no-sandbox.toml"
+    overlay.write_text('[sandbox]\nbackend = "none"\n')
 
     rc = assist_main([
         "config",
@@ -311,6 +315,8 @@ def test_public_json_view_reports_cli_selection_and_expansion_sources(
         "--no-treatment",
         "--permission-preset",
         "read-only",
+        "--config",
+        str(overlay),
     ])
 
     payload = json.loads(capsys.readouterr().out)
@@ -468,8 +474,8 @@ def test_preset_ask_still_requires_the_existing_approval_transport(
 
 
 @pytest.mark.skipif(
-    not Path("/usr/bin/bwrap").is_file(),
-    reason="bwrap is required for the live preset sandbox check",
+    not BWRAP_AVAILABLE,
+    reason=f"operational bwrap is required: {BWRAP_FAILURE or 'unavailable'}",
 )
 def test_explicit_shell_allow_still_cannot_bypass_the_sandbox(
     tmp_path: Path,
@@ -538,6 +544,8 @@ def test_setup_saves_permission_preset_in_machine_local_config(
         "local-model",
         "--permission-preset",
         "read-only",
+        "--sandbox",
+        "none",
         "--force",
     ]) == 0
 
@@ -547,7 +555,7 @@ def test_setup_saves_permission_preset_in_machine_local_config(
         'permission_preset = "read-only"\n'
     ) in config_text
     assert "[sandbox]\n" in config_text
-    assert 'backend = "bwrap"\n' in config_text
+    assert 'backend = "none"\n' in config_text
 
 
 @pytest.mark.parametrize(

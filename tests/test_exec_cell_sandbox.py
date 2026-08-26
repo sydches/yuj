@@ -7,13 +7,15 @@ import time
 import pytest
 
 from _config_helpers import make_config
+from scripts.llm_solver.harness.sandbox._preflight import bwrap_preflight
 from scripts.llm_solver.harness.tools import dispatch
 
 
 BWRAP = Path("/usr/bin/bwrap")
+BWRAP_AVAILABLE, BWRAP_FAILURE = bwrap_preflight(str(BWRAP))
 requires_bwrap = pytest.mark.skipif(
-    not BWRAP.is_file(),
-    reason="bwrap is required for exec_cell sandbox acceptance checks",
+    not BWRAP_AVAILABLE,
+    reason=f"operational bwrap is required: {BWRAP_FAILURE or 'unavailable'}",
 )
 
 

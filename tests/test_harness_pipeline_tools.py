@@ -323,12 +323,16 @@ class TestHarnessTools:
 
     def test_bash_tool(self, tmp_path):
         from llm_solver.harness.tools import bash
-        result = bash("echo hello", cwd=str(tmp_path), timeout=10)
+        result = bash(
+            "echo hello", cwd=str(tmp_path), timeout=10, sandbox=False
+        )
         assert "hello" in result
 
     def test_bash_timeout(self, tmp_path):
         from llm_solver.harness.tools import bash
-        result = bash("sleep 10", cwd=str(tmp_path), timeout=1)
+        result = bash(
+            "sleep 10", cwd=str(tmp_path), timeout=1, sandbox=False
+        )
         assert "timed out" in result
 
     def test_read_tool(self, tmp_path):

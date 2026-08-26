@@ -1273,6 +1273,7 @@ def test_setup_accepts_normal_xdg_config_and_auth_layout(
         "--provider", "claude",
         "--auth", "api-key",
         "--model", "claude-sonnet-4-5",
+        "--sandbox", "none",
         "--api-key", "xdg-layout-key",
         "--force",
     ]) == 0
@@ -1373,6 +1374,7 @@ def test_setup_stores_managed_api_key_outside_config_and_reports_safe_status(
         "--provider", "claude",
         "--auth", "api-key",
         "--model", "claude-sonnet-4-5",
+        "--sandbox", "none",
         "--api-key", "setup-private-key",
         "--force",
     ]) == 0

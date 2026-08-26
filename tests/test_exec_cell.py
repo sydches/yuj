@@ -17,6 +17,7 @@ from scripts.llm_solver.harness.schemas import (
     get_exec_cell_function_schemas,
     get_tool_schemas,
 )
+from scripts.llm_solver.harness.sandbox._preflight import bwrap_preflight
 from scripts.llm_solver.harness.tool_specs import (
     CODE_MODE_SCHEMA_TOOL_NAMES,
     EXEC_CELL_API_TOOL_NAMES,
@@ -24,6 +25,9 @@ from scripts.llm_solver.harness.tool_specs import (
 )
 from scripts.llm_solver.harness.tools import dispatch
 from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
+
+
+BWRAP_AVAILABLE, BWRAP_FAILURE = bwrap_preflight("/usr/bin/bwrap")
 
 
 def _turn(*, calls=(), content=None, reason="tool_calls") -> TurnResult:
@@ -167,8 +171,8 @@ def test_code_mode_preserves_the_agent_skill_read_seam(tmp_path: Path):
 
 
 @pytest.mark.skipif(
-    not Path("/usr/bin/bwrap").is_file(),
-    reason="bwrap is required for the live exec_cell dispatcher check",
+    not BWRAP_AVAILABLE,
+    reason=f"operational bwrap is required: {BWRAP_FAILURE or 'unavailable'}",
 )
 def test_inner_calls_reenter_dispatch_filters_redaction_and_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -229,8 +233,8 @@ def test_inner_calls_reenter_dispatch_filters_redaction_and_envelope(
 
 
 @pytest.mark.skipif(
-    not Path("/usr/bin/bwrap").is_file(),
-    reason="bwrap is required for the live exec_cell trace check",
+    not BWRAP_AVAILABLE,
+    reason=f"operational bwrap is required: {BWRAP_FAILURE or 'unavailable'}",
 )
 def test_trace_records_source_child_calls_output_size_and_state_projection(
     tmp_path: Path,

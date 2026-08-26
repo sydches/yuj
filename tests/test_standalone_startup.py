@@ -14,9 +14,8 @@ from scripts.llm_solver.runtime_resources import validate_runtime_resources
 
 def _write_no_sandbox_overlay(path: Path) -> None:
     path.write_text(
-        "[tools]\n"
-        "sandbox_bash = false\n"
-        "sandbox_required = false\n"
+        "[sandbox]\n"
+        'backend = "none"\n'
     )
 
 
@@ -82,8 +81,14 @@ def test_installed_resource_validation_ignores_only_interpreter_caches(
         runtime_resource_module.validate_runtime_resources()
 
 
-def test_config_json_reports_resource_contract_without_absolute_root(capsys):
-    assert cli.main(["config", "--json", "--agent", "research"]) == 0
+def test_config_json_reports_resource_contract_without_absolute_root(
+    tmp_path, capsys
+):
+    overlay = tmp_path / "no-sandbox.toml"
+    _write_no_sandbox_overlay(overlay)
+    assert cli.main([
+        "config", "--json", "--agent", "research", "--config", str(overlay)
+    ]) == 0
     payload = json.loads(capsys.readouterr().out)
     resources = payload["references"]["runtime_resources"]
     assert resources == {

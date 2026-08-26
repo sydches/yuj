@@ -10,7 +10,7 @@ docs/sandbox.md has a manual verification checklist — three ``touch``
 commands that must return "Read-only file system". This test
 automates the same checklist.
 
-Skipped when bwrap is not installed (CI without bwrap support).
+Skipped when bwrap is not operational on the test host.
 """
 from __future__ import annotations
 
@@ -20,15 +20,17 @@ from pathlib import Path
 
 import pytest
 
+from scripts.llm_solver.harness.sandbox._preflight import bwrap_preflight
 from scripts.llm_solver.harness.tools import bash
 
 
 BWRAP = "/usr/bin/bwrap"
+BWRAP_AVAILABLE, BWRAP_FAILURE = bwrap_preflight(BWRAP)
 
 
 pytestmark = pytest.mark.skipif(
-    not Path(BWRAP).is_file(),
-    reason="bwrap not installed — sandbox escape tests require /usr/bin/bwrap",
+    not BWRAP_AVAILABLE,
+    reason=f"operational bwrap is required: {BWRAP_FAILURE or 'unavailable'}",
 )
 
 

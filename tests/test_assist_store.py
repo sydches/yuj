@@ -932,6 +932,7 @@ def test_setup_writes_local_provider_config(tmp_path, monkeypatch, capsys):
         "setup",
         "--provider", "openai",
         "--model", "gpt-5.4",
+        "--sandbox", "none",
         "--api-key", "test-secret",
         "--force",
     ])
@@ -960,6 +961,7 @@ def test_setup_defaults_to_local_without_prompts_in_a_script(
         rc = main([
             "setup",
             "--model", "local-model",
+            "--sandbox", "none",
             "--force",
         ])
 
@@ -979,6 +981,7 @@ def test_setup_can_store_api_key_env_reference(tmp_path, monkeypatch):
         "setup",
         "--provider", "anthropic",
         "--model", "claude-sonnet-4-5",
+        "--sandbox", "none",
         "--api-key-env", "ANTHROPIC_API_KEY",
         "--force",
     ])

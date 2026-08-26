@@ -32,6 +32,12 @@ def _without_machine_local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     )
 
 
+def _no_sandbox_overlay(tmp_path: Path) -> Path:
+    overlay = tmp_path / "no-sandbox.toml"
+    overlay.write_text('[sandbox]\nbackend = "none"\n')
+    return overlay
+
+
 def _flatten_paths(value: object, prefix: tuple[str, ...] = ()):
     if isinstance(value, dict) and value:
         for key in sorted(value):
@@ -213,9 +219,11 @@ def test_environment_profile_value_is_redacted_from_derived_references(
         '[model]\nprofile_name = "$ENV:YUJ_INSPECTION_PROFILE"\n'
     )
 
-    rc = main(
-        ["config", "--json", "--no-treatment", "--config", str(overlay)]
-    )
+    rc = main([
+        "config", "--json", "--no-treatment",
+        "--config", str(overlay),
+        "--config", str(_no_sandbox_overlay(tmp_path)),
+    ])
 
     encoded = capsys.readouterr().out
     document = json.loads(encoded)
@@ -262,7 +270,10 @@ def test_public_config_command_never_constructs_a_client_or_session(
         patch("scripts.llm_assist.__main__.SessionStore") as session_store,
         patch("openai.OpenAI") as openai_client,
     ):
-        rc = main(["config", "--json", "--no-treatment"])
+        rc = main([
+            "config", "--json", "--no-treatment",
+            "--config", str(_no_sandbox_overlay(tmp_path)),
+        ])
 
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
@@ -295,6 +306,8 @@ def test_public_cli_model_and_service_overrides_report_command_line_provenance(
             "YUJ_INSPECTION_CLI_KEY",
             "--model",
             "cli-model",
+            "--config",
+            str(_no_sandbox_overlay(tmp_path)),
         ]
     )
 
@@ -485,7 +498,10 @@ def test_human_output_is_readable_and_reports_redaction_and_sources(
 ) -> None:
     _without_machine_local(monkeypatch, tmp_path)
 
-    rc = main(["config", "--no-treatment"])
+    rc = main([
+        "config", "--no-treatment",
+        "--config", str(_no_sandbox_overlay(tmp_path)),
+    ])
 
     output = capsys.readouterr().out
     assert rc == 0
