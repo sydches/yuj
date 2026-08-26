@@ -284,17 +284,20 @@ file format and supported scopes.
 
 ### Select the model's edit format
 
-For a profile that supports tool calls, Yuj sends the model exactly one
-file-edit dialect. The selected model profile supplies the normal choice
-through inherited `[profile].edit_format`. The shipped `_base` profile selects
-`exact`.
+For a profile that supports tool calls, Yuj selects one replacement dialect.
+The selected model profile supplies the normal choice through inherited
+`[profile].edit_format`. The shipped `_base` profile selects `exact`.
 
-| Value | Model-facing tool | Input shape |
-| --- | --- | --- |
-| `exact` | `edit` | `path`, exact `old_str`, and `new_str` |
-| `apply_patch` | `apply_patch` | Codex V4A `*** Begin Patch` text in `patch` |
-| `udiff` | `udiff` | Standard `---`/`+++` unified-diff text in `patch` |
-| `whole` | `write` | `path` and complete replacement `content` |
+The `exact`, `apply_patch`, and `udiff` dialects cannot create a missing file,
+so Yuj also supplies `write` as their file-creation tool. The `whole` dialect
+uses `write` for both creation and replacement.
+
+| Value | Replacement tool | File-creation tool | Input shape |
+| --- | --- | --- | --- |
+| `exact` | `edit` | `write` | `path`, exact `old_str`, and `new_str` |
+| `apply_patch` | `apply_patch` | `write` | Codex V4A `*** Begin Patch` text in `patch` |
+| `udiff` | `udiff` | `write` | Standard `---`/`+++` unified-diff text in `patch` |
+| `whole` | `write` | `write` | `path` and complete replacement `content` |
 
 Override the profile for one settings layer with the public setting:
 
@@ -311,11 +314,13 @@ profile. A nonempty public setting wins over the legacy selector. New
 settings files should use only `[tools].edit_format`.
 
 Yuj validates profile and settings values before a run. It filters the tool
-schemas before schema simplification and the profile tool-count cap, so the
-request never contains another edit dialect alongside the selected one.
-With deferred tool loading, the registry also excludes the unselected
-dialects, and an edit-dialect entry in `[tools].active_default` resolves to the
-selected tool.
+schemas before schema simplification and the profile tool-count cap. With the
+fixed tool surface, each request contains only the selected replacement tool
+and its `write` companion. The `whole` dialect contains only `write`. With
+deferred tool loading, the registry excludes the unselected replacement tools
+but retains `write`. The request includes `write` when `[tools].active_default`
+names it or the model loads it. An edit-dialect entry in
+`[tools].active_default` resolves to the selected replacement tool.
 
 ## Control the command boundary
 

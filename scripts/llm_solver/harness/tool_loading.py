@@ -71,10 +71,20 @@ class ToolSurface:
         registered_edit_tools = tuple(
             name for name in names if name in EDIT_FORMAT_TOOL_NAMES
         )
-        if len(registered_edit_tools) == 1:
-            selected_edit_tool = registered_edit_tools[0]
+        # Map a configured dialect name that is not registered (e.g. a
+        # default of "edit" under the apply_patch dialect) onto the
+        # registered replace dialect. The write companion is always
+        # registered beside the replace dialect, so it must not absorb
+        # the substitution — fall back to it only when it is the sole
+        # dialect tool (edit_format = "whole").
+        replace_tools = tuple(
+            name for name in registered_edit_tools if name != "write"
+        )
+        if registered_edit_tools:
+            fallback = replace_tools[0] if replace_tools else registered_edit_tools[0]
             configured = tuple(dict.fromkeys(
-                selected_edit_tool if name in EDIT_FORMAT_TOOL_NAMES else name
+                (name if name in self._registered_name_set else fallback)
+                if name in EDIT_FORMAT_TOOL_NAMES else name
                 for name in configured
             ))
         if self.lazy_loading_enabled and LOADER_TOOL_NAME not in self._registered_name_set:

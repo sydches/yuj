@@ -161,10 +161,20 @@ def _filter_disabled_tools(tool_schemas: list[dict], cfg) -> list[dict]:
     return out
 
 
+# Dialect tools that are exclusive to their dialect. `write` is NOT here:
+# beyond being the "whole" dialect it is the file-creation companion that
+# every dialect ships (the exact/apply_patch/udiff tools all refuse
+# missing files). Dropping it removed file creation from the surface
+# entirely (harness_drift_audit.md, 2026-08-26).
+_DIALECT_EXCLUSIVE_TOOL_NAMES: frozenset[str] = (
+    EDIT_FORMAT_TOOL_NAMES - frozenset({"write"})
+)
+
+
 def _filter_edit_format_tools(
     tool_schemas: list[dict], cfg, client,
 ) -> list[dict]:
-    """Keep exactly one model-facing mutation dialect."""
+    """Keep one replace-dialect tool; always keep the write companion."""
     selected_tool = EDIT_FORMAT_TO_TOOL[
         resolve_effective_edit_format(cfg, client)
     ]
@@ -173,7 +183,7 @@ def _filter_edit_format_tools(
         for schema in tool_schemas
         if (
             schema.get("function", {}).get("name", "")
-            not in EDIT_FORMAT_TOOL_NAMES
+            not in _DIALECT_EXCLUSIVE_TOOL_NAMES
             or schema.get("function", {}).get("name", "") == selected_tool
         )
     ]

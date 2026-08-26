@@ -50,7 +50,7 @@ def test_metrics_trace_and_state_report_default_tool_block(
         "bash", "read", "edit", "glob", "grep", "load_tools", "done"
     ]
     assert set(loading["registered_tools"]) & EDIT_FORMAT_TOOL_NAMES == {
-        "edit"
+        "edit", "write"
     }
     assert isinstance(loading["default_tool_block_tokens"], int)
     assert loading["default_tool_block_tokens"] > 0

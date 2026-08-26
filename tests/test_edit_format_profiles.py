@@ -30,8 +30,13 @@ _EXPECTED_TOOL = {
 _EDIT_TOOLS = frozenset(_EXPECTED_TOOL.values())
 
 
+def _expected_dialect_tools(edit_format: str) -> set[str]:
+    """The selected replace dialect plus the always-on write companion."""
+    return {_EXPECTED_TOOL[edit_format], "write"}
+
+
 @pytest.mark.parametrize("edit_format", tuple(_EXPECTED_TOOL))
-def test_each_dialect_exposes_only_its_matching_tool(edit_format: str) -> None:
+def test_each_dialect_exposes_its_tool_plus_write(edit_format: str) -> None:
     cfg = make_config(
         tools_edit_format=edit_format,
         tools_apply_patch_enabled=False,
@@ -47,7 +52,7 @@ def test_each_dialect_exposes_only_its_matching_tool(edit_format: str) -> None:
     )
     names = {schema["function"]["name"] for schema in schemas}
 
-    assert names & _EDIT_TOOLS == {_EXPECTED_TOOL[edit_format]}
+    assert names & _EDIT_TOOLS == _expected_dialect_tools(edit_format)
 
 
 @pytest.mark.parametrize("edit_format", tuple(_EXPECTED_TOOL))
@@ -62,7 +67,17 @@ def test_shipped_base_profile_keeps_selected_dialect_under_tool_cap(
     )
     names = {schema["function"]["name"] for schema in schemas}
 
-    assert names & _EDIT_TOOLS == {_EXPECTED_TOOL[edit_format]}
+    assert names & _EDIT_TOOLS == _expected_dialect_tools(edit_format)
+
+
+def test_default_surface_matches_campaign_wire_contract() -> None:
+    """Regression: the stock config must expose the 7-tool surface the
+    2026-08 campaign cells recorded on the wire (harness_drift_audit.md)."""
+    surface = build_tool_surface(load_config(), SimpleNamespace(profile=None))
+
+    assert surface.active_names == (
+        "bash", "read", "write", "edit", "glob", "grep", "done",
+    )
 
 
 def test_selected_dialect_changes_model_facing_spec_text() -> None:
@@ -111,9 +126,9 @@ def test_deferred_surface_registers_and_activates_only_selected_dialect(
 
     surface = build_tool_surface(cfg, SimpleNamespace(profile=profile))
 
-    assert set(surface.registered_names) & _EDIT_TOOLS == {
-        _EXPECTED_TOOL[edit_format]
-    }
+    assert set(surface.registered_names) & _EDIT_TOOLS == (
+        _expected_dialect_tools(edit_format)
+    )
     assert set(surface.default_active_names) & _EDIT_TOOLS == {
         _EXPECTED_TOOL[edit_format]
     }
@@ -253,7 +268,7 @@ def test_tools_edit_format_config_knob_and_legacy_selector(tmp_path: Path) -> No
             SimpleNamespace(profile=profile),
         )
     }
-    assert names & _EDIT_TOOLS == {"apply_patch"}
+    assert names & _EDIT_TOOLS == {"apply_patch", "write"}
 
     canonical = make_config(
         tools_edit_format="whole",

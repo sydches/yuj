@@ -53,7 +53,8 @@ schema, description, or result rule.
 | --- | --- |
 | `read`, `glob`, `grep`, `bash`, `done` | On |
 | `edit` | Selected by the shipped profile's `exact` edit format. |
-| `write`, `apply_patch`, `udiff` | Available edit dialects, but not selected by the shipped profile. |
+| `write` | On as the file-creation companion to the selected `exact` replacement tool. |
+| `apply_patch`, `udiff` | Available replacement dialects, but not selected by the shipped profile. |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `ask_user` | On for the top-level assistant session. Never present in child-agent or measurement requests. |
@@ -197,14 +198,17 @@ settings and [Sandbox](sandbox.html#python-code-mode) for the boundary.
 
 ### Edit format
 
-Yuj gives a tool-calling model one edit dialect at a time:
+Yuj gives a tool-calling model one replacement dialect at a time. It also
+supplies `write` with the `exact`, `apply_patch`, and `udiff` dialects because
+those tools cannot create a missing file. The `whole` dialect uses `write` for
+both creation and replacement.
 
-| Format | Tool |
-| --- | --- |
-| `exact` | `edit` |
-| `apply_patch` | `apply_patch` |
-| `udiff` | `udiff` |
-| `whole` | `write` |
+| Format | Replacement tool | File-creation tool |
+| --- | --- | --- |
+| `exact` | `edit` | `write` |
+| `apply_patch` | `apply_patch` | `write` |
+| `udiff` | `udiff` | `write` |
+| `whole` | `write` | `write` |
 
 The model profile selects the normal format. Override it with
 `[tools].edit_format` or `--edit-format`. See

@@ -311,14 +311,15 @@ Yuj first looks for an exact profile directory. It next looks for one profile
 with the requested `[profile].family`. It uses `_base` when neither exists.
 More than one family match is an error.
 
-A child profile inherits `edit_format` when it omits the field:
+A child profile inherits `edit_format` when it omits the field. Yuj also
+supplies `write` with each replacement dialect so the model can create files.
 
-| Value | Tool schema |
-| --- | --- |
-| `exact` | `edit` |
-| `apply_patch` | Codex V4A `apply_patch` |
-| `udiff` | Standard unified-diff `udiff` |
-| `whole` | Complete-file `write` |
+| Value | Replacement tool | File-creation tool |
+| --- | --- | --- |
+| `exact` | `edit` | `write` |
+| `apply_patch` | Codex V4A `apply_patch` | `write` |
+| `udiff` | Standard unified-diff `udiff` | `write` |
+| `whole` | Complete-file `write` | `write` |
 
 Yuj rejects any other value. For one run, use `[tools].edit_format` or
 `--edit-format` instead of copying the profile.
@@ -328,7 +329,7 @@ Use these profile fields for these active jobs:
 | Profile field | Active job |
 | --- | --- |
 | `[profile].inherits` | Load a parent profile first. |
-| `[profile].edit_format` | Select `exact`, `apply_patch`, `udiff`, or `whole` and expose only its matching edit tool. |
+| `[profile].edit_format` | Select `exact`, `apply_patch`, `udiff`, or `whole`. Yuj exposes its replacement tool and the `write` file-creation tool. |
 | `[model].supports_tool_calls` | Send or omit the tool schema list. |
 | `[model].supports_system_role` | Keep or fold the system message. |
 | `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
