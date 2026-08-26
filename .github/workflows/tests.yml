@@ -26,9 +26,10 @@ jobs:
         run: python -m pip install -e '.[test]'
       - name: Smoke editable command surfaces
         run: |
+          printf '[sandbox]\nbackend = "none"\n' > "$RUNNER_TEMP/no-sandbox.toml"
           yuj --help >/dev/null
           yuj code --help >/dev/null
-          yuj config --json --agent research >/dev/null
+          yuj config --json --agent research --config "$RUNNER_TEMP/no-sandbox.toml" >/dev/null
       - name: Run the public test suite
         run: python -m pytest -q
 
@@ -56,14 +57,14 @@ jobs:
           python -m venv "$RUNNER_TEMP/yuj-install"
           "$RUNNER_TEMP/yuj-install/bin/python" -m pip install "$RUNNER_TEMP"/yuj-dist/*.whl
           mkdir -p "$RUNNER_TEMP/yuj-outside"
-          printf '[tools]\nsandbox_bash = false\nsandbox_required = false\n' > "$RUNNER_TEMP/yuj-outside/no-sandbox.toml"
+          printf '[sandbox]\nbackend = "none"\n' > "$RUNNER_TEMP/yuj-outside/no-sandbox.toml"
           cd "$RUNNER_TEMP/yuj-outside"
           unset PYTHONPATH YUJ_CONFIG YUJ_CONFIG_LOCAL
           "$RUNNER_TEMP/yuj-install/bin/python" -I -c 'from pathlib import Path; import scripts; source = Path("${{ github.workspace }}").resolve(); installed = Path(scripts.__file__).resolve(); assert source not in installed.parents, installed; print(f"import-origin: {installed}")'
           "$RUNNER_TEMP/yuj-install/bin/yuj" --help >/dev/null
           "$RUNNER_TEMP/yuj-install/bin/yuj" code --help >/dev/null
-          "$RUNNER_TEMP/yuj-install/bin/yuj" config >/dev/null
-          "$RUNNER_TEMP/yuj-install/bin/yuj" config --json --agent research > config.json
+          "$RUNNER_TEMP/yuj-install/bin/yuj" config --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" >/dev/null
+          "$RUNNER_TEMP/yuj-install/bin/yuj" config --json --agent research --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" > config.json
           "$RUNNER_TEMP/yuj-install/bin/python" -I -c 'import json; data=json.load(open("config.json")); resources=data["references"]["runtime_resources"]; assert data["success"] is True; assert resources["origin"] == "installed-package"; assert resources["root_resource_count"] == 57; assert resources["package_resource_count"] == 10'
           "$RUNNER_TEMP/yuj-install/bin/yuj" code --dry-run --cwd "$RUNNER_TEMP/yuj-outside" --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" "standalone install preflight" > startup.txt
           grep -F 'Yuj startup preflight: ready' startup.txt
