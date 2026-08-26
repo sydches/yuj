@@ -44,7 +44,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj show` | Show one session's settings and recent activity. |
 | `yuj diff` | Print changes in one retained session worktree. |
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
-| `yuj sessions` | List unarchived sessions, or list archived sessions with `--archived`. |
+| `yuj sessions` | List, filter, or select saved sessions. |
 | `yuj label` | Set, replace, or clear one manual session label. |
 | `yuj fork` | Create an independent child from one stopped saved session. |
 | `yuj archive` | Hide one stopped session from ordinary selection without changing its evidence. |
@@ -575,8 +575,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. Use `--full` to show the complete saved turn view. |
 | `yuj diff [SESSION]` | A pipeable unified diff for a verified retained worktree, or an explicit reason that ownership cannot be established. |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
-| `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
-| `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |
+| `yuj sessions` | A compact list of short ID, status, label, flags, and working directory for up to 20 recent unarchived sessions. |
+| `yuj sessions --full` | Complete identity, status, model, path, and time fields for each matching session. |
 
 The default `show` view shortens reasoning and tool results. It prints the five
 most recent turns and ten most recent trace events. Show every saved turn and
@@ -609,6 +609,12 @@ yuj show --no-tools --trace SESSION
 | `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
 | `yuj sessions` | `--archived` | List archived sessions instead of unarchived sessions. |
+| `yuj sessions` | `--all` | Include both unarchived and archived sessions. |
+| `yuj sessions` | `--status STATUS` | Keep an exact saved status. Repeat the option to keep more than one status. |
+| `yuj sessions` | `--cwd DIR` | Keep the exact saved working directory. Relative paths resolve from the current directory. |
+| `yuj sessions` | `--label LABEL` | Keep the exact, case-sensitive manual label. |
+| `yuj sessions` | `--full` | Show complete fields instead of the compact listing. |
+| `yuj sessions` | `--select` | Number the matching sessions and ask for one choice. This requires an interactive terminal. |
 | `yuj label` | `SESSION` | Select the saved session to change. |
 | `yuj label` | `LABEL` | Set or replace the exact manual label. |
 | `yuj label` | `--clear` | Clear the label instead of setting one. |
@@ -881,6 +887,31 @@ Automatic selection and ordinary `sessions` output exclude archived
 sessions. Use `sessions --archived` to list them. An explicit reference still
 uses the complete session index, so `status`, `show`, and `usage` can inspect
 an archived session.
+
+The ordinary list fits an 80-column redirected view. Long labels and paths are
+shortened there; `sessions --full` prints every value. Narrow the list before
+you choose:
+
+```bash
+yuj sessions --status paused --cwd .
+yuj sessions --all --label release-check
+```
+
+Use `--status` more than once to include several exact statuses. `--archived`
+shows only archived sessions, while `--all` includes both archive states.
+Filters run before `--limit` is applied.
+
+Ask for a numbered choice when both input and output are attached to a
+terminal:
+
+```bash
+yuj sessions --status paused --select
+```
+
+The result prints the immutable full ID, short ID, label, status, path, and a
+`yuj show` command. It does not change the active-session pointer. Redirected
+or piped use never opens the selector; an explicit `--select` then stops with
+an error.
 
 For `status`, `show`, and `usage`, Yuj chooses in this order:
 

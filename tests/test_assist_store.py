@@ -2041,10 +2041,10 @@ def test_sessions_marks_active_session_and_current_cwd(tmp_path, capsys, monkeyp
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert "session_id" in captured.out
-    assert f"{local_record.session_id}  created" in captured.out
+    assert "ref      status" in captured.out
+    assert f"{local_record.short_id} created" in captured.out
     assert "active,locked,cwd" in captured.out
-    assert f"{remote_record.session_id}  created" in captured.out
+    assert f"{remote_record.short_id} created" in captured.out
     assert "active" in captured.out
 
 

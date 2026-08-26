@@ -482,9 +482,10 @@ def test_sessions_status_show_and_current_render_label_or_dash(
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store):
         assert main(["sessions"]) == 0
         sessions_output = capsys.readouterr().out
-        assert "status     label" in sessions_output
-        assert f"{labeled.session_id}  created    visible-label" in sessions_output
-        assert f"{unlabeled.session_id}  created    -" in sessions_output
+        assert "ref      status" in sessions_output
+        assert f"{labeled.short_id} created" in sessions_output
+        assert "visible-label" in sessions_output
+        assert f"{unlabeled.short_id} created" in sessions_output
 
         assert main(["status", "visible-label"]) == 0
         status_output = capsys.readouterr().out

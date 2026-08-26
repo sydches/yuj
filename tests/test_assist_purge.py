@@ -416,8 +416,8 @@ def test_success_removes_only_selected_row_and_owned_artifacts(
 
     assert main(["sessions", "--archived"]) == 0
     listed = capsys.readouterr().out
-    assert target.session_id not in listed
-    assert retained.session_id in listed
+    assert target.short_id not in listed
+    assert retained.short_id in listed
 
 
 @pytest.mark.parametrize(

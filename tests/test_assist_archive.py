@@ -514,8 +514,8 @@ def test_default_lists_and_latest_current_resume_exclude_archived_sessions(
     ):
         assert main(["sessions"]) == 0
         listed = capsys.readouterr().out
-        assert ordinary.session_id in listed
-        assert archived.session_id not in listed
+        assert ordinary.short_id in listed
+        assert archived.short_id not in listed
 
         assert main(["status"]) == 0
         assert f"session_id: {ordinary.session_id}" in capsys.readouterr().out
@@ -591,10 +591,13 @@ def test_explicit_archived_listing_status_show_and_usage_are_read_only(
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store):
         assert main(["sessions", "--archived"]) == 0
         archived_list = capsys.readouterr().out
-        assert archived.session_id in archived_list
-        assert ordinary.session_id not in archived_list
+        assert archived.short_id in archived_list
+        assert ordinary.short_id not in archived_list
         assert "archived" in archived_list
-        assert f"archived_at={archived.archived_at}" in archived_list
+        assert main(["sessions", "--archived", "--full"]) == 0
+        archived_full = capsys.readouterr().out
+        assert f"session_id: {archived.session_id}" in archived_full
+        assert f"archived_at: {archived.archived_at}" in archived_full
 
         assert main(["status", "cold-run"]) == 0
         status_output = capsys.readouterr().out

@@ -590,10 +590,45 @@ def main(argv: list[str] | None = None) -> int:
         "--limit", type=int, default=20,
         help="number of recent sessions to list (default: 20)",
     )
-    sessions_parser.add_argument(
+    archive_filters = sessions_parser.add_mutually_exclusive_group()
+    archive_filters.add_argument(
         "--archived",
         action="store_true",
         help="list archived sessions instead of ordinary sessions",
+    )
+    archive_filters.add_argument(
+        "--all",
+        action="store_true",
+        help="list both ordinary and archived sessions",
+    )
+    sessions_parser.add_argument(
+        "--status",
+        action="append",
+        default=[],
+        metavar="STATUS",
+        help="keep this exact status; repeat to keep more than one",
+    )
+    sessions_parser.add_argument(
+        "--cwd",
+        type=Path,
+        metavar="DIR",
+        help="keep sessions whose saved working directory is this exact path",
+    )
+    sessions_parser.add_argument(
+        "--label",
+        metavar="LABEL",
+        help="keep the session with this exact label",
+    )
+    display_mode = sessions_parser.add_mutually_exclusive_group()
+    display_mode.add_argument(
+        "--full",
+        action="store_true",
+        help="show complete identity, status, model, and path fields",
+    )
+    display_mode.add_argument(
+        "--select",
+        action="store_true",
+        help="choose one matching session in an interactive terminal",
     )
     sessions_parser.set_defaults(func=cmd_sessions)
 
@@ -1785,44 +1820,148 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_sessions(args) -> int:
+    if args.limit < 1:
+        raise SystemExit("--limit must be at least 1")
+    if args.select and not _is_interactive():
+        raise SystemExit("--select requires an interactive terminal")
+    archived = None if args.all else bool(args.archived)
+    filtered_cwd = (
+        str(args.cwd.expanduser().resolve()) if args.cwd is not None else None
+    )
     store = SessionStore()
-    sessions = store.list_sessions(limit=args.limit, archived=bool(args.archived))
+    sessions = store.list_sessions(
+        limit=args.limit,
+        archived=archived,
+        statuses=args.status,
+        cwd=filtered_cwd,
+        label=args.label,
+    )
     if not sessions:
-        noun = (
-            "archived assistant sessions"
-            if args.archived
-            else "assistant sessions"
-        )
-        print(f"(no {noun})")
+        print("(no matching assistant sessions)")
         return 0
     current_cwd = str(Path.cwd().resolve())
     active_ids = store.list_active_session_ids()
     locked_ids = store.list_locked_session_ids()
-    print(
-        "session_id                             status     "
-        "label                 ref       flags               model  cwd"
-    )
-    for record in sessions:
-        flags: list[str] = []
-        if record.session_id in active_ids:
-            flags.append("active")
-        if record.session_id in locked_ids:
-            flags.append("locked")
-        if record.cwd == current_cwd:
-            flags.append("cwd")
-        if record.archived_at is not None:
-            flags.append("archived")
-        flag_text = ",".join(flags) if flags else "-"
-        label_text = record.label if record.label is not None else "-"
-        print(
-            f"{record.session_id}  {record.status:9s}  {label_text:20s}  "
-            f"{record.short_id:8s}  {flag_text:18s}  {record.model}  {record.cwd}"
+    rows = [
+        (
+            record,
+            _session_listing_flags(
+                record, current_cwd, active_ids, locked_ids
+            ),
         )
-        if record.last_finish_reason:
-            print(f"    last_finish_reason={record.last_finish_reason}")
-        if record.archived_at is not None:
-            print(f"    archived_at={record.archived_at}")
+        for record in sessions
+    ]
+    if args.select:
+        _print_compact_sessions(rows, numbered=True)
+        selected = _select_session(rows)
+        if selected is None:
+            print("selection: cancelled")
+            return 130
+        record, flags = selected
+        print(f"selected_session_id: {record.session_id}")
+        print(f"selected_session_ref: {record.short_id}")
+        print(
+            "selected_label: "
+            f"{record.label if record.label is not None else '-'}"
+        )
+        print(f"selected_status: {record.status}")
+        print(f"selected_cwd: {record.cwd}")
+        print(f"selected_flags: {flags}")
+        print(f"next: {CLI_NAME} show {record.session_id}")
+        return 0
+    if args.full:
+        _print_full_sessions(rows)
+        return 0
+    _print_compact_sessions(rows)
     return 0
+
+
+def _session_listing_flags(
+    record,
+    current_cwd: str,
+    active_ids: set[str],
+    locked_ids: set[str],
+) -> str:
+    flags: list[str] = []
+    if record.archived_at is not None:
+        flags.append("archived")
+    if record.session_id in active_ids:
+        flags.append("active")
+    if record.session_id in locked_ids:
+        flags.append("locked")
+    if record.cwd == current_cwd:
+        flags.append("cwd")
+    return ",".join(flags) if flags else "-"
+
+
+def _fit_listing_field(value: str, width: int, *, keep_tail: bool = False) -> str:
+    if len(value) <= width:
+        return value
+    if width <= 3:
+        return value[:width]
+    if keep_tail:
+        return "..." + value[-(width - 3):]
+    return value[: width - 3] + "..."
+
+
+def _compact_listing_width() -> int:
+    if not sys.stdout.isatty():
+        return 80
+    terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+    return max(72, min(terminal_width, 120))
+
+
+def _print_compact_sessions(rows, *, numbered: bool = False) -> None:
+    total_width = _compact_listing_width()
+    number_width = len(str(len(rows))) if numbered else 0
+    prefix_width = number_width + 2 if numbered else 0
+    fixed_width = 8 + 1 + 16 + 1 + 16 + 1 + 18 + 1
+    cwd_width = max(8, total_width - prefix_width - fixed_width)
+    prefix = f"{'#':>{number_width}}. " if numbered else ""
+    print(
+        f"{prefix}{'ref':8s} {'status':16s} {'label':16s} "
+        f"{'flags':18s} {'cwd':{cwd_width}s}"
+    )
+    for index, (record, flags) in enumerate(rows, start=1):
+        row_prefix = f"{index:>{number_width}}. " if numbered else ""
+        status = _fit_listing_field(record.status, 16)
+        label = _fit_listing_field(record.label or "-", 16)
+        flag_text = _fit_listing_field(flags, 18)
+        cwd = _fit_listing_field(record.cwd, cwd_width, keep_tail=True)
+        print(
+            f"{row_prefix}{record.short_id:8s} {status:16s} {label:16s} "
+            f"{flag_text:18s} {cwd:{cwd_width}s}"
+        )
+
+
+def _print_full_sessions(rows) -> None:
+    for index, (record, flags) in enumerate(rows):
+        if index:
+            print()
+        print(f"session_id: {record.session_id}")
+        print(f"session_ref: {record.short_id}")
+        print(f"label: {record.label if record.label is not None else '-'}")
+        print(f"status: {record.status}")
+        finish_reason = record.last_finish_reason or "-"
+        print(f"finish_reason: {finish_reason}")
+        print(f"flags: {flags}")
+        print(f"model: {record.model}")
+        print(f"cwd: {record.cwd}")
+        print(f"created_at: {record.created_at}")
+        print(f"updated_at: {record.updated_at}")
+        print(f"archived_at: {record.archived_at or '-'}")
+
+
+def _select_session(rows):
+    if len(rows) == 1:
+        return rows[0]
+    while True:
+        value = input(f"Select session [1-{len(rows)}] or q: ").strip().lower()
+        if value in {"q", "quit"}:
+            return None
+        if value.isdigit() and 1 <= int(value) <= len(rows):
+            return rows[int(value) - 1]
+        print(f"choose a number from 1 to {len(rows)}, or q")
 
 
 def cmd_archive(args) -> int:

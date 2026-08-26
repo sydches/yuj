@@ -7,6 +7,7 @@ import re
 import socket
 import sqlite3
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -527,39 +528,47 @@ class SessionStore:
         self,
         *,
         limit: int = 50,
-        archived: bool = False,
+        archived: bool | None = False,
+        statuses: Iterable[str] = (),
+        cwd: str | None = None,
+        label: str | None = None,
     ) -> list[SessionRecord]:
         if not self._has_archive_column and archived:
             return []
-        if not self._has_archive_column:
-            archive_filter = ""
-        elif archived:
-            archive_filter = "where archived_at is not null"
-        else:
-            archive_filter = "where archived_at is null"
-        purge_filter = (
-            "and session_id not in ("
-            "select session_id from session_purges"
-            ")"
-            if self._has_purge_table and archive_filter
-            else (
-                "where session_id not in ("
-                "select session_id from session_purges"
-                ")"
-                if self._has_purge_table
-                else ""
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if self._has_archive_column and archived is True:
+            conditions.append("archived_at is not null")
+        elif self._has_archive_column and archived is False:
+            conditions.append("archived_at is null")
+        exact_statuses = tuple(dict.fromkeys(str(value) for value in statuses))
+        if exact_statuses:
+            placeholders = ", ".join("?" for _value in exact_statuses)
+            conditions.append(f"status in ({placeholders})")
+            parameters.extend(exact_statuses)
+        if cwd is not None:
+            conditions.append("cwd = ?")
+            parameters.append(str(cwd))
+        if label is not None:
+            conditions.append("label = ?")
+            parameters.append(str(label))
+        if self._has_purge_table:
+            conditions.append(
+                "session_id not in (select session_id from session_purges)"
             )
+        where_clause = (
+            "where " + " and ".join(conditions) if conditions else ""
         )
+        parameters.append(limit)
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
                 select * from sessions
-                {archive_filter}
-                {purge_filter}
+                {where_clause}
                 order by updated_at desc
                 limit ?
                 """,
-                (limit,),
+                parameters,
             ).fetchall()
         return [_row_to_record(row) for row in rows]
 
