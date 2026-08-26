@@ -10,7 +10,9 @@ A sandbox limits what a model command can reach. Yuj uses Linux `bubblewrap`
 (`bwrap`) by default. You can instead require Docker or Podman, ask Yuj to
 choose an available sandbox automatically, or explicitly select no sandbox.
 
-You do not need Docker for normal use.
+The shipped settings require `bwrap`. If the host cannot run it, Yuj stops
+before model work. Select another backend during `yuj setup` or in a local
+configuration file. Linux does not need Docker when `bwrap` works.
 
 Activate the environment where Yuj is installed before you run a command on
 this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.

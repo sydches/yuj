@@ -16,11 +16,15 @@ You need a writable Git repository and a model service or local model server.
 
 | Your system | What you need |
 | --- | --- |
-| Linux | Python 3.11 or newer, Git, and `bubblewrap`, Docker, or Podman for sandboxed commands |
-| Windows | WSL2, then a Linux sandbox backend or an explicit unsandboxed setting inside WSL2 |
-| macOS | Python 3.11 or newer, Git, and Docker or Podman for sandboxed commands |
+| Linux | Python 3.11 or newer and Git. Use `bubblewrap`, Docker, or Podman for sandboxed commands, or select `none` explicitly. |
+| Windows | WSL2 with Python 3.11 or newer and Git. Choose a Linux sandbox backend or select `none` inside WSL2. |
+| macOS | Python 3.11 or newer and Git. Use Docker or Podman for sandboxed commands, or select `none` explicitly. |
 
 The model can run on another computer if the Yuj host can reach it.
+
+The shipped settings select `bwrap`. If the host cannot run it, select Docker,
+Podman, `auto`, or `none` during setup. Yuj stops before model work when a
+named backend is unavailable or when `auto` finds no working backend.
 
 ## Install Yuj
 
@@ -61,11 +65,6 @@ python3 -m venv .venv
 
 The `test` extra installs `pytest`. The `yuj smoke` command uses it for its
 final check.
-
-Linux keeps `bwrap` as the default. Install it before normal use, or select
-Docker, Podman, automatic sandbox selection, or explicit unsandboxed
-execution during setup. Docker and Podman require a trusted image that is
-already present locally.
 
 The install puts the `yuj` command in `.venv/bin/`. The examples use that
 path until you move to the repository that the model will edit.
@@ -282,6 +281,16 @@ Use `--prompt-file /path/to/task.txt` for a long task description.
 Use `--cwd /path/to/project` when you do not want to change the current
 directory.
 
+If the selected model accepts images, attach visual evidence with `--image`:
+
+```bash
+yuj code --image ./failure.png \
+  "Fix the rendering error shown in this image."
+```
+
+Read [Attach local images](using-yuj.html#attach-local-images) for supported
+formats, limits, model checks, resume input, and saved evidence.
+
 Each start or resume begins a run segment.
 
 After most run segments, Yuj tries to stage all uncommitted changes in the
@@ -300,8 +309,9 @@ for the exact tool decisions and precedence rules.
 
 ## Continue
 
-Read the [CLI reference](using-yuj.html) to inspect usage, pause, answer,
-approve, reject, or resume a session.
+Read the [CLI reference](using-yuj.html) to control and inspect sessions. It
+explains corrections, labels, forks, archives, permanent purge, approvals,
+clarifications, and resume.
 
 Read [Saved files](harness_artifacts.html) to learn what Yuj records and when
 another tool may use each file.

@@ -332,6 +332,11 @@ values:
 | `auto` | Use the first installed, operational sandbox in platform order. It never selects `none`. |
 | `none` | Explicitly run model commands as the Yuj account without a sandbox. |
 
+The shipped configuration selects `bwrap`. If `bwrap` is unsupported,
+missing, or fails its startup check, Yuj stops before model or tool work. Save
+another choice with `yuj setup --sandbox NAME` or set `sandbox.backend` in a
+later configuration layer. Yuj never silently falls back to host execution.
+
 On Linux, `auto` tries `bwrap`, Docker, then Podman. On macOS, it tries
 Docker, then Podman. Native Windows has no backend that preserves Yuj's
 absolute-path identity contract. Run Yuj in WSL2, which follows the Linux
@@ -360,6 +365,9 @@ capability-resolved backends. Available means that Yuj found a supported
 executable; unavailable also includes backends that this platform does not
 support. Use `yuj doctor` or `yuj code --dry-run` for the operational startup
 check.
+
+The shipped fixed measurement configurations continue to require `bwrap`.
+Change that choice only through an explicit measurement configuration.
 
 Legacy `tools.sandbox_bash = true` plus `tools.sandbox_required = true`
 migrates to `bwrap`. The matching `false`/`false` pair migrates to `none`.
@@ -1108,21 +1116,25 @@ smaller native-tool cap.
 
 ### Declare image input support
 
-Assistant image input fails closed. A model profile inherits this default:
+Yuj rejects image input unless it knows that the selected model accepts it.
+Each model profile inherits this default:
 
 ```text
 [model]
 supports_image_inputs = false
 ```
 
-Yuj recognizes image input for directly hosted OpenAI general-purpose
-`gpt-4o`, `gpt-4.1`, and GPT-5 models, full `o1` and `o3` models, and
-`o4-mini`, including their dated snapshots. It does not infer support for
-text-only or specialized IDs that merely share one of those prefixes, such as
-`o1-mini`, `o3-mini`, or GPT-4o audio, realtime, search, and transcription
-models. Yuj also recognizes directly hosted Anthropic IDs in the Claude 3 or
-Claude 4 families. It treats other providers and model IDs as unsupported
-unless the selected model profile explicitly sets
+Yuj recognizes these directly hosted model families:
+
+| Service | Recognized image-capable model IDs |
+| --- | --- |
+| OpenAI | General-purpose `gpt-4o`, `gpt-4.1`, and GPT-5 models; full `o1` and `o3` models; `o4-mini`; and their dated snapshots |
+| Anthropic | Claude 3 and Claude 4 model families |
+
+Yuj does not infer support from a shared prefix for text-only or specialized
+models. For example, it rejects `o1-mini`, `o3-mini`, and GPT-4o audio,
+realtime, search, and transcription models. Yuj treats every other provider
+and model ID as unsupported unless its selected profile sets
 `supports_image_inputs = true`.
 
 Use the explicit profile declaration only after testing that exact model and

@@ -334,6 +334,12 @@ ignores it. `YUJ_CONFIG_LOCAL` selects an exact alternative path.
 | `--api-key VALUE` | Save a key. Claude and Codex keep it in their provider credential file; other service choices keep it in `config.local.toml`. |
 | `--force` | Replace an existing local settings file without asking. |
 
+The shipped settings select `bwrap`. If the host cannot run it, save another
+choice before the first task. A named backend must work exactly as selected.
+`auto` stops if no supported backend passes its startup check, and only
+`--sandbox none` permits unsandboxed model commands. Read
+[Sandbox](sandbox.html#choose-a-mode) before you select a different boundary.
+
 Without `--force`, a non-interactive command does not replace an existing
 file. An interactive command asks first.
 
@@ -511,9 +517,9 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 
 | Command | What it shows |
 | --- | --- |
-| `yuj current` | The immutable ID, optional label, and status details for the active or newest unarchived session in the current repository. If that repository has no unarchived session, show the newest unarchived saved session. |
-| `yuj status [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, selected and resolved sandbox with engagement state, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, other times, saved-file path, pinned provider and authentication method, selected and resolved sandbox with engagement state, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj current` | Status details for the active or newest unarchived session in the current repository. If that repository has none, show the newest unarchived session. |
+| `yuj status [SESSION]` | Session identity, run and archive state, model and sandbox, saved input summaries, pending operator action, and the next command. |
+| `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
 | `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |
@@ -539,10 +545,10 @@ turns and trace events to print.
 | `yuj purge` | `FULL_SESSION_ID --preview` | List the owned artifact entries and their logical byte total without changing them. |
 | `yuj purge` | `FULL_SESSION_ID --confirm FULL_SESSION_ID` | Permanently remove the archived session after the two IDs match exactly. |
 
-The current parser accepts any integer for these three options. A value of
-`0` prints no matching rows. A negative `--turns` or `--trace-lines` value
-also prints no tail. A negative `--limit` removes the database row limit.
-Use a positive value for normal work.
+The current parser accepts any integer for `--turns`, `--trace-lines`, and
+`--limit`. A value of `0` prints no matching rows. A negative `--turns` or
+`--trace-lines` value also prints no tail. A negative `--limit` removes the
+database row limit. Use a positive value for normal work.
 
 ### Inspect usage
 

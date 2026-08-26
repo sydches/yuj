@@ -679,6 +679,8 @@ todos_char_budget = 2000
 # absence is acceptable. `none` has no filesystem masking boundary.
 # Add project-specific masks in config.local.toml.
 [sandbox]
+# The shipped default requires Linux bwrap and fails before model work when it
+# is unavailable. Save another explicit choice with `yuj setup --sandbox NAME`.
 backend = "bwrap"                 # none | auto | bwrap | docker | podman
 container_image = ""              # required when Docker or Podman resolves
 container_flags = []              # fail-closed resource/metadata allowlist

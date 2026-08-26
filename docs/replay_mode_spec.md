@@ -49,7 +49,8 @@ Each saved file has one role:
 | --- | --- |
 | `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls and results, and recorded lifecycle-hook effects. |
 | `subagents/<id>/.trace.jsonl` | The exact terminal result and accounting for the matching parent `subagent` event. |
-| Transcript | The saved pre-profile request tool array from each input block, when present, and the saved model reply from each `=== turn NNN output ===` block. |
+| Transcript | The saved pre-profile input and model reply for each turn. Replay checks the input fields named below. An image-bearing input keeps its transport-encoded image blocks here. |
+| `attachments.json` and `attachments/` | Nothing directly. Live assistant start and resume use these files to verify image bytes before writing the model request to the transcript. |
 | `clarification_request.json` | The exact assistant question and request identity. |
 | `clarification_answer.json` | The exact operator answer and its hash. |
 | `clarification_consumption.json` | The answer hash and the one permitted assistant-resume delivery attempt. |
@@ -60,6 +61,12 @@ Each saved file has one role:
 
 The trace is the source of truth for events. The transcript supplies the full
 model replies that replay returns.
+
+For an image-bearing turn, replay uses the saved transcript record and never
+reopens the original local image path. The saved attachment files prove the
+bytes used by the live assistant, but the general replay check still does not
+compare every input message block. Treat the recorded image block as evidence,
+not as a full request-parity proof.
 
 A long run or an assistant resume may split its transcript into numbered
 files. If the main file is `repo.log`, replay first reads
@@ -92,6 +99,7 @@ Some recorded features need special replay behavior:
 | Lifecycle hook | Match the saved hook position and apply its recorded block, rewrite, note, timeout, or error. Never start the external command. Stop if the configured command differs from the source. |
 | Named subagent | Verify the saved child identity, result hash and size, turns, and tokens. Return the recorded final text instead of running a child model. Copy the child trace when the replay writes to another run directory. |
 | Stream rule | Reproduce the saved interrupt and hidden injection, then consume the next response for the same logical turn. Do not read the current rule file to rebuild the retry. |
+| Assistant image input | Use the recorded turn and never reopen or substitute the original local file. The general request-check limit below still applies. |
 | Assistant clarification | Require one matching request, answer, and consumption record and one of each matching trace event. Return the saved `ask_user` reply, then replace context with the exact recorded `messages` array from the next request. Do not contact an operator or model, enter `input_required`, or create clarification files in the replay run. |
 | Paused-session correction | Require matching correction and consumption records plus matching creation and consumption trace events. Add the exact recorded correction only at its source resume request. Write replay trace events, but do not contact an operator or create correction files in the replay run. |
 

@@ -49,8 +49,8 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 
 | File | What it means |
 | --- | --- |
-| `sessions.sqlite3` | Index of coding sessions, immutable parent-session IDs, manual labels, archive times, active-session pointers, process locks, purge journals, and the non-secret provider/authentication identity pinned to each managed-provider session. A nullable `parent_session_id` identifies the immediate source of an explicit fork and cannot be changed. A nullable `archived_at` value is reversible local operator metadata. An incomplete purge journal holds the sorted relative entry manifest, file identity fields, logical byte estimate, phase, and bounded failure detail. Completion clears the path manifest but keeps its digest, entry count, byte estimate, and times. Session selection does not treat a purge journal as a session row. Labels, archive times, and purge journals do not enter model input, replay, or measurement mode. Credential IDs are internal and are not printed by session commands. |
-| `purge-staging/<session_id>/` | Remaining owned entries after a confirmed purge moves one exact archived session directory out of the live session namespace. The path comes only from the configured assistant root and full immutable session ID. It is not a repository, worktree, credential store, trash service, or measurement directory. A successful purge removes this directory before it removes the SQLite session row. |
+| `sessions.sqlite3` | Session index and local metadata: immutable lineage, manual labels, archive times, active pointers, process locks, purge journals, and non-secret provider authentication identity. Labels, archive state, and purge state do not enter model input, replay, or measurement mode. Session commands never print credential IDs or values. |
+| `purge-staging/<session_id>/` | Files that remain after an interrupted confirmed purge moves one session out of the live session directory. This path stays under the configured assistant root. A successful purge removes it before removing the session row. |
 | `<session_id>/prompt.txt` | Original task text. |
 | `<session_id>/attachments.json` | Bounded attachment manifest. For each image it records the run segment, display name, detected media type, byte count, dimensions, SHA-256 digest, session-relative saved path, and the associated user-text digest and sizes. It stores no source path or image bytes. |
 | `<session_id>/attachments/segment-NNNN/image-NNNN.<ext>` | Exact validated image bytes copied from an explicit `code`, `run`, or `resume` input. Both numbers use four digits, starting at `0001`. These permission-restricted files are the source for model requests and replay-safe resumes; Yuj does not reopen the original path. |
@@ -80,6 +80,8 @@ unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 | `<session_id>/shell_interrupt.json` | Time and reason for the latest user interrupt. Resume clears it when the new run segment starts. |
 | `<session_id>/llm_hurdle_detector.jsonl` | Detector results when the selected treatment enables that file. |
 | `<session_id>/adaptive_control_ledger.jsonl` | Controller actions when the selected treatment enables that file. |
+
+### Session lifecycle evidence
 
 `yuj archive` changes only `sessions.sqlite3`. It does not delete, compress,
 move, or rewrite the session directory or a retained worktree. It frees no

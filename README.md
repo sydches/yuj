@@ -13,10 +13,11 @@ yourself. The name Yuj means “to yoke” or “to harness” in Sanskrit.
 
 ## Install Yuj
 
-You need Git and Python 3.11 or newer. Linux uses
-[bubblewrap](https://github.com/containers/bubblewrap) by default. Yuj can
-instead require Docker or Podman, choose an installed sandbox automatically,
-or use explicit unsandboxed execution. macOS supports the container choices.
+You need Git and Python 3.11 or newer. The shipped settings select Linux
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`). If the host
+cannot run `bwrap`, select Docker, Podman, automatic sandbox selection, or
+explicit unsandboxed execution during `yuj setup`. Yuj stops before model work
+when the selected sandbox is unavailable. macOS supports Docker and Podman.
 Windows users run Yuj in WSL2.
 
 Install a built wheel or source distribution when you want to use Yuj without
@@ -45,8 +46,8 @@ python3 -m venv .venv
 
 The `test` extra installs `pytest`, which `yuj smoke` needs for its final
 check. A built-package user can install `pytest` separately before using that
-command. `yuj --help` shows the Yuj help text. Run `yuj setup` to save an
-explicit sandbox choice and `yuj doctor` to prove its operational resolution.
+command. `yuj --help` shows the Yuj help text. Run `yuj setup` to save the
+model and sandbox choices. Run `yuj doctor` to check both choices.
 
 The package contains the public runtime files that Yuj needs. It does not
 contain paper, study, benchmark, session, trace, or private campaign material.
@@ -120,11 +121,13 @@ Yuj calls one saved task record a coding session. A coding session can
 continue through more than one run segment.
 
 - The model can read files, change code, run commands, and run tests.
+- You can attach PNG, JPEG, GIF, or WebP images when you start or resume a
+  session with an image-capable model.
 - Yuj runs model command surfaces through one explicit sandbox policy. Linux
   defaults to `bubblewrap`; Docker, Podman, automatic selection, and explicit
   unsandboxed execution are available where supported.
-- You can inspect, pause, approve, reject, resume, fork, archive, and unarchive
-  a session.
+- You can inspect, label, pause, correct, approve, reject, resume, fork,
+  archive, unarchive, or permanently purge a session.
 - You can inspect persisted token and cache use without contacting the model
   service. Yuj reports cost and quota only when saved evidence supports them.
 - The model can pause once for a missing fact. You can record one answer and
@@ -172,6 +175,7 @@ own repository.
 | `yuj fork SESSION` | Create an independent child from one stopped saved session. |
 | `yuj archive SESSION` | Hide one stopped session from ordinary lists and automatic selection without changing its evidence. |
 | `yuj unarchive SESSION` | Restore one archived session to ordinary selection. |
+| `yuj purge FULL_SESSION_ID --preview` | Preview the files owned by one archived session before permanent deletion. |
 | `yuj approve` | Allow a tool action that needs approval. |
 | `yuj reject` | Refuse a tool action that needs approval. |
 | `yuj sessions` | List unarchived saved sessions. Add `--archived` to list archived sessions instead. |
