@@ -256,6 +256,7 @@ class Config:
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
+    assistant_notifications: str = "off"
     # Derived assistant-only base table. Configuration expansion owns this
     # value; user-declared rules remain separate and compile after it.
     permissions_preset_rules: dict[str, object] = field(default_factory=dict)

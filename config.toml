@@ -507,12 +507,13 @@ block_classes = [
 ]
 
 # ---------------------------------------------------------------------------
-# Assistant-only permission preset selection. Empty preserves the ordinary
-# plan-mode and permission settings below. A selected preset expands before
-# the existing permission policy is compiled.
+# Assistant-only settings. Notifications never run in measurement mode. An
+# empty permission preset preserves the ordinary plan-mode and permission
+# settings below; a selected preset expands before that policy is compiled.
 # ---------------------------------------------------------------------------
 [assistant]
 permission_preset = ""  # read-only | ask-before-changes | allow-edits
+notifications = "off"   # off | bell; interactive assistant sessions only
 
 # ---------------------------------------------------------------------------
 # Declarative per-tool permission policy. Empty rules preserve allow-by-default

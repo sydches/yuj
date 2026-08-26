@@ -756,6 +756,9 @@ def _extract_config_fields(d: dict) -> dict:
         "prompt_addendum": experiment.get("prompt_addendum", ""),
         "variant_name": experiment.get("variant_name", ""),
         "runtime_mode": d.get("runtime", {}).get("mode", "measurement"),
+        "assistant_notifications": d.get("assistant", {}).get(
+            "notifications", "off"
+        ),
         "security_scan_mode": _require(d, "security", "scan_mode"),
         "security_patterns_file": _require(d, "security", "patterns_file"),
         "security_block_classes": _string_tuple(
@@ -1061,6 +1064,11 @@ def _validate_coupling(
         raise ValueError(
             "config error: loop.interrupted_turn_mode must be 'off' or "
             f"'mechanical', got {cfg.interrupted_turn_mode!r}."
+        )
+    if cfg.assistant_notifications not in {"off", "bell"}:
+        raise ValueError(
+            "config error: assistant.notifications must be 'off' or 'bell', "
+            f"got {cfg.assistant_notifications!r}."
         )
     if (
         isinstance(cfg.length_continue_max, bool)

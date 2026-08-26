@@ -83,6 +83,7 @@ from ._images import (
     save_image_segment,
 )
 from .forking import ForkSessionError, fork_saved_session, validate_correction_owner
+from .notifications import send_session_notification
 from .purge import (
     PurgePreview,
     PurgeSessionError,
@@ -1195,8 +1196,23 @@ def cmd_run(args) -> int:
             success, finish_reason = run_session(store, record, resume=False)
     except KeyboardInterrupt:
         return _handle_keyboard_interrupt(store, record)
+    except Exception:
+        _notify_session_result(
+            record,
+            success=False,
+            finish_reason="failed",
+            mode=trust_cfg.assistant_notifications,
+        )
+        raise
     refreshed = store.get_session(record.session_id)
-    _print_session_result(refreshed or record, success, finish_reason)
+    final_record = refreshed or record
+    _print_session_result(final_record, success, finish_reason)
+    _notify_session_result(
+        final_record,
+        success=success,
+        finish_reason=finish_reason,
+        mode=trust_cfg.assistant_notifications,
+    )
     return 0 if success else 1
 
 
@@ -1406,11 +1422,25 @@ def cmd_smoke(args) -> int:
             success, finish_reason = run_session(store, record, resume=False)
     except KeyboardInterrupt:
         return _handle_keyboard_interrupt(store, record)
+    except Exception:
+        _notify_session_result(
+            record,
+            success=False,
+            finish_reason="failed",
+            mode=trust_cfg.assistant_notifications,
+        )
+        raise
     refreshed = store.get_session(record.session_id)
     final_record = refreshed or record
     _print_session_result(final_record, success, finish_reason)
 
     acceptance_ok, reasons = _smoke_acceptance_check(smoke_root, final_record)
+    _notify_session_result(
+        final_record,
+        success=success and acceptance_ok,
+        finish_reason=finish_reason,
+        mode=trust_cfg.assistant_notifications,
+    )
     if not acceptance_ok:
         print("smoke acceptance failed:")
         for reason in reasons:
@@ -1499,6 +1529,7 @@ def cmd_resume(args) -> int:
             raise SystemExit("cannot add follow-up input to a completed session")
         _print_session_result(record, True, record.last_finish_reason)
         return 0
+    notification_mode = "off"
     try:
         with _session_lock(store, record):
             try:
@@ -1507,6 +1538,7 @@ def cmd_resume(args) -> int:
                     saved_config_paths,
                     requested_model=record.model,
                 )
+                notification_mode = trust_cfg.assistant_notifications
                 trust_manifest = discover_workspace_behavior(
                     trust_cfg,
                     workspace=Path(record.cwd),
@@ -1569,8 +1601,23 @@ def cmd_resume(args) -> int:
                     )
     except KeyboardInterrupt:
         return _handle_keyboard_interrupt(store, record)
+    except Exception:
+        _notify_session_result(
+            record,
+            success=False,
+            finish_reason="failed",
+            mode=notification_mode,
+        )
+        raise
     refreshed = store.get_session(record.session_id)
-    _print_session_result(refreshed or record, success, finish_reason)
+    final_record = refreshed or record
+    _print_session_result(final_record, success, finish_reason)
+    _notify_session_result(
+        final_record,
+        success=success,
+        finish_reason=finish_reason,
+        mode=notification_mode,
+    )
     return 0 if success else 1
 
 
@@ -3523,6 +3570,25 @@ def _print_session_result(record, success: bool, finish_reason: str | None) -> N
     _print_run_compact_summary(record)
     if not success and record.status != "completed":
         print(f"resume with: {CLI_NAME} resume {record.short_id}")
+
+
+def _notify_session_result(
+    record,
+    *,
+    success: bool,
+    finish_reason: str | None,
+    mode: str,
+) -> None:
+    try:
+        send_session_notification(
+            mode=mode,
+            session_ref=record.short_id,
+            success=success,
+            finish_reason=finish_reason,
+            interactive=_is_interactive(),
+        )
+    except Exception:
+        pass
 
 
 def _print_run_compact_summary(record) -> None:

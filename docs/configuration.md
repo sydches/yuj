@@ -198,7 +198,7 @@ overlay and the limits that matter for that choice.
 | Use a worktree, save file checkpoints, or rewind | [Isolate and restore work](#isolate-and-restore-work) |
 | Add diagnostics, search, a scratchpad, schema checks, or todos | [Configure model tools](#configure-model-tools) |
 | Run background commands, named agents, or Python cells | [Run background work, agents, or code cells](#run-background-work-agents-or-code-cells) |
-| Trust repository startup behavior, select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
+| Trust repository startup behavior, receive session notifications, select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
 | Route side requests, ask an advisor, or fall back to another model | [Route model requests](#route-model-requests) |
 | Control prompt caching or reasoning effort | [Tune model requests](#tune-model-requests) |
 | Choose, compact, or continue context | [Choose a context mode](#choose-a-context-mode) |
@@ -850,6 +850,30 @@ safe. It does not change sandbox selection, tool permissions, approval rules,
 secret handling, or security scanning. Each control still makes its own
 decision after trust. Revocation also changes only the startup trust decision;
 it does not edit the repository or a saved session.
+
+### Receive a terminal notification
+
+Turn on a terminal notification when you want Yuj to get your attention after
+an interactive assistant run:
+
+```toml
+[assistant]
+notifications = "bell"
+```
+
+The default is `"off"`. The `"bell"` setting rings the terminal bell and
+writes one short line to standard error. The line contains the short session
+reference and one of these states: `completed`, `failed`, `approval required`,
+or `input required`. It does not contain the task, model, repository path,
+tool output, or secrets.
+
+Yuj notifies only when both standard input and standard output are terminals.
+It stays silent when output is piped, during non-interactive use, and during
+measurement runs. It also ignores notification delivery errors, so a broken
+terminal does not change the saved session result.
+
+Run `yuj config` or `yuj config --json` to inspect the resolved
+`assistant.notifications` value and its source layer.
 
 ### Select a fixed assistant permission preset
 

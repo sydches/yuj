@@ -343,6 +343,19 @@ or billing method.
 Read [Configuration](configuration.html) for setting order, model services,
 context modes, and saved settings.
 
+### Receive a terminal notification
+
+Set `assistant.notifications = "bell"` in a small TOML overlay when you want
+an interactive run to ring the terminal bell after it stops. Yuj reports only
+the short session reference and whether the run completed, failed, needs an
+approval, or needs an answer.
+
+The setting is off by default. It stays silent for piped and non-interactive
+runs, and notification failure does not change the session result. Run
+`yuj config` to check the resolved value before starting the task. See
+[Receive a terminal notification](configuration.html#receive-a-terminal-notification)
+for the exact setting and privacy limits.
+
 ## Set up a model
 
 ### `yuj setup`
