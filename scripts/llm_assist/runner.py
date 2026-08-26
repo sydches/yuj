@@ -1122,6 +1122,11 @@ def _format_trace_event(event: dict) -> str:
     if et in {"correction_consumed", "correction_replayed"}:
         correction_id = event.get("correction_id") or "?"
         return f"{et} correction={correction_id}"
+    if et == "operator_followup":
+        session = event.get("session_number")
+        source = event.get("prompt_source") or "unknown"
+        chars = event.get("text_chars")
+        return f"operator_followup session={session} source={source} chars={chars}"
     if et == "regression":
         n_regressed = event.get("n_regressed")
         return f"regression n_regressed={n_regressed}"

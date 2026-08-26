@@ -101,7 +101,8 @@ yuj doctor
 yuj
 ```
 
-Enter the task when Yuj prompts you. You can also pass it directly:
+Type or paste the task when Yuj prompts you. Press Ctrl-D on an empty line to
+start the session. You can also pass the task directly:
 
 ```bash
 yuj "Fix the failing tests and check the change."

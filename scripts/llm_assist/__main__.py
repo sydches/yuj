@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import hashlib
 import json
 import os
 import subprocess
@@ -186,7 +187,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument(
             "task",
             nargs="*",
-            help="task text; use this form instead of --prompt-text or --prompt-file",
+            help=(
+                "task text; use this form instead of --prompt-text or "
+                "--prompt-file"
+            ),
         )
         p.add_argument(
             "-C", "--cd", "--cwd",
@@ -197,7 +201,11 @@ def main(argv: list[str] | None = None) -> int:
             help="working directory to edit (default: current directory)",
         )
         p.add_argument("--prompt-text", help="literal task prompt")
-        p.add_argument("--prompt-file", type=Path, help="read task prompt from file")
+        p.add_argument(
+            "--prompt-file",
+            type=Path,
+            help="read task prompt from a file, or use '-' for standard input",
+        )
         p.add_argument(
             "-i", "--image",
             type=Path,
@@ -487,7 +495,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     resume_parser.add_argument("--prompt-text", help="literal follow-up text")
     resume_parser.add_argument(
-        "--prompt-file", type=Path, help="read follow-up text from file"
+        "--prompt-file",
+        type=Path,
+        help="read follow-up text from a file, or use '-' for standard input",
     )
     resume_parser.add_argument(
         "--image",
@@ -1085,7 +1095,9 @@ def _smoke_acceptance_check(smoke_root: Path, record) -> tuple[bool, list[str]]:
 
 
 def cmd_resume(args) -> int:
-    resume_prompt_text, pending_images = _resolve_resume_image_input(args)
+    resume_prompt_text, resume_prompt_source, pending_images = (
+        _resolve_resume_input(args)
+    )
     store = SessionStore()
     record = _resolve_session_record(store, args.session_id, selector="resumable")
     try:
@@ -1110,8 +1122,8 @@ def cmd_resume(args) -> int:
             f"{CLI_NAME} approve {record.session_id} first"
         )
     if record.status == "completed":
-        if pending_images:
-            raise SystemExit("cannot attach images to a completed session")
+        if resume_prompt_text is not None:
+            raise SystemExit("cannot add follow-up input to a completed session")
         _print_session_result(record, True, record.last_finish_reason)
         return 0
     if pending_images:
@@ -1124,14 +1136,25 @@ def cmd_resume(args) -> int:
     _print_session_start(record, action="resuming")
     try:
         with _session_lock(store, record), TraceFollower(record.artifact_path):
+            live = derive_live_state(record.artifact_path)
+            next_session_number = max(1, live.session_number + 1)
+            if resume_prompt_text is not None:
+                assert resume_prompt_source is not None
+                _record_resume_prompt_source(
+                    record.artifact_path,
+                    session_number=next_session_number,
+                    prompt_text=resume_prompt_text,
+                    prompt_source=resume_prompt_source,
+                )
             if pending_images:
-                live = derive_live_state(record.artifact_path)
+                assert resume_prompt_text is not None
                 save_image_segment(
                     record.artifact_path,
-                    segment_number=max(1, live.session_number + 1),
+                    segment_number=next_session_number,
                     prompt_text=resume_prompt_text,
                     images=pending_images,
                 )
+            if resume_prompt_text is not None:
                 success, finish_reason = run_session(
                     store,
                     record,
@@ -2326,7 +2349,7 @@ def _resolve_prompt_input(args) -> tuple[str, str]:
     provided = int(has_prompt_text) + int(has_prompt_file) + int(has_task)
     if provided == 0:
         if _is_interactive():
-            return _prompt_required("Task"), "interactive"
+            return _prompt_multiline("Task"), "interactive"
         raise SystemExit(
             "provide a task as positional text, with --prompt-text, or with --prompt-file"
         )
@@ -2335,34 +2358,72 @@ def _resolve_prompt_input(args) -> tuple[str, str]:
             "provide exactly one prompt source: positional task text, --prompt-text, or --prompt-file"
         )
     if has_prompt_file:
-        prompt_path = args.prompt_file.resolve()
-        return prompt_path.read_text(), str(prompt_path)
+        return _read_prompt_file(args.prompt_file)
     if has_prompt_text:
-        return args.prompt_text, "inline"
-    return " ".join(args.task).strip(), "inline-positional"
+        return _require_prompt_text(args.prompt_text, source="inline"), "inline"
+    return (
+        _require_prompt_text(" ".join(args.task).strip(), source="positional"),
+        "inline-positional",
+    )
 
 
-def _resolve_resume_image_input(
+def _resolve_resume_input(
     args,
-) -> tuple[str | None, tuple[PendingImage, ...]]:
+) -> tuple[str | None, str | None, tuple[PendingImage, ...]]:
     paths = tuple(getattr(args, "image", ()) or ())
     prompt_text = getattr(args, "prompt_text", None)
     prompt_file = getattr(args, "prompt_file", None)
-    has_text = prompt_text is not None or prompt_file is not None
-    if bool(paths) != has_text:
-        raise SystemExit("resume images and follow-up text must be provided together")
-    if not paths:
-        return None, ()
     if prompt_text is not None and prompt_file is not None:
         raise SystemExit("provide exactly one resume follow-up text source")
-    resolved_text = (
-        Path(prompt_file).resolve().read_text()
-        if prompt_file is not None
-        else str(prompt_text)
+    if prompt_file is not None:
+        resolved_text, prompt_source = _read_prompt_file(prompt_file)
+    elif prompt_text is not None:
+        resolved_text = _require_prompt_text(
+            str(prompt_text), source="resume follow-up"
+        )
+        prompt_source = "inline"
+    else:
+        resolved_text = None
+        prompt_source = None
+    if paths and resolved_text is None:
+        raise SystemExit("resume images require follow-up text")
+    return resolved_text, prompt_source, read_image_inputs(paths)
+
+
+def _read_prompt_file(prompt_file: Path) -> tuple[str, str]:
+    if str(prompt_file) == "-":
+        return _require_prompt_text(sys.stdin.read(), source="standard input"), "stdin"
+    prompt_path = prompt_file.resolve()
+    return (
+        _require_prompt_text(prompt_path.read_text(), source=str(prompt_path)),
+        str(prompt_path),
     )
-    if not resolved_text.strip():
-        raise SystemExit("resume image follow-up text must not be empty")
-    return resolved_text, read_image_inputs(paths)
+
+
+def _require_prompt_text(text: str, *, source: str) -> str:
+    if not text.strip():
+        raise SystemExit(f"{source} prompt is empty")
+    return text
+
+
+def _record_resume_prompt_source(
+    artifact_dir: Path,
+    *,
+    session_number: int,
+    prompt_text: str,
+    prompt_source: str,
+) -> None:
+    append_trace_event_fsync(
+        artifact_dir / ".trace.jsonl",
+        {
+            "event": "operator_followup",
+            "trace_schema_version": TRACE_SCHEMA_VERSION,
+            "session_number": session_number,
+            "prompt_source": prompt_source,
+            "text_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+            "text_chars": len(prompt_text),
+        },
+    )
 
 
 def _config_local_path() -> Path:
@@ -2440,6 +2501,11 @@ def _prompt_required(label: str) -> str:
         if value:
             return value
         print(f"{label} is required")
+
+
+def _prompt_multiline(label: str) -> str:
+    print(f"{label} (finish with Ctrl-D on an empty line):")
+    return _require_prompt_text(sys.stdin.read(), source=label.lower())
 
 
 def _prompt_default(label: str, default: str) -> str:

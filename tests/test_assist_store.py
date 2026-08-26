@@ -1,3 +1,4 @@
+import io
 import json
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -889,6 +890,7 @@ def test_root_help_shows_session_options_and_secondary_commands(capsys):
     assert "--cd" in captured.out
     assert "-C" in captured.out
     assert "--prompt-text" in captured.out
+    assert "or use '-' for standard" in captured.out
     assert "-i" in captured.out
     assert "--version" in captured.out
     assert "status" in captured.out
@@ -897,7 +899,7 @@ def test_root_help_shows_session_options_and_secondary_commands(capsys):
     assert "yuj code" not in captured.out
 
 
-def test_bare_yuj_prompts_for_task():
+def test_bare_yuj_reads_a_multiline_task_until_input_closes():
     captured = {}
 
     def fake_cmd_run(args):
@@ -909,13 +911,49 @@ def test_bare_yuj_prompts_for_task():
     ), patch(
         "scripts.llm_assist.__main__._is_interactive", return_value=True
     ), patch(
-        "scripts.llm_assist.__main__._prompt_required",
-        return_value="Fix the failing tests",
+        "sys.stdin",
+        io.StringIO("Fix the failing tests.\nKeep this line indented:\n  exact text\n"),
     ):
         rc = main([])
 
     assert rc == 0
-    assert captured["prompt"] == ("Fix the failing tests", "interactive")
+    assert captured["prompt"] == (
+        "Fix the failing tests.\nKeep this line indented:\n  exact text\n",
+        "interactive",
+    )
+
+
+def test_prompt_file_dash_reads_standard_input_without_rewriting_it():
+    captured = {}
+
+    def fake_cmd_run(args):
+        captured["prompt"] = _resolve_prompt_input(args)
+        return 0
+
+    prompt = "First line.\n\n  Indented line.  \n"
+    with patch(
+        "scripts.llm_assist.__main__.cmd_run", side_effect=fake_cmd_run
+    ), patch("sys.stdin", io.StringIO(prompt)):
+        rc = main(["--prompt-file", "-"])
+
+    assert rc == 0
+    assert captured["prompt"] == (prompt, "stdin")
+
+
+def test_prompt_file_dash_rejects_empty_standard_input():
+    def fake_cmd_run(args):
+        _resolve_prompt_input(args)
+        raise AssertionError("empty input must not start a session")
+
+    with patch(
+        "scripts.llm_assist.__main__.cmd_run", side_effect=fake_cmd_run
+    ), patch("sys.stdin", io.StringIO(" \n\t")):
+        try:
+            main(["--prompt-file", "-"])
+        except SystemExit as exc:
+            assert str(exc) == "standard input prompt is empty"
+        else:
+            raise AssertionError("expected SystemExit")
 
 
 def test_root_version_matches_package_metadata(capsys):

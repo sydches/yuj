@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -462,16 +463,80 @@ def test_resume_image_flag_requires_and_delivers_segment_text(
     assert seen_text == ["The new screenshot shows the remaining error."]
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["resume", "SESSION", "--image", "screen.png"],
-        ["resume", "SESSION", "--prompt-text", "look again"],
-    ],
-)
-def test_resume_rejects_unpaired_text_or_images(argv: list[str]):
-    with pytest.raises(SystemExit, match="together"):
-        main(argv)
+def test_resume_rejects_images_without_follow_up_text():
+    with pytest.raises(SystemExit, match="require follow-up text"):
+        main(["resume", "SESSION", "--image", "screen.png"])
+
+
+def test_resume_accepts_multiline_stdin_without_an_image_and_records_source(
+    tmp_path: Path,
+):
+    store = SessionStore(tmp_path / "assist")
+    target = tmp_path / "target"
+    target.mkdir()
+    record = store.create_session(
+        cwd=target,
+        model="text-test",
+        prompt_text="Fix the original failure.",
+        prompt_source="inline",
+        context_mode="full",
+        system_prompt_path=None,
+        config_paths=[],
+    )
+    record.artifact_path.mkdir(parents=True)
+    (record.artifact_path / ".trace.jsonl").write_text(json.dumps({
+        "event": "session_end",
+        "session_number": 1,
+        "finish_reason": "max_turns",
+        "turns": 2,
+    }) + "\n")
+    store.update_session(
+        record.session_id, status="paused", last_finish_reason="max_turns"
+    )
+    prompt = "Check both cases.\n\n  Keep this indentation.\n"
+    seen_text: list[str] = []
+
+    def fake_run_session(
+        store_obj,
+        selected,
+        *,
+        resume,
+        resume_prompt_text=None,
+    ):
+        assert resume is True
+        seen_text.append(resume_prompt_text)
+        assert load_session_images(selected.artifact_path) == ()
+        store_obj.update_session(
+            selected.session_id, status="completed", last_finish_reason="stop"
+        )
+        return True, "stop"
+
+    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+            patch(
+                "scripts.llm_assist.__main__.run_session",
+                side_effect=fake_run_session,
+            ), patch("sys.stdin", io.StringIO(prompt)):
+        result = main([
+            "resume", record.session_id,
+            "--prompt-file", "-",
+        ])
+
+    assert result == 0
+    assert seen_text == [prompt]
+    events = [
+        json.loads(line)
+        for line in (record.artifact_path / ".trace.jsonl").read_text().splitlines()
+    ]
+    evidence = next(event for event in events if event["event"] == "operator_followup")
+    assert evidence == {
+        "event": "operator_followup",
+        "trace_schema_version": 2,
+        "session_number": 2,
+        "prompt_source": "stdin",
+        "text_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "text_chars": len(prompt),
+    }
+    assert prompt not in (record.artifact_path / ".trace.jsonl").read_text()
 
 
 def test_unsupported_local_model_is_rejected_before_session_or_model_run(

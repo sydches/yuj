@@ -176,20 +176,31 @@ Yuj applies the sandbox and approval rules when it runs a tool. Read
 
 ### Give Yuj the task
 
-Run `yuj` with no task text to enter the task at the interactive prompt. To
-start with task text, give exactly one task source.
+Run `yuj` with no task text to enter a multiline task. Type or paste the task,
+then press Ctrl-D on an empty line. Yuj reads every line before it starts the
+session, so pasted lines cannot remain in the shell input queue.
+
+To start with another task source, give exactly one source.
 
 | Form | Example |
 | --- | --- |
-| Interactive prompt | `yuj` |
+| Multiline prompt | `yuj` |
 | Text after the command | `yuj "Fix the failing tests."` |
 | `--prompt-text` | `yuj --prompt-text "Fix the failing tests."` |
 | `--prompt-file` | `yuj --prompt-file /path/to/task.txt` |
+| Standard input | `printf '%s\n' 'Fix the tests.' | yuj --prompt-file -` |
 
 Use a file for a long task:
 
 ```bash
 yuj --prompt-file /path/to/task.txt
+```
+
+Use `-` to read the task from standard input. Yuj keeps the supplied line
+breaks and whitespace:
+
+```bash
+printf '%s\n' 'Fix the parser.' 'Run its tests.' | yuj --prompt-file -
 ```
 
 Use `-C`, `--cd`, or `--cwd` when the repository is not the current directory:
@@ -236,7 +247,7 @@ Yuj calls the starting group of settings a base.
 | `TASK ...` | Join the remaining words and use them as the task text. |
 | `-C PATH`, `--cd PATH`, `--cwd PATH` | Edit this repository. The current directory is the default. |
 | `--prompt-text TEXT` | Use this text as the task. |
-| `--prompt-file PATH` | Read the task from this file. |
+| `--prompt-file PATH` | Read the task from this file. Use `-` for standard input. |
 | `-i PATH`, `--image PATH` | Attach this local image. Repeat for more images. |
 | `-m NAME`, `--model NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
@@ -933,6 +944,19 @@ Resume a named session:
 yuj resume SESSION
 ```
 
+Add follow-up text to the next resume:
+
+```bash
+yuj resume SESSION --prompt-text "Check the parser edge cases too."
+```
+
+Use `--prompt-file PATH` for a longer follow-up. Use `--prompt-file -` to read
+the follow-up from standard input:
+
+```bash
+printf '%s\n' 'Also check empty input.' | yuj resume SESSION --prompt-file -
+```
+
 Attach new visual evidence to a resume with new follow-up text:
 
 ```bash
@@ -940,10 +964,9 @@ yuj resume SESSION --prompt-text "This screen shows the remaining error." \
   --image ./remaining-error.png
 ```
 
-Use `--prompt-file PATH` instead of `--prompt-text TEXT` for a longer
-follow-up. The resume command requires images and exactly one follow-up text
-source together. Repeat `--image` for more images. It validates and saves the
-new segment before the first resumed model request.
+Each image resume requires exactly one follow-up text source, but follow-up
+text does not require an image. Repeat `--image` for more images. Yuj validates
+and saves the new image segment before the first resumed model request.
 
 The command accepts a full ID, exact label, short ID, unique ID start,
 `latest`, or `last`.
@@ -962,11 +985,13 @@ Yuj moves the preceding model transcript to the next
 `transcript.pre_seg_N.log` file. `checkpoint.json` and `metrics.json` describe
 only the newest run segment because a resume replaces them.
 
-`resume` does not accept new model, context, or settings options. Its only
-direct command-line task input is the paired follow-up text and image form
-above. A prior `correct` command may have recorded one separate text input for
-the next resume. Ordinary resume without either form keeps its existing
-behavior.
+`resume` does not accept new model, context, or settings options. It accepts
+one optional follow-up text source for the next model request. A prior
+`correct` command may have recorded one separate correction for the next
+resume. Ordinary resume without either form keeps its existing behavior.
+
+For each follow-up, Yuj records the input source, character count, and content
+hash in the trace. It does not copy the follow-up text into that event.
 
 `resume` refuses a session whose clarification still lacks an answer. When an
 answer is ready, resume adds the exact answer to one model request and records
