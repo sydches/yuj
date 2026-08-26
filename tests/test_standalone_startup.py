@@ -99,7 +99,7 @@ def test_config_json_reports_resource_contract_without_absolute_root(
     }
 
 
-def test_code_dry_run_stops_before_network_and_creates_no_session(
+def test_yuj_dry_run_stops_before_network_and_creates_no_session(
     tmp_path, monkeypatch, capsys
 ):
     task = tmp_path / "task"
@@ -115,7 +115,6 @@ def test_code_dry_run_stops_before_network_and_creates_no_session(
 
     monkeypatch.setattr(cli, "_resolve_model_or_exit", network_boundary)
     result = cli.main([
-        "code",
         "--dry-run",
         "--cwd",
         str(task),
@@ -152,7 +151,7 @@ def test_preflight_accepts_disabled_optional_bash_layers(tmp_path):
     assert report.detected_runner == "pytest"
 
 
-def test_normal_code_runs_local_preflight_before_model_discovery(
+def test_normal_yuj_runs_local_preflight_before_model_discovery(
     tmp_path, monkeypatch
 ):
     task = tmp_path / "task"
@@ -171,5 +170,5 @@ def test_normal_code_runs_local_preflight_before_model_discovery(
     monkeypatch.setattr(cli, "_resolve_model_or_exit", model_discovery)
     monkeypatch.setattr(cli, "_maybe_offer_first_run_setup", lambda args: None)
     with pytest.raises(SystemExit, match="stop at model boundary"):
-        cli.main(["code", "--cwd", str(task), "verify ordering"])
+        cli.main(["--cwd", str(task), "verify ordering"])
     assert events == ["local-preflight", "model-discovery"]

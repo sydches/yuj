@@ -50,7 +50,7 @@ The examples below use `yuj`. Activate the environment with
 `~/.venvs/yuj/bin/yuj`.
 
 Install `pytest` in the environment before using `yuj smoke`; the ordinary
-`yuj code` command does not require the Yuj source tree or its test suite.
+`yuj` command does not require the Yuj source tree or its test suite.
 
 ### Install an editable source checkout
 
@@ -102,15 +102,14 @@ From a directory outside the Yuj source tree, run:
 
 ```bash
 yuj --help
-yuj code --help
 yuj config
 yuj config --json --agent research
-yuj code --dry-run --cwd /path/to/target \
+yuj --dry-run --cwd /path/to/target \
   "verify local startup"
 ```
 
 `config` reports the runtime-resource origin and validates the shipped
-resources. `code --dry-run` follows the ordinary local startup path. It
+resources. `yuj --dry-run` follows the ordinary local startup path. It
 validates the selected profile, tool surface, sandbox, and each enabled agent,
 project-file, skill, injection, stream-rule, language-rule, and security
 feature. It then stops before model discovery. It creates no coding session or
@@ -273,8 +272,13 @@ Move to the Git repository that the model may edit:
 
 ```bash
 cd /path/to/your-project
-yuj code \
-  "Fix the failing tests and check the change."
+yuj
+```
+
+Enter the task at the `Task:` prompt. You can also pass it directly:
+
+```bash
+yuj "Fix the failing tests and check the change."
 ```
 
 Use `--prompt-file /path/to/task.txt` for a long task description.
@@ -285,7 +289,7 @@ directory.
 If the selected model accepts images, attach visual evidence with `--image`:
 
 ```bash
-yuj code --image ./failure.png \
+yuj --image ./failure.png \
   "Fix the rendering error shown in this image."
 ```
 

@@ -13,8 +13,8 @@ The last file wins when two files set the same field.
 
 The CLI default and the paper treatments share the same
 `configs/regimes/treatment.toml` base. An exact paper treatment also needs the
-listed runtime and detector-threshold layers. Likewise, `yuj code
---no-treatment` selects the same plain base and full-context choice used by the
+listed runtime and detector-threshold layers. Likewise, `yuj --no-treatment`
+selects the same plain base and full-context choice used by the
 paper controls, but an exact paper control also needs its listed runtime layer.
 
 | Paper comparison | Control layers and context mode | Treatment layers and context mode |

@@ -61,11 +61,14 @@ cd /path/to/your-project
 yuj config
 yuj doctor
 yuj smoke
-yuj code "Fix the failing tests"
+yuj
 yuj status
 yuj show
 yuj usage
 ```
+
+Enter the coding task when Yuj prompts you. You can also pass the task after
+`yuj` on the same command line.
 
 Use `yuj approve` or `yuj reject` when a tool action needs your choice. If the
 model asks a clarification question, run the exact `yuj answer` command shown
@@ -78,7 +81,7 @@ provider sign-in, session selection, and exit statuses.
 
 ## What the study compares
 
-Normal `yuj code` sessions use the treatment base. Add `--no-treatment`
+Normal `yuj` sessions use the treatment base. Add `--no-treatment`
 to select the plain base.
 
 A complete paper comparison also fixes the model, input limit, runtime

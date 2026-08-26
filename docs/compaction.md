@@ -48,7 +48,7 @@ built-in path.
 Apply the overlay through the normal command:
 
 ```bash
-yuj code --config my-hook.toml "Fix the issue and run its tests."
+yuj --config my-hook.toml "Fix the issue and run its tests."
 ```
 
 ## Read the preparation

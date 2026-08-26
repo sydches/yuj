@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import uuid
+from importlib.metadata import PackageNotFoundError, version as distribution_version
 from pathlib import Path
 
 from ..llm_solver.config import (
@@ -166,11 +167,18 @@ _TREATMENT_CONFIG = PROJECT_ROOT / "configs/regimes/treatment.toml"
 _PLAIN_CONFIG = PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml"
 
 
+def _cli_version() -> str:
+    try:
+        return distribution_version("yuj")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         prog=CLI_NAME,
-        description="Start and control Yuj coding sessions",
+        description="Run a secondary Yuj command",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -181,7 +189,9 @@ def main(argv: list[str] | None = None) -> int:
             help="task text; use this form instead of --prompt-text or --prompt-file",
         )
         p.add_argument(
-            "--cwd",
+            "-C", "--cd", "--cwd",
+            dest="cwd",
+            metavar="DIR",
             type=Path,
             default=Path.cwd(),
             help="working directory to edit (default: current directory)",
@@ -189,13 +199,13 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--prompt-text", help="literal task prompt")
         p.add_argument("--prompt-file", type=Path, help="read task prompt from file")
         p.add_argument(
-            "--image",
+            "-i", "--image",
             type=Path,
             action="append",
             default=[],
             help="local image to attach; repeat for more images",
         )
-        p.add_argument("--model", "-m", help="model name or short alias")
+        p.add_argument("-m", "--model", help="model name or short alias")
         p.add_argument(
             "--thinking", choices=THINKING_LEVELS,
             help="per-request reasoning effort",
@@ -232,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
             "--api-key-env",
             help="environment variable containing the API key; stored as an env reference, not the key",
         )
-        p.add_argument("--config", "-c", type=Path, action="append", default=[],
+        p.add_argument("-c", "--config", type=Path, action="append", default=[],
                        help="extra TOML settings file; repeat to apply more files")
         p.add_argument("--system-prompt", type=Path, default=None,
                        help="file to prepend to the system prompt")
@@ -252,16 +262,12 @@ def main(argv: list[str] | None = None) -> int:
             action="store_true",
             help="validate local startup through the model-network boundary, then exit",
         )
+        p.add_argument(
+            "-V", "--version",
+            action="version",
+            version=f"%(prog)s {_cli_version()}",
+        )
         p.set_defaults(func=cmd_run)
-
-    run_parser = sub.add_parser("run", help="start a new coding session")
-    _attach_run_args(run_parser)
-
-    code_parser = sub.add_parser(
-        "code",
-        help="start a new coding session (same as run)",
-    )
-    _attach_run_args(code_parser)
 
     config_parser = sub.add_parser(
         "config",
@@ -710,28 +716,35 @@ def main(argv: list[str] | None = None) -> int:
     )
     worktree_rm.set_defaults(func=cmd_worktree_rm)
 
-    if not argv:
-        if _needs_first_run_setup() and _is_interactive():
-            return cmd_setup(argparse.Namespace(
-                provider=None,
-                model=None,
-                base_url=None,
-                api_key=None,
-                api_key_env=None,
-                auth=None,
-                permission_preset=None,
-                force=False,
-            ))
-        parser.print_help()
-        return 0
-
-    args = parser.parse_args(argv)
+    if not argv or argv[0] not in sub.choices:
+        command_rows = "\n".join(
+            f"  {action.dest:<12} {action.help}"
+            for action in sub._choices_actions
+        )
+        session_parser = argparse.ArgumentParser(
+            prog=CLI_NAME,
+            description="Start a Yuj coding session",
+            epilog=(
+                f"Commands:\n{command_rows}\n\n"
+                "Run 'yuj COMMAND --help' for one command's options."
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        _attach_run_args(session_parser)
+        args = session_parser.parse_args(argv)
+    else:
+        args = parser.parse_args(argv)
     try:
         return args.func(args)
     except ProviderAuthError as exc:
         raise SystemExit(f"{exc.code}: {exc}") from exc
     except ImageInputError as exc:
         raise SystemExit(f"image input error: {exc}") from exc
+    except KeyboardInterrupt:
+        sys.stderr.write("\n")
+        return 130
+    except EOFError:
+        raise SystemExit("input closed") from None
 
 
 def cmd_run(args) -> int:
@@ -2311,7 +2324,13 @@ def _resolve_prompt_input(args) -> tuple[str, str]:
     has_prompt_file = args.prompt_file is not None
     has_task = bool(args.task)
     provided = int(has_prompt_text) + int(has_prompt_file) + int(has_task)
-    if provided != 1:
+    if provided == 0:
+        if _is_interactive():
+            return _prompt_required("Task"), "interactive"
+        raise SystemExit(
+            "provide a task as positional text, with --prompt-text, or with --prompt-file"
+        )
+    if provided > 1:
         raise SystemExit(
             "provide exactly one prompt source: positional task text, --prompt-text, or --prompt-file"
         )

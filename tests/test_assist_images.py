@@ -384,7 +384,6 @@ def test_new_task_image_flag_saves_segment_before_runner(
                 side_effect=fake_run_session,
             ):
         result = main([
-            "code",
             "--image", str(source),
             "--image", str(second_source),
             "Inspect", "the", "failure", "shown.",
@@ -494,7 +493,6 @@ def test_unsupported_local_model_is_rejected_before_session_or_model_run(
             patch("scripts.llm_assist.__main__.run_session") as run_mock:
         with pytest.raises(SystemExit, match="does not declare image input support"):
             main([
-                "code",
                 "--cwd", str(target),
                 "--image", str(source),
                 "Inspect it.",

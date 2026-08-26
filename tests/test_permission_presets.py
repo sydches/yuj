@@ -561,15 +561,14 @@ def test_setup_saves_permission_preset_in_machine_local_config(
 @pytest.mark.parametrize(
     ("command", "handler"),
     [
-        ("code", "cmd_run"),
-        ("run", "cmd_run"),
+        (None, "cmd_run"),
         ("smoke", "cmd_smoke"),
         ("config", "cmd_config"),
         ("setup", "cmd_setup"),
     ],
 )
 def test_assistant_cli_exposes_permission_preset(
-    command: str,
+    command: str | None,
     handler: str,
 ) -> None:
     from unittest.mock import patch
@@ -577,8 +576,9 @@ def test_assistant_cli_exposes_permission_preset(
     with patch(
         f"scripts.llm_assist.__main__.{handler}", return_value=0
     ) as invoked:
-        assert assist_main(
-            [command, "--permission-preset", "read-only"]
-        ) == 0
+        argv = ["--permission-preset", "read-only"]
+        if command is not None:
+            argv.insert(0, command)
+        assert assist_main(argv) == 0
 
     assert invoked.call_args.args[0].permission_preset == "read-only"

@@ -134,7 +134,7 @@ yuj config
 ```
 
 The command applies and validates the same layers, in the same order, as a new
-`yuj code` session. It prints every resolved setting with the layer that won.
+`yuj` session. It prints every resolved setting with the layer that won.
 This includes nested tables and values that still come from `config.toml`.
 The preflight loads and validates the full shipped runtime-resource manifest,
 model profiles, configured model roles and fallbacks, and enabled named-agent
@@ -220,7 +220,7 @@ Plan mode stops the model from changing the project until it has written a
 plan. Enable it for one coding session:
 
 ```bash
-yuj code --plan-mode required "Plan the change, then implement it."
+yuj --plan-mode required "Plan the change, then implement it."
 ```
 
 To make it part of a settings layer, use:
@@ -364,7 +364,7 @@ sandbox backend, but no selected path silently falls back to `none`. Use
 `yuj config` to see the supported, available, unavailable, selected, and
 capability-resolved backends. Available means that Yuj found a supported
 executable; unavailable also includes backends that this platform does not
-support. Use `yuj doctor` or `yuj code --dry-run` for the operational startup
+support. Use `yuj doctor` or `yuj --dry-run` for the operational startup
 check.
 
 The shipped fixed measurement configurations continue to require `bwrap`.
@@ -794,7 +794,7 @@ Use a preset when you want a fixed starting policy without writing every rule.
 Select one preset for a coding session:
 
 ```bash
-yuj code --permission-preset ask-before-changes "Inspect, plan, and make the change."
+yuj --permission-preset ask-before-changes "Inspect, plan, and make the change."
 ```
 
 Save one as the machine setting with `yuj setup --permission-preset NAME`, or
@@ -1356,7 +1356,7 @@ The selected base chooses the normal mode:
 Override the base choice when you need another mode:
 
 ```bash
-yuj code --context full "Fix the issue."
+yuj --context full "Fix the issue."
 ```
 
 Yuj registers these modes:
@@ -1715,7 +1715,7 @@ only the visible catalog text.
 Apply the overlay with the normal CLI command:
 
 ```bash
-yuj code --config skills.toml "Prepare the release."
+yuj --config skills.toml "Prepare the release."
 ```
 
 All profiles use the same discovery, catalog, `read` tool, and sandbox rules.
@@ -1740,7 +1740,7 @@ bash_timeout = 240
 Apply the file after the selected base:
 
 ```bash
-yuj code --config longer-task.toml \
+yuj --config longer-task.toml \
   "Complete the migration and run its tests."
 ```
 
@@ -1755,7 +1755,7 @@ Set the key before you start the session:
 
 ```bash
 export ANTHROPIC_API_KEY='...'
-yuj code --provider anthropic --model YOUR_MODEL_ID \
+yuj --provider anthropic --model YOUR_MODEL_ID \
   "Fix the failing test."
 ```
 

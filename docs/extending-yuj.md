@@ -33,7 +33,7 @@ Do not pass a descriptor file with `--config`.
 
 | You want to change | File | How Yuj reads it | Python needed? |
 | --- | --- | --- | --- |
-| One coding session | A small settings file | `yuj code --config FILE.toml` | No, for an existing setting. |
+| One coding session | A small settings file | `yuj --config FILE.toml` | No, for an existing setting. |
 | A model and local server | `configs/runtime/*.toml` | The config loader reads `[model]`. `scripts/serve.sh` reads `[launch]`. | No, for a supported server and field. |
 | A model's message, tool-call, or edit format | `profiles/NAME/profile.toml` and its rule files | The profile loader selects it by name or family. | No, for a supported field or rule. A new transform needs Python. |
 | A named subagent | `agents/NAME.toml` and its Markdown prompt | The optional `task` tool loads the descriptor by agent name. | No, for the current descriptor format. |
@@ -140,7 +140,7 @@ enabled = true
 Apply it after setup:
 
 ```bash
-yuj code --config my-run.toml "Fix the issue and run the tests."
+yuj --config my-run.toml "Fix the issue and run the tests."
 ```
 
 Read [Configuration](configuration.html) for the full setting order and the
@@ -267,7 +267,7 @@ Put that ID in `[model].name`.
 Apply the same file to a coding session when you want its `[model]` values:
 
 ```bash
-yuj code --config /path/to/my-runtime.toml "Fix the issue."
+yuj --config /path/to/my-runtime.toml "Fix the issue."
 ```
 
 The config loader ignores `[launch]`. The server helper ignores `[model]`.
@@ -533,7 +533,7 @@ stream_rules_context_mode = "discard"
 ```
 
 ```bash
-YUJ_STREAMING=1 yuj code --config stream-rules.toml "Fix the issue."
+YUJ_STREAMING=1 yuj --config stream-rules.toml "Fix the issue."
 ```
 
 Run the focused loader and runtime tests after changing the rule format:

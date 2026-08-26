@@ -163,7 +163,6 @@ def test_installed_cli_persists_edit_format_override(tmp_path: Path) -> None:
         patch("scripts.llm_assist.__main__.run_session", side_effect=_run),
     ):
         assert assist_main([
-            "run",
             "--cwd", str(work_dir),
             "--prompt-text", "Do it.",
             "--edit-format", "whole",

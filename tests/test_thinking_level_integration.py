@@ -262,7 +262,6 @@ def test_installed_cli_persists_thinking_in_session_overlay(
         patch("scripts.llm_assist.__main__.run_session", side_effect=_run),
     ):
         assert assist_main([
-            "run",
             "--cwd", str(work_dir),
             "--prompt-text", "Do it.",
             "--thinking", "high",

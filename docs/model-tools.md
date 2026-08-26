@@ -85,7 +85,7 @@ tool_enabled = true
 Apply the file to a coding session:
 
 ```bash
-yuj code --config more-tools.toml "Fix the issue and run the tests."
+yuj --config more-tools.toml "Fix the issue and run the tests."
 ```
 
 When `bash` is on, the model can run a test command through `bash` even when

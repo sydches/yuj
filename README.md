@@ -98,8 +98,13 @@ Open the Git repository that you want the model to change:
 ```bash
 cd /path/to/your-project
 yuj doctor
-yuj code \
-  "Fix the failing tests and check the change."
+yuj
+```
+
+Enter the task when Yuj prompts you. You can also pass it directly:
+
+```bash
+yuj "Fix the failing tests and check the change."
 ```
 
 Run a small test task before you use a real project:
@@ -154,32 +159,13 @@ own repository.
 
 | Command | What it does |
 | --- | --- |
+| `yuj` | Start a coding session. Enter the task when prompted or pass it as an argument. |
 | `yuj setup` | Save settings for an online model service or a local model server. |
-| `yuj login` | Save and select one Claude or Codex credential. |
-| `yuj auth-status` | Show the selected provider and authentication method without credentials. |
-| `yuj logout` | Remove only the named provider credential. |
 | `yuj config` | Validate and explain every resolved setting without contacting a model. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
-| `yuj models` | List the models that the selected service offers. |
-| `yuj code "task"` | Start a coding session. |
-| `yuj run "task"` | Run the same command as `yuj code`. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
-| `yuj current` | Show the active or newest unarchived session for this repository. If it has none, show the newest unarchived saved session. |
 | `yuj status` | Show a session's status and the next user action. |
-| `yuj show` | Show settings and recent session activity. |
-| `yuj usage` | Show persisted token, cache, cost, and quota evidence without contacting a model. |
 | `yuj resume` | Continue a paused session. |
-| `yuj correct SESSION "CORRECTION"` | Record one exact correction before resume. |
-| `yuj answer SESSION REQUEST_ID "ANSWER"` | Record one answer for a pending clarification. |
-| `yuj rewind SESSION TURN` | Restore an enabled session's messages and files to an earlier completed turn. |
-| `yuj label SESSION LABEL` | Set or replace one manual label on a saved session. Add `--clear` instead of `LABEL` to remove it. |
-| `yuj fork SESSION` | Create an independent child from one stopped saved session. |
-| `yuj archive SESSION` | Hide one stopped session from ordinary lists and automatic selection without changing its evidence. |
-| `yuj unarchive SESSION` | Restore one archived session to ordinary selection. |
-| `yuj purge FULL_SESSION_ID --preview` | Preview the files owned by one archived session before permanent deletion. |
-| `yuj approve` | Allow a tool action that needs approval. |
-| `yuj reject` | Refuse a tool action that needs approval. |
-| `yuj sessions` | List unarchived saved sessions. Add `--archived` to list archived sessions instead. |
 
 The [CLI reference](docs/using-yuj.md) lists every option for the installed
 `yuj` command. It also explains how Yuj selects a session, what each status
@@ -188,7 +174,7 @@ means, and which exit status each command returns.
 ## Default and plain settings
 
 Yuj calls its default group of long-task and recovery rules the treatment
-base. `yuj code` uses this base and the `halflife` context mode by default.
+base. `yuj` uses this base and the `halflife` context mode by default.
 
 `--no-treatment` selects the plain base and the `full` context mode. Use
 this setting when you want to compare the two bases.

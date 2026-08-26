@@ -18,8 +18,10 @@ Use these terms in this guide:
 | Target repository | The Git repository that the model may change. |
 | Session directory | The directory where Yuj saves records for one coding session. |
 
-Run `yuj --help` for the command list. Run `yuj COMMAND --help` for the
-current options for one command. Every command accepts `-h` and `--help`.
+Run `yuj --help` for the coding-session options and secondary command list.
+Run `yuj --version` to print the installed version.
+Run `yuj COMMAND --help` for the options of one secondary command. Every
+command accepts `-h` and `--help`.
 
 Activate the environment where Yuj is installed before you run a command on
 this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
@@ -36,8 +38,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj models` | List models from the selected service. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
-| `yuj code` | Start a coding session. |
-| `yuj run` | Run the same command as `yuj code`. |
+| `yuj` | Start a coding session. Enter the task when prompted or pass it as an argument. |
 | `yuj current` | Run `yuj status latest` over unarchived sessions. |
 | `yuj status` | Show one session's status and the next user action. |
 | `yuj show` | Show one session's settings and recent activity. |
@@ -56,8 +57,9 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj approve` | Allow a tool action that needs approval. |
 | `yuj reject` | Refuse a tool action that needs approval. |
 
-When you run `yuj` with no command, Yuj normally prints its help. On the first
-interactive run with no local settings file, Yuj starts interactive setup.
+When you run `yuj` with no task, Yuj prompts for one and starts a coding
+session. On the first interactive run with no local settings file, Yuj runs
+setup before it asks for the task.
 
 ## Inspect settings
 
@@ -78,7 +80,7 @@ no model request and writes no session artifacts.
 The `selection.sandbox` object reports the platform's supported, installed,
 available, and unavailable backends, the configured choice, and the
 capability-resolved backend. It does not start a sandbox. Use `doctor` or
-`code --dry-run` for the operational preflight.
+`yuj --dry-run` for the operational preflight.
 
 | Option | What it does |
 | --- | --- |
@@ -106,7 +108,13 @@ order, validation coverage, the JSON fields, and the redaction boundary.
 Move to the Git repository that the model may edit. Then run:
 
 ```bash
-yuj code "Fix the failing tests and check the change."
+yuj
+```
+
+Enter the task at the `Task:` prompt. You can also pass it directly:
+
+```bash
+yuj "Fix the failing tests and check the change."
 ```
 
 The model can read files, change code, run commands, and run tests. Yuj
@@ -114,13 +122,11 @@ continues until the model finishes or a stopping rule ends the session.
 
 Keep the terminal process running while the run segment is active.
 
-`yuj run` and `yuj code` use the same code and accept the same options.
-
 Use the local startup seam when you want to validate an installation or task
 repository without contacting the model service:
 
 ```bash
-yuj code --dry-run "check local startup"
+yuj --dry-run "check local startup"
 ```
 
 This follows the same local startup path as an ordinary session. It loads the
@@ -170,34 +176,37 @@ Yuj applies the sandbox and approval rules when it runs a tool. Read
 
 ### Give Yuj the task
 
-Give exactly one task source.
+Run `yuj` with no task text to enter the task at the interactive prompt. To
+start with task text, give exactly one task source.
 
 | Form | Example |
 | --- | --- |
-| Text after the command | `yuj code "Fix the failing tests."` |
-| `--prompt-text` | `yuj code --prompt-text "Fix the failing tests."` |
-| `--prompt-file` | `yuj code --prompt-file /path/to/task.txt` |
+| Interactive prompt | `yuj` |
+| Text after the command | `yuj "Fix the failing tests."` |
+| `--prompt-text` | `yuj --prompt-text "Fix the failing tests."` |
+| `--prompt-file` | `yuj --prompt-file /path/to/task.txt` |
 
 Use a file for a long task:
 
 ```bash
-yuj code --prompt-file /path/to/task.txt
+yuj --prompt-file /path/to/task.txt
 ```
 
-Use `--cwd` when the repository is not the current directory:
+Use `-C`, `--cd`, or `--cwd` when the repository is not the current directory:
 
 ```bash
-yuj code --cwd /path/to/project "Update the parser and its tests."
+yuj -C /path/to/project "Update the parser and its tests."
 ```
 
-`--cwd` also sets the repository that session-selection commands prefer.
+These options also set the repository that session-selection commands prefer.
 
 ### Attach local images
 
-Attach one or more images to the task text with a repeated `--image` option:
+Attach one or more images to the task text with a repeated `-i` or `--image`
+option:
 
 ```bash
-yuj code --image ./failure.png --image ./expected.webp \
+yuj -i ./failure.png -i ./expected.webp \
   "Compare these screens and fix the rendering error."
 ```
 
@@ -218,18 +227,18 @@ path later does not change a resume or replay. `status` and `show` print the
 saved name, detected media type, byte count, dimensions, and SHA-256 digest.
 They do not print the source path or image bytes.
 
-### Options for `code` and `run`
+### Options for `yuj`
 
 Yuj calls the starting group of settings a base.
 
 | Option | What it does |
 | --- | --- |
 | `TASK ...` | Join the remaining words and use them as the task text. |
-| `--cwd PATH` | Edit this repository. The current directory is the default. |
+| `-C PATH`, `--cd PATH`, `--cwd PATH` | Edit this repository. The current directory is the default. |
 | `--prompt-text TEXT` | Use this text as the task. |
 | `--prompt-file PATH` | Read the task from this file. |
-| `--image PATH` | Attach this local image. Repeat for more images. |
-| `--model NAME`, `-m NAME` | Use this model ID or known short name. |
+| `-i PATH`, `--image PATH` | Attach this local image. Repeat for more images. |
+| `-m NAME`, `--model NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |
 | `--permission-preset NAME` | Use `read-only`, `ask-before-changes`, or `allow-edits` for this session. |
@@ -237,12 +246,13 @@ Yuj calls the starting group of settings a base.
 | `--provider NAME` | Use `local`, `claude`, `codex`, `openai`, `anthropic`, `openrouter`, `zai`, or `custom`. |
 | `--base-url URL` | Use this API base address. `custom` requires it. |
 | `--api-key-env NAME` | Read the API key from this environment variable. |
-| `--config PATH`, `-c PATH` | Apply this TOML file. Repeat the option to apply more files from left to right. |
+| `-c PATH`, `--config PATH` | Apply this TOML file. Repeat the option to apply more files from left to right. |
 | `--system-prompt PATH` | Add this file before Yuj's normal system prompt. The file may import another file with an `@path` line. |
 | `--treatment` | Use the treatment base. This is the default. |
 | `--no-treatment` | Use the plain base. |
 | `--context NAME` | Use this context mode instead of the base default. |
 | `--dry-run` | Complete local startup through the model-network boundary, write no session artifacts, and exit. |
+| `-V`, `--version` | Print the installed Yuj version and exit. |
 
 A context mode controls which earlier messages, saved facts, and current files
 the model receives before its next action.
@@ -1111,7 +1121,7 @@ The approval check does not replace the sandbox.
 Start a new session after one task finishes:
 
 ```bash
-yuj code "Add a test for the fixed case."
+yuj "Add a test for the fixed case."
 ```
 
 The new session sees the files left by the old session. It does not receive the

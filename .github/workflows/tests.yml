@@ -28,7 +28,7 @@ jobs:
         run: |
           printf '[sandbox]\nbackend = "none"\n' > "$RUNNER_TEMP/no-sandbox.toml"
           yuj --help >/dev/null
-          yuj code --help >/dev/null
+          yuj --version >/dev/null
           yuj config --json --agent research --config "$RUNNER_TEMP/no-sandbox.toml" >/dev/null
       - name: Run the public test suite
         run: python -m pytest -q
@@ -62,11 +62,11 @@ jobs:
           unset PYTHONPATH YUJ_CONFIG YUJ_CONFIG_LOCAL
           "$RUNNER_TEMP/yuj-install/bin/python" -I -c 'from pathlib import Path; import scripts; source = Path("${{ github.workspace }}").resolve(); installed = Path(scripts.__file__).resolve(); assert source not in installed.parents, installed; print(f"import-origin: {installed}")'
           "$RUNNER_TEMP/yuj-install/bin/yuj" --help >/dev/null
-          "$RUNNER_TEMP/yuj-install/bin/yuj" code --help >/dev/null
+          "$RUNNER_TEMP/yuj-install/bin/yuj" --version >/dev/null
           "$RUNNER_TEMP/yuj-install/bin/yuj" config --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" >/dev/null
           "$RUNNER_TEMP/yuj-install/bin/yuj" config --json --agent research --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" > config.json
           "$RUNNER_TEMP/yuj-install/bin/python" -I -c 'import json; data=json.load(open("config.json")); resources=data["references"]["runtime_resources"]; assert data["success"] is True; assert resources["origin"] == "installed-package"; assert resources["root_resource_count"] == 57; assert resources["package_resource_count"] == 10'
-          "$RUNNER_TEMP/yuj-install/bin/yuj" code --dry-run --cwd "$RUNNER_TEMP/yuj-outside" --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" "standalone install preflight" > startup.txt
+          "$RUNNER_TEMP/yuj-install/bin/yuj" --dry-run --cwd "$RUNNER_TEMP/yuj-outside" --config "$RUNNER_TEMP/yuj-outside/no-sandbox.toml" "standalone install preflight" > startup.txt
           grep -F 'Yuj startup preflight: ready' startup.txt
           grep -F 'Runtime resources: installed-package (57 root, 10 package)' startup.txt
           grep -F 'Model network: not contacted' startup.txt

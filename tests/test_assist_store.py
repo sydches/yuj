@@ -1,8 +1,9 @@
 import json
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.llm_assist.__main__ import main
+from scripts.llm_assist.__main__ import _resolve_prompt_input, main
 from scripts.llm_assist.progress import TraceFollower
 from scripts.llm_assist.runner import (
     approval_request_path,
@@ -793,7 +794,6 @@ def test_cmd_run_prints_progress_before_final_result(tmp_path, capsys):
             ), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
-            "run",
             "--cwd", str(work_dir),
             "--prompt-text", "do it",
         ])
@@ -842,7 +842,6 @@ def test_cmd_run_keyboard_interrupt_marks_session_interrupted_and_resumable(tmp_
             ), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
-            "run",
             "--cwd", str(work_dir),
             "--prompt-text", "do it",
         ])
@@ -860,58 +859,24 @@ def test_cmd_run_keyboard_interrupt_marks_session_interrupted_and_resumable(tmp_
     assert store.get_session_lock(record.session_id) is None
 
 
-def test_code_alias_routes_to_run(tmp_path, capsys):
-    store = SessionStore(tmp_path / "assist-home")
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
+def test_code_and_run_are_ordinary_prompt_words():
+    captured = []
 
-    def fake_run_session(store_obj, record, *, resume):
-        artifact_dir = Path(record.artifact_dir)
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        (artifact_dir / ".trace.jsonl").write_text(
-            json.dumps({
-                "event": "session_end",
-                "session_number": 1,
-                "finish_reason": "stop",
-                "turns": 1,
-            }) + "\n"
-        )
-        store_obj.update_session(record.session_id, status="completed", last_finish_reason="stop")
-        return True, "stop"
+    def fake_cmd_run(args):
+        captured.append(_resolve_prompt_input(args))
+        return 0
 
-    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
-            patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
-            patch(
-                "scripts.llm_assist.__main__.resolve_served_model",
-                return_value=("exact-served.gguf", ["exact-served.gguf"]),
-            ), \
-            patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session) as run_mock:
-        rc = main([
-            "code",
-            "--cwd", str(work_dir),
-            "--prompt-text", "do it",
-        ])
+    with patch("scripts.llm_assist.__main__.cmd_run", side_effect=fake_cmd_run):
+        assert main(["code", "this change"]) == 0
+        assert main(["run", "the tests"]) == 0
 
-    assert rc == 0
-    assert run_mock.called is True
-    sessions = store.list_sessions(limit=1)
-    assert sessions and sessions[0].status == "completed"
+    assert captured == [
+        ("code this change", "inline-positional"),
+        ("run the tests", "inline-positional"),
+    ]
 
 
-def test_code_alias_help_exits_cleanly(capsys):
-    try:
-        main(["code", "--help"])
-    except SystemExit as exc:
-        assert exc.code == 0
-    else:
-        raise AssertionError("expected SystemExit")
-    captured = capsys.readouterr()
-    assert "usage: yuj code" in captured.out
-    assert "--cwd" in captured.out
-    assert "--prompt-text" in captured.out
-
-
-def test_root_help_lists_status_and_current_commands(capsys):
+def test_root_help_shows_session_options_and_secondary_commands(capsys):
     try:
         main(["--help"])
     except SystemExit as exc:
@@ -919,9 +884,89 @@ def test_root_help_lists_status_and_current_commands(capsys):
     else:
         raise AssertionError("expected SystemExit")
     captured = capsys.readouterr()
+    assert "usage: yuj" in captured.out
+    assert "--cwd" in captured.out
+    assert "--cd" in captured.out
+    assert "-C" in captured.out
+    assert "--prompt-text" in captured.out
+    assert "-i" in captured.out
+    assert "--version" in captured.out
     assert "status" in captured.out
     assert "current" in captured.out
     assert "setup" in captured.out
+    assert "yuj code" not in captured.out
+
+
+def test_bare_yuj_prompts_for_task():
+    captured = {}
+
+    def fake_cmd_run(args):
+        captured["prompt"] = _resolve_prompt_input(args)
+        return 0
+
+    with patch(
+        "scripts.llm_assist.__main__.cmd_run", side_effect=fake_cmd_run
+    ), patch(
+        "scripts.llm_assist.__main__._is_interactive", return_value=True
+    ), patch(
+        "scripts.llm_assist.__main__._prompt_required",
+        return_value="Fix the failing tests",
+    ):
+        rc = main([])
+
+    assert rc == 0
+    assert captured["prompt"] == ("Fix the failing tests", "interactive")
+
+
+def test_root_version_matches_package_metadata(capsys):
+    try:
+        main(["--version"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("expected SystemExit")
+
+    assert capsys.readouterr().out == f"yuj {distribution_version('yuj')}\n"
+
+
+def test_root_accepts_familiar_directory_and_image_aliases(tmp_path):
+    captured = {}
+
+    def fake_cmd_run(args):
+        captured["cwd"] = args.cwd
+        captured["images"] = args.image
+        captured["prompt"] = _resolve_prompt_input(args)
+        return 0
+
+    image = tmp_path / "screen.png"
+    with patch("scripts.llm_assist.__main__.cmd_run", side_effect=fake_cmd_run):
+        rc = main(["-C", str(tmp_path), "-i", str(image), "fix", "this"])
+
+    assert rc == 0
+    assert captured == {
+        "cwd": tmp_path,
+        "images": [image],
+        "prompt": ("fix this", "inline-positional"),
+    }
+
+
+def test_root_exits_cleanly_when_input_is_interrupted(capsys):
+    with patch(
+        "scripts.llm_assist.__main__.cmd_run", side_effect=KeyboardInterrupt
+    ):
+        assert main(["fix", "this"]) == 130
+
+    assert capsys.readouterr().err == "\n"
+
+
+def test_root_exits_cleanly_when_input_closes():
+    with patch("scripts.llm_assist.__main__.cmd_run", side_effect=EOFError):
+        try:
+            main(["fix", "this"])
+        except SystemExit as exc:
+            assert str(exc) == "input closed"
+        else:
+            raise AssertionError("expected SystemExit")
 
 
 def test_setup_writes_local_provider_config(tmp_path, monkeypatch, capsys):
@@ -1101,7 +1146,7 @@ def test_doctor_reports_model_failure(capsys, tmp_path, monkeypatch):
     assert "selected_model: fail" in captured.out
 
 
-def test_code_uses_positional_prompt_and_current_dir_by_default(tmp_path, capsys, monkeypatch):
+def test_yuj_uses_positional_prompt_and_current_dir_by_default(tmp_path, capsys, monkeypatch):
     store = SessionStore(tmp_path / "assist-home")
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -1128,7 +1173,7 @@ def test_code_uses_positional_prompt_and_current_dir_by_default(tmp_path, capsys
                 return_value=("exact-served.gguf", ["exact-served.gguf"]),
             ), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
-        rc = main(["code", "fix", "the", "failing", "test"])
+        rc = main(["fix", "the", "failing", "test"])
 
     captured = capsys.readouterr()
     assert rc == 0
@@ -1143,7 +1188,7 @@ def test_code_uses_positional_prompt_and_current_dir_by_default(tmp_path, capsys
     assert store.get_active_session_id(work_dir) == sessions[0].session_id
 
 
-def test_code_no_treatment_uses_plain_package_and_full_context(tmp_path, monkeypatch):
+def test_yuj_no_treatment_uses_plain_package_and_full_context(tmp_path, monkeypatch):
     store = SessionStore(tmp_path / "assist-home")
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -1173,7 +1218,6 @@ def test_code_no_treatment_uses_plain_package_and_full_context(tmp_path, monkeyp
             ), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
-            "code",
             "--no-treatment",
             "--config", str(user_overlay),
             "fix the test",
@@ -1215,7 +1259,6 @@ def test_run_persists_exact_served_model_id(tmp_path, capsys):
             ), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
-            "run",
             "--cwd", str(work_dir),
             "--prompt-text", "do the thing",
             "--model", "qwen3-8b",
@@ -1257,7 +1300,6 @@ def test_run_provider_preset_persists_session_overlay(tmp_path, monkeypatch):
             ) as resolve_mock, \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
-            "run",
             "--cwd", str(work_dir),
             "--prompt-text", "do it",
             "--provider", "openrouter",
@@ -1288,7 +1330,6 @@ def test_custom_provider_requires_base_url(tmp_path):
     with patch("scripts.llm_assist.__main__.SessionStore", return_value=store):
         try:
             main([
-                "run",
                 "--cwd", str(work_dir),
                 "--prompt-text", "do it",
                 "--provider", "custom",
@@ -1819,7 +1860,6 @@ def test_run_model_resolution_failure_exits_cleanly(tmp_path):
             ):
         try:
             main([
-                "run",
                 "--cwd", str(work_dir),
                 "--prompt-text", "do it",
             ])

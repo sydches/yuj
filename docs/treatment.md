@@ -17,7 +17,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 Run:
 
 ```bash
-yuj code "Fix the issue and run the relevant tests."
+yuj "Fix the issue and run the relevant tests."
 ```
 
 Yuj applies four groups of rules:
@@ -53,7 +53,7 @@ lists the exact files and their order.
 Run:
 
 ```bash
-yuj code --no-treatment "Fix the issue and run the relevant tests."
+yuj --no-treatment "Fix the issue and run the relevant tests."
 ```
 
 `--no-treatment` selects the
@@ -86,7 +86,7 @@ reread_min_gap = 9
 Apply the file after the base:
 
 ```bash
-yuj code --config my-yuj.toml "Fix the issue."
+yuj --config my-yuj.toml "Fix the issue."
 ```
 
 Repeat `--config` to apply more files. Yuj applies them from left to right.
@@ -102,7 +102,7 @@ Read [Configuration](configuration.html) for the full setting order.
 Keep the other treatment settings. Choose another context mode:
 
 ```bash
-yuj code --context full "Fix the issue."
+yuj --context full "Fix the issue."
 ```
 
 Read the [CLI reference](using-yuj.html) for every command-line option. Read

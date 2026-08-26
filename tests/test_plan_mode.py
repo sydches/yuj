@@ -145,13 +145,16 @@ def test_measurement_cli_maps_plan_mode_override(tmp_path: Path):
 
 @pytest.mark.parametrize(
     ("command", "handler"),
-    [("code", "cmd_run"), ("run", "cmd_run"), ("smoke", "cmd_smoke")],
+    [(None, "cmd_run"), ("smoke", "cmd_smoke")],
 )
-def test_installed_cli_exposes_plan_mode(command: str, handler: str):
+def test_installed_cli_exposes_plan_mode(command: str | None, handler: str):
     with patch(
         f"scripts.llm_assist.__main__.{handler}", return_value=0,
     ) as invoked:
-        assert assist_main([command, "--plan-mode", "required"]) == 0
+        argv = ["--plan-mode", "required"]
+        if command is not None:
+            argv.insert(0, command)
+        assert assist_main(argv) == 0
 
     assert invoked.call_args.args[0].plan_mode == "required"
 

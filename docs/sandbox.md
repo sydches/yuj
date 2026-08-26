@@ -60,7 +60,7 @@ preflight. If none passes, Yuj stops. It never selects `none`.
 capability-resolved backends without starting a sandbox. Available means that
 a supported backend executable was found. Unavailable includes named backends
 that are unsupported on this platform or whose executable was not found.
-`yuj doctor` and `yuj code --dry-run` perform the operational check. Normal
+`yuj doctor` and `yuj --dry-run` perform the operational check. Normal
 startup records both the selected value and exact resolved backend before tool
 execution.
 
@@ -213,7 +213,7 @@ backend = "none"
 Apply the file:
 
 ```bash
-yuj code --config no-sandbox.toml "Your task"
+yuj --config no-sandbox.toml "Your task"
 ```
 
 With `none`, foreground and background shell commands, test commands,
