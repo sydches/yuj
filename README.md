@@ -138,8 +138,8 @@ continue through more than one run segment.
 - Yuj runs model command surfaces through one explicit sandbox policy. Linux
   defaults to `bubblewrap`; Docker, Podman, automatic selection, and explicit
   unsandboxed execution are available where supported.
-- You can inspect, label, pause, correct, approve, reject, resume, fork,
-  archive, unarchive, or permanently purge a session.
+- You can inspect, export, label, pause, correct, approve, reject, resume,
+  fork, archive, unarchive, or permanently purge a session.
 - You can inspect persisted token and cache use without contacting the model
   service. Yuj reports cost and quota only when saved evidence supports them.
 - The model can pause once for a missing fact. You can record one answer and
@@ -172,6 +172,7 @@ own repository.
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
 | `yuj trust status -C DIR` | Inspect the saved startup-trust decision for a workspace. |
 | `yuj status` | Show a session's status and the next user action. |
+| `yuj export SESSION` | Print a redacted Markdown session report. |
 | `yuj resume` | Continue a paused session. |
 
 The [CLI reference](docs/using-yuj.md) lists every option for the installed

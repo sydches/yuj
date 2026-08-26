@@ -91,6 +91,7 @@ from .purge import (
 )
 from .progress import TraceFollower
 from .session_diff import SessionDiffError, build_session_worktree_diff
+from .session_export import SessionExportError, build_session_report
 from .runner import (
     _make_client,
     _record_auth_binding,
@@ -821,6 +822,28 @@ def main(argv: list[str] | None = None) -> int:
         help="page long terminal output (default: automatic)",
     )
     show_parser.set_defaults(func=cmd_show)
+
+    export_parser = sub.add_parser(
+        "export",
+        help="print one redacted Markdown session report",
+        description="Print one redacted Markdown session report.",
+    )
+    export_parser.add_argument(
+        "session_id",
+        nargs="?",
+        default="latest",
+        help=(
+            "coding-session ID, exact label, unique ID prefix, or 'latest' "
+            "(default: latest session)"
+        ),
+    )
+    export_parser.add_argument(
+        "--pager",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="page long terminal output (default: automatic)",
+    )
+    export_parser.set_defaults(func=cmd_export)
 
     diff_parser = sub.add_parser(
         "diff", help="show changes in one retained session worktree"
@@ -2752,6 +2775,42 @@ def _render_show(args) -> int:
     print("trace_tail:")
     for line in trace_lines:
         print(f"  {line}")
+    return 0
+
+
+def cmd_export(args) -> int:
+    store = SessionStore()
+    record = _resolve_session_record(
+        store,
+        args.session_id,
+        selector="latest",
+        allow_archived=True,
+    )
+    expected_artifact = store.root / "sessions" / record.session_id
+    if record.artifact_path.resolve(strict=False) != expected_artifact.resolve(
+        strict=False
+    ):
+        raise SystemExit("cannot export session: artifact ownership is invalid")
+    live = derive_live_state(record.artifact_path)
+    status = live.status or record.status
+    finish_reason = (
+        live.finish_reason if live.status else record.last_finish_reason
+    )
+    try:
+        report = build_session_report(
+            record,
+            status=status,
+            finish_reason=finish_reason,
+            turns=session_turn_count(record.artifact_path),
+        )
+    except (
+        ClarificationStateError,
+        CorrectionStateError,
+        SessionExportError,
+        UsageEvidenceError,
+    ) as exc:
+        raise SystemExit(f"cannot export session: {exc}") from exc
+    _write_operator_output(report, pager=args.pager)
     return 0
 
 

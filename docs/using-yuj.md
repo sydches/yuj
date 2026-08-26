@@ -42,6 +42,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj current` | Run `yuj status latest` over unarchived sessions. |
 | `yuj status` | Show one session's status and the next user action. |
 | `yuj show` | Show one session's settings and recent activity. |
+| `yuj export` | Print one redacted Markdown report for a saved session. |
 | `yuj diff` | Print changes in one retained session worktree. |
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List, filter, or select saved sessions. |
@@ -608,6 +609,7 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | `yuj current` | Status details for the active or newest unarchived session in the current repository. If that repository has none, show the newest unarchived session. |
 | `yuj status [SESSION]` | Session identity, run and archive state, model and sandbox, saved input summaries, pending operator action, and the next command. |
 | `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. Use `--full` to show the complete saved turn view. |
+| `yuj export [SESSION]` | A redacted Markdown report with the task, operator follow-ups, final assistant responses, tool summaries, usage, status, and evidence hashes. |
 | `yuj diff [SESSION]` | A pipeable unified diff for a verified retained worktree, or an explicit reason that ownership cannot be established. |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions` | A compact list of short ID, status, label, flags, and working directory for up to 20 recent unarchived sessions. |
@@ -641,6 +643,8 @@ yuj show --no-tools --trace SESSION
 | `yuj show` | `--results`, `--no-results` | Include or omit tool results while keeping tool calls. |
 | `yuj show` | `--trace`, `--no-trace` | Include or omit trace events. |
 | `yuj show` | `--pager`, `--no-pager` | Force or disable the pager. Long terminal output uses a pager by default. |
+| `yuj export` | `SESSION` | Select a session. The default is `latest`. Archived sessions are allowed. |
+| `yuj export` | `--pager`, `--no-pager` | Force or disable the pager. Long terminal output uses a pager by default. |
 | `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
 | `yuj sessions` | `--archived` | List archived sessions instead of unarchived sessions. |
@@ -668,10 +672,36 @@ Yuj reads `$PAGER` when it pages a long view. It uses `less -FRX` when `less`
 is available and `$PAGER` is empty. Set `PAGER=cat` or pass `--no-pager` to
 print directly. Yuj never starts a pager when you pipe or redirect the output.
 
-Both views read saved session evidence. They do not contact a model or change
-the session, trace, transcript, or working tree. The full view expands the
-content saved in the trace. The raw provider request log remains in the
-session artifact directory for direct inspection.
+These inspection commands read saved session evidence. They do not contact a
+model or change the session, trace, transcript, or working tree. The full
+`show` view expands the content saved in the trace. The raw provider request
+log remains in the session artifact directory for direct inspection.
+
+### Export a redacted report
+
+Print one Markdown report to standard output:
+
+```bash
+yuj export SESSION --no-pager > session-report.md
+```
+
+The report includes the original task, digest-matched operator follow-ups,
+final assistant responses, tool-call summaries, session status, usage, and
+evidence hashes. It reads every saved transcript segment, but it does not copy
+raw provider requests or responses into the report.
+
+The report omits system prompts, configuration values and paths, credential
+identity, workspace and artifact paths, and model reasoning. Yuj applies its
+secret patterns to every remaining text field. It also removes common
+authorization headers, private keys, secret assignments, and URL credentials.
+Automatic redaction cannot identify every private fact, so read the report
+before you share it.
+
+`yuj export` accepts a full session ID, exact label, unique ID prefix, or
+`latest`. It also accepts archived sessions. The command refuses linked raw
+trace or transcript evidence instead of reading a file outside the session.
+It makes no model or network request and writes no session data. An unchanged
+session produces the same report each time.
 
 ### Inspect usage
 
@@ -948,7 +978,7 @@ The result prints the immutable full ID, short ID, label, status, path, and a
 or piped use never opens the selector; an explicit `--select` then stops with
 an error.
 
-For `status`, `show`, and `usage`, Yuj chooses in this order:
+For `status`, `show`, `export`, and `usage`, Yuj chooses in this order:
 
 1. the active session for the current repository
 2. the newest session for the current repository
