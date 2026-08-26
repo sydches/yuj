@@ -186,8 +186,10 @@ cell result.
 Code mode and deferred tool loading are alternative compact surfaces. A
 configuration that enables both is rejected.
 
-Cells run model-written Python inside the selected shell sandbox. They cannot
-start background commands and stop at the whole-cell timeout. Inner calls keep
+Cells run model-written Python under the resolved command policy. An explicit
+`none` choice runs the cell as the Yuj account; every requested sandbox fails
+closed if it cannot start. Cells cannot start background commands and stop at
+the whole-cell timeout. Inner calls keep
 the normal filters, redaction, result envelope, ignore rules, permissions, and
 trace behavior. See
 [Configuration](configuration.html#run-a-sandboxed-python-cell) for the two

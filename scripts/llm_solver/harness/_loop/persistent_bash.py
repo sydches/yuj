@@ -21,6 +21,7 @@ from ..sandbox import (
     get_persistent_runner,
     set_persistent_runner,
 )
+from ..sandbox.policy import sandbox_execution_kwargs
 
 if TYPE_CHECKING:
     from ..loop import Session
@@ -34,7 +35,7 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
 
     Eligibility (all required):
       - YUJ_PERSISTENT_BASH != "0" (default on; set to "0" to disable)
-      - cfg.sandbox_bash is true
+      - the centrally resolved execution backend is bwrap
       - container_mode() is None (i.e. legacy bwrap mode, not ambient
         or docker-exec — those use per-call subprocess.run)
       - cfg.bwrap_bin exists on disk
@@ -43,9 +44,10 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
     """
     if os.environ.get("YUJ_PERSISTENT_BASH", "1") == "0":
         return None
-    if not session.cfg.sandbox_bash:
+    execution = sandbox_execution_kwargs(session.cfg)
+    if not execution["sandbox"]:
         return None
-    if getattr(session.cfg, "sandbox_backend", "bwrap") != "bwrap":
+    if execution["sandbox_backend"] != "bwrap":
         return None
     if container_mode() is not None:
         return None
@@ -60,7 +62,7 @@ def maybe_install_persistent_bash(session: "Session") -> "PersistentBashSession 
             session.cwd, session.cfg, session._ignore_policy,
         ),
         readable_paths=_bash_readable_paths(session.cfg),
-        sandbox_required=getattr(session.cfg, "sandbox_required", False),
+        sandbox_required=True,
         effective_env=session._effective_env,
         allow_login_shell=session._allow_login_shell,
     )

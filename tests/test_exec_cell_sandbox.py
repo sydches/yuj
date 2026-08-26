@@ -11,7 +11,7 @@ from scripts.llm_solver.harness.tools import dispatch
 
 
 BWRAP = Path("/usr/bin/bwrap")
-pytestmark = pytest.mark.skipif(
+requires_bwrap = pytest.mark.skipif(
     not BWRAP.is_file(),
     reason="bwrap is required for exec_cell sandbox acceptance checks",
 )
@@ -55,6 +55,7 @@ def _cfg(**overrides):
         ),
     ],
 )
+@requires_bwrap
 def test_exec_cell_blocks_docs_sandbox_escape_attempts(
     tmp_path: Path, source: str, target_kind: str,
 ):
@@ -73,6 +74,7 @@ def test_exec_cell_blocks_docs_sandbox_escape_attempts(
     assert not target.exists()
 
 
+@requires_bwrap
 def test_exec_cell_allows_task_directory_write(tmp_path: Path):
     result = dispatch(
         "exec_cell",
@@ -90,6 +92,7 @@ def test_exec_cell_allows_task_directory_write(tmp_path: Path):
     assert (tmp_path / "inside.txt").read_text() == "inside"
 
 
+@requires_bwrap
 def test_exec_cell_timeout_bounds_model_code(tmp_path: Path):
     started = time.monotonic()
     result = dispatch(
@@ -103,6 +106,7 @@ def test_exec_cell_timeout_bounds_model_code(tmp_path: Path):
     assert elapsed < 5
 
 
+@requires_bwrap
 def test_exec_cell_timeout_bounds_inner_calls(tmp_path: Path):
     started = time.monotonic()
     result = dispatch(
@@ -116,12 +120,15 @@ def test_exec_cell_timeout_bounds_inner_calls(tmp_path: Path):
     assert elapsed < 5
 
 
-def test_exec_cell_refuses_unsandboxed_execution(tmp_path: Path):
+def test_exec_cell_uses_explicit_unsandboxed_execution(tmp_path: Path):
     result = dispatch(
         "exec_cell",
-        {"source": "print('must not run')"},
+        {"source": "print('explicit host execution')"},
         cwd=str(tmp_path),
-        cfg=_cfg(sandbox_bash=False),
+        cfg=_cfg(
+            sandbox_backend="none",
+            sandbox_bash=False,
+            sandbox_required=False,
+        ),
     )
-    assert "requires the shell sandbox" in result
-    assert "must not run" not in result
+    assert result.strip() == "explicit host execution"

@@ -541,10 +541,13 @@ def test_setup_saves_permission_preset_in_machine_local_config(
         "--force",
     ]) == 0
 
-    assert config_path.read_text().endswith(
+    config_text = config_path.read_text()
+    assert (
         "[assistant]\n"
         'permission_preset = "read-only"\n'
-    )
+    ) in config_text
+    assert "[sandbox]\n" in config_text
+    assert 'backend = "bwrap"\n' in config_text
 
 
 @pytest.mark.parametrize(

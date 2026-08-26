@@ -34,7 +34,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj logout` | Remove one provider-scoped credential. |
 | `yuj config` | Validate and explain the resolved settings without model work. |
 | `yuj models` | List models from the selected service. |
-| `yuj doctor` | Check the settings, model connection, Git, and `bwrap`. |
+| `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
 | `yuj code` | Start a coding session. |
 | `yuj run` | Run the same command as `yuj code`. |
@@ -73,6 +73,11 @@ Human output shows each effective value and its winning source layer. JSON
 output uses the stable `yuj.config-inspection` schema version 1. Secret and
 environment-derived values are redacted in both modes. The command performs
 no model request and writes no session artifacts.
+
+The `selection.sandbox` object reports the platform's supported, installed,
+available, and unavailable backends, the configured choice, and the
+capability-resolved backend. It does not start a sandbox. Use `doctor` or
+`code --dry-run` for the operational preflight.
 
 | Option | What it does |
 | --- | --- |
@@ -321,6 +326,8 @@ ignores it. `YUJ_CONFIG_LOCAL` selects an exact alternative path.
 | `--auth METHOD` | With `claude` or `codex`, use `api-key` or `subscription`. |
 | `--model NAME`, `-m NAME` | Save the default model ID. |
 | `--permission-preset NAME` | Save `read-only`, `ask-before-changes`, or `allow-edits` as the assistant default. |
+| `--sandbox NAME` | Save `none`, `auto`, `bwrap`, `docker`, or `podman`. The default is `bwrap`. |
+| `--sandbox-image IMAGE` | Save the already-local image for Docker, Podman, or automatic selection. Required when the setup-time choice resolves to Docker or Podman. |
 | `--base-url URL` | Save the API base address. `custom` requires it. |
 | `--api-key-env NAME` | Save `$ENV:NAME`. Yuj reads the key from that variable when a command starts. |
 | `--api-key VALUE` | Save a key. Claude and Codex keep it in their provider credential file; other service choices keep it in `config.local.toml`. |
@@ -408,17 +415,21 @@ yuj doctor
 - whether a local server offers the selected model
 - whether `config.local.toml` exists
 - whether the current directory is a Git repository root
-- whether `bwrap` is installed
+- the sandbox backends supported, available, and unavailable on this platform
+- the configured sandbox choice and exact operational resolution
 
-`doctor` reports Git and `bwrap` problems as warnings. It checks only whether
-the current directory itself contains `.git`. It does not check whether a
-parent directory is a Git repository.
+An unavailable selected sandbox is an error. `auto` tries installed supported
+backends in platform order and never selects unsandboxed execution. An
+explicit `none` is reported as not engaged. `doctor` checks only whether the
+current directory itself contains `.git`; a missing root is a warning. It
+does not check whether a parent directory is a Git repository.
 
 For an OpenAI-compatible address that starts with `http://localhost`, a
 missing selected model is an error. For other addresses, it is a warning
 because some hosted services do not list every valid model ID.
 
-A coding session can still stop later if its settings require `bwrap`.
+A coding session repeats the same fail-closed startup resolution before model
+or tool work.
 
 | Option | What it does |
 | --- | --- |
@@ -500,8 +511,8 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | Command | What it shows |
 | --- | --- |
 | `yuj current` | The immutable ID, optional label, and status details for the active or newest unarchived session in the current repository. If that repository has no unarchived session, show the newest unarchived saved session. |
-| `yuj status [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
-| `yuj show [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, other times, saved-file path, pinned provider and authentication method, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
+| `yuj status [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, finish reason, latest ended segment's turn count, repository, model, pinned provider and authentication method, selected and resolved sandbox with engagement state, attachment evidence, correction evidence, clarification, approval, process lock, interrupt mark, and next action |
+| `yuj show [SESSION]` | Immutable ID, optional parent ID and label, status, archive state and time, other times, saved-file path, pinned provider and authentication method, selected and resolved sandbox with engagement state, attachment evidence, correction evidence, context mode, task source, clarification, approval, next action, recent turns, and recent trace events |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions --limit N` | Immutable ID, optional label, status, short ID, flags, model, and repository for up to `N` recent unarchived sessions from all repositories; the default is 20 |
 | `yuj sessions --archived` | The same fields for archived sessions, plus the archive time |

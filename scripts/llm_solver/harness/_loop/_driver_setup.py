@@ -7,11 +7,10 @@ sites (``runtime_envelope``, ``pretest_run``, ``session_start``,
 ``session_end``) all stay at the ``solve_task`` call-site so
 state.json projection order is preserved.
 
-For ``_compute_runtime_envelope_fields``: this returns a dict of
+For ``compute_runtime_envelope_fields``: this returns a dict of
 fields ready to splice into ``_emit_trace_event(trace_file,
-"runtime_envelope", **fields)``. The emit + ``sandbox_required`` raise
-stay in ``solve_task`` — both are load-bearing for trace-order and
-loud-failure semantics.
+"runtime_envelope", **fields)``. The central sandbox policy resolves and
+proves the backend before the dict is returned.
 """
 from __future__ import annotations
 
@@ -565,108 +564,41 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
 
     Returns a dict of kwargs ready to splice into
     ``_emit_trace_event(trace_file, "runtime_envelope", **fields)``.
-    The caller emits the event, logs the summary, and applies the
-    ``sandbox_required`` strict-mode raise — all kept at solve_task so
-    the trace-event order and loud-failure surface stay one-shot
-    visible at the dispatch site.
+    The caller emits the event and logs the summary. The central sandbox
+    policy resolves and proves the selected backend before this function
+    returns.
 
     Records the runtime conditions that the rest of the trace is
     conditioned on. Without this, post-hoc analysis cannot distinguish
     a sandboxed run from a silently degraded unsandboxed run.
     """
-    _container_id = os.environ.get("YUJ_CONTAINER", "")
-    _configured_backend = getattr(cfg, "sandbox_backend", "bwrap")
-    _bwrap_present = Path(cfg.bwrap_bin).is_file()
-    _container_runtime: str | None = None
-    _container_image_digest: str | None = None
-    _container_preflight_err: str | None = None
-    # Bwrap PREFLIGHT (Codex S3): actually exec a tiny command in
-    # a fresh user+net namespace and check exit. Catches the
-    # silent class of failures where bwrap is INSTALLED but the
-    # kernel rejects unprivileged userns clone (sysctl
-    # kernel.unprivileged_userns_clone=0, AppArmor profile
-    # changed, seccomp from a parent supervisor). Today these
-    # produce a per-call warning + silent unsandboxed fallback.
-    # Cached at module level: pays once per process. Skipped
-    # entirely in container mode (docker exec doesn't use bwrap).
-    if _configured_backend == "container":
-        if _container_id:
-            raise RuntimeError(
-                "sandbox.backend='container' cannot be combined with legacy "
-                "YUJ_CONTAINER; unset YUJ_CONTAINER or select "
-                "sandbox.backend='bwrap'"
-            )
-        _ambient_unshare_net = None
-        _bwrap_preflight_passed = None
-        _bwrap_preflight_err = None
-        _container_runtime = getattr(
-            cfg, "sandbox_container_runtime", "docker"
-        )
-        if not cfg.sandbox_bash:
-            _sandbox_mode = "none"
-            _sandbox_engaged = False
-        else:
-            from ..sandbox.container_backend import (
-                ContainerBackend,
-                ContainerBackendError,
-            )
+    from ..sandbox.policy import preflight_sandbox
 
-            backend = ContainerBackend(
-                runtime=_container_runtime,
-                image=getattr(cfg, "sandbox_container_image", ""),
-                flags=tuple(
-                    getattr(cfg, "sandbox_container_flags", ()) or ()
-                ),
-            )
-            try:
-                runtime_bin = backend.resolve_runtime(
-                    sandbox_required=bool(
-                        getattr(cfg, "sandbox_required", False)
-                    )
-                )
-                if runtime_bin is None:
-                    _container_preflight_err = (
-                        f"container runtime {_container_runtime!r} is missing"
-                    )
-                else:
-                    _container_image_digest = backend.image_digest(runtime_bin)
-            except ContainerBackendError as exc:
-                _container_preflight_err = str(exc)
-            _sandbox_engaged = bool(_container_image_digest)
-            _sandbox_mode = "container" if _sandbox_engaged else "none"
-    elif _configured_backend != "bwrap":
-        raise ValueError(
-            "sandbox.backend must be 'bwrap' or 'container'; "
-            f"got {_configured_backend!r}"
-        )
-    elif _container_id:
-        _sandbox_mode = "container"
-        _sandbox_engaged = True
-        _bwrap_preflight_passed: bool | None = None
-        _bwrap_preflight_err: str | None = None
-        # Ambient-container egress probe — when YUJ_CONTAINER=ambient,
-        # the model's bash subprocess is wrapped in `unshare -n` if the
-        # outer container has CAP_SYS_ADMIN. Probe once at startup so
-        # the trace records the actual leak-isolation state.
-        if _container_id == "ambient":
-            from .._tools._run_in_sandbox import _probe_ambient_unshare_net
-            _ambient_unshare_net = _probe_ambient_unshare_net()
-        else:
-            _ambient_unshare_net = None
-    else:
-        _ambient_unshare_net = None
-        if _bwrap_present:
-            from ..sandbox import bwrap_preflight as _bwrap_preflight
-            _bwrap_preflight_passed, _bwrap_preflight_err = _bwrap_preflight(cfg.bwrap_bin)
-        else:
-            _bwrap_preflight_passed = False
-            _bwrap_preflight_err = "bwrap binary not present (cfg.bwrap_bin)"
-        if cfg.sandbox_bash and _bwrap_present and _bwrap_preflight_passed:
-            _sandbox_mode = "bwrap"
-            _sandbox_engaged = True
-        else:
-            _sandbox_mode = "none"
-            _sandbox_engaged = False
+    _resolution = preflight_sandbox(cfg)
+    _container_id = _resolution.legacy_container or ""
+    _configured_backend = _resolution.selected
+    _resolved_backend = _resolution.resolved
+    _bwrap_present = "bwrap" in _resolution.capabilities.installed
+    _container_runtime = (
+        _resolved_backend if _resolved_backend in {"docker", "podman"} else None
+    )
+    _container_image_digest = _resolution.container_image_digest
+    _container_preflight_err = None
+    _sandbox_engaged = bool(_resolution.engaged)
+    _sandbox_mode = (
+        "container"
+        if _resolved_backend in {"docker", "podman", "ambient", "docker-exec"}
+        else _resolved_backend
+    )
+    _bwrap_preflight_passed = (
+        True if _resolved_backend == "bwrap" else None
+    )
+    _bwrap_preflight_err = None
+    _ambient_unshare_net = None
+    if _resolved_backend == "ambient":
+        from .._tools._run_in_sandbox import _probe_ambient_unshare_net
+
+        _ambient_unshare_net = _probe_ambient_unshare_net()
     # Record the active guardrail name-to-qualname map so trace replay
     # across overrides is reproducible. This uses the no-override default.
     _gr = build_guardrail_registry()
@@ -744,12 +676,28 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
         session=1,
         sandbox_mode=_sandbox_mode,
         sandbox_engaged=_sandbox_engaged,
-        sandbox_backend=_configured_backend,
+        # sandbox_backend remains the compatibility family field. The two
+        # exact fields below distinguish a request such as auto from its
+        # resolved Docker or Podman backend.
+        sandbox_backend=(
+            "container"
+            if _resolved_backend in {"docker", "podman"}
+            else _resolved_backend
+        ),
+        sandbox_selected=_configured_backend,
+        sandbox_resolved=_resolved_backend,
+        sandbox_explicit_unsandboxed=_resolution.explicit_unsandboxed,
+        sandbox_platform=_resolution.capabilities.platform,
+        sandbox_supported=list(_resolution.capabilities.supported),
+        sandbox_installed=list(_resolution.capabilities.installed),
+        sandbox_available=list(_resolution.capabilities.available),
+        sandbox_unavailable=list(_resolution.capabilities.unavailable),
+        sandbox_backend_executable=_resolution.executable,
         container_runtime=_container_runtime,
         container_image_digest=_container_image_digest,
         container_preflight_error=_container_preflight_err,
-        sandbox_bash_cfg=bool(cfg.sandbox_bash),
-        sandbox_required_cfg=bool(getattr(cfg, "sandbox_required", False)),
+        sandbox_bash_cfg=_resolved_backend != "none",
+        sandbox_required_cfg=_resolved_backend != "none",
         bwrap_bin=cfg.bwrap_bin,
         bwrap_present=_bwrap_present,
         bwrap_preflight_passed=_bwrap_preflight_passed,

@@ -216,7 +216,10 @@ def test_assistant_run_persists_and_strictly_reuses_worktree(tmp_path):
     repo = _repo(tmp_path)
     assist_root = tmp_path / "assist"
     overlay = tmp_path / "assistant-worktree.toml"
-    overlay.write_text('[runtime]\nworktree = "auto"\n')
+    overlay.write_text(
+        '[runtime]\nworktree = "auto"\n'
+        '\n[sandbox]\nbackend = "none"\n'
+    )
     store = SessionStore(assist_root)
     record = create_session(
         store,

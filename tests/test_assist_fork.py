@@ -180,7 +180,10 @@ def _source_session(
     )
     artifact_dir = record.artifact_path
     provider = artifact_dir / "provider.toml"
-    provider.write_text(f'[runtime]\nworktree = "{worktree_mode}"\n')
+    provider.write_text(
+        f'[runtime]\nworktree = "{worktree_mode}"\n'
+        '\n[sandbox]\nbackend = "none"\n'
+    )
     store.update_session_config_paths(record.session_id, [provider])
     record = store.get_session(record.session_id)
     assert record is not None

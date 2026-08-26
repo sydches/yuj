@@ -283,7 +283,11 @@ def test_installed_runner_binds_client_to_session_record_id(tmp_path: Path) -> N
         system_prompt_path=None,
         config_paths=[],
     )
-    cfg = make_config(runtime_mode="assistant", max_sessions=1)
+    cfg = make_config(
+        runtime_mode="assistant",
+        max_sessions=1,
+        sandbox_backend="none",
+    )
     client = MagicMock()
 
     with (

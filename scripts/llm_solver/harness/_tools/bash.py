@@ -346,6 +346,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
          readable_paths: tuple[str, ...] = (),
          sandbox_backend: str = "bwrap",
          container_runtime: str = "docker",
+         container_runtime_bin: str = "",
          container_image: str = "",
          container_flags: tuple[str, ...] = (),
          effective_env=None,
@@ -357,11 +358,9 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     backend, it runs in one no-network Docker/Podman container with ``cwd``
     mounted at the identical absolute path.
 
-    If bwrap is unavailable, falls back to plain `subprocess.run(shell=True,
-    cwd=cwd)`. The fallback is logged once per process so the degradation
-    is visible, not silent. If `sandbox_required=True`, the same condition
-    raises RuntimeError instead — strict mode for runs whose research
-    validity depends on sandboxing.
+    A selected sandbox backend must be available. Missing sandbox machinery
+    fails closed; host execution occurs only when the resolved policy is the
+    explicit ``none`` choice and the caller supplies ``sandbox=False``.
     """
     # In-process fast path for whitelisted trivial reads (cat / head)
     # that would otherwise round-trip through bwrap+bash. Only when
@@ -408,6 +407,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             readable_paths=readable_paths,
             sandbox_backend=sandbox_backend,
             container_runtime=container_runtime,
+            container_runtime_bin=container_runtime_bin,
             container_image=container_image,
             container_flags=container_flags,
             effective_env=effective_env,

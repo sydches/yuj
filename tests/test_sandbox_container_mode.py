@@ -152,16 +152,15 @@ def test_legacy_bwrap_mode_still_hard_fails_when_missing(monkeypatch, tmp_path):
     assert rc is None  # exception path returns None for exit code
 
 
-def test_legacy_bwrap_mode_degrades_without_required(monkeypatch, tmp_path):
-    """When sandbox_required=False, missing bwrap falls back to
-    unsandboxed subprocess (legacy log-and-degrade behavior)."""
+def test_selected_bwrap_never_degrades_without_required(monkeypatch, tmp_path):
+    """A selected backend cannot turn into implicit host execution."""
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
     out, rc, _ = _run_in_sandbox(
-        "echo degraded-but-running", cwd=str(tmp_path), timeout=10,
+        "echo must-not-run", cwd=str(tmp_path), timeout=10,
         sandbox=True, bwrap_bin=NONEXISTENT_BWRAP, sandbox_required=False,
     )
-    assert rc == 0
-    assert "degraded-but-running" in out
+    assert rc is None
+    assert "Refusing to substitute another backend or run unsandboxed" in out
 
 
 # ----- File ops bypass the sandbox dispatch entirely -----

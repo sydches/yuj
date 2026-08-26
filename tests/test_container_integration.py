@@ -19,9 +19,7 @@ from scripts.llm_solver.harness._loop.persistent_bash import (
 )
 from scripts.llm_solver.harness._tools._run_in_sandbox import _run_in_sandbox
 from scripts.llm_solver.harness.lsp_support import build_lsp_sandbox_argv
-from scripts.llm_solver.harness.sandbox.container_backend import (
-    ContainerBackend, ContainerRuntimeUnavailable,
-)
+from scripts.llm_solver.harness.sandbox.container_backend import ContainerBackend
 
 
 IMAGE = "local/yuj-fixture:latest"
@@ -47,7 +45,9 @@ container_flags = ["--memory", "2g", "--pids-limit=64"]
 """.strip()
     )
     configured = load_config(user_config=overlay)
-    assert configured.sandbox_backend == "container"
+    # The legacy shared-container spelling migrates to the exact named
+    # runtime so provenance cannot hide Docker versus Podman.
+    assert configured.sandbox_backend == "podman"
     assert configured.sandbox_container_runtime == "podman"
     assert configured.sandbox_container_image == "local/task:sealed"
     assert configured.sandbox_container_flags == (
@@ -103,7 +103,7 @@ def test_run_in_sandbox_executes_container_argv_without_shell(
     assert (out, exit_code, timed_out) == ("container-ok\n", 0, False)
 
 
-def test_missing_container_runtime_fails_closed_or_explicitly_degrades(
+def test_missing_container_runtime_always_fails_closed_when_selected(
     monkeypatch, tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
@@ -120,12 +120,13 @@ def test_missing_container_runtime_fails_closed_or_explicitly_degrades(
     assert strict[1:] == (None, False)
     assert "runtime 'docker' is missing" in strict[0]
 
-    degraded = _run_in_sandbox(
-        "printf degraded", cwd=str(tmp_path), timeout=10, sandbox=True,
+    optional_flag = _run_in_sandbox(
+        "printf must-not-run", cwd=str(tmp_path), timeout=10, sandbox=True,
         bwrap_bin=MISSING_BWRAP, sandbox_required=False,
         sandbox_backend="container", container_image=IMAGE,
     )
-    assert degraded == ("degraded", 0, False)
+    assert optional_flag[1:] == (None, False)
+    assert "refusing to run the command unsandboxed" in optional_flag[0]
 
 
 def test_first_class_container_rejects_legacy_container_mode(
@@ -287,11 +288,11 @@ def test_required_missing_runtime_stops_before_the_model(
     (tmp_path / "prompt.txt").write_text("must not run")
     client = MagicMock()
 
-    def unavailable(self, *, sandbox_required):
-        raise ContainerRuntimeUnavailable("runtime missing in test")
-
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
-    monkeypatch.setattr(ContainerBackend, "resolve_runtime", unavailable)
+    monkeypatch.setattr(
+        "scripts.llm_solver.harness.sandbox.policy.shutil.which",
+        lambda _name: None,
+    )
     cfg = make_config(
         max_sessions=1,
         sandbox_bash=True,
@@ -300,7 +301,7 @@ def test_required_missing_runtime_stops_before_the_model(
         sandbox_container_image=IMAGE,
     )
 
-    with pytest.raises(RuntimeError, match="runtime missing in test"):
+    with pytest.raises(RuntimeError, match="'docker'.*not installed"):
         solve_task(tmp_path, cfg, client)
     client.chat.assert_not_called()
 
@@ -345,6 +346,7 @@ def test_solve_task_records_container_provenance_on_every_session_start(
         "sandbox_mode": "container",
         "sandbox_engaged": True,
         "sandbox_backend": "container",
+        "sandbox_backend_executable": "/private/host/bin/docker",
         "container_runtime": "docker",
         "container_image_digest": DIGEST,
         "container_preflight_error": None,
@@ -387,6 +389,10 @@ def test_solve_task_records_container_provenance_on_every_session_start(
         if line.strip()
     ]
     start = next(event for event in events if event["event"] == "session_start")
+    envelope = next(
+        event for event in events if event["event"] == "runtime_envelope"
+    )
+    assert "sandbox_backend_executable" not in envelope
     assert start["sandbox_backend"] == "container"
     assert start["container_runtime"] == "docker"
     assert start["container_image_digest"] == DIGEST

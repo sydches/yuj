@@ -23,6 +23,11 @@ from .harness.worktree_runtime import (
     create_session_worktree,
     inspect_session_worktree,
 )
+from .harness.sandbox.policy import (
+    SandboxResolutionError,
+    bind_sandbox_resolution,
+    preflight_sandbox,
+)
 from .models import resolve_model
 from .server import LlamaClient, load_profile
 from .server.request_controls import THINKING_LEVELS
@@ -276,15 +281,23 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(user_config=args.config, overrides=overrides)
     require_runtime_mode(cfg, expected="measurement", caller="scripts.llm_solver")
+    try:
+        sandbox_resolution = preflight_sandbox(cfg)
+    except SandboxResolutionError as exc:
+        log.error("Sandbox startup failed before model contact: %s", exc)
+        return 2
+    cfg = bind_sandbox_resolution(cfg, sandbox_resolution)
     started_at = datetime.now(timezone.utc).isoformat()
 
     # Echo resolved config for every run (not just --dry-run): reproducibility.
     log.info(
         "Config: model=%s ctx=%d max_turns=%d max_sessions=%d tool_desc=%s "
-        "edit_format=%s variant=%s",
+        "edit_format=%s variant=%s sandbox_selected=%s sandbox_resolved=%s",
         cfg.model, cfg.context_size, cfg.max_turns, cfg.max_sessions,
         cfg.tool_desc, cfg.tools_edit_format or "profile",
         cfg.variant_name or "(none)",
+        sandbox_resolution.selected,
+        sandbox_resolution.resolved,
     )
 
     # Capture a preliminary run envelope before dry-run can return. Real

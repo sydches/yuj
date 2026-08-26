@@ -55,11 +55,9 @@ def bwrap_preflight(bwrap_bin: str) -> tuple[bool, str | None]:
     keyed by the bwrap_bin path: a typical run set restarts the harness
     per task, so the first call pays once and the rest hit the cache.
 
-    Caller decides what to do with the result. solve_task uses this to
-    upgrade the silent per-call fall-back ("bwrap missing → run
-    unsandboxed, log warning, hope") into a loud session-start fail
-    that surfaces the broken sandbox before any pretest output pollutes
-    the trace.
+    The central sandbox policy turns a failed named-bwrap result into a
+    startup error. Automatic selection may try another installed sandbox,
+    but no path degrades to host execution.
     """
     cached = _BWRAP_PREFLIGHT_CACHE.get(bwrap_bin)
     if cached is not None:

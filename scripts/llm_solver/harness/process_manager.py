@@ -99,6 +99,7 @@ def build_background_sandbox_argv(
     sandbox: bool = True,
     sandbox_backend: str = "bwrap",
     container_runtime: str = "docker",
+    container_runtime_bin: str = "",
     container_image: str = "",
     container_flags: tuple[str, ...] = (),
     effective_env: Mapping[str, str] | None = None,
@@ -138,16 +139,18 @@ def build_background_sandbox_argv(
             image=container_image,
             flags=container_flags,
         )
-        runtime_bin = backend.resolve_runtime(sandbox_required=sandbox_required)
-        if runtime_bin is None:
-            return explicit(shell_argv)
+        runtime_bin = (
+            container_runtime_bin
+            or backend.resolve_runtime(sandbox_required=True)
+        )
+        assert runtime_bin is not None
         return backend.build_argv(
             command,
             cwd,
             runtime_bin=runtime_bin,
             unreadable_paths=unreadable_paths,
             readable_paths=readable_paths,
-            sandbox_required=sandbox_required,
+            sandbox_required=True,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
         )
@@ -229,6 +232,7 @@ class ProcessManager:
         sandbox: bool = True,
         sandbox_backend: str = "bwrap",
         container_runtime: str = "docker",
+        container_runtime_bin: str = "",
         container_image: str = "",
         container_flags: tuple[str, ...] = (),
         effective_env: Mapping[str, str] | None = None,
@@ -249,6 +253,7 @@ class ProcessManager:
                 sandbox=sandbox,
                 sandbox_backend=sandbox_backend,
                 container_runtime=container_runtime,
+                container_runtime_bin=container_runtime_bin,
                 container_image=container_image,
                 container_flags=container_flags,
                 effective_env=effective_env,

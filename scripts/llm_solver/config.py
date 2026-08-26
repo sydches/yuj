@@ -432,12 +432,20 @@ class Config:
     # executes model-written Python inside the selected fail-closed sandbox.
     tools_exec_cell_enabled: bool = False
     tools_exec_cell_timeout: int = 30
-    # First-class shell sandbox backend. Container mode creates one ephemeral
-    # Docker/Podman container per command and preserves the absolute cwd.
+    # One user-facing sandbox choice: none, auto, bwrap, docker, or podman.
+    # Startup pins auto and named choices into sandbox_resolved_backend before
+    # any model request or model-command execution.
     sandbox_backend: str = "bwrap"
     sandbox_container_runtime: str = "docker"
     sandbox_container_image: str = ""
     sandbox_container_flags: tuple[str, ...] = ()
+    sandbox_resolved_backend: str = ""
+    sandbox_platform: str = ""
+    sandbox_supported_backends: tuple[str, ...] = ()
+    sandbox_installed_backends: tuple[str, ...] = ()
+    sandbox_backend_executable: str = ""
+    sandbox_container_image_digest: str = ""
+    sandbox_legacy_container: str = ""
     # Explicit environment passed only to sandboxed/model-command children.
     # Provider clients and the harness process retain their host environment.
     sandbox_env_inherit: str = "core"
@@ -828,6 +836,9 @@ _OVERRIDE_SETTING_PATHS: dict[str, SettingPath] = {
     "require_intent": ("loop", "require_intent"),
     "rumination_nudge_threshold": ("loop", "rumination_nudge_threshold"),
     "runtime_mode": ("runtime", "mode"),
+    "sandbox_backend": ("sandbox", "backend"),
+    "sandbox_container_image": ("sandbox", "container_image"),
+    "sandbox_container_flags": ("sandbox", "container_flags"),
     "thinking_level": ("model", "thinking_level"),
     "tool_desc": ("experiment", "tool_desc"),
     "tools_edit_format": ("tools", "edit_format"),
@@ -843,6 +854,119 @@ def _user_paths(
     if isinstance(user_config, (str, Path)):
         return [Path(user_config)]
     return [Path(path) for path in user_config]
+
+
+def _normalize_sandbox_settings(
+    data: dict[str, object],
+    provenance: dict[SettingPath, ConfigSource],
+) -> None:
+    """Migrate legacy sandbox settings into the one canonical backend leaf."""
+    sandbox = data.setdefault("sandbox", {})
+    tools = data.setdefault("tools", {})
+    if not isinstance(sandbox, dict) or not isinstance(tools, dict):
+        raise ValueError("config error: sandbox and tools must be tables.")
+
+    backend_path = ("sandbox", "backend")
+    backend = sandbox.get("backend", "bwrap")
+    backend_source = provenance.get(backend_path)
+    if backend_source is None:
+        backend_source = ConfigSource(
+            "checked-in-defaults", "defaults", "config.toml", 0, True
+        )
+
+    legacy_paths = [
+        path
+        for path in (
+            ("tools", "sandbox_bash"),
+            ("tools", "sandbox_required"),
+        )
+        if path[1] in tools
+    ]
+    legacy_sources = [provenance[path] for path in legacy_paths]
+    if legacy_sources:
+        legacy_source = max(legacy_sources, key=lambda source: source.order)
+        if legacy_source.order >= backend_source.order:
+            bash_value = tools.get("sandbox_bash", True)
+            required_value = tools.get("sandbox_required", True)
+            if not isinstance(bash_value, bool) or not isinstance(
+                required_value, bool
+            ):
+                raise ValueError(
+                    "config error: legacy sandbox settings must be booleans."
+                )
+            if (bash_value, required_value) == (True, True):
+                legacy_backend = "bwrap"
+            elif (bash_value, required_value) == (False, False):
+                legacy_backend = "none"
+            else:
+                raise ValueError(
+                    "config error: legacy sandbox settings must be "
+                    "true/true for required sandboxing or false/false for "
+                    "explicit unsandboxed execution. Optional fallback is "
+                    "no longer supported."
+                )
+            if legacy_source.order == backend_source.order:
+                backend_is_sandboxed = backend in {
+                    "auto", "bwrap", "container", "docker", "podman",
+                }
+                if (legacy_backend == "none") == backend_is_sandboxed:
+                    raise ValueError(
+                        "config error: sandbox.backend contradicts legacy "
+                        "tools.sandbox_bash and tools.sandbox_required in "
+                        "the same layer."
+                    )
+            else:
+                backend = legacy_backend
+                apply_resolved_value(
+                    data,
+                    provenance,
+                    backend_path,
+                    backend,
+                    source=legacy_source,
+                )
+                sandbox = data["sandbox"]  # type: ignore[assignment]
+
+        # These names are accepted only as migration inputs. Do not leave
+        # stale, apparently effective boolean settings in config inspection.
+        for path in legacy_paths:
+            tools.pop(path[1], None)
+            provenance.pop(path, None)
+
+    runtime_path = ("sandbox", "container_runtime")
+    runtime_source = provenance.get(runtime_path)
+    if backend == "container":
+        runtime = sandbox.get("container_runtime", "docker")
+        if runtime not in {"docker", "podman"}:
+            raise ValueError(
+                "config error: legacy sandbox.container_runtime must be "
+                f"'docker' or 'podman', got {runtime!r}."
+            )
+        source = provenance.get(backend_path, backend_source)
+        apply_resolved_value(
+            data,
+            provenance,
+            backend_path,
+            runtime,
+            source=source,
+        )
+        backend = runtime
+    elif runtime_source is not None:
+        current_backend_source = provenance.get(backend_path, backend_source)
+        if runtime_source.order >= current_backend_source.order:
+            raise ValueError(
+                "config error: sandbox.container_runtime is a legacy setting "
+                "that may be combined only with sandbox.backend='container'. "
+                "Select sandbox.backend='docker' or 'podman' directly."
+            )
+
+    from .harness.sandbox.policy import SANDBOX_CHOICES
+
+    if not isinstance(backend, str) or backend not in SANDBOX_CHOICES:
+        allowed = ", ".join(sorted(SANDBOX_CHOICES))
+        raise ValueError(
+            f"config error: sandbox.backend must be one of {allowed}, "
+            f"got {backend!r}."
+        )
 
 
 def resolve_config(
@@ -900,6 +1024,7 @@ def resolve_config(
             )
 
     expanded, environment_references = expand_environment_references(data)
+    _normalize_sandbox_settings(expanded, provenance)
     resolved_layers = (*layered.layers, command_line_source)
     try:
         resolved_layers = expand_assistant_permission_preset(
@@ -1004,5 +1129,10 @@ def dump_config(cfg: Config) -> dict:
     snapshot = asdict(cfg)
     if not snapshot.get("permissions_preset_rules"):
         snapshot.pop("permissions_preset_rules", None)
+    # Startup-only routing details are not user settings or portable run
+    # provenance. Keep the selected/resolved backend and image digest, but do
+    # not save a host executable path or legacy outer-container identifier.
+    snapshot.pop("sandbox_backend_executable", None)
+    snapshot.pop("sandbox_legacy_container", None)
     redacted, _changed, _reasons = redact_config_value(snapshot)
     return redacted  # type: ignore[return-value]

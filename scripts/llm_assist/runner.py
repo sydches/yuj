@@ -29,6 +29,11 @@ from ..llm_solver.harness.corrections import (
 )
 from ..llm_solver.harness._loop.model_role_runtime import build_model_role_runtime
 from ..llm_solver.harness.loop import _load_trace_events
+from ..llm_solver.harness.sandbox.policy import (
+    SandboxResolution,
+    bind_sandbox_resolution,
+    preflight_sandbox,
+)
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
     create_session_worktree,
@@ -290,6 +295,9 @@ def run_session(
     if auth_store is not None:
         auth_store.require_outside_target(Path(record.cwd))
     cfg = _protect_auth_environment(cfg, auth_binding, store=auth_store)
+    sandbox_resolution = preflight_sandbox(cfg)
+    cfg = bind_sandbox_resolution(cfg, sandbox_resolution)
+    _record_sandbox_provenance(record, sandbox_resolution)
     profile = _load_profile(cfg)
     stored_images = load_session_images(artifact_dir)
     if stored_images:
@@ -999,6 +1007,58 @@ def _write_session_metadata(
         "worktree_base_commit": record.worktree_base_commit,
     }
     (artifact_dir / "session.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def _record_sandbox_provenance(
+    record: SessionRecord,
+    resolution: SandboxResolution,
+) -> None:
+    """Merge the pre-model sandbox resolution into assistant session metadata."""
+    path = record.artifact_path / "session.json"
+    try:
+        metadata = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        _write_session_metadata(record)
+        metadata = json.loads(path.read_text())
+    metadata["sandbox"] = resolution.as_dict()
+    path.write_text(json.dumps(metadata, indent=2) + "\n")
+
+
+def session_sandbox_provenance(artifact_dir: Path) -> dict[str, object] | None:
+    """Return the latest trace-backed sandbox identity for status commands."""
+    events = _load_trace_events(Path(artifact_dir) / ".trace.jsonl")
+    for event in reversed(events):
+        if event.get("event") != "session_start":
+            continue
+        if "sandbox_resolved" not in event:
+            continue
+        return {
+            "selected": event.get("sandbox_selected", event.get("sandbox_backend")),
+            "resolved": event.get("sandbox_resolved", event.get("sandbox_backend")),
+            "engaged": bool(event.get("sandbox_engaged")),
+            "explicit_unsandboxed": bool(
+                event.get("sandbox_explicit_unsandboxed", False)
+            ),
+        }
+    for event in reversed(events):
+        if event.get("event") != "runtime_envelope":
+            continue
+        return {
+            "selected": event.get("sandbox_selected", event.get("sandbox_backend")),
+            "resolved": event.get("sandbox_resolved", event.get("sandbox_backend")),
+            "engaged": bool(event.get("sandbox_engaged")),
+            "explicit_unsandboxed": bool(
+                event.get("sandbox_explicit_unsandboxed", False)
+            ),
+        }
+    try:
+        metadata = json.loads(
+            (Path(artifact_dir) / "session.json").read_text()
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    sandbox = metadata.get("sandbox")
+    return sandbox if isinstance(sandbox, dict) else None
 
 
 def _record_auth_binding(record: SessionRecord) -> AuthBinding | None:

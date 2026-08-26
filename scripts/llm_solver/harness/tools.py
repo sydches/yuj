@@ -129,22 +129,16 @@ def _dispatch_bash(args, cwd, cfg):
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
         effective_env, allow_login_shell = _effective_command_environment(cfg)
+    from .sandbox.policy import sandbox_execution_kwargs
+
     return bash(
-        args["cmd"], cwd=cwd, timeout=cfg.bash_timeout, sandbox=cfg.sandbox_bash,
+        args["cmd"], cwd=cwd, timeout=cfg.bash_timeout,
         bwrap_bin=cfg.bwrap_bin,
-        sandbox_required=getattr(cfg, "sandbox_required", False),
         unreadable_paths=_bash_unreadable_paths(cwd, cfg),
         readable_paths=_bash_readable_paths(cfg),
-        sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
-        container_runtime=getattr(
-            cfg, "sandbox_container_runtime", "docker"
-        ),
-        container_image=getattr(cfg, "sandbox_container_image", ""),
-        container_flags=tuple(
-            getattr(cfg, "sandbox_container_flags", ()) or ()
-        ),
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
+        **sandbox_execution_kwargs(cfg),
     )
 
 

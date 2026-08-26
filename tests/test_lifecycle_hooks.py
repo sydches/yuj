@@ -272,6 +272,8 @@ def test_timeout_and_other_nonzero_exit_fail_open_and_trace(
 def test_pre_tool_block_never_enters_handler_and_is_model_visible(
     tmp_path: Path,
 ) -> None:
+    task = tmp_path / "task"
+    task.mkdir()
     script = _stub_script(tmp_path)
     marker = tmp_path / "runtime-block.jsonl"
     cfg = make_config(
@@ -319,7 +321,7 @@ def test_pre_tool_block_never_enters_handler_and_is_model_visible(
         client,
         "system",
         "task",
-        str(tmp_path),
+        str(task),
         trace_file=trace,
         session_number=2,
     )
@@ -352,6 +354,8 @@ def test_pre_tool_block_never_enters_handler_and_is_model_visible(
 def test_pre_tool_rewrite_precedes_validation_and_post_tool_annotates(
     tmp_path: Path,
 ) -> None:
+    task = tmp_path / "task"
+    task.mkdir()
     script = _stub_script(tmp_path)
     marker = tmp_path / "runtime.jsonl"
     command = [sys.executable, str(script), "runtime", str(marker)]
@@ -393,7 +397,7 @@ def test_pre_tool_rewrite_precedes_validation_and_post_tool_annotates(
         client,
         "system",
         "task",
-        str(tmp_path),
+        str(task),
         trace_file=trace,
         session_number=2,
         artifact_dir=tmp_path / "run-artifacts",
@@ -454,6 +458,8 @@ class _LifecycleClient:
 def test_driver_runs_all_non_tool_lifecycle_events_with_run_directory(
     tmp_path: Path,
 ) -> None:
+    task = tmp_path / "task"
+    task.mkdir()
     script = _stub_script(tmp_path)
     marker = tmp_path / "lifecycle.jsonl"
     command = [sys.executable, str(script), "log", str(marker)]
@@ -474,7 +480,7 @@ def test_driver_runs_all_non_tool_lifecycle_events_with_run_directory(
         patch("scripts.llm_solver.harness.loop._auto_commit"),
         patch.object(Session, "_get_server_ctx", return_value=cfg.context_size),
     ):
-        success = solve_task(tmp_path, cfg, client, initial_prompt="Finish it.")
+        success = solve_task(task, cfg, client, initial_prompt="Finish it.")
 
     assert success is True
     invocations = [
@@ -483,10 +489,10 @@ def test_driver_runs_all_non_tool_lifecycle_events_with_run_directory(
     assert [row["event"] for row in invocations] == [
         "session_start", "pre_model", "done", "session_end",
     ]
-    assert all(row["run_dir"] == str(tmp_path) for row in invocations)
-    assert all(row["run_id"] == tmp_path.name for row in invocations)
+    assert all(row["run_dir"] == str(task) for row in invocations)
+    assert all(row["run_id"] == task.name for row in invocations)
     trace_events = [
-        json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()
+        json.loads(line) for line in trace_path(task).read_text().splitlines()
     ]
     hooks = [row for row in trace_events if row.get("event") == "hook"]
     assert [row["hook_event"] for row in hooks] == [

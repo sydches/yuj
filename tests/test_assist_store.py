@@ -1846,7 +1846,8 @@ def test_smoke_command_fails_when_repo_not_fixed(tmp_path, capsys):
         store_obj.update_session(record.session_id, status="completed", last_finish_reason="stop")
         return True, "stop"
 
-    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+    with patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
+            patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
             patch("scripts.llm_assist.__main__.resolve_smoke_model", return_value=("exact-model", ["exact-model"])), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
@@ -1886,7 +1887,8 @@ def test_smoke_command_succeeds_when_repo_fixed_and_tests_pass(tmp_path, capsys)
         store_obj.update_session(record.session_id, status="completed", last_finish_reason="stop")
         return True, "stop"
 
-    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+    with patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
+            patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
             patch("scripts.llm_assist.__main__.resolve_smoke_model", return_value=("exact-model", ["exact-model"])), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
@@ -1933,7 +1935,8 @@ def test_smoke_command_fails_when_pending_approval_exists(tmp_path, capsys):
         store_obj.update_session(record.session_id, status="paused", last_finish_reason="approval_required")
         return False, "approval_required"
 
-    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+    with patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
+            patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
             patch("scripts.llm_assist.__main__.resolve_smoke_model", return_value=("exact-model", ["exact-model"])), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([
@@ -1970,7 +1973,8 @@ def test_smoke_command_bootstraps_repo_and_runs_session(tmp_path, capsys):
         store_obj.update_session(record.session_id, status="completed", last_finish_reason="stop")
         return True, "stop"
 
-    with patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
+    with patch("scripts.llm_assist.__main__.preflight_assistant_startup"), \
+            patch("scripts.llm_assist.__main__.SessionStore", return_value=store), \
             patch("scripts.llm_assist.__main__.resolve_smoke_model", return_value=("exact-model", ["exact-model"])), \
             patch("scripts.llm_assist.__main__.run_session", side_effect=fake_run_session):
         rc = main([

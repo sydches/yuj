@@ -56,6 +56,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "tool_lazy_loading_enabled", "tool_active_limit", "registered_tools",
             "active_tools",
             "loaded_skills",
+            "sandbox_selected", "sandbox_resolved", "sandbox_engaged",
+            "sandbox_explicit_unsandboxed",
             "repo_map_refresh", "repo_map_files", "repo_map_symbols",
             "repo_map_cache_hit", "repo_map_sha256",
         })
@@ -336,6 +338,13 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         frozenset({
             "session", "sandbox_mode", "sandbox_engaged", "sandbox_backend",
             "container_runtime", "container_image_digest",
+        }),
+        frozenset({
+            "sandbox_selected", "sandbox_resolved",
+            "sandbox_explicit_unsandboxed", "sandbox_platform",
+            "sandbox_supported", "sandbox_installed",
+            "sandbox_available", "sandbox_unavailable",
+            "sandbox_backend_executable",
         }),
     ),
     TraceEventSpec("guardrail_init", frozenset({"session_number"})),

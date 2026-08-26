@@ -200,6 +200,7 @@ def run_post_edit_checks(
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
         effective_env, allow_login_shell = _effective_command_environment(cfg)
+    from .sandbox.policy import sandbox_execution_kwargs
 
     for raw_spec in checks:
         spec = parse_post_edit_check_spec(raw_spec)
@@ -222,25 +223,15 @@ def run_post_edit_checks(
                 f"post_edit_check {spec.name!r} has malformed cmd "
                 f"template {template!r}: {e}"
             ) from e
-        # Forward sandbox_required and unreadable_paths so strict-mode
-        # runs don't silently degrade
-        # their post-edit checks to unsandboxed.
+        # Use the same resolved policy and masks as foreground commands.
         out = bash(
             cmd, cwd=cwd, timeout=cfg.post_edit_check_timeout,
-            sandbox=cfg.sandbox_bash, bwrap_bin=cfg.bwrap_bin,
-            sandbox_required=getattr(cfg, "sandbox_required", False),
+            bwrap_bin=cfg.bwrap_bin,
             unreadable_paths=_bash_unreadable_paths(cwd, cfg),
             readable_paths=_bash_readable_paths(cfg),
-            sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
-            container_runtime=getattr(
-                cfg, "sandbox_container_runtime", "docker"
-            ),
-            container_image=getattr(cfg, "sandbox_container_image", ""),
-            container_flags=tuple(
-                getattr(cfg, "sandbox_container_flags", ()) or ()
-            ),
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
+            **sandbox_execution_kwargs(cfg),
         )
         failed = ("[exit code:" in out) or out.startswith("ERROR")
         if not failed:

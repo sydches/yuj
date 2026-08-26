@@ -22,6 +22,7 @@ from ..sandbox import (
     container_mode,
 )
 from ..sandbox.env_policy import build_subprocess_env
+from ..sandbox.policy import sandbox_execution_kwargs
 from ..tool_specs import EXEC_CELL_API_TOOL_NAMES
 
 
@@ -246,11 +247,14 @@ def _build_cell_process(
     allow_login_shell: bool,
 ) -> tuple[list[str], str | None, dict[str, str] | None]:
     """Return argv, subprocess cwd, and host-side env for one cell."""
-    if not bool(getattr(cfg, "sandbox_bash", True)):
-        raise RuntimeError(
-            "exec_cell requires the shell sandbox; tools.sandbox_bash is false"
+    execution = sandbox_execution_kwargs(cfg)
+    if not execution["sandbox"]:
+        return (
+            ["python3", "-u", "-c", _CELL_RUNNER],
+            cwd,
+            build_subprocess_env(effective_env),
         )
-    backend = str(getattr(cfg, "sandbox_backend", "bwrap"))
+    backend = str(execution["sandbox_backend"])
     legacy_mode = container_mode()
     if backend == "container":
         if legacy_mode is not None:
@@ -261,11 +265,14 @@ def _build_cell_process(
         from ..sandbox.container_backend import ContainerBackend
 
         container = ContainerBackend(
-            runtime=getattr(cfg, "sandbox_container_runtime", "docker"),
-            image=getattr(cfg, "sandbox_container_image", ""),
-            flags=tuple(getattr(cfg, "sandbox_container_flags", ()) or ()),
+            runtime=str(execution["container_runtime"]),
+            image=str(execution["container_image"]),
+            flags=tuple(execution["container_flags"]),
         )
-        runtime_bin = container.resolve_runtime(sandbox_required=True)
+        runtime_bin = (
+            str(execution["container_runtime_bin"])
+            or container.resolve_runtime(sandbox_required=True)
+        )
         assert runtime_bin is not None
         return (
             container.build_argv(
@@ -283,7 +290,7 @@ def _build_cell_process(
         )
     if backend != "bwrap":
         raise RuntimeError(
-            "sandbox.backend must be 'bwrap' or 'container'"
+            "resolved sandbox backend must be 'bwrap' or 'container'"
         )
     if legacy_mode == AMBIENT_CONTAINER:
         # The explicitly declared outer container is the filesystem boundary.

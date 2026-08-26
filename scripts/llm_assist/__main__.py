@@ -54,6 +54,14 @@ from ..llm_solver.harness.corrections import (
 )
 from ..llm_solver.harness._loop.interrupted_turn import append_trace_event_fsync
 from ..llm_solver.harness._loop.trace_schema import TRACE_SCHEMA_VERSION
+from ..llm_solver.harness.sandbox.policy import (
+    SANDBOX_CHOICES,
+    SandboxResolutionError,
+    inspect_sandbox_selection,
+    preflight_sandbox,
+    probe_sandbox_capabilities,
+    resolve_sandbox_selection,
+)
 from ._auth import (
     AuthBinding,
     CredentialMissingError,
@@ -89,6 +97,7 @@ from .runner import (
     save_approval_decisions,
     save_approval_request,
     session_compact_summary,
+    session_sandbox_provenance,
     session_trace_tail,
     session_turn_count,
     session_turn_tail,
@@ -326,6 +335,15 @@ def main(argv: list[str] | None = None) -> int:
         choices=ASSISTANT_PERMISSION_PRESET_NAMES,
         help="fixed assistant permission preset to save",
     )
+    setup_parser.add_argument(
+        "--sandbox",
+        choices=sorted(SANDBOX_CHOICES),
+        help="sandbox choice to save (default: bwrap)",
+    )
+    setup_parser.add_argument(
+        "--sandbox-image",
+        help="local image reference for Docker, Podman, or auto",
+    )
     setup_parser.add_argument("--base-url", help="API base URL to save")
     setup_parser.add_argument(
         "--auth",
@@ -378,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     models_parser.set_defaults(func=cmd_models)
 
     doctor_parser = sub.add_parser(
-        "doctor", help="check settings, model service, Git, and bwrap"
+        "doctor", help="check settings, sandbox, model service, and Git"
     )
     doctor_parser.add_argument("--config", "-c", type=Path, action="append", default=[],
                                help="extra TOML settings file; repeat to apply more files")
@@ -836,6 +854,7 @@ def cmd_config(args) -> int:
         resource_report = validate_runtime_resources().to_dict()
         resource_report["root"] = "<yuj-root>"
         references["runtime_resources"] = resource_report
+        sandbox_resolution = inspect_sandbox_selection(resolved.config)
         document = build_inspection_document(
             resolved,
             success=True,
@@ -844,9 +863,41 @@ def cmd_config(args) -> int:
                 "treatment": bool(args.treatment),
                 "context_mode": context_mode,
                 "context_source": "command-line" if args.context else "base",
+                "sandbox": sandbox_resolution.as_dict(),
             },
             references=references,
         )
+    except SandboxResolutionError as exc:
+        if resolved is None:
+            document = build_error_document(str(exc), code="sandbox_unavailable")
+        else:
+            capabilities = probe_sandbox_capabilities(
+                bwrap_bin=resolved.config.bwrap_bin
+            )
+            document = build_inspection_document(
+                resolved,
+                success=False,
+                selection={
+                    "sandbox": {
+                        **capabilities.as_dict(),
+                        "selected": resolved.config.sandbox_backend,
+                        "resolved": None,
+                        "explicit_unsandboxed": False,
+                    },
+                },
+                diagnostics=[{
+                    "level": "error",
+                    "code": "sandbox_unavailable",
+                    "message": str(exc),
+                }],
+            )
+        output = (
+            render_inspection_json(document)
+            if args.json_output
+            else render_inspection_human(document)
+        )
+        sys.stdout.write(output)
+        return 1
     except (Exception, SystemExit) as exc:
         detail = exc.code if isinstance(exc, SystemExit) else exc
         message = sanitize_diagnostic_message(detail, resolved=resolved)
@@ -878,6 +929,19 @@ def cmd_smoke(args) -> int:
     transport_overrides = _transport_overrides_from_args(
         args, auth_binding=auth_binding
     )
+    try:
+        preflight_assistant_startup(
+            config_paths=config_paths,
+            cwd=smoke_root,
+            context_mode=context_mode,
+            requested_model=args.model,
+            config_overrides=transport_overrides,
+            system_prompt_file=args.system_prompt,
+            auth_binding=auth_binding,
+            auth_store=auth_store,
+        )
+    except Exception as exc:
+        raise SystemExit(f"startup preflight failed: {exc}") from exc
     model, served = _resolve_smoke_model_or_exit(
         config_paths,
         requested_model=args.model,
@@ -1245,6 +1309,62 @@ def cmd_setup(args) -> int:
         )
         permission_preset = "" if selected == "none" else selected
     permission_preset = permission_preset or ""
+    sandbox_choice = getattr(args, "sandbox", None)
+    if sandbox_choice is None:
+        sandbox_choice = _prompt_choice(
+            "Sandbox",
+            choices=["bwrap", "auto", "docker", "podman", "none"],
+            default="bwrap",
+        )
+    sandbox_image = str(getattr(args, "sandbox_image", None) or "")
+    if (
+        sandbox_choice in {"docker", "podman"}
+        and not sandbox_image
+        and _is_interactive()
+    ):
+        sandbox_image = _prompt_required("Local sandbox image reference")
+    if sandbox_choice in {"docker", "podman"} and not sandbox_image:
+        raise SystemExit(
+            f"--sandbox-image is required with --sandbox {sandbox_choice}"
+        )
+    capabilities = probe_sandbox_capabilities(bwrap_bin="/usr/bin/bwrap")
+    try:
+        sandbox_resolution = resolve_sandbox_selection(
+            sandbox_choice, capabilities
+        )
+    except SandboxResolutionError as exc:
+        print(f"sandbox_platform: {capabilities.platform}")
+        print(
+            "sandbox_supported: "
+            + (", ".join(capabilities.supported) or "none")
+        )
+        print(
+            "sandbox_installed: "
+            + (", ".join(capabilities.installed) or "none")
+        )
+        print(
+            "sandbox_available: "
+            + (", ".join(capabilities.available) or "none")
+        )
+        print(
+            "sandbox_unavailable: "
+            + (", ".join(capabilities.unavailable) or "none")
+        )
+        print(f"sandbox_selected: {sandbox_choice}")
+        print("sandbox_resolved: unavailable")
+        raise SystemExit(f"sandbox setup failed: {exc}") from exc
+    if (
+        sandbox_resolution.resolved in {"docker", "podman"}
+        and not sandbox_image
+    ):
+        if _is_interactive():
+            sandbox_image = _prompt_required("Local sandbox image reference")
+        else:
+            raise SystemExit(
+                "--sandbox-image is required because --sandbox "
+                f"{sandbox_choice} resolves to "
+                f"{sandbox_resolution.resolved} on this host"
+            )
     preset = dict(_PROVIDER_PRESETS[provider])
     auth_method: str | None = None
     binding: AuthBinding | None = None
@@ -1306,6 +1426,8 @@ def cmd_setup(args) -> int:
         api_key=api_key,
         model=model,
         permission_preset=permission_preset,
+        sandbox=sandbox_choice,
+        sandbox_image=sandbox_image,
     ))
     if binding is not None:
         assert managed_store is not None
@@ -1319,6 +1441,25 @@ def cmd_setup(args) -> int:
     print(f"model: {model}")
     if permission_preset:
         print(f"permission_preset: {permission_preset}")
+    print(f"sandbox_platform: {capabilities.platform}")
+    print(
+        "sandbox_supported: "
+        + (", ".join(capabilities.supported) or "none")
+    )
+    print(
+        "sandbox_installed: "
+        + (", ".join(capabilities.installed) or "none")
+    )
+    print(
+        "sandbox_available: "
+        + (", ".join(capabilities.available) or "none")
+    )
+    print(
+        "sandbox_unavailable: "
+        + (", ".join(capabilities.unavailable) or "none")
+    )
+    print(f"sandbox_selected: {sandbox_resolution.selected}")
+    print(f"sandbox_resolved: {sandbox_resolution.resolved}")
     return 0
 
 
@@ -1441,6 +1582,47 @@ def cmd_doctor(args) -> int:
         print(f"config: fail ({exc})")
 
     if cfg is not None:
+        capabilities = probe_sandbox_capabilities(
+            bwrap_bin=str(getattr(cfg, "bwrap_bin", "/usr/bin/bwrap"))
+        )
+        print(f"sandbox_platform: {capabilities.platform}")
+        print(
+            "sandbox_supported: "
+            + (", ".join(capabilities.supported) or "none")
+        )
+        print(
+            "sandbox_installed: "
+            + (", ".join(capabilities.installed) or "none")
+        )
+        print(
+            "sandbox_available: "
+            + (", ".join(capabilities.available) or "none")
+        )
+        print(
+            "sandbox_unavailable: "
+            + (", ".join(capabilities.unavailable) or "none")
+        )
+        print(
+            "sandbox_selected: "
+            + str(getattr(cfg, "sandbox_backend", "bwrap"))
+        )
+        try:
+            sandbox_resolution = preflight_sandbox(
+                cfg, capabilities=capabilities
+            )
+        except SandboxResolutionError as exc:
+            failures += 1
+            print("sandbox_resolved: unavailable")
+            print(f"sandbox: fail ({exc})")
+        else:
+            print(f"sandbox_resolved: {sandbox_resolution.resolved}")
+            print(
+                "sandbox: ok "
+                f"(engaged={str(bool(sandbox_resolution.engaged)).lower()}, "
+                "explicit_unsandboxed="
+                f"{str(sandbox_resolution.explicit_unsandboxed).lower()})"
+            )
+
         try:
             auth_store = CredentialStore()
             models = _make_client(
@@ -1470,12 +1652,6 @@ def cmd_doctor(args) -> int:
         print("git_repo: ok")
     else:
         print("git_repo: warn (current directory is not a git repo root)")
-
-    bwrap = subprocess.run(["which", "bwrap"], capture_output=True, text=True, check=False)
-    if bwrap.returncode == 0:
-        print(f"bwrap: ok ({bwrap.stdout.strip()})")
-    else:
-        print("bwrap: warn (not found; sandboxed bash may be unavailable)")
 
     return 1 if failures else 0
 
@@ -1705,6 +1881,7 @@ def cmd_status(args) -> int:
         raise SystemExit(f"invalid correction evidence: {exc}") from exc
     lock = store.get_session_lock(record.session_id)
     interrupt = load_interrupt_marker(record.artifact_path)
+    sandbox = session_sandbox_provenance(record.artifact_path)
 
     print(f"session_id: {record.session_id}")
     if record.parent_session_id is not None:
@@ -1723,6 +1900,7 @@ def cmd_status(args) -> int:
     if record.provider:
         print(f"provider: {record.provider}")
         print(f"authentication: {record.auth_method}")
+    _print_sandbox_provenance(sandbox)
     _print_image_evidence(record.artifact_path)
     _print_correction_evidence(correction)
     if approval is not None and approval.get("status") == "pending":
@@ -1804,6 +1982,9 @@ def cmd_show(args) -> int:
     if record.provider:
         print(f"provider: {record.provider}")
         print(f"authentication: {record.auth_method}")
+    _print_sandbox_provenance(
+        session_sandbox_provenance(record.artifact_path)
+    )
     _print_image_evidence(record.artifact_path)
     print(f"context: {record.context_mode}")
     print(f"prompt_source: {record.prompt_source}")
@@ -1883,6 +2064,32 @@ def cmd_show(args) -> int:
     for line in trace_lines:
         print(f"  {line}")
     return 0
+
+
+def _print_sandbox_provenance(
+    sandbox: dict[str, object] | None,
+) -> None:
+    if sandbox is None:
+        print("sandbox_selected: unknown")
+        print("sandbox_resolved: unknown")
+        print("sandbox_engaged: unknown")
+        print("sandbox_explicit_unsandboxed: unknown")
+        return
+    print(f"sandbox_selected: {sandbox.get('selected') or 'unknown'}")
+    print(f"sandbox_resolved: {sandbox.get('resolved') or 'unknown'}")
+    engaged = sandbox.get("engaged")
+    if isinstance(engaged, bool):
+        print(f"sandbox_engaged: {'yes' if engaged else 'no'}")
+    else:
+        print("sandbox_engaged: unknown")
+    explicit = sandbox.get("explicit_unsandboxed")
+    if isinstance(explicit, bool):
+        print(
+            "sandbox_explicit_unsandboxed: "
+            f"{'yes' if explicit else 'no'}"
+        )
+    else:
+        print("sandbox_explicit_unsandboxed: unknown")
 
 
 def _print_image_evidence(artifact_dir: Path) -> None:
@@ -2103,6 +2310,8 @@ def _maybe_offer_first_run_setup(args) -> None:
             api_key_env=None,
             auth=None,
             permission_preset=None,
+            sandbox=None,
+            sandbox_image=None,
             force=False,
         ))
         if rc == 0:
@@ -2156,6 +2365,8 @@ def _render_local_config(
     api_key: str,
     model: str,
     permission_preset: str = "",
+    sandbox: str = "",
+    sandbox_image: str = "",
 ) -> str:
     rendered = (
         "# Generated by `yuj setup`. This file is gitignored.\n"
@@ -2172,6 +2383,16 @@ def _render_local_config(
             "\n[assistant]\n"
             f'permission_preset = "{_toml_escape(permission_preset)}"\n'
         )
+    if sandbox:
+        rendered += (
+            "\n[sandbox]\n"
+            f'backend = "{_toml_escape(sandbox)}"\n'
+        )
+        if sandbox_image:
+            rendered += (
+                "container_image = "
+                f'"{_toml_escape(sandbox_image)}"\n'
+            )
     return rendered
 
 

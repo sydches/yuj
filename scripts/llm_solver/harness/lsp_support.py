@@ -153,7 +153,8 @@ def build_lsp_sandbox_argv(
     unreadable_paths: tuple[str, ...] = (), sandbox_required: bool = True,
     readable_paths: tuple[str, ...] = (),
     sandbox: bool = True, sandbox_backend: str = "bwrap",
-    container_runtime: str = "docker", container_image: str = "",
+    container_runtime: str = "docker", container_runtime_bin: str = "",
+    container_image: str = "",
     container_flags: tuple[str, ...] = (),
     effective_env: Mapping[str, str] | None = None,
     allow_login_shell: bool = False,
@@ -186,18 +187,18 @@ def build_lsp_sandbox_argv(
             image=container_image,
             flags=container_flags,
         )
-        runtime_bin = backend.resolve_runtime(
-            sandbox_required=sandbox_required,
+        runtime_bin = (
+            container_runtime_bin
+            or backend.resolve_runtime(sandbox_required=True)
         )
-        if runtime_bin is None:
-            return explicit(list(command))
+        assert runtime_bin is not None
         return backend.build_argv(
             command_text,
             cwd,
             runtime_bin=runtime_bin,
             unreadable_paths=unreadable_paths,
             readable_paths=readable_paths,
-            sandbox_required=sandbox_required,
+            sandbox_required=True,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
         )
@@ -428,6 +429,7 @@ class LspManager:
         readable_paths: tuple[str, ...] = (),
         sandbox_required: bool = True, sandbox: bool = True,
         sandbox_backend: str = "bwrap", container_runtime: str = "docker",
+        container_runtime_bin: str = "",
         container_image: str = "", container_flags: tuple[str, ...] = (),
         effective_env: Mapping[str, str] | None = None,
         allow_login_shell: bool = False,
@@ -444,6 +446,7 @@ class LspManager:
                 sandbox=sandbox,
                 sandbox_backend=sandbox_backend,
                 container_runtime=container_runtime,
+                container_runtime_bin=container_runtime_bin,
                 container_image=container_image,
                 container_flags=container_flags,
                 effective_env=effective_env,

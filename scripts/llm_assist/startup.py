@@ -49,6 +49,14 @@ class StartupPreflightReport:
     injection_count: int
     stream_rule_count: int
     sandbox_mode: str
+    sandbox_selected: str
+    sandbox_resolved: str
+    sandbox_platform: str
+    sandbox_supported: tuple[str, ...]
+    sandbox_installed: tuple[str, ...]
+    sandbox_available: tuple[str, ...]
+    sandbox_unavailable: tuple[str, ...]
+    sandbox_explicit_unsandboxed: bool
     sandbox_engaged: bool
     network_contacted: bool = False
 
@@ -170,16 +178,6 @@ def preflight_assistant_startup(
             + ", ".join(missing_transforms)
         )
     environment = compute_runtime_envelope_fields(cfg, target)
-    if (
-        getattr(cfg, "sandbox_required", False)
-        and cfg.sandbox_bash
-        and not environment["sandbox_engaged"]
-    ):
-        raise RuntimeError(
-            "sandbox_required=true but the configured sandbox did not pass "
-            "local startup preflight"
-        )
-
     return StartupPreflightReport(
         resource_origin=resources.origin,
         root_resource_count=resources.root_resource_count,
@@ -195,6 +193,16 @@ def preflight_assistant_startup(
         injection_count=len(injections),
         stream_rule_count=len(stream_rules),
         sandbox_mode=str(environment["sandbox_mode"]),
+        sandbox_selected=str(environment["sandbox_selected"]),
+        sandbox_resolved=str(environment["sandbox_resolved"]),
+        sandbox_platform=str(environment["sandbox_platform"]),
+        sandbox_supported=tuple(environment["sandbox_supported"]),
+        sandbox_installed=tuple(environment["sandbox_installed"]),
+        sandbox_available=tuple(environment["sandbox_available"]),
+        sandbox_unavailable=tuple(environment["sandbox_unavailable"]),
+        sandbox_explicit_unsandboxed=bool(
+            environment["sandbox_explicit_unsandboxed"]
+        ),
         sandbox_engaged=bool(environment["sandbox_engaged"]),
     )
 
@@ -215,8 +223,20 @@ def render_startup_preflight(report: StartupPreflightReport) -> str:
         f"Local inputs: {report.project_instruction_count} project docs, "
         f"{report.skill_count} skills, {report.injection_count} injections, "
         f"{report.stream_rule_count} stream rules\n"
-        f"Sandbox: {report.sandbox_mode} "
-        f"(engaged={str(report.sandbox_engaged).lower()})\n"
+        f"Sandbox platform: {report.sandbox_platform}\n"
+        "Sandbox supported: "
+        f"{', '.join(report.sandbox_supported) or 'none'}\n"
+        "Sandbox installed: "
+        f"{', '.join(report.sandbox_installed) or 'none'}\n"
+        "Sandbox available: "
+        f"{', '.join(report.sandbox_available) or 'none'}\n"
+        "Sandbox unavailable: "
+        f"{', '.join(report.sandbox_unavailable) or 'none'}\n"
+        f"Sandbox selected: {report.sandbox_selected}\n"
+        f"Sandbox resolved: {report.sandbox_resolved}\n"
+        f"Sandbox engaged: {str(report.sandbox_engaged).lower()}\n"
+        "Sandbox explicit unsandboxed: "
+        f"{str(report.sandbox_explicit_unsandboxed).lower()}\n"
         "Model network: not contacted\n"
     )
 

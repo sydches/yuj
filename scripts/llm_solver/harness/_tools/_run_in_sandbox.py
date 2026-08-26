@@ -96,6 +96,7 @@ def _run_in_sandbox(
     readable_paths: tuple[str, ...] = (),
     sandbox_backend: str = "bwrap",
     container_runtime: str = "docker",
+    container_runtime_bin: str = "",
     container_image: str = "",
     container_flags: tuple[str, ...] = (),
     effective_env: Mapping[str, str] | None = None,
@@ -164,31 +165,25 @@ def _run_in_sandbox(
                 image=container_image,
                 flags=container_flags,
             )
-            runtime_bin = backend.resolve_runtime(
-                sandbox_required=sandbox_required,
+            runtime_bin = (
+                container_runtime_bin
+                or backend.resolve_runtime(sandbox_required=True)
             )
-            if runtime_bin is None:
-                log.warning(
-                    "sandbox.backend=container but runtime %s is missing — "
-                    "running without sandbox because sandbox_required=false",
-                    container_runtime,
-                )
-                result = _run_host()
-            else:
-                argv = backend.build_argv(
-                    cmd,
-                    cwd,
-                    runtime_bin=runtime_bin,
-                    effective_env=effective_env,
-                    unreadable_paths=unreadable_paths,
-                    readable_paths=readable_paths,
-                    sandbox_required=sandbox_required,
-                    allow_login_shell=allow_login_shell,
-                )
-                result = subprocess.run(
-                    argv, cwd=None,
-                    capture_output=True, text=True, timeout=timeout,
-                )
+            assert runtime_bin is not None
+            argv = backend.build_argv(
+                cmd,
+                cwd,
+                runtime_bin=runtime_bin,
+                effective_env=effective_env,
+                unreadable_paths=unreadable_paths,
+                readable_paths=readable_paths,
+                sandbox_required=True,
+                allow_login_shell=allow_login_shell,
+            )
+            result = subprocess.run(
+                argv, cwd=None,
+                capture_output=True, text=True, timeout=timeout,
+            )
         elif sandbox and sandbox_backend != "bwrap":
             raise RuntimeError(
                 "sandbox.backend must be 'bwrap' or 'container'; "
@@ -261,24 +256,11 @@ def _run_in_sandbox(
             )
         else:
             if sandbox:
-                # Strict mode: any caller that needs guaranteed isolation
-                # (sandbox_required=True) gets a hard error instead of the
-                # legacy silent fall-back. Strict mode must fail instead
-                # of silently running without the requested sandbox.
-                if sandbox_required:
-                    raise RuntimeError(
-                        f"sandbox_required=true but bwrap binary {bwrap_bin!r} "
-                        "is missing or not a file. Refusing to run bash "
-                        "unsandboxed. Install bwrap, set sandbox_bash=false "
-                        "(if no sandboxing is intentional for this run), "
-                        "or set sandbox_required=false to restore the legacy "
-                        "log-and-degrade behavior, or set "
-                        "YUJ_CONTAINER=ambient if the harness is running "
-                        "inside a container that provides isolation."
-                    )
-                log.warning(
-                    "sandbox_bash=true but %s not found — running without sandbox",
-                    bwrap_bin,
+                raise RuntimeError(
+                    f"selected sandbox backend 'bwrap' is missing or unavailable at "
+                    f"{bwrap_bin!r}. Refusing to substitute another backend "
+                    "or run unsandboxed; select sandbox.backend='none' "
+                    "explicitly if host execution is intended."
                 )
             result = _run_host()
         out = result.stdout + result.stderr

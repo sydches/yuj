@@ -16,11 +16,11 @@ You need a writable Git repository and a model service or local model server.
 
 | Your system | What you need |
 | --- | --- |
-| Linux | Python 3.11 or newer, Git, and the `bubblewrap` package |
-| Windows | WSL2 with Linux, Python 3.11 or newer, Git, and `bubblewrap` |
-| macOS | A Linux virtual machine with Python 3.11 or newer, Git, and `bubblewrap` |
+| Linux | Python 3.11 or newer, Git, and `bubblewrap`, Docker, or Podman for sandboxed commands |
+| Windows | WSL2, then a Linux sandbox backend or an explicit unsandboxed setting inside WSL2 |
+| macOS | Python 3.11 or newer, Git, and Docker or Podman for sandboxed commands |
 
-The model can run on another computer if the Linux system can reach it.
+The model can run on another computer if the Yuj host can reach it.
 
 ## Install Yuj
 
@@ -33,7 +33,6 @@ trusted artifact, then run:
 ```bash
 python3 -m venv ~/.venvs/yuj
 ~/.venvs/yuj/bin/pip install /path/to/yuj-0.1.0-py3-none-any.whl
-command -v bwrap
 ~/.venvs/yuj/bin/yuj --help
 ```
 
@@ -57,13 +56,16 @@ git clone https://github.com/sydches/yuj.git
 cd yuj
 python3 -m venv .venv
 .venv/bin/pip install -e '.[test]'
-command -v bwrap
+.venv/bin/yuj --help
 ```
 
 The `test` extra installs `pytest`. The `yuj smoke` command uses it for its
 final check.
 
-The last command must print the path to `bwrap` for the normal sandbox.
+Linux keeps `bwrap` as the default. Install it before normal use, or select
+Docker, Podman, automatic sandbox selection, or explicit unsandboxed
+execution during setup. Docker and Podman require a trusted image that is
+already present locally.
 
 The install puts the `yuj` command in `.venv/bin/`. The examples use that
 path until you move to the repository that the model will edit.
@@ -114,8 +116,8 @@ project-file, skill, injection, stream-rule, language-rule, and security
 feature. It then stops before model discovery. It creates no coding session or
 run artifact and prints `Model network: not contacted`.
 
-Read the [sandbox guide](sandbox.html) if another container already limits
-shell access. The guide also explains how to run without `bwrap`.
+Read the [sandbox guide](sandbox.html) to choose `bwrap`, Docker, Podman,
+automatic selection, or explicit unsandboxed execution.
 
 ## Connect an online model service
 
@@ -147,6 +149,21 @@ yuj setup --provider custom \
 
 Run `yuj setup` with no options if you want Yuj to ask for each
 value.
+
+Interactive setup also asks for the sandbox choice. For a repeatable setup,
+add one of these forms to the provider command:
+
+```text
+--sandbox bwrap
+--sandbox docker --sandbox-image LOCAL_TRUSTED_IMAGE
+--sandbox podman --sandbox-image LOCAL_TRUSTED_IMAGE
+--sandbox auto --sandbox-image LOCAL_TRUSTED_IMAGE
+--sandbox none
+```
+
+The image is required with an explicit Docker or Podman choice and whenever
+automatic selection resolves to Docker or Podman on the setup host. `none` is
+the only setting that permits unsandboxed model commands.
 
 Use `--api-key-env` when you can. Yuj then saves only
 `$ENV:VARIABLE_NAME` in `config.local.toml`.
@@ -224,9 +241,10 @@ yuj doctor
 yuj models
 ```
 
-`doctor` checks the saved settings, model connection, selected model, Git,
-and `bwrap`. It reports Git and `bwrap` problems as warnings. A coding
-session can still stop later if its settings require `bwrap`.
+`doctor` reports the platform's supported, available, and unavailable sandbox
+backends, the configured choice, and the exact operational resolution. A
+missing or broken selected sandbox is an error. It also checks the saved
+settings, model connection, selected model, and Git.
 
 `models` lists the exact model IDs from the selected service. It marks the
 selected model with `*`.

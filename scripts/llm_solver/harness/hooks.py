@@ -288,7 +288,7 @@ def validate_hook_sandbox_paths(
             for candidate in _command_path_candidates(spec.command, root):
                 if _inside(candidate, root) or _inside(candidate, resolved_root):
                     raise HookConfigurationError(
-                        "config error: tools.sandbox_required=true forbids "
+                        "config error: the hook path guard forbids "
                         f"hooks.{event}[{spec.index}] command paths inside the "
                         f"task cwd ({root})."
                     )

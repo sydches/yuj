@@ -407,6 +407,7 @@ class Session:
             or getattr(cfg, "lsp_tool_enabled", False)
         ):
             from .lsp_support import LspManager, parse_server_specs
+            from .sandbox.policy import sandbox_execution_kwargs
 
             def _lsp_event_sink(payload: dict[str, object]) -> None:
                 fields = dict(payload)
@@ -427,18 +428,9 @@ class Session:
                     cwd, cfg, self._ignore_policy,
                 ),
                 readable_paths=_bash_readable_paths(cfg),
-                sandbox_required=getattr(cfg, "sandbox_required", False),
-                sandbox=bool(getattr(cfg, "sandbox_bash", True)),
-                sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
-                container_runtime=getattr(
-                    cfg, "sandbox_container_runtime", "docker"
-                ),
-                container_image=getattr(cfg, "sandbox_container_image", ""),
-                container_flags=tuple(
-                    getattr(cfg, "sandbox_container_flags", ()) or ()
-                ),
                 effective_env=self._effective_env,
                 allow_login_shell=self._allow_login_shell,
+                **sandbox_execution_kwargs(cfg),
                 diagnostics_timeout_s=float(
                     getattr(cfg, "lsp_diagnostics_timeout_s", 2.0)
                 ),
@@ -803,6 +795,8 @@ class Session:
                     artifact_dir
                     or (trace_path.parent if trace_path is not None else cwd)
                 )
+                from .sandbox.policy import sandbox_execution_kwargs
+
                 self._process_manager = ProcessManager.sandboxed(
                     run_dir=manager_run_dir,
                     cwd=cwd,
@@ -811,20 +805,9 @@ class Session:
                         cwd, cfg, self._ignore_policy,
                     ),
                     readable_paths=_bash_readable_paths(cfg),
-                    sandbox_required=getattr(cfg, "sandbox_required", False),
-                    sandbox=bool(getattr(cfg, "sandbox_bash", True)),
-                    sandbox_backend=getattr(cfg, "sandbox_backend", "bwrap"),
-                    container_runtime=getattr(
-                        cfg, "sandbox_container_runtime", "docker"
-                    ),
-                    container_image=getattr(
-                        cfg, "sandbox_container_image", ""
-                    ),
-                    container_flags=tuple(
-                        getattr(cfg, "sandbox_container_flags", ()) or ()
-                    ),
                     effective_env=self._effective_env,
                     allow_login_shell=self._allow_login_shell,
+                    **sandbox_execution_kwargs(cfg),
                     max_procs=int(cfg.tools_background_max_procs),
                     poll_timeout_s=float(cfg.tools_background_poll_timeout),
                     admit_output=_admit_poll_output,
@@ -985,7 +968,9 @@ class Session:
             run_dir=hook_run_dir,
             run_id=hook_run_dir.name,
             session_number=self._session_number,
-            sandbox_required=bool(getattr(cfg, "sandbox_required", False)),
+            # Hook path ownership is a separate host-side safety control. It
+            # remains active even when model commands explicitly use none.
+            sandbox_required=True,
             event_sink=_hook_event_sink,
             replay=getattr(client, "is_replay", False) is True,
             recorded_events=getattr(client, "hook_events", ()),

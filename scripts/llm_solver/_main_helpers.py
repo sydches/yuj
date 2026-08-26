@@ -295,6 +295,41 @@ def _build_run_metadata(
         "cli_overrides": {k: v for k, v in overrides.items() if v is not None},
         "model_runtime": model_runtime,
         "model_runtime_sha256": model_runtime_sha256,
+        "sandbox": {
+            "selected": getattr(cfg, "sandbox_backend", "bwrap"),
+            "resolved": (
+                getattr(cfg, "sandbox_resolved_backend", "")
+                or getattr(cfg, "sandbox_backend", "bwrap")
+            ),
+            "platform": getattr(cfg, "sandbox_platform", ""),
+            "supported": list(
+                getattr(cfg, "sandbox_supported_backends", ()) or ()
+            ),
+            "installed": list(
+                getattr(cfg, "sandbox_installed_backends", ()) or ()
+            ),
+            "available": list(
+                getattr(cfg, "sandbox_installed_backends", ()) or ()
+            ),
+            "unavailable": [
+                backend
+                for backend in ("bwrap", "docker", "podman")
+                if backend not in (
+                    getattr(cfg, "sandbox_installed_backends", ()) or ()
+                )
+            ],
+            "explicit_unsandboxed": (
+                getattr(cfg, "sandbox_resolved_backend", "") == "none"
+            ),
+            "engaged": (
+                getattr(cfg, "sandbox_resolved_backend", "") != "none"
+                if getattr(cfg, "sandbox_resolved_backend", "")
+                else None
+            ),
+            "container_image_digest": (
+                getattr(cfg, "sandbox_container_image_digest", "") or None
+            ),
+        },
     }
     regime = _detect_regime(layers)
     if regime is not None:

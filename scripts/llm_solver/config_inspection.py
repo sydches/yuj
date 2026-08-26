@@ -172,6 +172,29 @@ def render_inspection_human(document: Mapping[str, object]) -> str:
             source = selection.get("context_source")
             suffix = f" [{source}]" if source else ""
             lines.append(f"Context: {context}{suffix}")
+        sandbox = selection.get("sandbox")
+        if isinstance(sandbox, Mapping):
+            supported = ", ".join(
+                str(value) for value in sandbox.get("supported", [])
+            ) or "none"
+            installed = ", ".join(
+                str(value) for value in sandbox.get("installed", [])
+            ) or "none"
+            available = ", ".join(
+                str(value) for value in sandbox.get("available", [])
+            ) or "none"
+            unavailable = ", ".join(
+                str(value) for value in sandbox.get("unavailable", [])
+            ) or "none"
+            lines.append(
+                "Sandbox: "
+                f"selected={sandbox.get('selected')} "
+                f"resolved={sandbox.get('resolved')}"
+            )
+            lines.append(f"Sandbox supported: {supported}")
+            lines.append(f"Sandbox installed: {installed}")
+            lines.append(f"Sandbox available: {available}")
+            lines.append(f"Sandbox unavailable: {unavailable}")
 
     layers = document.get("layers")
     if isinstance(layers, list) and layers:

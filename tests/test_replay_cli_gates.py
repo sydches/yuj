@@ -19,7 +19,10 @@ def _source_run(tmp_path: Path, model="qwen-test", mode="compound") -> Path:
     (run / "harness_run" / "transcripts").mkdir(parents=True)
     (run / "host_task").mkdir()
     overlay = tmp_path / "layer.toml"
-    overlay.write_text("[loop]\nmax_turns = 3\n")
+    overlay.write_text(
+        "[loop]\nmax_turns = 3\n"
+        "\n[sandbox]\nbackend = \"none\"\n"
+    )
     sha = hashlib.sha256(overlay.read_bytes()).hexdigest()
     (run / "harness_run" / "session.json").write_text(json.dumps({
         "model": model, "context_mode": mode,

@@ -13,9 +13,11 @@ yourself. The name Yuj means “to yoke” or “to harness” in Sanskrit.
 
 ## Install Yuj
 
-You need Linux, Git, Python 3.11 or newer, and
-[bubblewrap](https://github.com/containers/bubblewrap). Windows users can use
-WSL2. macOS users need a Linux virtual machine.
+You need Git and Python 3.11 or newer. Linux uses
+[bubblewrap](https://github.com/containers/bubblewrap) by default. Yuj can
+instead require Docker or Podman, choose an installed sandbox automatically,
+or use explicit unsandboxed execution. macOS supports the container choices.
+Windows users run Yuj in WSL2.
 
 Install a built wheel or source distribution when you want to use Yuj without
 keeping its source checkout:
@@ -23,9 +25,7 @@ keeping its source checkout:
 ```bash
 python3 -m venv ~/.venvs/yuj
 ~/.venvs/yuj/bin/pip install /path/to/yuj-0.1.0-py3-none-any.whl
-command -v bwrap
 ~/.venvs/yuj/bin/yuj --help
-~/.venvs/yuj/bin/yuj config --json
 ```
 
 You can give `pip` the `.tar.gz` source distribution instead. Both artifacts
@@ -40,14 +40,13 @@ git clone https://github.com/sydches/yuj.git
 cd yuj
 python3 -m venv .venv
 .venv/bin/pip install -e '.[test]'
-command -v bwrap
 .venv/bin/yuj --help
 ```
 
 The `test` extra installs `pytest`, which `yuj smoke` needs for its final
 check. A built-package user can install `pytest` separately before using that
-command. `command -v bwrap` shows the path to `bwrap`. `yuj --help` shows the
-Yuj help text.
+command. `yuj --help` shows the Yuj help text. Run `yuj setup` to save an
+explicit sandbox choice and `yuj doctor` to prove its operational resolution.
 
 The package contains the public runtime files that Yuj needs. It does not
 contain paper, study, benchmark, session, trace, or private campaign material.
@@ -121,7 +120,9 @@ Yuj calls one saved task record a coding session. A coding session can
 continue through more than one run segment.
 
 - The model can read files, change code, run commands, and run tests.
-- Yuj normally runs model shell commands through Linux `bubblewrap`.
+- Yuj runs model command surfaces through one explicit sandbox policy. Linux
+  defaults to `bubblewrap`; Docker, Podman, automatic selection, and explicit
+  unsandboxed execution are available where supported.
 - You can inspect, pause, approve, reject, resume, fork, archive, and unarchive
   a session.
 - You can inspect persisted token and cache use without contacting the model
@@ -154,7 +155,7 @@ own repository.
 | `yuj auth-status` | Show the selected provider and authentication method without credentials. |
 | `yuj logout` | Remove only the named provider credential. |
 | `yuj config` | Validate and explain every resolved setting without contacting a model. |
-| `yuj doctor` | Check the settings, model connection, Git, and `bwrap`. |
+| `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj models` | List the models that the selected service offers. |
 | `yuj code "task"` | Start a coding session. |
 | `yuj run "task"` | Run the same command as `yuj code`. |
@@ -211,7 +212,7 @@ Read the [treatment guide](docs/treatment.md) for the runtime rules. Read the
 | [Configuration](docs/configuration.md) | Inspect resolved settings; configure model services, context modes, and environment variables |
 | [Extend Yuj with TOML files](docs/extending-yuj.md) | Model runtime files, profiles, test runners, tool rules, and their code limits |
 | [Compaction hooks](docs/compaction.md) | Trusted Python hook input, return, validation, and trace contract |
-| [Sandbox](docs/sandbox.md) | `bwrap`, container modes, path access, and how to turn the sandbox off |
+| [Sandbox](docs/sandbox.md) | Explicit sandbox selection, path access, and unsandboxed security effects |
 | [Saved files](docs/harness_artifacts.md) | Each saved file, its source, and its allowed uses |
 | [Measurements](docs/measurement.md) | Run one task or an externally prepared task set with fixed settings |
 | [Replay](docs/replay_mode_spec.md) | Run recorded model actions again and continue them live |

@@ -136,6 +136,7 @@ def _extract_config_fields(d: dict) -> dict:
         EnvironmentPolicy,
     )
     sandbox_section = d.get("sandbox", {})
+    sandbox_backend = sandbox_section.get("backend", "bwrap")
     sandbox_env_raw = sandbox_section.get("env")
     if sandbox_env_raw is None:
         # Preserve the pre-policy deterministic command baseline for older
@@ -562,20 +563,24 @@ def _extract_config_fields(d: dict) -> dict:
         "edit_candidate_count": d.get("tools", {}).get("edit_candidate_count", 3),
         "pretest_timeout": _require(d, "tools", "pretest_timeout"),
         "llama_server_bin": _require(d, "tools", "llama_server_bin"),
-        "sandbox_bash": _require(d, "tools", "sandbox_bash"),
+        # Runtime compatibility fields are derived from the one canonical
+        # sandbox.backend choice. They are not independent settings.
+        "sandbox_bash": sandbox_backend != "none",
         "strip_ansi": _require(d, "tools", "strip_ansi"),
         "collapse_blank_lines": _require(d, "tools", "collapse_blank_lines"),
         "collapse_duplicate_lines": _require(d, "tools", "collapse_duplicate_lines"),
         "collapse_similar_lines": _require(d, "tools", "collapse_similar_lines"),
         "bwrap_bin": _require(d, "tools", "bwrap_bin"),
-        "sandbox_required": d.get("tools", {}).get("sandbox_required", False),
+        "sandbox_required": sandbox_backend != "none",
         "unreadable_paths": _string_tuple(
             d.get("sandbox", {}).get("unreadable_paths", []) or (),
             path="sandbox.unreadable_paths",
         ),
-        "sandbox_backend": d.get("sandbox", {}).get("backend", "bwrap"),
-        "sandbox_container_runtime": d.get("sandbox", {}).get(
-            "container_runtime", "docker"
+        "sandbox_backend": sandbox_backend,
+        "sandbox_container_runtime": (
+            sandbox_backend
+            if sandbox_backend in {"docker", "podman"}
+            else d.get("sandbox", {}).get("container_runtime", "docker")
         ),
         "sandbox_container_image": d.get("sandbox", {}).get(
             "container_image", ""
@@ -1036,9 +1041,10 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         raise ValueError(
             "config error: tools.exec_cell_timeout must be an integer >= 1."
         )
-    if cfg.sandbox_backend not in {"bwrap", "container"}:
+    if cfg.sandbox_backend not in {"none", "auto", "bwrap", "docker", "podman"}:
         raise ValueError(
-            "config error: sandbox.backend must be 'bwrap' or 'container', "
+            "config error: sandbox.backend must be 'none', 'auto', 'bwrap', "
+            "'docker', or 'podman', "
             f"got {cfg.sandbox_backend!r}."
         )
     if not isinstance(cfg.runtime_worktree, str) or not cfg.runtime_worktree.strip():
@@ -1180,9 +1186,19 @@ def _validate_coupling(cfg: Config, strict_dial_gates: bool = False,
         )
     except EnvironmentPolicyError as exc:
         raise ValueError(f"config error: {exc}") from exc
-    if cfg.sandbox_backend == "container":
+    if cfg.sandbox_backend in CONTAINER_RUNTIMES:
         ContainerBackend(
-            runtime=cfg.sandbox_container_runtime,
+            runtime=cfg.sandbox_backend,
+            image=cfg.sandbox_container_image,
+            flags=cfg.sandbox_container_flags,
+        )
+    elif cfg.sandbox_backend == "auto" and (
+        cfg.sandbox_container_image or cfg.sandbox_container_flags
+    ):
+        # Auto may resolve to either shared container adapter. Validate its
+        # optional container inputs without probing or starting a runtime.
+        ContainerBackend(
+            runtime="docker",
             image=cfg.sandbox_container_image,
             flags=cfg.sandbox_container_flags,
         )

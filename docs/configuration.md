@@ -321,32 +321,65 @@ selected tool.
 
 ### Select a shell sandbox backend
 
-Yuj uses `bwrap` by default. To run each command in a short-lived Docker or
-Podman container, name an image that already exists on the host:
+`sandbox.backend` is the one sandbox-use and backend choice. It accepts these
+values:
+
+| Value | Result |
+| --- | --- |
+| `bwrap` | Require Linux `bubblewrap`. This is the default and preserves existing Linux behavior. |
+| `docker` | Require Docker and a local container image. |
+| `podman` | Require Podman and a local container image. |
+| `auto` | Use the first installed, operational sandbox in platform order. It never selects `none`. |
+| `none` | Explicitly run model commands as the Yuj account without a sandbox. |
+
+On Linux, `auto` tries `bwrap`, Docker, then Podman. On macOS, it tries
+Docker, then Podman. Native Windows has no backend that preserves Yuj's
+absolute-path identity contract. Run Yuj in WSL2, which follows the Linux
+order and also permits an explicit `none` choice inside WSL2.
+
+To use Docker, name an image that already exists on the host:
 
 ```toml
 [sandbox]
-backend = "container"
-container_runtime = "docker"  # or "podman"
+backend = "docker"  # or "podman"
 container_image = "local/yuj-task@sha256:YOUR_DIGEST"
 container_flags = ["--memory", "4g", "--pids-limit", "512"]
 ```
 
+`auto` also needs `container_image` when it may resolve to Docker or Podman.
 Yuj inspects the image at task startup and pins commands to that image ID. It
-never pulls an image. The container mounts the task directory read-write,
-keeps the image root read-only, disables networking, and drops capabilities.
-The same backend runs `bash`, `run_tests`, post-edit checks, and language
-servers.
+never pulls an image. The container mounts the task directory read-write at
+the same absolute path, keeps the image root read-only, disables networking,
+and drops capabilities.
 
-When `[tools].sandbox_required = true`, a missing runtime or image stops the
-task. When it is false, Yuj warns and runs commands without a sandbox. You
-cannot combine this backend with a legacy `YUJ_CONTAINER` mode.
+Yuj resolves the setting before a model request or tool execution. A named
+backend must start exactly as named. `auto` may choose another installed
+sandbox backend, but no selected path silently falls back to `none`. Use
+`yuj config` to see the supported, available, unavailable, selected, and
+capability-resolved backends. Available means that Yuj found a supported
+executable; unavailable also includes backends that this platform does not
+support. Use `yuj doctor` or `yuj code --dry-run` for the operational startup
+check.
+
+Legacy `tools.sandbox_bash = true` plus `tools.sandbox_required = true`
+migrates to `bwrap`. The matching `false`/`false` pair migrates to `none`.
+Mixed legacy booleans are invalid. A copied legacy full configuration may keep
+a consistent backend and boolean pair in one layer. Contradictory pairs fail.
+The legacy shared-container spelling migrates to its exact Docker or Podman
+runtime. New settings files should use only `sandbox.backend`. A legacy
+`YUJ_CONTAINER` mode cannot be combined with another selected backend.
 
 `container_flags` accepts resource limits and metadata that does not change
 execution. It rejects
 flags that change mounts, networking, the environment, the entry point,
 devices, privileges, or the security boundary. Read [Sandbox](sandbox.html)
 before you enable this backend.
+
+The same resolved policy runs foreground and background shell commands,
+`run_tests`, post-edit checks, language servers, Python cells, and named-agent
+sessions. `none` changes only the process-isolation boundary. Permission
+rules, approvals, command and path validation, hooks, output handling, and
+artifact ownership still apply.
 
 ### Control the command environment
 
@@ -973,10 +1006,11 @@ trace because no later model request can receive it.
 Hooks run as host processes, outside every model-command sandbox. They receive
 the Yuj process environment plus `YUJ_RUN_DIR`, `YUJ_RUN_ID`, `YUJ_TASK_CWD`,
 and `YUJ_HOOK_EVENT`. Install and review the executable separately. Do not run
-hook code from the task repository. When `[tools].sandbox_required = true`,
-Yuj rejects executable paths and path arguments that resolve inside the task
-directory. Read [Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task)
-for this boundary.
+hook code from the task repository. Yuj rejects executable paths and path
+arguments that resolve inside the task directory under every sandbox choice,
+including `none`. Read
+[Sandbox](sandbox.html#keep-lifecycle-hooks-outside-the-task) for this
+boundary.
 
 Each invocation writes a `hook` trace row with the event, command, exit status,
 duration, outcome, and any accepted effect. Replay applies those recorded
@@ -1058,10 +1092,11 @@ dispatcher. The model must print the text that it wants the cell to return.
 Permissions, ignore rules, shell rules, output filters, and redaction still
 apply. Repository-wide definition search still needs `ast_search_enabled`.
 
-The Python process always uses the selected shell sandbox. If the sandbox is
-off or cannot start, the cell fails instead of running on the host. The timeout
-covers the whole cell and every inner call. A cell cannot start a background
-command.
+The Python process uses the resolved command policy. With `bwrap`, Docker, or
+Podman, it stays inside that sandbox. With explicit `none`, it runs as the Yuj
+account. A requested sandbox that cannot start fails before the cell runs.
+The timeout covers the whole cell and every inner call. A cell cannot start a
+background command.
 
 The raw trace stores the accepted source and output sizes. It records every
 injected function call as a child tool call. The state writer projects those

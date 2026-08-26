@@ -402,24 +402,12 @@ collapse_similar_lines = true   # collapse runs of structurally similar lines; o
 llama_server_bin = "~/.local/bin/llama-server"
 # bubblewrap binary path for bash sandboxing. Override if bwrap is installed elsewhere.
 bwrap_bin = "/usr/bin/bwrap"
-# Bash tool sandboxing via bubblewrap. When true, every bash tool call runs
-# inside a fresh mount namespace where the entire host filesystem is
-# read-only and only the session's cwd (the task dir) is writable. Closes
-# the last escape hatch after the file tools' path-remapping. Requires
-# /usr/bin/bwrap on PATH; Ubuntu 22.04 ships 0.6.1 in the default repos.
-# Falls back to unsandboxed execution if bwrap is missing or the sandbox
-# setup itself fails — that failure is logged but does not block the run
-# unless sandbox_required is also true (see below).
-sandbox_bash = true
-# Strict mode for the bwrap fall-back. When true, any first bash call that
-# would have to run unsandboxed (sandbox_bash=true but bwrap_bin missing,
-# or any later sandbox setup error) raises instead of silently degrading.
-# Default true: stop rather than silently run with host access if sandbox
-# setup fails. Set false only when another isolation layer protects the session.
-sandbox_required = true
+# Legacy overlays may still use tools.sandbox_bash plus
+# tools.sandbox_required. The loader migrates true/true to bwrap and
+# false/false to none. New settings use sandbox.backend below.
 
 # Model-callable run_tests tool. When enabled, exposes a `run_tests`
-# tool that invokes pytest inside the same bwrap sandbox as `bash`
+# tool that invokes pytest under the same resolved command policy as `bash`
 # with deterministic flags (--tb=short -q --no-header). Off by default
 # — when false the schema is filtered out before being sent to the
 # model, so the model never sees a tool it cannot use. See knob
@@ -686,13 +674,13 @@ ignore_file_names = [".yujignore"]
 # changing the canonical list stored in the trace/state projection.
 todos_char_budget = 2000
 
-# Optional host paths to hide inside bwrap. Patterns may be absolute and may
-# contain `**`. Prefix a pattern with `optional:` when absence is acceptable.
+# Optional host paths to hide inside a selected sandbox. Patterns may be
+# absolute and may contain `**`. Prefix a pattern with `optional:` when
+# absence is acceptable. `none` has no filesystem masking boundary.
 # Add project-specific masks in config.local.toml.
 [sandbox]
-backend = "bwrap"                 # bwrap | container
-container_runtime = "docker"      # docker | podman
-container_image = ""              # required when backend = "container"
+backend = "bwrap"                 # none | auto | bwrap | docker | podman
+container_image = ""              # required when Docker or Podman resolves
 container_flags = []              # fail-closed resource/metadata allowlist
 unreadable_paths = []
 

@@ -6,9 +6,9 @@ nav_order: 8
 
 # Sandbox
 
-A sandbox limits what a model shell command can reach. Yuj uses Linux
-`bubblewrap` (`bwrap`) by default and can instead start a short-lived local
-Docker or Podman container for each command.
+A sandbox limits what a model command can reach. Yuj uses Linux `bubblewrap`
+(`bwrap`) by default. You can instead require Docker or Podman, ask Yuj to
+choose an available sandbox automatically, or explicitly select no sandbox.
 
 You do not need Docker for normal use.
 
@@ -19,18 +19,18 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 | Your situation | What to do |
 | --- | --- |
-| You run Yuj on Linux | Keep `[sandbox].backend = "bwrap"` and leave `YUJ_CONTAINER` unset. |
-| You want a first-class Docker/Podman boundary | Select `backend = "container"` and an already-local trusted image as shown below. |
-| You use Windows | Run Yuj in WSL2. Install `bwrap` in WSL2. |
-| You use macOS | Run Yuj in a Linux virtual machine. Install `bwrap` in that machine. |
+| You run Yuj on Linux and want existing behavior | Keep `[sandbox].backend = "bwrap"` and leave `YUJ_CONTAINER` unset. |
+| You want Docker or Podman | Select that exact backend and an already-local trusted image as shown below. |
+| You want a platform-aware choice | Select `backend = "auto"`. It never chooses unsandboxed execution. |
+| You use Windows | Run Yuj in WSL2, then choose a Linux backend or `none` inside WSL2. |
+| You use macOS | Select Docker or Podman with a local image, use `auto`, or select `none` explicitly. |
 | Yuj already runs inside a secure container | Set `YUJ_CONTAINER=ambient`. |
 | Another program created a task container | Set `YUJ_CONTAINER` to that container ID. |
-| You accept shell commands with no sandbox | Apply the TOML file shown below. |
+| You accept model commands with no process sandbox | Select `backend = "none"` explicitly. |
 
 The `YUJ_CONTAINER` rows are legacy outer-container modes. Yuj does not create
 or secure that outer container. They are distinct from the first-class
-`[sandbox].backend = "container"` mode, and Yuj rejects a configuration that
-sets both.
+Docker or Podman backend, and Yuj rejects a configuration that sets both.
 
 In `ambient` mode, Yuj tests whether it can remove network access with
 `unshare -n`. Yuj warns when the test fails. The model shell can then use the
@@ -38,6 +38,28 @@ outer container's network access.
 
 Set `YUJ_AMBIENT_UNSHARE_NET=0` only when you want to skip this test. This
 setting does not block network access.
+
+### How selection resolves
+
+The valid values are `none`, `auto`, `bwrap`, `docker`, and `podman`. Linux
+supports `bwrap`, Docker, and Podman in that order. macOS supports Docker and
+Podman in that order. Native Windows cannot preserve the same absolute task
+path inside Yuj's Linux container contract, so Yuj runs on Windows through
+WSL2. WSL2 reports Linux and uses the Linux choices.
+
+Yuj probes the platform and installed executables once at startup. A named
+backend is exact: if it is unsupported, missing, or fails its operational
+preflight, Yuj stops before a model request or tool execution. `auto` tries
+installed backends in platform order and selects the first one that passes
+preflight. If none passes, Yuj stops. It never selects `none`.
+
+`yuj config` reports the supported, available, unavailable, selected, and
+capability-resolved backends without starting a sandbox. Available means that
+a supported backend executable was found. Unavailable includes named backends
+that are unsupported on this platform or whose executable was not found.
+`yuj doctor` and `yuj code --dry-run` perform the operational check. Normal
+startup records both the selected value and exact resolved backend before tool
+execution.
 
 ## What `bwrap` allows
 
@@ -66,8 +88,7 @@ Create a small overlay that names an image already present on the host:
 
 ```toml
 [sandbox]
-backend = "container"
-container_runtime = "docker"  # or "podman"
+backend = "docker"  # or "podman"
 container_image = "local/yuj-task@sha256:YOUR_DIGEST"
 container_flags = ["--memory", "4g", "--pids-limit", "512"]
 ```
@@ -100,7 +121,9 @@ For each command, Yuj:
 - clears the image environment before applying Yuj's effective command
   environment.
 
-Yuj accepts only resource limits and metadata flags that do not change
+When `backend = "auto"` may resolve to Docker or Podman, configure the same
+local `container_image`. Yuj accepts only resource limits and metadata flags
+that do not change
 execution. It rejects mount, network, environment, entry-point, device,
 privilege, security, and unknown flags. Each tool call gets a new container;
 this backend does not reuse the persistent `bwrap` shell.
@@ -124,9 +147,9 @@ before applying it, even in ambient and unsandboxed modes. Yuj itself and the
 model client keep the host environment. Saved provenance lists effective
 variable names but redacts fixed values.
 
-With `[tools].sandbox_required = true`, a missing runtime or local image stops
-the task before a model command. Setting it to false prints one startup warning
-and then runs commands without a sandbox.
+No selected sandbox degrades to host execution. A missing binary, unusable
+namespace, missing local image, or failed container inspection stops startup.
+Only `backend = "none"` enables host execution.
 
 The read-only host view can still contain private files. Hide selected paths
 with `[sandbox].unreadable_paths`:
@@ -165,14 +188,12 @@ hook's JSON input. Use an absolute operator-owned path. Review the program,
 validate every input field, and keep secrets out of command arguments. Do not
 store the executable or any imported hook code in the task directory.
 
-With `sandbox_required = true`, Yuj rejects a hook executable or path argument
-that resolves inside the task directory. This includes commands such as
-`python /task/hook.py`. It checks during startup and again before each launch,
-so a task cannot add or retarget the path after startup. This check does not
-sandbox the hook or prove that an external program is safe.
-
-With `sandbox_required = false`, Yuj allows task-owned hook paths to run with
-host permissions. Do this only for a repository you trust. See
+Yuj rejects a hook executable or path argument that resolves inside the task
+directory. This includes commands such as `python /task/hook.py`. It checks
+during startup and again before each launch under every sandbox choice,
+including `none`, so a task cannot add or retarget the path after startup.
+This check does not sandbox the hook or prove that an external program is
+safe. See
 [Configuration](configuration.html#run-trusted-lifecycle-hooks) for the full
 handler contract.
 
@@ -182,9 +203,8 @@ Create a small TOML file:
 
 ```toml
 # no-sandbox.toml
-[tools]
-sandbox_bash = false
-sandbox_required = false
+[sandbox]
+backend = "none"
 ```
 
 Apply the file:
@@ -193,18 +213,24 @@ Apply the file:
 yuj code --config no-sandbox.toml "Your task"
 ```
 
-Without the sandbox, model shell commands use your normal account permissions.
-They can reach anything that your account can reach.
+With `none`, foreground and background shell commands, test commands,
+post-edit checks, language servers, and Python cells run as the Yuj account.
+They have the account's host file and network access. Sandbox filesystem
+masks and no-network isolation do not exist in this mode.
 
-The approval check still pauses before specific risky commands. It does not
-form a general security boundary.
+`none` does not mean unrestricted. Tool permission rules, approval decisions,
+command and path validation, shell refusals and redirects, task-owned hook
+guards, output filtering, security scans, and artifact boundaries keep their
+normal behavior. Those controls are not a replacement for process isolation.
+Use `none` only when you accept the host-access consequences.
 
 ## Python code mode
 
-`exec_cell` uses the selected sandbox, command environment, writable task
-directory, no-network boundary, read-only skill roots, and unreadable-path
-masks. Unlike `bash` with `sandbox_required = false`, a cell never falls back
-to the host. It returns an error when the sandbox is off, missing, or broken.
+`exec_cell` uses the same resolved policy as every other model command. Under
+`bwrap`, Docker, or Podman it uses that sandbox's command environment,
+writable task directory, network boundary, read-only skill roots, and path
+masks. Under explicit `none`, the model-written Python runs as the Yuj account
+with host access. A requested sandbox that is missing or broken fails closed.
 
 The injected `read`, `grep`, `glob`, `list_definitions`, and `bash` functions
 return through the host dispatcher, but the model-written Python stays inside
