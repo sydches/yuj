@@ -22,9 +22,10 @@ You need a writable Git repository and a model service or local model server.
 
 The model can run on another computer if the Yuj host can reach it.
 
-The shipped settings select `bwrap`. If the host cannot run it, select Docker,
-Podman, `auto`, or `none` during setup. Yuj stops before model work when a
-named backend is unavailable or when `auto` finds no working backend.
+Sandboxing is optional. The shipped settings select `bwrap`. If the host
+cannot run it, select Docker, Podman, `auto`, or `none` during setup. Yuj stops
+before model work when a named backend is unavailable or when `auto` finds no
+working backend.
 
 ## Install Yuj
 

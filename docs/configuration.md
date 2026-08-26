@@ -332,10 +332,11 @@ values:
 | `auto` | Use the first installed, operational sandbox in platform order. It never selects `none`. |
 | `none` | Explicitly run model commands as the Yuj account without a sandbox. |
 
-The shipped configuration selects `bwrap`. If `bwrap` is unsupported,
-missing, or fails its startup check, Yuj stops before model or tool work. Save
-another choice with `yuj setup --sandbox NAME` or set `sandbox.backend` in a
-later configuration layer. Yuj never silently falls back to host execution.
+Sandboxing is optional. The shipped configuration selects `bwrap`. If `bwrap`
+is unsupported, missing, or fails its startup check, Yuj stops before model or
+tool work. Save another choice with `yuj setup --sandbox NAME` or set
+`sandbox.backend` in a later configuration layer. Yuj never silently falls
+back to host execution.
 
 On Linux, `auto` tries `bwrap`, Docker, then Podman. On macOS, it tries
 Docker, then Podman. Native Windows has no backend that preserves Yuj's

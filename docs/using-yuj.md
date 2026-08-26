@@ -334,10 +334,10 @@ ignores it. `YUJ_CONFIG_LOCAL` selects an exact alternative path.
 | `--api-key VALUE` | Save a key. Claude and Codex keep it in their provider credential file; other service choices keep it in `config.local.toml`. |
 | `--force` | Replace an existing local settings file without asking. |
 
-The shipped settings select `bwrap`. If the host cannot run it, save another
-choice before the first task. A named backend must work exactly as selected.
-`auto` stops if no supported backend passes its startup check, and only
-`--sandbox none` permits unsandboxed model commands. Read
+Sandboxing is optional. The shipped settings select `bwrap`. If the host
+cannot run it, save another choice before the first task. A named backend must
+work exactly as selected. `auto` stops if no supported backend passes its
+startup check. Only `--sandbox none` permits unsandboxed model commands. Read
 [Sandbox](sandbox.html#choose-a-mode) before you select a different boundary.
 
 Without `--force`, a non-interactive command does not replace an existing

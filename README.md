@@ -13,8 +13,9 @@ yourself. The name Yuj means “to yoke” or “to harness” in Sanskrit.
 
 ## Install Yuj
 
-You need Git and Python 3.11 or newer. The shipped settings select Linux
-[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`). If the host
+You need Git and Python 3.11 or newer. Sandboxing is optional. The shipped
+settings select Linux [bubblewrap](https://github.com/containers/bubblewrap)
+(`bwrap`). If the host
 cannot run `bwrap`, select Docker, Podman, automatic sandbox selection, or
 explicit unsandboxed execution during `yuj setup`. Yuj stops before model work
 when the selected sandbox is unavailable. macOS supports Docker and Podman.

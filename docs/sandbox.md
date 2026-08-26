@@ -6,11 +6,12 @@ nav_order: 8
 
 # Sandbox
 
-A sandbox limits what a model command can reach. Yuj uses Linux `bubblewrap`
-(`bwrap`) by default. You can instead require Docker or Podman, ask Yuj to
-choose an available sandbox automatically, or explicitly select no sandbox.
+A sandbox limits what a model command can reach. Sandboxing is optional. Yuj
+uses Linux `bubblewrap` (`bwrap`) by default. You can instead require Docker
+or Podman, ask Yuj to choose an available sandbox automatically, or explicitly
+select no sandbox.
 
-The shipped settings require `bwrap`. If the host cannot run it, Yuj stops
+The shipped settings select `bwrap`. If the host cannot run it, Yuj stops
 before model work. Select another backend during `yuj setup` or in a local
 configuration file. Linux does not need Docker when `bwrap` works.
 
