@@ -29,6 +29,7 @@ ROOT_RUNTIME_FILES = (
     "profiles/_base/normalize/rules.toml",
     "profiles/_base/profile.toml",
     "profiles/_base/tool_descriptions/minimal/apply_patch.txt",
+    "profiles/_base/tool_descriptions/minimal/ask_user.txt",
     "profiles/_base/tool_descriptions/minimal/bash.txt",
     "profiles/_base/tool_descriptions/minimal/bash_kill.txt",
     "profiles/_base/tool_descriptions/minimal/bash_poll.txt",

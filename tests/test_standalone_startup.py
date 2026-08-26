@@ -23,7 +23,7 @@ def _write_no_sandbox_overlay(path: Path) -> None:
 def test_source_resource_contract_and_package_owned_data_load():
     report = validate_runtime_resources()
     assert report.origin == "source-checkout"
-    assert report.root_resource_count == 56
+    assert report.root_resource_count == 57
     assert report.package_resource_count == 10
     assert resource_origin() == "source-checkout"
     assert package_data_path(
@@ -90,7 +90,7 @@ def test_config_json_reports_resource_contract_without_absolute_root(capsys):
         "origin": "source-checkout",
         "package_resource_count": 10,
         "root": "<yuj-root>",
-        "root_resource_count": 56,
+        "root_resource_count": 57,
     }
 
 
@@ -121,7 +121,7 @@ def test_code_dry_run_stops_before_network_and_creates_no_session(
     output = capsys.readouterr().out
     assert result == 0
     assert "Yuj startup preflight: ready" in output
-    assert "Runtime resources: source-checkout (56 root, 10 package)" in output
+    assert "Runtime resources: source-checkout (57 root, 10 package)" in output
     assert "Runner: pytest" in output
     assert "Model network: not contacted" in output
     assert not assist_home.exists()
