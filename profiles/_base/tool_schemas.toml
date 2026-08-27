@@ -39,6 +39,11 @@ required = ["path", "old_str", "new_str"]
 properties = { path = { type = "string" }, old_str = { type = "string" }, new_str = { type = "string" } }
 
 [[tools]]
+name = "notebook_edit"
+required = ["path", "old_source", "new_source"]
+properties = { path = { type = "string" }, old_source = { type = "string" }, new_source = { type = "string" }, cell_index = { type = "integer" }, cell_id = { type = "string", minLength = 1 } }
+
+[[tools]]
 name = "glob"
 required = ["pattern"]
 properties = { pattern = { type = "string" }, path = { type = "string" }, page = { type = "integer" } }

@@ -330,6 +330,9 @@ file_checkpoints_exclude = [
 # Refuse or warn on edit calls whose target was not observed at its current
 # content hash in this session. The trace reconstructs the ledger on resume.
 stale_guard_mode = "warn"  # off | warn | block
+# Precise source-only edits for existing Jupyter code and Markdown cells.
+# The tool is absent from the model-facing surface until enabled.
+notebook_edit_enabled = false
 # Redirect shell reads such as cat/grep/find to the corresponding bounded
 # model tool. Write-side redirect rules remain active independently.
 bash_redirect_read_side = false
@@ -453,6 +456,7 @@ assertion_context_max = 3
 # Schema per check:
 #   name     — identifier used on the savings ledger (ctx.check)
 #   trigger  — "edit" | "write" | "apply_patch" | "udiff" | combinations
+#              notebook_edit uses the "edit" trigger
 #   when     — safe-eval predicate over {path, ext}; "" (empty) = always
 #              allowed:  == != in not in and or not,  str.startswith /
 #              endswith / lower / upper,  constants

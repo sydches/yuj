@@ -410,6 +410,9 @@ class Config:
     )
     # Session-local read-before-edit policy, rebuilt from raw trace events.
     tools_stale_guard_mode: str = "warn"
+    # Source-only Jupyter notebook cell editing. This specialized mutation
+    # tool stays off the model-facing surface unless explicitly enabled.
+    tools_notebook_edit_enabled: bool = False
     # Compound-aware shell redirects. Read-side interception is an opt-in;
     # write-side rules remain gated by the availability of their target tool.
     tools_bash_redirect_read_side: bool = False

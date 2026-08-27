@@ -626,12 +626,34 @@ file contents before it edits:
 | `block` | Refuse the edit with `ERROR: stale_file: read PATH first`. |
 
 A successful `read` records the file's content hash and metadata. A successful
-file edit refreshes that record. A simple, single-file `cat`, `head`, `tail`,
-`sed -n`, `grep`, or `rg` command also counts as a read. Compound commands,
-pipelines, redirects, recursive searches, and count-only searches do not.
+file edit, including `notebook_edit`, refreshes that record. A simple,
+single-file `cat`, `head`, `tail`, `sed -n`, `grep`, or `rg` command also
+counts as a read. Compound commands, pipelines, redirects, recursive searches,
+and count-only searches do not.
 
 Yuj rebuilds this session ledger from `stale_guard_observe` trace rows on
 resume. It does not copy the ledger into `.solver/state.json`.
+
+### Edit one Jupyter notebook cell
+
+Turn on the source-only notebook editor when a task includes `.ipynb` files:
+
+```toml
+[tools]
+notebook_edit_enabled = true
+```
+
+The setting adds `notebook_edit` to the model tool set. It is off by default.
+The model must identify one existing code or Markdown cell with `cell_index`
+or `cell_id`. It must also supply the complete current source as `old_source`.
+Yuj rejects a missing, stale, malformed, or unclear target without changing
+the file.
+
+Yuj changes only the selected cell's raw JSON `source` value. It preserves all
+unrelated notebook bytes and data, including metadata, outputs, attachments,
+IDs, and cell order. The tool follows the normal workspace, permission,
+approval, stale-file, and workspace-checkpoint controls. Post-edit checks use
+the `edit` trigger.
 
 ### Redirect shell commands to dedicated tools
 
@@ -908,7 +930,7 @@ The groups expand to these exact tool names:
   `get_function_details`, and `lsp`.
 - Session control: `ask_user`, `checkpoint`, `done`, `exit_plan_mode`,
   `load_tools`, `think`, and `write_todos`.
-- File edit: `apply_patch`, `edit`, `udiff`, and `write`.
+- File edit: `apply_patch`, `edit`, `notebook_edit`, `udiff`, and `write`.
 
 Yuj adds an `allow` rule for every tool in the listed groups after the preset's
 catch-all rule. Every tool outside those groups keeps the catch-all result.
@@ -972,7 +994,7 @@ Each tool matches one stable value:
 | `bash` | `cmd` |
 | `terminal_start` | `cmd` |
 | `terminal_io` | `input`; an omitted input uses an empty value for status reads and termination |
-| `read`, `write`, `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, `lsp` | `path`; `glob` and `grep` use `.` when omitted |
+| `read`, `write`, `edit`, `notebook_edit`, `glob`, `grep`, `run_tests`, `list_definitions`, `lsp` | `path`; `glob` and `grep` use `.` when omitted |
 | `apply_patch`, `udiff` | `patch` |
 | `done` | `message` |
 | `task` | `agent` |

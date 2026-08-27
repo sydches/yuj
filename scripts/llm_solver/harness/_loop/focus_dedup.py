@@ -73,7 +73,7 @@ def _focus_signature(tc, args_summary: str, cwd: str) -> tuple[str, str]:
     Goal: detect repeated inspection of the same file or same normalized bash
     command without waiting for the coarse duplicate-abort threshold.
     """
-    if tc.name in {"read", "write", "edit"}:
+    if tc.name in {"read", "write", "edit", "notebook_edit"}:
         path = tc.arguments.get("path") or tc.arguments.get("file_path")
         if isinstance(path, str) and path:
             return _encode_focus_path(path, cwd)

@@ -168,9 +168,8 @@ def pre_mutation_gate(
     if turn_number < cap:
         return PASS
     if (
-        tc_name in (
-            "write", "edit", "str_replace", "create", "apply_patch", "udiff", "done"
-        )
+        tc_name in MUTATION_TOOLS
+        or tc_name == "done"
         or _is_bash_write_like(tc_name, tc_args)
     ):
         return PASS

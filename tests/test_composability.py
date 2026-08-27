@@ -176,7 +176,10 @@ def test_tool_specs_drive_surface_metadata():
     assert tuple(build_tool_registry().handlers) == ACTIVE_TOOL_NAMES
     assert PARALLEL_READ_SAFE_TOOL_NAMES == frozenset({"read", "glob", "grep"})
     assert GUARDRAIL_MUTATION_TOOL_NAMES == frozenset(
-        {"write", "edit", "apply_patch", "udiff", "str_replace"}
+        {
+            "write", "edit", "notebook_edit", "apply_patch", "udiff",
+            "str_replace",
+        }
     )
     assert PROFILE_GATE_ATTRS == {
         "run_tests": "tools_run_tests_enabled",
@@ -186,6 +189,7 @@ def test_tool_specs_drive_surface_metadata():
         "bash_kill": "tools_background_enabled",
         "terminal_start": "tools_terminal_enabled",
         "terminal_io": "tools_terminal_enabled",
+        "notebook_edit": "tools_notebook_edit_enabled",
         "exit_plan_mode": "plan_mode_enabled",
         "task": "tools_task_enabled",
         "think": "tools_think_enabled",

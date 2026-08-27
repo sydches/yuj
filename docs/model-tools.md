@@ -24,6 +24,7 @@ person types into a terminal.
 | `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
+| `notebook_edit` | `path`, `old_source`, `new_source` | One of `cell_index` or `cell_id` | Replace the exact source of one existing code or Markdown cell without rewriting unrelated notebook data. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
 | `write_todos` | `todos` | None | Replace the whole session todo list. Each item has a `description` and `status`; at most one item may be `in_progress`. |
@@ -57,6 +58,7 @@ schema, description, or result rule.
 | `edit` | Selected by the shipped profile's `exact` edit format. |
 | `write` | On as the file-creation companion to the selected `exact` replacement tool. |
 | `apply_patch`, `udiff` | Available replacement dialects, but not selected by the shipped profile. |
+| `notebook_edit` | Off |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `ask_user` | On for the top-level assistant session. Never present in child-agent or measurement requests. |
@@ -81,6 +83,7 @@ terminal_enabled = true
 task_enabled = true
 todos_enabled = true
 checkpoint_enabled = true
+notebook_edit_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -220,6 +223,32 @@ The model profile selects the normal format. Override it with
 [Configuration](configuration.html#select-the-models-edit-format) for the
 precedence rules.
 
+### Notebook cell edits
+
+Enable `notebook_edit` when the task includes Jupyter notebooks:
+
+```toml
+[tools]
+notebook_edit_enabled = true
+```
+
+Read the notebook before each edit. Then select one existing cell with either
+its zero-based `cell_index` or its `cell_id`. Do not pass both selectors. Pass
+the complete current cell source as `old_source` and the replacement as
+`new_source`.
+
+`notebook_edit` supports code and Markdown cells. It keeps the source as the
+same JSON type, either a string or an array of strings. It also preserves cell
+order, IDs, metadata, outputs, attachments, and every byte outside the selected
+`source` value. A missing cell, duplicate ID, stale source, invalid notebook,
+or no clear selector changes no file.
+
+The tool uses the normal workspace, permission, approval, stale-file, workspace
+checkpoint, and post-edit controls. A configured post-edit check uses the
+`edit` trigger. Read
+[Configuration](configuration.html#edit-one-jupyter-notebook-cell) for the
+setting.
+
 ### Language-server feedback
 
 With `[lsp].enabled = true`, Yuj adds matching diagnostics to a successful edit
@@ -291,7 +320,8 @@ Narrow its pattern or path when that happens.
 
 ### Read before edit
 
-The stale-file guard can require current contents before an edit. A typed
+The stale-file guard can require current contents before an edit, including a
+`notebook_edit`. A typed
 `read` or one simple single-file shell read records the content hash. If the
 file changes later, that read becomes stale. `warn` applies the edit and adds a
 warning. `block` returns `ERROR: stale_file: read PATH first` without changing

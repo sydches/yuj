@@ -106,6 +106,7 @@ def _tool_snapshot(
     primary = {
         "bash": "cmd",
         "edit": "new_str",
+        "notebook_edit": "new_source",
         "write": "content",
         "apply_patch": "patch",
     }.get(tool_name)

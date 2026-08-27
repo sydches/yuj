@@ -79,7 +79,9 @@ def edit_operations(
     preserve useful attempted-path metadata when a malformed call is traced.
     """
     arguments = arguments or {}
-    if tool_name in {"write", "edit", "str_replace", "create", "insert"}:
+    if tool_name in {
+        "write", "edit", "notebook_edit", "str_replace", "create", "insert",
+    }:
         path = arguments.get("path") or arguments.get("file_path")
         return _deduplicate([("update", str(path or ""))])
 

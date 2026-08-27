@@ -290,6 +290,9 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_stale_guard_mode": d.get("tools", {}).get(
             "stale_guard_mode", "warn"
         ),
+        "tools_notebook_edit_enabled": d.get("tools", {}).get(
+            "notebook_edit_enabled", False
+        ),
         "tools_bash_redirect_read_side": d.get("tools", {}).get(
             "bash_redirect_read_side", False
         ),
@@ -991,6 +994,10 @@ def _validate_coupling(
     if not isinstance(cfg.tools_checkpoint_enabled, bool):
         raise ValueError(
             "config error: tools.checkpoint_enabled must be a boolean."
+        )
+    if not isinstance(cfg.tools_notebook_edit_enabled, bool):
+        raise ValueError(
+            "config error: tools.notebook_edit_enabled must be a boolean."
         )
     from .harness.tool_policy import (
         PermissionPolicy,

@@ -57,6 +57,13 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=5,
     ),
     ToolSpec(
+        "notebook_edit",
+        guardrail_mutation=True,
+        action_write_like=True,
+        profile_gate_attr="tools_notebook_edit_enabled",
+        schema_order=5,
+    ),
+    ToolSpec(
         "glob",
         parallel_read_safe=True,
         schema_order=6,

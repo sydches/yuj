@@ -210,6 +210,17 @@ def _mutation_signature(
             sort_keys=True,
             ensure_ascii=True,
         )
+    elif tc_name == "notebook_edit":
+        payload = json.dumps(
+            {
+                "cell_id": tc_args.get("cell_id"),
+                "cell_index": tc_args.get("cell_index"),
+                "old": tc_args.get("old_source", ""),
+                "new": tc_args.get("new_source", ""),
+            },
+            sort_keys=True,
+            ensure_ascii=True,
+        )
     else:
         payload = str(tc_args.get("content", ""))
     digest = hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]

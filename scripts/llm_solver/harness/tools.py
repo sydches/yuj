@@ -30,6 +30,7 @@ from ._tools.exec_cell import (
 from ._tools.glob import glob_files
 from ._tools.grep import grep_files
 from ._tools.list_definitions import list_definitions
+from ._tools.notebook_edit import notebook_edit
 from ._tools.read import read
 from ._tools.run_tests import run_tests
 from ._tools.think import think
@@ -246,6 +247,11 @@ _DISPATCH = {
     ),
     "edit": lambda args, cwd, cfg: edit(
         args["path"], args["old_str"], args["new_str"], cwd=cwd, cfg=cfg,
+    ),
+    "notebook_edit": lambda args, cwd, cfg: notebook_edit(
+        args["path"], args["old_source"], args["new_source"],
+        cwd=cwd, cell_index=args.get("cell_index"),
+        cell_id=args.get("cell_id"), cfg=cfg,
     ),
     "glob": lambda args, cwd, cfg: glob_files(
         args["pattern"], args.get("path", "."), cwd=cwd,
@@ -543,7 +549,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
 
     stale_decision = None
     stale_precheck_error = ""
-    if name == "edit" and stale_guard is not None and not redirected:
+    if name in {"edit", "notebook_edit"} and stale_guard is not None and not redirected:
         try:
             stale_decision = stale_guard.check_edit(str(arguments.get("path", "")))
         except Exception as exc:
@@ -646,7 +652,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                     or Path(cwd).resolve() in candidate.resolve(strict=False).parents
                 ):
                     stale_guard.observe_read(read_path)
-            elif succeeded and name in {"write", "edit"}:
+            elif succeeded and name in {"write", "edit", "notebook_edit"}:
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name
                 )

@@ -116,7 +116,9 @@ def test_off_mode_performs_no_file_check_or_trace(tmp_path):
     assert events == []
 
 
-@pytest.mark.parametrize("source", ["write", "edit", "apply_patch"])
+@pytest.mark.parametrize(
+    "source", ["write", "edit", "notebook_edit", "apply_patch"]
+)
 def test_successful_mutation_refreshes_ledger(tmp_path, source):
     target = tmp_path / "src.py"
     target.write_text("old\n")

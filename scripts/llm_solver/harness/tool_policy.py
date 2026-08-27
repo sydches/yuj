@@ -50,6 +50,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "load_tools": ("names", ()),
         "lsp": ("path", ""),
         "list_functions": ("arguments", ""),
+        "notebook_edit": ("path", ""),
         "read": ("path", ""),
         "rewind": ("report", ""),
         "run_tests": ("path", ""),

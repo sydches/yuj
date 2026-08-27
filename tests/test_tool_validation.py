@@ -32,6 +32,12 @@ VALID_ARGUMENTS = {
         "old_str": "value = 1",
         "new_str": "value = 2",
     },
+    "notebook_edit": {
+        "path": "analysis.ipynb",
+        "cell_id": "setup",
+        "old_source": "value = 1\n",
+        "new_source": "value = 2\n",
+    },
     "glob": {"pattern": "**/*.py", "path": "src", "page": 1},
     "grep": {"pattern": "value", "path": "src", "glob": "*.py", "page": 2},
     "write_todos": {
@@ -80,6 +86,23 @@ INVALID_ARGUMENTS = (
         "edit",
         {"path": "x.py", "old_str": "before", "new_str": []},
         "$.new_str",
+        "type",
+    ),
+    (
+        "notebook_edit",
+        {"path": "x.ipynb", "old_source": "before"},
+        "$.new_source",
+        "required",
+    ),
+    (
+        "notebook_edit",
+        {
+            "path": "x.ipynb",
+            "old_source": "before",
+            "new_source": "after",
+            "cell_index": "zero",
+        },
+        "$.cell_index",
         "type",
     ),
     ("glob", {}, "$.pattern", "required"),

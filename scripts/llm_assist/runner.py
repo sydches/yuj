@@ -1015,7 +1015,9 @@ def session_compact_summary(artifact_dir: Path) -> dict[str, object]:
             ]
             fallback_paths = (
                 _extract_paths_from_args(args_summary)
-                if tool_name in {"edit", "write", "multi_edit"}
+                if tool_name in {
+                    "edit", "notebook_edit", "write", "multi_edit",
+                }
                 else []
             )
             for file_path in structured_paths or fallback_paths:

@@ -25,7 +25,8 @@ The allowlist can restrict globally enabled tools; it cannot turn on a public
 tool whose own configuration gate is off.
 
 Agents are read-only unless the descriptor sets `read_only = false`. A
-read-only agent cannot use `write`, `edit`, `apply_patch`, `udiff`, `exec_cell`,
-`run_tests`, background-process tools, or `task`. Its `bash` tool accepts only
-`cat`, `grep`, `head`, `ls`, `pwd`, `stat`, `tail`, and `wc`. It rejects shell
-control, redirection, substitution, command paths, and unknown commands.
+read-only agent cannot use `write`, `edit`, `notebook_edit`, `apply_patch`,
+`udiff`, `exec_cell`, `run_tests`, background-process tools, or `task`. Its
+`bash` tool accepts only `cat`, `grep`, `head`, `ls`, `pwd`, `stat`, `tail`, and
+`wc`. It rejects shell control, redirection, substitution, command paths, and
+unknown commands.

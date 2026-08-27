@@ -181,6 +181,7 @@ Yuj offers these tools to the model:
 | Read files and find code | `read`, `glob`, `grep` | On |
 | List names in a Python file | `list_definitions` | Off |
 | Change files | One of `edit`, `apply_patch`, `udiff`, or `write` | Profile-selected; `_base` uses `edit`. |
+| Change one Jupyter code or Markdown cell | `notebook_edit` | Off |
 | Run shell commands | `bash` | On |
 | Use a debugger, REPL, or other terminal-dependent program | `terminal_start`, `terminal_io` | Off; assistant sessions only. |
 | Run tests | `run_tests` | Off |
@@ -203,6 +204,7 @@ enabled = true
 [tools]
 edit_format = "apply_patch"
 terminal_enabled = true
+notebook_edit_enabled = true
 ```
 
 A model profile can limit the number of enabled tools that Yuj sends to the
@@ -1268,11 +1270,11 @@ Inspect the request before you choose:
 yuj show
 ```
 
-For `write` and exact `edit` requests, `show` compares the current workspace
-file with the proposed content. For `apply_patch` and `udiff`, it shows the
-exact proposed patch. The preview names every displayed path and labels the
-content as proposed and not applied. Generating or viewing it does not change
-the workspace.
+For `write`, exact `edit`, and `notebook_edit` requests, `show` compares the
+current workspace file with the proposed content. For `apply_patch` and
+`udiff`, it shows the exact proposed patch. The preview names every displayed
+path and labels the content as proposed and not applied. Generating or viewing
+it does not change the workspace.
 
 Yuj stores at most the first 120 lines and 16,000 escaped characters. A
 truncation marker gives the displayed and original character counts. It also

@@ -29,6 +29,7 @@ _TASK_ID_RE = re.compile(r"^task-(\d{6})$")
 _READ_ONLY_FORBIDDEN_TOOLS = frozenset({
     "write",
     "edit",
+    "notebook_edit",
     "apply_patch",
     "udiff",
     "exec_cell",

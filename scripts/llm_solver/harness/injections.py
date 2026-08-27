@@ -445,7 +445,7 @@ def path_targets_for_tool(
     original command reads one explicit file.
     """
     raw_paths: list[str] = []
-    if tool_name in {"read", "edit", "write"}:
+    if tool_name in {"read", "edit", "notebook_edit", "write"}:
         value = arguments.get("path")
         if isinstance(value, str):
             raw_paths.append(value)

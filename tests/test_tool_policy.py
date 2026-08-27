@@ -96,7 +96,9 @@ def test_star_and_question_are_the_only_wildcards():
     ).decision == "ask"
 
 
-@pytest.mark.parametrize("tool_name", ("read", "write", "edit"))
+@pytest.mark.parametrize(
+    "tool_name", ("read", "write", "edit", "notebook_edit")
+)
 def test_file_tool_rules_match_path_not_other_arguments(tool_name):
     policy = PermissionPolicy.from_rule_tables(
         {tool_name: {"*": "deny", "docs/*.md": "allow"}}

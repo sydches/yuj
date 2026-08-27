@@ -46,6 +46,7 @@ _SESSION_CONTROL_TOOLS = (
 _FILE_EDIT_TOOLS = (
     "apply_patch",
     "edit",
+    "notebook_edit",
     "udiff",
     "write",
 )

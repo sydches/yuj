@@ -13,7 +13,9 @@ _MAX_DIFF_INPUT_BYTES = 1_000_000
 _MAX_PREVIEW_CHARS = 16_000
 _MAX_PREVIEW_LINES = 120
 _MAX_PREVIEW_PATHS = 32
-_FILE_MUTATION_TOOLS = frozenset({"write", "edit", "apply_patch", "udiff"})
+_FILE_MUTATION_TOOLS = frozenset({
+    "write", "edit", "notebook_edit", "apply_patch", "udiff",
+})
 
 
 class ApprovalPreviewError(ValueError):
@@ -271,6 +273,49 @@ def _edit_preview(cwd: str, arguments: Mapping[str, object]) -> dict[str, object
     )
 
 
+def _notebook_edit_preview(
+    cwd: str,
+    arguments: Mapping[str, object],
+) -> dict[str, object]:
+    path = _string_argument(arguments, "path")
+    old_source = _string_argument(arguments, "old_source")
+    new_source = _string_argument(arguments, "new_source")
+    target = _target(cwd, path)
+    workspace_text, existed = _read_workspace_text(target, path)
+    if not existed:
+        raise ApprovalPreviewError(f"{_terminal_safe(path)} does not exist")
+    from ._tools.notebook_edit import (
+        NotebookEditError,
+        propose_notebook_edit,
+    )
+
+    try:
+        proposal = propose_notebook_edit(
+            workspace_text,
+            old_source=old_source,
+            new_source=new_source,
+            cell_index=arguments.get("cell_index"),
+            cell_id=arguments.get("cell_id"),
+        )
+    except NotebookEditError as exc:
+        raise ApprovalPreviewError(str(exc)) from exc
+    diff = _unified_text_diff(
+        path=path,
+        workspace_text=workspace_text,
+        proposed_text=proposal.text,
+        existed=True,
+    )
+    return _available(
+        format_name="unified_diff",
+        paths=[path],
+        content=diff,
+        summary=(
+            "Current notebook content compared with the proposed cell-source "
+            "edit."
+        ),
+    )
+
+
 def _apply_patch_preview(
     cwd: str,
     arguments: Mapping[str, object],
@@ -353,6 +398,8 @@ def build_approval_preview(
             return _write_preview(cwd, tool_args)
         if tool_name == "edit":
             return _edit_preview(cwd, tool_args)
+        if tool_name == "notebook_edit":
+            return _notebook_edit_preview(cwd, tool_args)
         if tool_name == "apply_patch":
             return _apply_patch_preview(cwd, tool_args)
         if tool_name == "udiff":
