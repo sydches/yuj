@@ -221,8 +221,12 @@ def _cli_version() -> str:
         return "unknown"
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
+def _build_cli_parsers() -> tuple[
+    argparse.ArgumentParser,
+    argparse.ArgumentParser,
+    frozenset[str],
+]:
+    """Build the installed command and default-session parser trees."""
     parser = argparse.ArgumentParser(
         prog=CLI_NAME,
         description="Run a secondary Yuj command",
@@ -1068,21 +1072,42 @@ def main(argv: list[str] | None = None) -> int:
     )
     worktree_rm.set_defaults(func=cmd_worktree_rm)
 
-    if not argv or argv[0] not in sub.choices:
-        command_rows = "\n".join(
-            f"  {action.dest:<12} {action.help}"
-            for action in sub._choices_actions
-        )
-        session_parser = argparse.ArgumentParser(
-            prog=CLI_NAME,
-            description="Start a Yuj coding session",
-            epilog=(
-                f"Commands:\n{command_rows}\n\n"
-                "Run 'yuj COMMAND --help' for one command's options."
-            ),
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        _attach_run_args(session_parser)
+    completion_parser = sub.add_parser(
+        "completion",
+        help="print a shell completion script",
+    )
+    completion_parser.add_argument(
+        "shell",
+        choices=("bash", "zsh", "fish"),
+        help="shell syntax to generate",
+    )
+    completion_parser.set_defaults(func=cmd_completion)
+
+    command_rows = "\n".join(
+        f"  {action.dest:<12} {action.help}"
+        for action in sub._choices_actions
+    )
+    session_parser = argparse.ArgumentParser(
+        prog=CLI_NAME,
+        description="Start a Yuj coding session",
+        epilog=(
+            f"Commands:\n{command_rows}\n\n"
+            "Run 'yuj COMMAND --help' for one command's options."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _attach_run_args(session_parser)
+    completion_parser.set_defaults(
+        completion_root_parser=parser,
+        completion_session_parser=session_parser,
+    )
+    return parser, session_parser, frozenset(sub.choices)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser, session_parser, commands = _build_cli_parsers()
+    if not argv or argv[0] not in commands:
         args = session_parser.parse_args(argv)
     else:
         args = parser.parse_args(argv)
@@ -1772,6 +1797,20 @@ def _cmd_config_edit(args) -> int:
         else render_edit_human(document)
     )
     sys.stdout.write(output)
+    return 0
+
+
+def cmd_completion(args) -> int:
+    """Print completion generated from this installed CLI parser."""
+    from .completion import generate_completion
+
+    script = generate_completion(
+        args.shell,
+        root_parser=args.completion_root_parser,
+        session_parser=args.completion_session_parser,
+        version=_cli_version(),
+    )
+    sys.stdout.write(script)
     return 0
 
 

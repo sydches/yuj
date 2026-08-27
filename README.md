@@ -182,6 +182,7 @@ own repository.
 | `yuj` | Start a coding session. Enter the task when prompted or pass it as an argument. |
 | `yuj setup` | Save settings for an online model service or a local model server. |
 | `yuj config` | Validate, explain, or safely edit a saved setting without contacting a model. |
+| `yuj completion bash` | Print completion for Bash, Zsh, or Fish from the installed command tree. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
 | `yuj init -C DIR --output AGENTS.md` | Propose a project instruction file and pause for review before writing it. |

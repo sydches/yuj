@@ -49,6 +49,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj usage` | Show exact persisted usage for one session without a provider request. |
 | `yuj sessions` | List, filter, or select saved sessions. |
 | `yuj trust` | Inspect or revoke one workspace's startup trust. |
+| `yuj completion` | Print Bash, Zsh, or Fish completion from the installed command tree. |
 | `yuj label` | Set, replace, or clear one manual session label. |
 | `yuj fork` | Create an independent child from one stopped saved session. |
 | `yuj archive` | Hide one stopped session from ordinary selection without changing its evidence. |
@@ -132,6 +133,70 @@ The command returns `0` only when resolution and validation succeed. It
 returns `1` and an actionable diagnostic otherwise. Read
 [Configuration](configuration.html#inspect-the-resolved-settings) for layer
 order, validation coverage, the JSON fields, and the redaction boundary.
+
+## Install shell completion
+
+### `yuj completion`
+
+Print a sourceable script for Bash, Zsh, or Fish:
+
+```bash
+yuj completion bash
+yuj completion zsh
+yuj completion fish
+```
+
+Yuj builds the script from the installed command parser. The output therefore
+contains the commands, option aliases, nested commands, path-valued options,
+and fixed choices from that exact Yuj version. Its first comment includes the
+installed version and a hash of the command surface.
+
+Try completion in the current shell before you install it:
+
+```bash
+# Bash
+source <(yuj completion bash)
+
+# Zsh, after compinit is available
+source <(yuj completion zsh)
+
+# Fish
+yuj completion fish | source
+```
+
+Install the generated file in your shell's normal user completion directory.
+These examples do not edit a startup file:
+
+```bash
+# Bash
+mkdir -p ~/.local/share/bash-completion/completions
+yuj completion bash > ~/.local/share/bash-completion/completions/yuj
+
+# Zsh
+mkdir -p ~/.zfunc
+yuj completion zsh > ~/.zfunc/_yuj
+
+# Fish
+mkdir -p ~/.config/fish/completions
+yuj completion fish > ~/.config/fish/completions/yuj.fish
+```
+
+Bash and Fish commonly discover those files automatically in a new shell.
+For Zsh, make sure `~/.zfunc` is in `fpath` before `compinit` runs. Add that
+line to your Zsh setup yourself if needed. Yuj never changes a shell startup
+file.
+
+Remove completion by deleting only the generated file that you installed:
+
+```bash
+rm ~/.local/share/bash-completion/completions/yuj
+rm ~/.zfunc/_yuj
+rm ~/.config/fish/completions/yuj.fish
+```
+
+Generate the file again after you update Yuj. An unknown shell exits with a
+clear argument error. Generation makes no model request, network request,
+session record, or configuration change.
 
 ## Start a task
 

@@ -27,6 +27,7 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 | You want to | Read |
 | --- | --- |
 | Find an installed `yuj` command or option | [CLI reference](using-yuj.html) |
+| Install Bash, Zsh, or Fish completion | [CLI reference](using-yuj.html#install-shell-completion) |
 | Sign in to Claude or Codex | [Getting started](getting-started.html#use-a-claude-or-codex-credential) |
 | Attach images to a new or resumed task | [CLI reference](using-yuj.html#attach-local-images) |
 | Answer a model clarification question | [CLI reference](using-yuj.html#answer-a-clarification-question) |
