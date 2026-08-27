@@ -184,6 +184,74 @@ resolved by the shared runtime loader. Inspection may show `NAME`, but never
 the variable's value. The same redaction policy also applies to validation
 diagnostics.
 
+### Edit one saved setting
+
+Use `yuj config` to change one documented setting in one named persistent
+layer. The command shows a validated preview by default:
+
+```bash
+yuj config --set loop.max_turns 40 --layer machine-local
+```
+
+Add `--apply` only after you check the destination and resulting source:
+
+```bash
+yuj config --set loop.max_turns 40 --layer machine-local --apply
+```
+
+`machine-local` selects `config.local.toml`. To select a project or operator
+overlay, pass the file and name its position:
+
+```bash
+yuj config --config project.toml \
+  --set tools.terminal_max_input_chars 12000 \
+  --layer overlay-1 --apply
+```
+
+Repeated `--config` options create `overlay-1`, `overlay-2`, and later layers
+from left to right. Yuj refuses to edit `checked-in-defaults`, `base`, or
+`command-line`. It also refuses a symbolic link, a non-regular file, a file
+with no write bits, or an overlay name with no matching `--config` path.
+
+Use a bare dotted setting path from the checked-in `config.toml`. Pass string
+values without TOML quotes. Pass booleans, numbers, arrays, and inline tables
+as TOML values. Yuj checks the public type before it resolves the proposal.
+It rejects unknown paths and values that are not stored as one editable TOML
+assignment.
+
+The preview shows the old and proposed destination values. It also shows the
+old and resulting effective values, their winning source layers, and the full
+low-to-high precedence order. A lower layer may save the value without winning
+against a later layer. The preview reports that result instead of claiming
+that the saved value is effective.
+
+Yuj resolves and validates the complete proposed configuration before it
+writes. It uses the same profile, named-agent, sandbox-selection, type, range,
+and cross-setting checks as configuration inspection. It does not contact a
+model service or create a session.
+
+The editor changes only the selected assignment. It keeps unrelated settings,
+comments, spacing, and section order. It replaces a multiline value as one
+setting. `--unset SETTING` removes only that layer's assignment and shows the
+lower-precedence value that will take over.
+
+With `--apply`, Yuj checks that the destination still contains the previewed
+bytes. It then replaces the file atomically. A conflict or validation error
+leaves the file unchanged. New machine-local files use owner-only permissions.
+
+Yuj rejects literal values for secret-bearing paths. Use a supported
+`$ENV:NAME` reference, `yuj login`, or `yuj setup` instead. The named variable
+must exist while Yuj validates the proposed configuration. Output shows the
+variable name but never its resolved value.
+
+Add `--json` for the stable `yuj.config-edit` schema version 1. After a save,
+run the normal inspection command with the same base and overlays. It reports
+the saved value and its winning source immediately:
+
+```bash
+yuj config --json --config project.toml
+```
+
 ## Find a setting
 
 Start from what you want to change. Each linked section gives the small TOML
@@ -191,7 +259,7 @@ overlay and the limits that matter for that choice.
 
 | You want to | Read |
 | --- | --- |
-| Check which settings and source layers will apply | [Inspect the resolved settings](#inspect-the-resolved-settings) |
+| Inspect or safely edit a setting and its source layer | [Inspect the resolved settings](#inspect-the-resolved-settings), then [edit one saved setting](#edit-one-saved-setting) |
 | Choose a service or model | [Save model settings](#save-model-settings) |
 | Require a plan, correct a known response pattern, choose an edit format, or format edited files | [Shape the model's work](#shape-the-models-work) |
 | Select a sandbox, control command variables, or hide paths | [Control the command boundary](#control-the-command-boundary) |

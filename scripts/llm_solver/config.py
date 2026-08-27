@@ -1020,6 +1020,8 @@ def resolve_config(
     *,
     layer_specs: Sequence[ConfigLayerSpec] | None = None,
     resolve_runtime_extensions: bool = True,
+    defaults_path: Path | None = None,
+    local_path: Path | None = None,
 ) -> ResolvedConfig:
     """Resolve, validate, and retain the exact source of every setting leaf."""
     paths = _user_paths(user_config)
@@ -1039,8 +1041,8 @@ def resolve_config(
             raise ValueError("layer_specs paths must match user_config in order")
 
     layered = resolve_toml_layers(
-        defaults_path=_DEFAULT_CONFIG,
-        local_path=_LOCAL_CONFIG,
+        defaults_path=Path(defaults_path or _DEFAULT_CONFIG),
+        local_path=Path(local_path or _LOCAL_CONFIG),
         user_layers=specs,
     )
     data = layered.data

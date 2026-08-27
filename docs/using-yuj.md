@@ -34,7 +34,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj login` | Save and select a Claude or Codex credential. |
 | `yuj auth-status` | Show the selected provider and authentication method without credentials. |
 | `yuj logout` | Remove one provider-scoped credential. |
-| `yuj config` | Validate and explain the resolved settings without model work. |
+| `yuj config` | Validate, explain, or safely edit saved settings without model work. |
 | `yuj models` | List models from the selected service. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
@@ -82,6 +82,27 @@ output uses the stable `yuj.config-inspection` schema version 1. Secret and
 environment-derived values are redacted in both modes. The command performs
 no model request and writes no session artifacts.
 
+To change one persistent value, select its layer and preview the edit:
+
+```bash
+yuj config --set loop.max_turns 40 --layer machine-local
+```
+
+Add `--apply` to save the validated preview. Select a supplied overlay by its
+one-based position:
+
+```bash
+yuj config --config project.toml \
+  --unset loop.max_turns --layer overlay-1 --apply
+```
+
+The edit output uses the stable `yuj.config-edit` schema version 1 when
+`--json` is present. It shows the destination values, effective values, winning
+sources, and precedence. A preview does not write. An applied edit changes one
+TOML assignment atomically and preserves unrelated text. Read
+[Edit one saved setting](configuration.html#edit-one-saved-setting) for value
+syntax, writable layers, secret handling, and conflict checks.
+
 The `selection.sandbox` object reports the platform's supported, installed,
 available, and unavailable backends, the configured choice, and the
 capability-resolved backend. It does not start a sandbox. Use `doctor` or
@@ -102,6 +123,10 @@ capability-resolved backend. It does not start a sandbox. Use `doctor` or
 | `--base-url URL` | Apply this service address last. |
 | `--api-key-env NAME` | Read the key from this variable and redact its value. |
 | `--agent NAME` | Validate this named-agent descriptor; repeat for more agents. |
+| `--set SETTING VALUE` | Preview one typed value in the selected persistent layer. |
+| `--unset SETTING` | Preview removing one assignment from the selected layer. |
+| `--layer NAME` | Select `machine-local` or `overlay-N` from the `--config` order. |
+| `--apply` | Atomically save a validated `--set` or `--unset` preview. |
 
 The command returns `0` only when resolution and validation succeed. It
 returns `1` and an actionable diagnostic otherwise. Read

@@ -31,11 +31,19 @@ from ..llm_solver.config_inspection import (
     sanitize_diagnostic_message,
     validate_configuration_references,
 )
+from ..llm_solver.config_edit import (
+    ConfigEditError,
+    build_edit_error,
+    edit_configuration,
+    render_edit_human,
+    render_edit_json,
+    select_destination,
+)
 from ..llm_solver._permission_presets import (
     ASSISTANT_PERMISSION_PRESET_NAMES,
 )
 from ..llm_solver._shared.edit_formats import EDIT_FORMATS
-from ..llm_solver._shared.paths import local_config_path
+from ..llm_solver._shared.paths import default_config_path, local_config_path
 from ..llm_solver.bash_quirks import load_redactions
 from ..llm_solver.harness.security_scan import SecurityScanner
 from ..llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
@@ -399,6 +407,31 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         help="named agent descriptor to validate; repeat for more agents",
+    )
+    config_edit = config_parser.add_mutually_exclusive_group()
+    config_edit.add_argument(
+        "--set",
+        dest="set_value",
+        nargs=2,
+        metavar=("SETTING", "VALUE"),
+        help="preview setting one documented value in a persistent layer",
+    )
+    config_edit.add_argument(
+        "--unset",
+        dest="unset_value",
+        metavar="SETTING",
+        help="preview removing one value from a persistent layer",
+    )
+    config_parser.add_argument(
+        "--layer",
+        dest="edit_layer",
+        help="edit machine-local or overlay-N from a supplied --config",
+    )
+    config_parser.add_argument(
+        "--apply",
+        dest="apply_edit",
+        action="store_true",
+        help="atomically save a validated configuration edit",
     )
     config_parser.set_defaults(func=cmd_config)
 
@@ -1645,8 +1678,122 @@ def cmd_run(args) -> int:
     return 0 if success else 1
 
 
+def _cmd_config_edit(args) -> int:
+    """Preview or save one validated persistent setting change."""
+    try:
+        layer_name = str(getattr(args, "edit_layer", "") or "").strip()
+        if not layer_name:
+            raise ConfigEditError("--set and --unset require --layer")
+        overlay_paths = list(getattr(args, "config", []) or [])
+        destination = select_destination(
+            layer_name,
+            overlay_paths=overlay_paths,
+        )
+        config_paths, context_mode = _effective_run_settings(args)
+        protected_paths = {
+            default_config_path().resolve(),
+            _TREATMENT_CONFIG.resolve(),
+            _PLAIN_CONFIG.resolve(),
+        }
+        if destination.path.resolve() in protected_paths:
+            raise ConfigEditError(
+                f"configuration layer {destination.layer_id!r} is read-only"
+            )
+        base_label = "treatment" if args.treatment else "plain"
+        specs = [
+            ConfigLayerSpec(
+                path=config_paths[0],
+                layer_id="base",
+                kind="base",
+                label=base_label,
+            ),
+            *[
+                ConfigLayerSpec(
+                    path=path,
+                    layer_id=f"overlay-{index}",
+                    kind="overlay",
+                    label=f"--config[{index}]",
+                )
+                for index, path in enumerate(config_paths[1:], 1)
+            ],
+        ]
+        from ..llm_solver.harness.context_strategies import resolve_context_class
+
+        resolve_context_class(context_mode)
+        overrides = {
+            "runtime_mode": "assistant",
+            "max_sessions": 1,
+            **_transport_overrides_from_args(args),
+        }
+        if args.model:
+            overrides["model"] = resolve_model(args.model)
+
+        def validate(resolved) -> None:
+            validate_configuration_references(
+                resolved.config,
+                named_agents=args.agent,
+            )
+            inspect_sandbox_selection(resolved.config)
+
+        set_value = getattr(args, "set_value", None)
+        if set_value is not None:
+            operation = "set"
+            setting, raw_value = set_value
+        else:
+            operation = "remove"
+            setting = str(getattr(args, "unset_value", "") or "")
+            raw_value = None
+        document = edit_configuration(
+            operation=operation,
+            setting=setting,
+            raw_value=raw_value,
+            destination=destination,
+            specs=specs,
+            overrides=overrides,
+            apply=bool(getattr(args, "apply_edit", False)),
+            validate=validate,
+        )
+    except (Exception, SystemExit) as exc:
+        detail = exc.code if isinstance(exc, SystemExit) else exc
+        document = build_edit_error(
+            sanitize_diagnostic_message(detail)
+        )
+        output = (
+            render_edit_json(document)
+            if args.json_output
+            else render_edit_human(document)
+        )
+        sys.stdout.write(output)
+        return 1
+
+    output = (
+        render_edit_json(document)
+        if args.json_output
+        else render_edit_human(document)
+    )
+    sys.stdout.write(output)
+    return 0
+
+
 def cmd_config(args) -> int:
     """Validate and explain assistant startup settings without side effects."""
+    editing = (
+        getattr(args, "set_value", None) is not None
+        or getattr(args, "unset_value", None) is not None
+    )
+    if editing:
+        return _cmd_config_edit(args)
+    if getattr(args, "edit_layer", None) or getattr(args, "apply_edit", False):
+        document = build_edit_error(
+            "--layer and --apply require --set or --unset"
+        )
+        output = (
+            render_edit_json(document)
+            if args.json_output
+            else render_edit_human(document)
+        )
+        sys.stdout.write(output)
+        return 1
     resolved = None
     try:
         config_paths, context_mode = _effective_run_settings(args)
