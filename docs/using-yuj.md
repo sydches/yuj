@@ -312,6 +312,10 @@ stream-rule, language-rule, and security feature. It writes no session or run
 artifact. It exits before model discovery and prints
 `Model network: not contacted`.
 
+`--dry-run --github ITEM` still performs the GitHub `GET` requests because
+the option explicitly asks Yuj to validate that external input. It does not
+save the imported item.
+
 ### Model tools
 
 Yuj offers these tools to the model:
@@ -394,6 +398,54 @@ yuj -C /path/to/project "Update the parser and its tests."
 
 These options also set the repository that session-selection commands prefer.
 
+### Attach a GitHub issue or pull request
+
+Install the GitHub CLI and sign in to `github.com` first:
+
+```bash
+gh auth status --hostname github.com
+```
+
+Use `--github` with one exact item URL or repository-qualified number:
+
+```bash
+yuj --github https://github.com/OWNER/REPOSITORY/issues/123 \
+  "Fix the selected issue."
+yuj --github OWNER/REPOSITORY#456 \
+  "Review and finish the selected pull request."
+```
+
+An issue import contains its source identity, title, body, state, author,
+labels, updated time, and up to 50 conversation comments. Each comment
+contains only its ID, author, updated time, and body.
+
+A pull-request import adds its draft state, base and head references and
+commit IDs, and up to 100 changed-file records. Each file record contains its
+name, status, line counts, previous name when present, and the patch that
+GitHub returns. A missing patch remains `null`. Yuj does not import reviews,
+inline review comments, checks, commits, reactions, assignees, or attachments.
+
+Yuj sends only fixed `GET` requests through `gh api --hostname github.com`.
+It never comments, labels, closes, merges, or changes the selected item. A
+missing `gh` command, failed authentication, missing item, URL-kind mismatch,
+or unclear reference stops before model work and prints the next check to run.
+
+Each projected API response cannot exceed 2 MiB. The complete imported
+representation cannot exceed 512 KiB. Yuj rejects more than 50 comments or
+100 changed files instead of silently dropping them. Attach a smaller local
+summary or diff with `--path` when an item exceeds a limit.
+
+Before model work, Yuj applies the normal prompt-injection scan and secret
+redaction rules. It marks the admitted representation as untrusted. A
+blocking scan stops the session.
+
+The session saves one mode-`0600` `github_context.json` file. This file binds
+the source, selected fields, admitted representation, byte counts, content
+digests, redaction state, and value-free scan findings to the original task.
+A resume and fork verify this file and do not contact GitHub again. `status`
+and `show` print its source and evidence metadata without printing the
+imported text.
+
 ### Attach repository paths
 
 Use a repeated `--path` option when you know which repository files the model
@@ -471,6 +523,7 @@ Yuj calls the starting group of settings a base.
 | `--prompt-file PATH` | Read the task from this file. Use `-` for standard input. |
 | `-i PATH`, `--image PATH` | Attach this local image. Repeat for more images. |
 | `--path PATH` | Attach this repository file or directory. Repeat for more paths. |
+| `--github ITEM` | Attach one GitHub issue or pull request by exact URL or `OWNER/REPOSITORY#NUMBER`. |
 | `-m NAME`, `--model NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |

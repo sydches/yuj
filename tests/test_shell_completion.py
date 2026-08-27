@@ -18,7 +18,7 @@ from scripts.llm_assist.completion import (
 
 
 EXPECTED_COMMAND_SURFACE_SHA256 = (
-    "33ed7b435c21564ed9d1cebec746248e6cf7af5f8b63816e37ae7f6e431ac4e2"
+    "ac34b33fe6458bcc6d266c5b4bda05577dd0aca95db3f36d7dcf3445e9539027"
 )
 
 
@@ -128,6 +128,7 @@ def test_bash_output_is_sourceable_and_completes_options_choices_and_nested_comm
     assert {"status", "revoke"} <= complete("yuj trust ''", 2)
     assert {"bash", "zsh", "fish"} <= complete("yuj completion ''", 2)
     assert "--network" in complete("yuj support --ne", 2)
+    assert "--github" in complete("yuj --git", 1)
 
 
 def test_public_completion_command_has_no_model_or_config_side_effect(

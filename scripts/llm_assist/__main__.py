@@ -94,6 +94,12 @@ from ._images import (
     read_image_inputs,
     save_image_segment,
 )
+from .github_context import (
+    GitHubContextError,
+    fetch_github_context,
+    load_github_context,
+    save_github_context,
+)
 from ._path_attachments import (
     PathAttachmentError,
     path_attachment_evidence,
@@ -285,6 +291,14 @@ def _build_cli_parsers() -> tuple[
             action="append",
             default=[],
             help="repository file or directory to attach; repeat for more paths",
+        )
+        p.add_argument(
+            "--github",
+            metavar="ITEM",
+            help=(
+                "attach one GitHub issue or pull request by URL or "
+                "OWNER/REPOSITORY#NUMBER"
+            ),
         )
         p.add_argument("-m", "--model", help="model name or short alias")
         p.add_argument(
@@ -1159,6 +1173,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"image input error: {exc}") from exc
     except PathAttachmentError as exc:
         raise SystemExit(f"path attachment error: {exc}") from exc
+    except GitHubContextError as exc:
+        raise SystemExit(f"GitHub context error: {exc}") from exc
     except ReviewTargetError as exc:
         raise SystemExit(f"review target error: {exc}") from exc
     except WorkspaceTrustError as exc:
@@ -1545,6 +1561,7 @@ def cmd_review(args) -> int:
 def cmd_run(args) -> int:
     pending_images = read_image_inputs(args.image)
     requested_paths = tuple(getattr(args, "path", ()) or ())
+    requested_github = getattr(args, "github", None)
     if not args.dry_run:
         _maybe_offer_first_run_setup(args)
     prompt_text, prompt_source = _resolve_prompt_input(args)
@@ -1610,6 +1627,13 @@ def cmd_run(args) -> int:
             workspace=args.cwd,
             ignore_policy=ignore_policy,
             unreadable_paths=tuple(trust_cfg.unreadable_paths),
+            scanner=SecurityScanner.from_config(trust_cfg),
+            redactions=load_redactions(),
+        )
+    pending_github = None
+    if requested_github:
+        pending_github = fetch_github_context(
+            requested_github,
             scanner=SecurityScanner.from_config(trust_cfg),
             redactions=load_redactions(),
         )
@@ -1698,6 +1722,12 @@ def cmd_run(args) -> int:
             record.artifact_path,
             prompt_text=prompt_text,
             bundle=pending_paths,
+        )
+    if pending_github is not None:
+        save_github_context(
+            record.artifact_path,
+            prompt_text=prompt_text,
+            context=pending_github,
         )
     if pending_review is not None:
         save_review_target(
@@ -3347,6 +3377,9 @@ def cmd_status(args) -> int:
     _print_path_attachment_evidence(
         record.artifact_path, prompt_text=record.prompt_text
     )
+    _print_github_context_evidence(
+        record.artifact_path, prompt_text=record.prompt_text
+    )
     _print_review_target_evidence(
         record.artifact_path, prompt_text=record.prompt_text
     )
@@ -3443,6 +3476,9 @@ def _render_show(args) -> int:
     )
     _print_image_evidence(record.artifact_path)
     _print_path_attachment_evidence(
+        record.artifact_path, prompt_text=record.prompt_text
+    )
+    _print_github_context_evidence(
         record.artifact_path, prompt_text=record.prompt_text
     )
     _print_review_target_evidence(
@@ -3697,6 +3733,32 @@ def _print_path_attachment_evidence(
             f"redacted={'yes' if item.redacted else 'no'} "
             f"security_rules={rules}"
         )
+
+
+def _print_github_context_evidence(
+    artifact_dir: Path,
+    *,
+    prompt_text: str,
+) -> None:
+    evidence = load_github_context(artifact_dir, prompt_text=prompt_text)
+    if evidence is None:
+        return
+    rules = ",".join(
+        finding["rule"] for finding in evidence.findings
+    ) or "none"
+    print(f"github_context: {evidence.requested}")
+    print(
+        "github_source: "
+        + json.dumps(evidence.source, sort_keys=True, separators=(",", ":"))
+    )
+    print(f"github_imported_bytes: {evidence.imported_bytes}")
+    print(f"github_imported_sha256: {evidence.imported_sha256}")
+    print(f"github_admitted_bytes: {evidence.admitted_bytes}")
+    print(f"github_admitted_sha256: {evidence.admitted_sha256}")
+    print(f"github_redacted: {'yes' if evidence.redacted else 'no'}")
+    print(f"github_security_rules: {rules}")
+    print("github_fields: " + ",".join(evidence.fields))
+    print("github_read_only: yes")
 
 
 def _print_review_target_evidence(

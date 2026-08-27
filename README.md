@@ -145,6 +145,8 @@ continue through more than one run segment.
   session with an image-capable model.
 - You can attach exact repository text files or directories when you start a
   session.
+- You can attach one GitHub issue or pull request as bounded, untrusted,
+  read-only task context.
 - Yuj runs model command surfaces through one explicit sandbox policy. Linux
   defaults to `bubblewrap`; Docker, Podman, automatic selection, and explicit
   unsandboxed execution are available where supported.
@@ -185,6 +187,7 @@ own repository.
 | `yuj completion bash` | Print completion for Bash, Zsh, or Fish from the installed command tree. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj support --output yuj-support.json` | Write a redacted local diagnostic report without contacting the model service. |
+| `yuj --github OWNER/REPOSITORY#NUMBER "TASK"` | Attach one read-only GitHub issue or pull request to a new task. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
 | `yuj init -C DIR --output AGENTS.md` | Propose a project instruction file and pause for review before writing it. |
 | `yuj review --working-tree -C DIR` | Review current Git changes with read-only model tools. |

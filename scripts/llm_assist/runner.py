@@ -59,6 +59,7 @@ from ._auth import (
 )
 from ._codex import CodexSubscriptionClient
 from ._images import ImageInputError, load_session_images
+from .github_context import attach_saved_github_context_to_prompt
 from ._path_attachments import attach_saved_paths_to_prompt
 from ._reviews import (
     REVIEW_TOOL_ALLOWLIST,
@@ -425,6 +426,9 @@ def run_session(
 
     prompt_text = attach_saved_paths_to_prompt(
         artifact_dir, record.prompt_text
+    )
+    prompt_text = attach_saved_github_context_to_prompt(
+        artifact_dir, prompt_text
     )
     prompt_text = attach_saved_review_to_prompt(
         artifact_dir, prompt_text

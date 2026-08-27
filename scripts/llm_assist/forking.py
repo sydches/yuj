@@ -34,6 +34,7 @@ from ..llm_solver.harness.workspace_checkpoints import (
     rebind_checkpoint_workspace,
 )
 from ._images import ImageInputError, load_session_images
+from .github_context import GitHubContextError, load_github_context
 from ._path_attachments import PathAttachmentError, load_path_attachments
 from ._reviews import ReviewTargetError, load_review_target
 from .store import SessionLockedError, SessionRecord, SessionStore
@@ -387,6 +388,9 @@ def _validate_source_evidence(
         load_path_attachments(
             source.artifact_path, prompt_text=source.prompt_text
         )
+        load_github_context(
+            source.artifact_path, prompt_text=source.prompt_text
+        )
         load_review_target(
             source.artifact_path, prompt_text=source.prompt_text
         )
@@ -395,6 +399,7 @@ def _validate_source_evidence(
         validate_correction_owner(source, correction)
     except (
         ImageInputError,
+        GitHubContextError,
         PathAttachmentError,
         ReviewTargetError,
         ClarificationStateError,
