@@ -296,6 +296,7 @@ def _build_container_argv(
     readable_paths: tuple[str, ...] = (),
     sandbox_required: bool = True,
     allow_login_shell: bool = False,
+    interactive: bool = False,
     runtime_bin: str | None = None,
     uid: int | None = None,
     gid: int | None = None,
@@ -315,6 +316,9 @@ def _build_container_argv(
     required = _require_bool(sandbox_required, name="sandbox_required")
     login_shell = _require_bool(
         allow_login_shell, name="sandbox.env.allow_login_shell",
+    )
+    interactive_terminal = _require_bool(
+        interactive, name="interactive",
     )
     workdir = _absolute_cwd(cwd)
     user_id = _validate_identity(os.getuid() if uid is None else uid, name="uid")
@@ -344,6 +348,7 @@ def _build_container_argv(
         "--ipc", "private",
         "--hostname", "yuj-sandbox",
         "--user", f"{user_id}:{group_id}",
+        *(["--interactive", "--tty"] if interactive_terminal else []),
         *flags,
         "--workdir", str(workdir),
         "--mount", workdir_mount,

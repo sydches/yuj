@@ -235,6 +235,7 @@ class Session:
         checkpoint_store=None,
         lsp_manager=None,
         process_manager=None,
+        terminal_manager=None,
         injections=None,
         stream_rules=None,
         artifact_dir: Path | None = None,
@@ -443,6 +444,7 @@ class Session:
         base_registry = tool_registry or build_tool_registry()
         handlers = dict(base_registry.handlers)
         self._process_manager = process_manager
+        self._terminal_manager = terminal_manager
 
         base_bash_handler = handlers["bash"]
 
@@ -478,6 +480,37 @@ class Session:
             if self._process_manager is None:
                 return "ERROR: background processes are not enabled"
             return self._process_manager.kill(str(args["proc_id"])).result
+
+        def _terminal_start_handler(args, _cwd, _cfg):
+            if self._terminal_manager is None:
+                return "ERROR: interactive terminals are not enabled"
+            return self._terminal_manager.start(str(args["cmd"])).result
+
+        def _terminal_io_handler(args, _cwd, _cfg):
+            if self._terminal_manager is None:
+                return "ERROR: interactive terminals are not enabled"
+            terminal_id = str(args["terminal_id"])
+            if bool(args.get("terminate", False)):
+                if "input" in args:
+                    return (
+                        "ERROR: terminal_io cannot send input and terminate "
+                        "in the same call"
+                    )
+                self._terminal_manager.kill(terminal_id)
+                return self._terminal_manager.read(
+                    terminal_id, timeout_s=0
+                ).result
+            if "input" in args:
+                self._terminal_manager.write(
+                    terminal_id,
+                    str(args["input"]),
+                    append_newline=bool(args.get("append_newline", True)),
+                )
+            timeout = args.get("timeout_s")
+            return self._terminal_manager.read(
+                terminal_id,
+                timeout_s=None if timeout is None else float(timeout),
+            ).result
 
         def _lsp_handler(args, _cwd, _cfg):
             if self._lsp_manager is None:
@@ -538,6 +571,8 @@ class Session:
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler
+        handlers["terminal_start"] = _terminal_start_handler
+        handlers["terminal_io"] = _terminal_io_handler
         from ._loop.exec_cell_runtime import build_session_exec_cell_handler
 
         handlers["exec_cell"] = build_session_exec_cell_handler(
@@ -812,6 +847,89 @@ class Session:
                     poll_timeout_s=float(cfg.tools_background_poll_timeout),
                     admit_output=_admit_poll_output,
                     event_sink=_process_event_sink,
+                )
+        if (
+            self._terminal_manager is None
+            and bool(getattr(cfg, "tools_terminal_enabled", False))
+            and getattr(cfg, "runtime_mode", "measurement") == "assistant"
+            and "terminal_start" in self._tool_surface.registered_names
+        ):
+            from .terminal_process import (
+                ReplayTerminalProcessManager,
+                TerminalProcessManager,
+            )
+
+            replay_events = getattr(client, "process_events", None)
+            if bool(getattr(client, "is_replay", False)):
+                self._terminal_manager = ReplayTerminalProcessManager(
+                    event
+                    for event in (replay_events or ())
+                    if int(event.get("session_number", -1)) == session_number
+                )
+            else:
+                def _terminal_event_sink(payload: dict[str, object]) -> None:
+                    fields = dict(payload)
+                    event_type = str(fields.pop("event"))
+                    with self._service_event_lock:
+                        self._emit(
+                            event_type,
+                            session_number=self._session_number,
+                            turn_number=self._current_turn,
+                            **fields,
+                        )
+
+                def _admit_terminal_output(value: str) -> str:
+                    from .security_scan import (
+                        SecurityScanner,
+                        emit_findings,
+                        render_security_block,
+                    )
+
+                    scanner = SecurityScanner.from_config(self.cfg)
+                    outcome = scanner.scan_text(value, stage="result")
+                    try:
+                        emit_findings(
+                            outcome.findings, self._security_event_sink
+                        )
+                    except Exception as exc:
+                        log.warning("security finding emit failed: %s", exc)
+                    if outcome.blocked:
+                        return render_security_block("terminal_io", outcome)
+                    return admit_tool_output(
+                        "terminal_io",
+                        value,
+                        arguments={},
+                        cfg=self.cfg,
+                        output_control=self.output_control,
+                        redactions=self.redactions,
+                        security_findings=outcome.findings,
+                    )
+
+                manager_run_dir = Path(
+                    artifact_dir
+                    or (trace_path.parent if trace_path is not None else cwd)
+                )
+                from .sandbox.policy import sandbox_execution_kwargs
+
+                self._terminal_manager = TerminalProcessManager.sandboxed(
+                    run_dir=manager_run_dir,
+                    cwd=cwd,
+                    bwrap_bin=cfg.bwrap_bin,
+                    unreadable_paths=_bash_unreadable_paths(
+                        cwd, cfg, self._ignore_policy,
+                    ),
+                    readable_paths=_bash_readable_paths(cfg),
+                    effective_env=self._effective_env,
+                    allow_login_shell=self._allow_login_shell,
+                    **sandbox_execution_kwargs(cfg),
+                    read_timeout_s=float(cfg.tools_terminal_read_timeout),
+                    max_lifetime_s=float(cfg.tools_terminal_max_lifetime),
+                    max_output_bytes=int(
+                        cfg.tools_terminal_max_output_bytes
+                    ),
+                    max_input_chars=int(cfg.tools_terminal_max_input_chars),
+                    admit_output=_admit_terminal_output,
+                    event_sink=_terminal_event_sink,
                 )
         from .stale_guard import StaleFileGuard
 
@@ -1402,6 +1520,8 @@ class Session:
                 self._lsp_manager.close()
             if self._process_manager is not None:
                 self._process_manager.close()
+            if self._terminal_manager is not None:
+                self._terminal_manager.close()
             if self._async_trace_writer is not None:
                 self._async_trace_writer.stop(timeout=5.0)
                 self._async_trace_writer = None

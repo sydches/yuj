@@ -318,6 +318,37 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "exit_code", "reason",
         }),
     ),
+    TraceEventSpec(
+        "terminal_start",
+        frozenset({
+            "session_number", "terminal_id", "command_sha256", "log_path",
+            "max_lifetime_s", "max_output_bytes", "result",
+        }),
+    ),
+    TraceEventSpec(
+        "terminal_input",
+        frozenset({
+            "session_number", "terminal_id", "input_sha256", "input_chars",
+            "input_bytes", "bytes_written", "append_newline", "complete",
+        }),
+        frozenset({"rejection"}),
+    ),
+    TraceEventSpec(
+        "terminal_read",
+        frozenset({
+            "session_number", "terminal_id", "result", "output_sha256",
+            "running", "exit_code", "timed_out", "cursor_start",
+            "cursor_end", "raw_output_bytes", "output_limited",
+            "termination_reason",
+        }),
+    ),
+    TraceEventSpec(
+        "terminal_end",
+        frozenset({
+            "session_number", "terminal_id", "reason", "exit_code",
+            "elapsed_s", "output_bytes", "output_limited",
+        }),
+    ),
     TraceEventSpec("regression", frozenset({"session_number", "n_regressed"})),
     TraceEventSpec(
         "adaptive_phase_switch",

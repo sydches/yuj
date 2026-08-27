@@ -41,7 +41,7 @@ OutputAdmission = Callable[[str], str]
 
 
 class AdmittedProcessOutput(str):
-    """A poll result that already passed the model-output admission path."""
+    """A process result that already passed model-output admission."""
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,7 @@ def build_background_sandbox_argv(
     container_flags: tuple[str, ...] = (),
     effective_env: Mapping[str, str] | None = None,
     allow_login_shell: bool = False,
+    interactive: bool = False,
 ) -> list[str]:
     """Build a long-lived command argv under the active sandbox policy.
 
@@ -153,6 +154,7 @@ def build_background_sandbox_argv(
             sandbox_required=True,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
+            interactive=interactive,
         )
     if sandbox_backend != "bwrap":
         raise ProcessManagerError(f"unknown sandbox backend {sandbox_backend!r}")

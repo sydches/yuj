@@ -19,6 +19,8 @@ person types into a terminal.
 | `bash` | `cmd` | `background` | Run one shell command and return its output. When background work is enabled, return a process ID instead of waiting. |
 | `bash_poll` | `proc_id` | `timeout_s` | Return new output from one background command and, when known, its exit status. |
 | `bash_kill` | `proc_id` | None | Stop one background process group. |
+| `terminal_start` | `cmd` | None | Start the session's one bounded interactive terminal process and return its terminal ID. |
+| `terminal_io` | `terminal_id` | `input`, `append_newline`, `timeout_s`, `terminate` | Send input, return new output and status, or stop the interactive process. |
 | `read` | `path` | `offset`, `limit` | Read a file with line numbers. `offset` starts at 0. `limit=0` means no line limit. Paths normally stay in the task cwd; an enabled Agent Skill's listed absolute directory is also readable. |
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
@@ -58,7 +60,7 @@ schema, description, or result rule.
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `ask_user` | On for the top-level assistant session. Never present in child-agent or measurement requests. |
-| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `task` | Off |
+| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `terminal_start`, `terminal_io`, `task` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
@@ -75,6 +77,7 @@ think_enabled = true
 think_keep_turns = 4
 edit_format = "apply_patch"
 background_enabled = true
+terminal_enabled = true
 task_enabled = true
 todos_enabled = true
 checkpoint_enabled = true
@@ -105,7 +108,9 @@ list clears it. The tool changes harness state, not source files.
 A model profile may limit the number of visible tools. `done` always remains.
 The top-level assistant session also keeps `ask_user`. Deferred loading keeps
 `load_tools`. Required plan mode keeps `exit_plan_mode` and the exact plan-file
-write so the model can leave the phase.
+write so the model can leave the phase. When interactive terminals are enabled,
+Yuj keeps both terminal controls inside the limit. The shipped eight-tool
+profiles still keep `bash`, `read`, `write`, and the selected edit tool.
 
 ## Choose a tool set
 
@@ -228,7 +233,8 @@ to expose definition, reference, and symbol queries. See
 The file tools keep their paths inside the task repository. They do not give
 the model a general path into the host system.
 
-The `bash` tool follows the active sandbox and approval settings. Read
+The `bash`, `terminal_start`, and `terminal_io` tools follow the active sandbox
+and approval settings. Read
 [Sandbox](sandbox.html) before you let the model work on private files or use a
 Docker socket.
 
@@ -248,6 +254,27 @@ With background commands enabled, the model passes `background = true` to
 `bash_kill` stops the process group. Polls keep the normal output filters,
 redaction, envelope, and size limit. Yuj stops every remaining child when the
 session ends.
+
+### Interactive terminal process
+
+Interactive terminal support is for a debugger, REPL, or another program that
+will not work without a terminal. It is assistant-only and off by default.
+`terminal_start` returns a `terminal_id`. `terminal_io` can send one bounded
+input string and then return only new output. Omit `input` to read or inspect
+status. Set `terminate=true`, without `input`, to stop the process and return
+its final output and status.
+
+Yuj owns the pseudo-terminal. It never gives the process the operator's
+terminal, and it never inserts process output between model turns. One process
+may be live at a time. The selected command boundary, permission rules, output
+filters, redaction, security scan, and session cleanup still apply. A risky
+initial command or risky input uses the normal approval gate.
+
+Yuj records accepted input by hash and size, not by copying it into the
+`terminal_input` trace row. The raw terminal log may still contain input echoed
+by the program. Read
+[Configuration](configuration.html#run-an-interactive-terminal-process) for
+the limits and [Saved files](harness_artifacts.html) for the evidence boundary.
 
 ### Shell redirects
 

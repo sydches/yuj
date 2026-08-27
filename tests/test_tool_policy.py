@@ -135,6 +135,18 @@ def test_search_path_defaults_match_the_handler_contract():
     assert permission_match_argument("grep", {"pattern": "value"}) == ("path", ".")
 
 
+def test_terminal_permission_rules_match_commands_and_later_input():
+    assert permission_match_argument(
+        "terminal_start", {"cmd": "python -i"}
+    ) == ("cmd", "python -i")
+    assert permission_match_argument(
+        "terminal_io", {"terminal_id": "t0001", "input": "next"}
+    ) == ("input", "next")
+    assert permission_match_argument(
+        "terminal_io", {"terminal_id": "t0001", "timeout_s": 0}
+    ) == ("input", "")
+
+
 def test_global_tool_rule_composes_with_exact_tool_override():
     policy = PermissionPolicy.from_rule_tables(
         {"*": "deny", "read": {"docs/*": "allow"}}

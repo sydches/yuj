@@ -1,0 +1,1 @@
+Start the one bounded interactive terminal process for this session. Use it only when a command requires a TTY. Returns a terminal_id; read output with terminal_io.

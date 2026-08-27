@@ -54,6 +54,8 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "rewind": ("report", ""),
         "run_tests": ("path", ""),
         "task": ("agent", ""),
+        "terminal_start": ("cmd", ""),
+        "terminal_io": ("input", ""),
         "think": ("thought", ""),
         "write_todos": ("todos", ()),
         "write": ("path", ""),

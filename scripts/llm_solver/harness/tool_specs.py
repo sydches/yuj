@@ -125,6 +125,16 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_surface="both",
     ),
     ToolSpec(
+        "terminal_start",
+        profile_gate_attr="tools_terminal_enabled",
+        schema_order=22,
+    ),
+    ToolSpec(
+        "terminal_io",
+        profile_gate_attr="tools_terminal_enabled",
+        schema_order=23,
+    ),
+    ToolSpec(
         "run_tests",
         profile_gate_attr="tools_run_tests_enabled",
         native_envelope_prefix="<test_results",
@@ -242,6 +252,10 @@ PROFILE_GATE_ATTRS = {
 CAP_IMMUNE_TOOL_NAMES = frozenset(
     spec.name for spec in _ACTIVE_TOOL_SPECS if spec.cap_immune
 )
+TERMINAL_TOOL_NAMES = frozenset({
+    "terminal_start",
+    "terminal_io",
+})
 NATIVE_ENVELOPE_PREFIXES = tuple(
     spec.native_envelope_prefix
     for spec in _ACTIVE_TOOL_SPECS

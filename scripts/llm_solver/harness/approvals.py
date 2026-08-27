@@ -136,9 +136,12 @@ def approval_decision(
     if runtime_mode != "assistant":
         return True, None
 
-    cmd = str(tool_args.get("cmd") or "")
+    command_field = "input" if tool_name == "terminal_io" else "cmd"
+    cmd = str(tool_args.get(command_field) or "")
     reason = required_reason
-    if reason is None and tool_name == "bash":
+    if reason is None and tool_name in {
+        "bash", "terminal_start", "terminal_io",
+    }:
         reason = _reason_for_bash(cmd, cwd)
     if reason is None:
         return True, None

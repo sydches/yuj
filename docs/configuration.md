@@ -197,7 +197,7 @@ overlay and the limits that matter for that choice.
 | Select a sandbox, control command variables, or hide paths | [Control the command boundary](#control-the-command-boundary) |
 | Use a worktree, save file checkpoints, or rewind | [Isolate and restore work](#isolate-and-restore-work) |
 | Add diagnostics, search, a scratchpad, schema checks, or todos | [Configure model tools](#configure-model-tools) |
-| Run background commands, named agents, or Python cells | [Run background work, agents, or code cells](#run-background-work-agents-or-code-cells) |
+| Run background commands, an interactive terminal, named agents, or Python cells | [Run background work, agents, or code cells](#run-background-work-agents-or-code-cells) |
 | Trust repository startup behavior, receive session notifications, select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
 | Route side requests, ask an advisor, or fall back to another model | [Route model requests](#route-model-requests) |
 | Control prompt caching or reasoning effort | [Tune model requests](#tune-model-requests) |
@@ -237,7 +237,7 @@ The only file it may write is `.solver/plan.md`.
 
 The model finishes the phase by writing a nonempty plan and calling
 `exit_plan_mode`. Yuj then restores the normal tool set. It rejects edits,
-tests, subagents, background commands, code cells, and `done` before that
+tests, subagents, background commands, interactive terminals, code cells, and `done` before that
 point, so a normal model stop does not complete the task.
 
 `plan_mode_max_turns` applies across resumes. After that many planning turns,
@@ -970,6 +970,8 @@ Each tool matches one stable value:
 | Tools | Match value |
 | --- | --- |
 | `bash` | `cmd` |
+| `terminal_start` | `cmd` |
+| `terminal_io` | `input`; an omitted input uses an empty value for status reads and termination |
 | `read`, `write`, `edit`, `glob`, `grep`, `run_tests`, `list_definitions`, `lsp` | `path`; `glob` and `grep` use `.` when omitted |
 | `apply_patch`, `udiff` | `patch` |
 | `done` | `message` |
@@ -1139,11 +1141,61 @@ session-local `proc_id` at once and exposes `bash_poll` and `bash_kill`.
 `background_max_procs` limits live children. `background_poll_timeout` limits
 one poll, even when the model asks to wait longer.
 
-The command uses the selected shell sandbox and has no network access. Yuj
-writes combined output to `.procs/<proc_id>.log`. Only new bytes returned by
-`bash_poll` enter model context, after the normal filters, redaction, and output
-limit. Yuj stops every remaining process group when the session ends. Read
+The command uses the selected command boundary. A selected sandbox applies its
+workspace and network limits. An explicit `sandbox.backend = "none"` runs it as
+the Yuj account. Yuj writes combined output to `.procs/<proc_id>.log`. Only new
+bytes returned by `bash_poll` enter model context, after the normal filters,
+redaction, and output limit. Yuj stops every remaining process group when the
+session ends. Read
 [Saved files](harness_artifacts.html) for the trace boundary.
+
+### Run an interactive terminal process
+
+Enable one bounded pseudo-terminal for an assistant session:
+
+```toml
+[tools]
+terminal_enabled = true
+terminal_read_timeout = 5
+terminal_max_lifetime = 900
+terminal_max_output_bytes = 1000000
+terminal_max_input_chars = 16384
+```
+
+The model starts a program with `terminal_start(cmd)`. Yuj returns a
+session-local `terminal_id`. A later `terminal_io` call may supply `input`, read
+new output, or inspect status. `append_newline` defaults to `true`. A call may
+ask to wait for `timeout_s`, but `terminal_read_timeout` is the upper bound. Set
+`terminate=true` without `input` to stop the process and read its final output
+and status.
+
+Only one interactive process may be live. `terminal_max_lifetime` is its hard
+lifetime. `terminal_max_output_bytes` caps its raw log; reaching the cap stops
+the process. `terminal_max_input_chars` caps the supplied string in one call.
+All four limits must be positive except `terminal_read_timeout`, which may be
+zero for status-only reads.
+
+The process receives a Yuj-owned pseudo-terminal, not the operator terminal.
+It uses the same selected command boundary, environment, hidden paths, and
+workspace rules as `bash`. A selected sandbox applies its isolation. An
+explicit `sandbox.backend = "none"` runs it as the Yuj account. Permission
+rules match the initial `cmd` and each later `input`; status and termination
+calls match an empty value. The normal risky-command approval check also
+applies to the initial command and later input.
+
+A reader drains output into `.terminals/<terminal_id>.log`, but no output enters
+model context until `terminal_io` asks for it. Each call receives only unread
+bytes plus current status. Output then passes through the normal security scan,
+filters, redaction, and size limit. Yuj stops the process on output overflow,
+lifetime expiry, explicit termination, unexpected exit, or session teardown.
+
+The trace stores command and input hashes, byte and character counts, output
+cursor positions, returned-output hashes, status, truncation, and the final
+reason. It does not copy input text into a `terminal_input` row. A terminal may
+echo that input into its raw log and returned output, so treat both as private
+session evidence. Offline replay returns the recorded terminal results and
+never starts a process. Read [Saved files](harness_artifacts.html) for the exact
+artifact and event fields.
 
 ### Run named subagents
 

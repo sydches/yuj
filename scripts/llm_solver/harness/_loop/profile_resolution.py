@@ -10,7 +10,11 @@ from ..._shared.edit_formats import (
     EDIT_FORMAT_TO_TOOL,
     validate_edit_format,
 )
-from ..tool_specs import CAP_IMMUNE_TOOL_NAMES, PROFILE_GATE_ATTRS
+from ..tool_specs import (
+    CAP_IMMUNE_TOOL_NAMES,
+    PROFILE_GATE_ATTRS,
+    TERMINAL_TOOL_NAMES,
+)
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +146,10 @@ def _filter_disabled_tools(tool_schemas: list[dict], cfg) -> list[dict]:
     out: list[dict] = []
     for schema in tool_schemas:
         name = schema.get("function", {}).get("name", "")
+        if name in TERMINAL_TOOL_NAMES and getattr(
+            cfg, "runtime_mode", "measurement"
+        ) != "assistant":
+            continue
         if name == "ask_user" and getattr(
             cfg, "runtime_mode", "measurement"
         ) != "assistant":
@@ -220,6 +228,17 @@ def _skills_active(cfg) -> bool:
     )
 
 
+def _priority_tools(cfg) -> frozenset[str]:
+    names: set[str] = set()
+    if _skills_active(cfg):
+        names.add("read")
+    if bool(getattr(cfg, "tools_terminal_enabled", False)) and getattr(
+        cfg, "runtime_mode", "measurement"
+    ) == "assistant":
+        names.update(TERMINAL_TOOL_NAMES)
+    return frozenset(names)
+
+
 def _require_skills_read(tool_schemas: list[dict], *, skills_active: bool) -> None:
     """Fail when a profile cap removed the only skill-body loading seam."""
     if skills_active and not any(
@@ -250,7 +269,7 @@ def apply_profile_to_schemas(tool_schemas: list[dict], cfg, client) -> list[dict
             client,
         ),
         client,
-        priority_tools=frozenset({"read"}) if skills_active else frozenset(),
+        priority_tools=_priority_tools(cfg),
     )
     _require_skills_read(output, skills_active=skills_active)
     return output
@@ -328,9 +347,7 @@ def build_tool_surface(
         registered = _apply_profile_tool_cap(
             registered,
             client,
-            priority_tools=(
-                frozenset({"read"}) if skills_active else frozenset()
-            ),
+            priority_tools=_priority_tools(cfg),
         )
         _require_skills_read(registered, skills_active=skills_active)
     return ToolSurface(

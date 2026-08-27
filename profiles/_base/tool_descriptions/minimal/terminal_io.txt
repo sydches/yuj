@@ -1,0 +1,1 @@
+Optionally send input to an interactive terminal, then return only its newly available output and current status. Omit input and use timeout_s=0 to inspect without waiting. append_newline defaults to true. Set terminate=true, without input, to stop the process and read its final output and status.

@@ -65,6 +65,22 @@ def test_container_argv_has_fail_closed_isolation_defaults(tmp_path: Path) -> No
     assert "/run/docker.sock" not in "\n".join(argv)
 
 
+def test_interactive_container_argv_allocates_a_runtime_tty(tmp_path: Path) -> None:
+    ordinary = _build_container_argv(
+        "python -i", tmp_path, image=IMAGE,
+        runtime_bin="docker", uid=1, gid=1,
+    )
+    interactive = _build_container_argv(
+        "python -i", tmp_path, image=IMAGE, interactive=True,
+        runtime_bin="docker", uid=1, gid=1,
+    )
+
+    assert "--interactive" not in ordinary
+    assert "--tty" not in ordinary
+    assert interactive.index("--interactive") < interactive.index(IMAGE)
+    assert interactive.index("--tty") < interactive.index(IMAGE)
+
+
 def test_command_environment_is_cleared_and_name_sorted(tmp_path: Path) -> None:
     effective = EnvironmentPolicy(
         inherit="none", set={"ZED": "last", "ALPHA": "first"},

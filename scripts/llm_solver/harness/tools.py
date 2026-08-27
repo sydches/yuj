@@ -282,6 +282,12 @@ _DISPATCH = {
         "ERROR: ask_user is handled only by an assistant session"
     ),
     "done": lambda args, cwd, cfg: "done",
+    "terminal_start": lambda args, cwd, cfg: (
+        "ERROR: interactive terminal manager is unavailable"
+    ),
+    "terminal_io": lambda args, cwd, cfg: (
+        "ERROR: interactive terminal manager is unavailable"
+    ),
     "run_tests": lambda args, cwd, cfg: run_tests(
         path=args.get("path", ""),
         k=args.get("k", ""),
@@ -360,11 +366,12 @@ def admit_tool_output(
 ) -> str:
     """Apply the single model-facing output-admission pipeline.
 
-    Background polls call this before emitting ``proc_poll``. Their marked
-    result then passes through :func:`dispatch` without a second transform.
+    Background polls and terminal reads call this before emitting their exact
+    result event. Their marked result then passes through :func:`dispatch`
+    without a second transform.
     """
     result = str(result)
-    if name in {"bash", "bash_poll"} and filter_shell_output:
+    if name in {"bash", "bash_poll", "terminal_io"} and filter_shell_output:
         cmd = str(arguments.get("cmd", ""))
         result = _filter_bash_output(result, cmd, cfg)
         if output_control is not None and name == "bash":
@@ -602,9 +609,10 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         execution_metadata["todos"] = [dict(item) for item in canonical_todos]
     exec_cell_metadata = getattr(result, "trace_metadata", None)
 
-    # Process-manager polls are scanned in their admission callback before
-    # proc_poll records the exact model-visible bytes. Do not create a second
-    # finding when that admitted value returns through dispatch.
+    # Process-manager polls and terminal reads are scanned in their admission
+    # callback before their trace event records the exact model-visible bytes.
+    # Do not create a second finding when that admitted value returns through
+    # dispatch.
     result_scan = (
         SecurityScanOutcome()
         if already_admitted
@@ -679,10 +687,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     if already_admitted:
         result = str(result)
         if security_findings:
-            # Background polls already passed through ordinary filtering and
-            # redaction before the raw proc_poll row was written. Add only
-            # the newly detected marker/envelope; never transform the bytes a
-            # second time.
+            # Process reads already passed through ordinary filtering and
+            # redaction before their raw event was written. Add only the newly
+            # detected marker/envelope; never transform the bytes twice.
             result = admit_tool_output(
                 name,
                 result,

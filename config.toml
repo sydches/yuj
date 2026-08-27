@@ -351,6 +351,13 @@ todos_max_items = 20
 background_enabled = false
 background_max_procs = 4
 background_poll_timeout = 300  # seconds; caps each bash_poll wait
+# One assistant-only pseudo-terminal. Output is drained to a capped local log
+# and returned only by terminal_io; the process never owns the operator TTY.
+terminal_enabled = false
+terminal_read_timeout = 5       # seconds; caps each terminal_io wait
+terminal_max_lifetime = 900     # seconds; hard process lifetime
+terminal_max_output_bytes = 1000000
+terminal_max_input_chars = 16384
 # Sequential named subagents. Enabling task adds the model-facing tool; each
 # agents/<name>.toml descriptor supplies its profile, allowlist, prompt, and
 # smaller per-agent turn limit. Children never run in the background.

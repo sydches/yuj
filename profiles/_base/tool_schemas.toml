@@ -121,6 +121,16 @@ required = []
 type = "string"
 
 [[tools]]
+name = "terminal_start"
+required = ["cmd"]
+properties = { cmd = { type = "string", minLength = 1 } }
+
+[[tools]]
+name = "terminal_io"
+required = ["terminal_id"]
+properties = { terminal_id = { type = "string" }, input = { type = "string" }, append_newline = { type = "boolean" }, timeout_s = { type = "number" }, terminate = { type = "boolean" } }
+
+[[tools]]
 name = "list_functions"
 required = []
 properties = {}

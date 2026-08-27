@@ -308,7 +308,11 @@ class ReplayClient:
                     continue
                 if ev.get("event") == "tool_call":
                     self._trace_events[int(ev.get("turn_number", -1) or -1)] = ev
-                elif ev.get("event") in {"proc_start", "proc_poll", "proc_kill"}:
+                elif ev.get("event") in {
+                    "proc_start", "proc_poll", "proc_kill",
+                    "terminal_start", "terminal_input", "terminal_read",
+                    "terminal_end",
+                }:
                     self.process_events.append(ev)
                 elif ev.get("event") == "hook":
                     self.hook_events.append(ev)

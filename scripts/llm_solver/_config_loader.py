@@ -314,6 +314,21 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_background_poll_timeout": d.get("tools", {}).get(
             "background_poll_timeout", 300.0
         ),
+        "tools_terminal_enabled": d.get("tools", {}).get(
+            "terminal_enabled", False
+        ),
+        "tools_terminal_read_timeout": d.get("tools", {}).get(
+            "terminal_read_timeout", 5.0
+        ),
+        "tools_terminal_max_lifetime": d.get("tools", {}).get(
+            "terminal_max_lifetime", 900.0
+        ),
+        "tools_terminal_max_output_bytes": d.get("tools", {}).get(
+            "terminal_max_output_bytes", 1_000_000
+        ),
+        "tools_terminal_max_input_chars": d.get("tools", {}).get(
+            "terminal_max_input_chars", 16_384
+        ),
         "tools_task_enabled": d.get("tools", {}).get(
             "task_enabled", False
         ),
@@ -1011,6 +1026,49 @@ def _validate_coupling(
             "config error: tools.background_poll_timeout must be a finite "
             "number >= 0."
         )
+    if not isinstance(cfg.tools_terminal_enabled, bool):
+        raise ValueError(
+            "config error: tools.terminal_enabled must be a boolean."
+        )
+    for field_name, value, minimum, inclusive in (
+        (
+            "tools.terminal_read_timeout",
+            cfg.tools_terminal_read_timeout,
+            0.0,
+            True,
+        ),
+        (
+            "tools.terminal_max_lifetime",
+            cfg.tools_terminal_max_lifetime,
+            0.0,
+            False,
+        ),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or (value < minimum if inclusive else value <= minimum)
+        ):
+            qualifier = ">=" if inclusive else ">"
+            raise ValueError(
+                f"config error: {field_name} must be a finite number "
+                f"{qualifier} {minimum:g}."
+            )
+    for field_name, value in (
+        (
+            "tools.terminal_max_output_bytes",
+            cfg.tools_terminal_max_output_bytes,
+        ),
+        (
+            "tools.terminal_max_input_chars",
+            cfg.tools_terminal_max_input_chars,
+        ),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                f"config error: {field_name} must be an integer >= 1."
+            )
     if not isinstance(cfg.tools_task_enabled, bool):
         raise ValueError(
             "config error: tools.task_enabled must be a boolean."

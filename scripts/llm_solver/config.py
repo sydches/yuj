@@ -422,6 +422,11 @@ class Config:
     tools_background_enabled: bool = False
     tools_background_max_procs: int = 4
     tools_background_poll_timeout: float = 300.0
+    tools_terminal_enabled: bool = False
+    tools_terminal_read_timeout: float = 5.0
+    tools_terminal_max_lifetime: float = 900.0
+    tools_terminal_max_output_bytes: int = 1_000_000
+    tools_terminal_max_input_chars: int = 16_384
     # Sequential nested harness sessions. The task tool is absent from the
     # model-facing schema until explicitly enabled. Depth counts child edges
     # from the root session (root=0), and the global turn limit caps each

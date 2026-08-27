@@ -182,6 +182,7 @@ Yuj offers these tools to the model:
 | List names in a Python file | `list_definitions` | Off |
 | Change files | One of `edit`, `apply_patch`, `udiff`, or `write` | Profile-selected; `_base` uses `edit`. |
 | Run shell commands | `bash` | On |
+| Use a debugger, REPL, or other terminal-dependent program | `terminal_start`, `terminal_io` | Off; assistant sessions only. |
 | Run tests | `run_tests` | Off |
 | Ask one clarification question | `ask_user` | On in the top-level assistant session; absent from child agents and measurements. |
 | Finish the task | `done` | On |
@@ -201,6 +202,7 @@ enabled = true
 
 [tools]
 edit_format = "apply_patch"
+terminal_enabled = true
 ```
 
 A model profile can limit the number of enabled tools that Yuj sends to the

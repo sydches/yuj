@@ -35,6 +35,8 @@ _READ_ONLY_FORBIDDEN_TOOLS = frozenset({
     "run_tests",
     "bash_poll",
     "bash_kill",
+    "terminal_start",
+    "terminal_io",
     "task",
 })
 _READ_ONLY_SIMPLE_COMMANDS = frozenset({
