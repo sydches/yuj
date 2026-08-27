@@ -37,6 +37,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj config` | Validate, explain, or safely edit saved settings without model work. |
 | `yuj models` | List models from the selected service. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
+| `yuj support` | Write one redacted local diagnostic report. |
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
 | `yuj init` | Analyze one repository and propose one project instruction file for review. |
 | `yuj` | Start a coding session. Enter the task when prompted or pass it as an argument. |
@@ -697,6 +698,48 @@ or tool work.
 | Option | What it does |
 | --- | --- |
 | `--config PATH`, `-c PATH` | Apply this TOML file. Repeat the option to add more files. |
+
+### `yuj support`
+
+Write one JSON report for a support request:
+
+```bash
+yuj support --output yuj-support.json
+```
+
+The report uses the stable `yuj.support-report` schema version 1. It contains
+the Yuj and Python versions, basic platform facts, Git availability, runtime
+resource checks, setting names with their winning source layers, and the
+sandbox selection. It also lists each section as collected, omitted,
+redacted, or unavailable.
+
+The report omits every resolved setting value. It also omits configuration
+paths, environment names, credential identities, private host details,
+repository paths and content, task text, model messages, and session records.
+Yuj does not read the target repository or session store for this command.
+Yuj never uploads the report or opens an issue.
+
+The command does not contact the model service by default. Add `--network` to
+request one model-list health check. The report records only the returned
+model count and whether the configured model appears in the list. It does not
+record the provider, address, credential identity, or model names.
+
+Yuj keeps each result that it can collect. A failed section appears as
+`unavailable`. A configuration failure also makes its sandbox and network
+checks unavailable. Stable ordering and the absence of a timestamp or report
+ID let you compare reports from an unchanged environment.
+
+Yuj creates the file with mode `0600` and replaces it atomically. It refuses
+an existing file unless you pass `--force`.
+
+| Option | What it does |
+| --- | --- |
+| `--output PATH` | Write the JSON report to this required path. |
+| `--network` | Contact the configured model service for one bounded health check. |
+| `--force` | Replace an existing regular file. |
+| `--config PATH`, `-c PATH` | Apply this TOML file. Repeat the option to add more files. |
+| `--treatment` | Inspect the treatment base. This is the default. |
+| `--no-treatment` | Inspect the plain base. |
 
 ### `yuj smoke`
 

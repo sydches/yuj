@@ -121,6 +121,11 @@ from .purge import (
 from .progress import TraceFollower
 from .session_diff import SessionDiffError, build_session_worktree_diff
 from .session_export import SessionExportError, build_session_report
+from .support_report import (
+    SupportReportError,
+    build_support_report,
+    write_support_report,
+)
 from .runner import (
     _make_client,
     _record_auth_binding,
@@ -560,6 +565,41 @@ def _build_cli_parsers() -> tuple[
     doctor_parser.add_argument("--config", "-c", type=Path, action="append", default=[],
                                help="extra TOML settings file; repeat to apply more files")
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    support_parser = sub.add_parser(
+        "support", help="write one redacted local diagnostic report"
+    )
+    support_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="JSON report path",
+    )
+    support_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing regular file",
+    )
+    support_parser.add_argument(
+        "--network",
+        action="store_true",
+        help="also contact the configured model service",
+    )
+    support_parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        action="append",
+        default=[],
+        help="extra TOML settings file; repeat to apply more files",
+    )
+    support_parser.add_argument(
+        "--treatment",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="inspect the treatment package (default: enabled)",
+    )
+    support_parser.set_defaults(func=cmd_support)
 
     smoke_parser = sub.add_parser("smoke", help="run one small coding check")
     smoke_parser.add_argument("--root", type=Path, default=None,
@@ -2782,6 +2822,65 @@ def cmd_doctor(args) -> int:
         print("git_repo: warn (current directory is not a git repo root)")
 
     return 1 if failures else 0
+
+
+def _support_network_check(cfg) -> dict[str, object]:
+    """Return only value-free model-service health facts."""
+    auth_store = CredentialStore()
+    models = _make_client(
+        cfg,
+        profile=None,
+        auth_binding=auth_store.active_binding(),
+        auth_store=auth_store,
+    ).health_check()
+    return {
+        "model_count": len(models),
+        "selected_model_listed": cfg.model in models,
+    }
+
+
+def cmd_support(args) -> int:
+    """Write a redacted environment report without session or repository data."""
+    config_paths, _context_mode = _effective_run_settings(args)
+    base_label = "treatment" if args.treatment else "plain"
+    specs = [
+        ConfigLayerSpec(
+            path=config_paths[0],
+            layer_id="base",
+            kind="base",
+            label=base_label,
+        ),
+        *[
+            ConfigLayerSpec(
+                path=path,
+                layer_id=f"overlay-{index}",
+                kind="overlay",
+                label=f"--config[{index}]",
+            )
+            for index, path in enumerate(config_paths[1:], 1)
+        ],
+    ]
+
+    document = build_support_report(
+        version=_cli_version(),
+        specs=specs,
+        overrides={"runtime_mode": "assistant", "max_sessions": 1},
+        network_requested=bool(args.network),
+        network_check=_support_network_check if args.network else None,
+    )
+    try:
+        byte_count, digest = write_support_report(
+            args.output,
+            document,
+            force=bool(args.force),
+        )
+    except SupportReportError as exc:
+        raise SystemExit(f"support report error: {exc}") from exc
+    print(f"support_report: {args.output.expanduser().absolute()}")
+    print(f"bytes: {byte_count}")
+    print(f"sha256: {digest}")
+    print(f"network_requested: {str(bool(args.network)).lower()}")
+    return 0
 
 
 def cmd_sessions(args) -> int:

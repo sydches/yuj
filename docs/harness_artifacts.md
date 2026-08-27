@@ -47,6 +47,11 @@ For an installed package, the normal `assist_home` is
 unset. An editable/source checkout uses `<checkout>/.llm_assist`. Set
 `HARNESS_ASSIST_HOME` to use an exact alternative.
 
+`yuj support --output PATH` writes a separate environment report to the path
+that you choose. It does not read or write the session tree. It also omits
+target-repository content. Read the [CLI reference](using-yuj.html#yuj-support)
+for its exact contents and privacy boundary.
+
 | File | What it means |
 | --- | --- |
 | `sessions.sqlite3` | Session index and local metadata: immutable lineage, manual labels, archive times, active pointers, process locks, purge journals, workspace trust decisions with their approval-time category and path snapshot, and non-secret provider authentication identity. Trust metadata, labels, archive state, and purge state do not enter model input, replay, or measurement mode. Session commands never print credential IDs or values. |
