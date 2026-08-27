@@ -302,6 +302,44 @@ yuj -C /path/to/project "Update the parser and its tests."
 
 These options also set the repository that session-selection commands prefer.
 
+### Attach repository paths
+
+Use a repeated `--path` option when you know which repository files the model
+needs:
+
+```bash
+yuj --path src/parser.py --path tests/parser \
+  "Fix the parser error shown by these tests."
+```
+
+Each value must name a file or directory inside the repository selected by
+`-C`. A relative path starts at that repository. An absolute path must remain
+inside it. Yuj sorts files inside a selected directory by repository path.
+
+Yuj applies workspace trust before it reads the selected content. It also
+applies the configured unreadable-path and ignore rules. Git-ignored content
+and version-control metadata stay hidden. A selected directory skips hidden
+descendants. A path that directly names hidden content fails.
+
+Yuj accepts UTF-8 text in regular files. It rejects a missing path, binary
+content, a symbolic-link path, a visible symbolic link below a selected
+directory, or a path outside the repository. It also rejects a file larger
+than 128 KiB. One task can select at most 20 paths, include at most 100 files,
+and include at most 512 KiB before redaction.
+
+Before model work, Yuj scans the text for prompt injection and applies its
+secret-redaction rules. A blocking scan stops the session. A flagging scan
+adds a value-free warning to the admitted text. The session saves only the
+admitted text, repository-relative paths, content hashes, sizes, redaction
+status, and value-free scan findings. It does not save the original bytes when
+redaction changed them.
+
+Yuj binds this evidence to the original task. A resume verifies the saved
+copy and builds the same path attachment block. It never reopens the original
+repository path. An offline replay uses the saved transcript that contains
+the original block. `status` and `show` print the paths, sizes, hashes,
+redaction status, and scan rule names. They do not print attached content.
+
 ### Attach local images
 
 Attach one or more images to the task text with a repeated `-i` or `--image`
@@ -340,6 +378,7 @@ Yuj calls the starting group of settings a base.
 | `--prompt-text TEXT` | Use this text as the task. |
 | `--prompt-file PATH` | Read the task from this file. Use `-` for standard input. |
 | `-i PATH`, `--image PATH` | Attach this local image. Repeat for more images. |
+| `--path PATH` | Attach this repository file or directory. Repeat for more paths. |
 | `-m NAME`, `--model NAME` | Use this model ID or known short name. |
 | `--thinking LEVEL` | Use `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` reasoning effort for every normal request. |
 | `--plan-mode MODE` | Use `off` or require a nonempty `.solver/plan.md` and explicit `exit_plan_mode` before implementation. |

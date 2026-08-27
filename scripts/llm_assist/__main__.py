@@ -36,6 +36,9 @@ from ..llm_solver._permission_presets import (
 )
 from ..llm_solver._shared.edit_formats import EDIT_FORMATS
 from ..llm_solver._shared.paths import local_config_path
+from ..llm_solver.bash_quirks import load_redactions
+from ..llm_solver.harness.security_scan import SecurityScanner
+from ..llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
 from ..llm_solver.models import resolve_model
 from ..llm_solver.runtime_resources import validate_runtime_resources
 from ..llm_solver.server.request_controls import THINKING_LEVELS
@@ -82,6 +85,12 @@ from ._images import (
     image_evidence,
     read_image_inputs,
     save_image_segment,
+)
+from ._path_attachments import (
+    PathAttachmentError,
+    path_attachment_evidence,
+    read_path_inputs,
+    save_path_attachments,
 )
 from .forking import ForkSessionError, fork_saved_session, validate_correction_owner
 from .notifications import send_session_notification
@@ -242,6 +251,13 @@ def main(argv: list[str] | None = None) -> int:
             action="append",
             default=[],
             help="local image to attach; repeat for more images",
+        )
+        p.add_argument(
+            "--path",
+            type=Path,
+            action="append",
+            default=[],
+            help="repository file or directory to attach; repeat for more paths",
         )
         p.add_argument("-m", "--model", help="model name or short alias")
         p.add_argument(
@@ -964,6 +980,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"{exc.code}: {exc}") from exc
     except ImageInputError as exc:
         raise SystemExit(f"image input error: {exc}") from exc
+    except PathAttachmentError as exc:
+        raise SystemExit(f"path attachment error: {exc}") from exc
     except WorkspaceTrustError as exc:
         raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except KeyboardInterrupt:
@@ -1248,6 +1266,7 @@ def cmd_init(args) -> int:
     args.prompt_text = _project_init_prompt(destination)
     args.prompt_file = None
     args.image = []
+    args.path = []
     args.plan_mode = "off"
     args.permission_preset = None
     args.edit_format = "whole"
@@ -1260,6 +1279,7 @@ def cmd_init(args) -> int:
 
 def cmd_run(args) -> int:
     pending_images = read_image_inputs(args.image)
+    requested_paths = tuple(getattr(args, "path", ()) or ())
     if not args.dry_run:
         _maybe_offer_first_run_setup(args)
     prompt_text, prompt_source = _resolve_prompt_input(args)
@@ -1298,6 +1318,7 @@ def cmd_run(args) -> int:
             workspace=args.cwd,
             config_paths=args.config,
             system_prompt_file=args.system_prompt,
+            task_attachment_paths=requested_paths,
         )
         _gate_workspace_behavior(
             trust_manifest,
@@ -1307,6 +1328,23 @@ def cmd_run(args) -> int:
         raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except Exception as exc:
         raise SystemExit(f"startup preflight failed: {exc}") from exc
+    pending_paths = None
+    if requested_paths:
+        ignore_policy = load_ignore_policy(
+            args.cwd,
+            enabled=getattr(trust_cfg, "state_ignore_file_enabled", True),
+            file_names=getattr(
+                trust_cfg, "state_ignore_file_names", (".yujignore",)
+            ),
+        )
+        pending_paths = read_path_inputs(
+            requested_paths,
+            workspace=args.cwd,
+            ignore_policy=ignore_policy,
+            unreadable_paths=tuple(trust_cfg.unreadable_paths),
+            scanner=SecurityScanner.from_config(trust_cfg),
+            redactions=load_redactions(),
+        )
     if pending_images:
         validate_image_capability(
             config_paths,
@@ -1375,6 +1413,12 @@ def cmd_run(args) -> int:
             segment_number=1,
             prompt_text=prompt_text,
             images=pending_images,
+        )
+    if pending_paths is not None:
+        save_path_attachments(
+            record.artifact_path,
+            prompt_text=prompt_text,
+            bundle=pending_paths,
         )
     _print_session_start(
         record,
@@ -2828,6 +2872,9 @@ def cmd_status(args) -> int:
         print(f"authentication: {record.auth_method}")
     _print_sandbox_provenance(sandbox)
     _print_image_evidence(record.artifact_path)
+    _print_path_attachment_evidence(
+        record.artifact_path, prompt_text=record.prompt_text
+    )
     _print_correction_evidence(correction)
     if approval is not None and approval.get("status") == "pending":
         print("approval: pending")
@@ -2920,6 +2967,9 @@ def _render_show(args) -> int:
         session_sandbox_provenance(record.artifact_path)
     )
     _print_image_evidence(record.artifact_path)
+    _print_path_attachment_evidence(
+        record.artifact_path, prompt_text=record.prompt_text
+    )
     print(f"context: {record.context_mode}")
     print(f"prompt_source: {record.prompt_source}")
     if args.full:
@@ -3139,6 +3189,35 @@ def _print_image_evidence(artifact_dir: Path) -> None:
             f"bytes={item.size_bytes} "
             f"sha256={item.sha256} "
             f"dimensions={item.width}x{item.height}"
+        )
+
+
+def _print_path_attachment_evidence(
+    artifact_dir: Path,
+    *,
+    prompt_text: str,
+) -> None:
+    evidence = path_attachment_evidence(
+        artifact_dir, prompt_text=prompt_text
+    )
+    if not evidence:
+        return
+    total_bytes = sum(item.raw_size_bytes for item in evidence)
+    noun = "file" if len(evidence) == 1 else "files"
+    print(f"path_attachments: {len(evidence)} {noun}, {total_bytes} bytes")
+    for item in evidence:
+        rules = ",".join(
+            finding["rule"] for finding in item.findings
+        ) or "none"
+        print(
+            "path_attachment: "
+            f"file={item.file_number} "
+            f"path={item.path} "
+            f"bytes={item.raw_size_bytes} "
+            f"raw_sha256={item.raw_sha256} "
+            f"admitted_sha256={item.admitted_sha256} "
+            f"redacted={'yes' if item.redacted else 'no'} "
+            f"security_rules={rules}"
         )
 
 

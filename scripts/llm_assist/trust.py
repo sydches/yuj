@@ -141,6 +141,52 @@ def _file_item(
     )
 
 
+def _workspace_path_item(
+    category: str,
+    raw_path: Path,
+    *,
+    workspace: Path,
+    logical_roots: Sequence[Path],
+) -> BehaviorItem:
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    candidate = Path(os.path.abspath(candidate))
+    if not _inside(candidate, workspace):
+        raise WorkspaceTrustError(
+            f"task attachment path escapes the selected workspace: {raw_path}"
+        )
+    current = workspace
+    for part in candidate.relative_to(workspace).parts:
+        current = current / part
+        try:
+            current.lstat()
+        except OSError as exc:
+            raise WorkspaceTrustError(
+                f"cannot inspect task attachment path {raw_path}: "
+                f"{type(exc).__name__}"
+            ) from exc
+        if current.is_symlink():
+            raise WorkspaceTrustError(
+                f"task attachment path must not cross a symbolic link: {current}"
+            )
+    if candidate.is_file():
+        kind = "file"
+    elif candidate.is_dir():
+        kind = "directory"
+    else:
+        raise WorkspaceTrustError(
+            "task attachment path must name a regular file or directory: "
+            f"{raw_path}"
+        )
+    return BehaviorItem(
+        category=category,
+        path=str(candidate),
+        logical_path=_logical_path(candidate, logical_roots),
+        kind=kind,
+    )
+
+
 def _configured_path(base: Path, value: str) -> Path:
     expanded = Path(os.path.expandvars(os.path.expanduser(str(value))))
     return expanded if expanded.is_absolute() else base / expanded
@@ -332,6 +378,7 @@ def discover_workspace_behavior(
     behavior_root: Path | None = None,
     config_paths: Sequence[Path] = (),
     system_prompt_file: Path | None = None,
+    task_attachment_paths: Sequence[Path] = (),
 ) -> BehaviorManifest:
     """Inventory repository startup inputs without activating them."""
     scope = Path(workspace).expanduser().resolve()
@@ -352,6 +399,16 @@ def discover_workspace_behavior(
     scope_project_root = find_project_root(scope, cfg.project_root_markers)
     logical_roots = tuple(dict.fromkeys((target_project_root, scope_project_root)))
     items: list[BehaviorItem] = []
+
+    for raw_path in task_attachment_paths:
+        items.append(
+            _workspace_path_item(
+                "task_attachments",
+                Path(raw_path),
+                workspace=scope,
+                logical_roots=logical_roots,
+            )
+        )
 
     repository_configs: list[Path] = []
     for raw_path in config_paths:

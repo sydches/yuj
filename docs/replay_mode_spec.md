@@ -51,6 +51,7 @@ Each saved file has one role:
 | `subagents/<id>/.trace.jsonl` | The exact terminal result and accounting for the matching parent `subagent` event. |
 | Transcript | The saved pre-profile input and model reply for each turn. Replay checks the input fields named below. An image-bearing input keeps its transport-encoded image blocks here. |
 | `attachments.json` and `attachments/` | Nothing directly. Live assistant start and resume use these files to verify image bytes before writing the model request to the transcript. |
+| `path_attachments.json` and `path_attachments/` | Nothing directly during offline replay. Live assistant start and resume verify the admitted text and rebuild the path-labelled input block before writing the model request to the transcript. |
 | `clarification_request.json` | The exact assistant question and request identity. |
 | `clarification_answer.json` | The exact operator answer and its hash. |
 | `clarification_consumption.json` | The answer hash and the one permitted assistant-resume delivery attempt. |
@@ -67,6 +68,12 @@ reopens the original local image path. The saved attachment files prove the
 bytes used by the live assistant, but the general replay check still does not
 compare every input message block. Treat the recorded image block as evidence,
 not as a full request-parity proof.
+
+For a task with repository-path attachments, replay uses the saved transcript
+record and never opens the original repository paths. The path manifest and
+admitted text prove the path identity and content hashes used by the live
+assistant. A live assistant resume verifies those saved files before it builds
+the next request.
 
 A long run or an assistant resume may split its transcript into numbered
 files. If the main file is `repo.log`, replay first reads

@@ -108,6 +108,14 @@ start the session. You can also pass the task directly:
 yuj "Fix the failing tests and check the change."
 ```
 
+Attach an exact repository file or directory when you already know which
+context the model needs:
+
+```bash
+yuj --path src/parser.py --path tests/parser \
+  "Fix the parser error shown by these tests."
+```
+
 When enabled repository instructions or extension points are present, Yuj
 lists their categories and paths before it asks you to trust that workspace.
 The sandbox, permission checks, secret handling, and injection scan still
@@ -135,6 +143,8 @@ continue through more than one run segment.
 - The model can read files, change code, run commands, and run tests.
 - You can attach PNG, JPEG, GIF, or WebP images when you start or resume a
   session with an image-capable model.
+- You can attach exact repository text files or directories when you start a
+  session.
 - Yuj runs model command surfaces through one explicit sandbox policy. Linux
   defaults to `bubblewrap`; Docker, Podman, automatic selection, and explicit
   unsandboxed execution are available where supported.

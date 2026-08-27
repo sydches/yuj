@@ -59,6 +59,7 @@ from ._auth import (
 )
 from ._codex import CodexSubscriptionClient
 from ._images import ImageInputError, load_session_images
+from ._path_attachments import attach_saved_paths_to_prompt
 from .forking import validate_correction_owner
 from .store import SessionRecord, SessionStore
 from .trust import (
@@ -404,7 +405,9 @@ def run_session(
         record.session_id, status="running", last_finish_reason=None
     )
 
-    prompt_text = record.prompt_text
+    prompt_text = attach_saved_paths_to_prompt(
+        artifact_dir, record.prompt_text
+    )
     if resume:
         approval = load_approval_request(record.artifact_path)
         if approval is not None and approval.get("status") == "approved":

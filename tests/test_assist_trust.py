@@ -132,6 +132,28 @@ def test_workspace_trust_persists_until_revoked(tmp_path):
     assert workspace_trust_state(store, changed) == "untrusted"
 
 
+def test_task_attachment_paths_are_workspace_behavior(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+    (workspace / "src").mkdir()
+    source = workspace / "src" / "demo.py"
+    source.write_text("value = 1\n")
+    cfg = _workspace_config()
+
+    manifest = discover_workspace_behavior(
+        cfg,
+        workspace=workspace,
+        task_attachment_paths=[Path("src"), source],
+    )
+
+    assert manifest.categories == ("task_attachments",)
+    assert [(item.logical_path, item.kind) for item in manifest.items] == [
+        ("project/src", "directory"),
+        ("project/src/demo.py", "file"),
+    ]
+
+
 def test_noninteractive_cli_requires_trust_and_supports_status_and_revoke(
     tmp_path, monkeypatch, capsys
 ):
