@@ -40,6 +40,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
 | `yuj init` | Analyze one repository and propose one project instruction file for review. |
 | `yuj` | Start a coding session. Enter the task when prompted or pass it as an argument. |
+| `yuj review` | Review one working tree, commit, or retained session with read-only tools. |
 | `yuj current` | Run `yuj status latest` over unarchived sessions. |
 | `yuj status` | Show one session's status and the next user action. |
 | `yuj show` | Show one session's settings and recent activity. |
@@ -653,6 +654,57 @@ Do not give `--root` a directory that contains work you need.
 Later commands have no `--assist-home` option. Set `HARNESS_ASSIST_HOME` to
 the same path before you run `status`, `show`, `usage`, `label`, `answer`,
 `approve`, `reject`, or `resume` for that smoke session.
+
+## Review code without changing it
+
+Select exactly one review target:
+
+```bash
+yuj review --working-tree -C /path/to/repository
+yuj review --commit REV -C /path/to/repository
+yuj review --session SESSION
+```
+
+`--working-tree` captures staged, unstaged, and untracked files that Git does
+not ignore. `--commit` resolves one commit and captures its change against the
+first parent. A root commit uses an empty parent. `--session` requires a
+stopped session with a verified retained worktree and saved base commit.
+
+Yuj resolves the repository root and captures the target before model work.
+The capture commands disable Git optional locks. The saved raw SHA-256 digest
+identifies the complete target bytes. Yuj scans the diff for prompt injection
+and applies secret redaction before it saves or sends the text.
+
+A captured target can contain at most 16 MiB. Yuj admits at most 512 KiB to
+the model. For a larger admitted diff, Yuj keeps the start and end and adds an
+exact middle-omission marker. The marker names the omitted byte count and full
+admitted SHA-256 digest. The review prompt requires the model to state this
+limit and prevents an absence-of-findings claim for omitted content.
+
+The review model receives only `read`, `grep`, `glob`, and `done`. Yuj also
+turns off lifecycle hooks, pretests, repository timestamp normalization,
+auto-commit, runtime worktrees, checkpoints, rewind, terminals, subagents,
+turn snapshots, language servers, post-edit checks, and the passive advisor.
+A settings file cannot re-enable those paths for a saved review session. The
+sandbox, workspace-behavior trust, secret handling, and injection scan still
+apply.
+
+The model reports confirmed defects first and orders them by likely impact.
+Each supported finding names a path and line, evidence, and likely impact.
+The report puts uncertain risks in a separate section. It states directly
+when it found no defect. The transcript keeps the complete model response.
+
+The review creates a normal inspectable session record. `status` and `show`
+print the target kind, resolved identity, byte counts, hashes, truncation,
+redaction, scan rules, read-only tool list, and repository-write state. They
+do not print the target patch. Usage remains available through `yuj usage`.
+A resume verifies the saved target and keeps the same read-only contract. It
+does not recapture a changed working tree.
+
+Use the normal model connection options with `review`: `--model`,
+`--thinking`, `--provider`, `--base-url`, `--api-key-env`, `--config`, and
+`--system-prompt`. Add `--dry-run` to validate the target and local startup
+without creating a session or contacting the model.
 
 ## Understand Git changes
 

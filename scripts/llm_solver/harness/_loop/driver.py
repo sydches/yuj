@@ -79,6 +79,10 @@ def solve_task(
     resume_from_artifacts: bool = False,
     worktree_info=None,
     startup_guard: Callable[[Path, Config, Path | None], None] | None = None,
+    tool_allowlist: frozenset[str] | None = None,
+    auto_commit: bool = True,
+    pretest_enabled: bool = True,
+    normalize_repo_timestamps: bool = True,
 ) -> bool:
     """Outer loop: run sessions until done or max_sessions exhausted.
 
@@ -429,12 +433,16 @@ def solve_task(
             # 2+ we short-circuit to success if the pretest already exits
             # green — no model invocation needed.
             _pretest_t0 = time.time()
-            pretest_block = run_pretest(
-                work_dir,
-                pretest_script=pretest_script,
-                pretest_timeout=cfg.pretest_timeout,
-                pretest_head_chars=cfg.pretest_head_chars,
-                pretest_tail_chars=cfg.pretest_tail_chars,
+            pretest_block = (
+                run_pretest(
+                    work_dir,
+                    pretest_script=pretest_script,
+                    pretest_timeout=cfg.pretest_timeout,
+                    pretest_head_chars=cfg.pretest_head_chars,
+                    pretest_tail_chars=cfg.pretest_tail_chars,
+                )
+                if pretest_enabled
+                else ""
             )
             pretest_scan = SecurityScanner.from_config(cfg).scan_text(
                 pretest_block, stage="result"
@@ -521,7 +529,7 @@ def solve_task(
             # pretest can change directory times through temporary files.
             # Changing times can change `ls -la` output even with fixed
             # model sampling. Later sessions must keep the model's changes.
-            if session_num == start_session_num:
+            if session_num == start_session_num and normalize_repo_timestamps:
                 _normalize_repo_timestamps(work_dir)
 
             if session_num == start_session_num:
@@ -703,6 +711,7 @@ def solve_task(
                 allow_login_shell=allow_login_shell,
                 subagent_runtime=subagent_runtime,
                 local_tokenizer=local_tokenizer,
+                tool_allowlist=tool_allowlist,
             )
             if tool_loading_metrics is None:
                 default_tokens, count_method = estimate_tool_block_tokens(
@@ -843,7 +852,8 @@ def solve_task(
                 )
 
             if result.done:
-                _auto_commit(work_dir, session_num, result.finish_reason)
+                if auto_commit:
+                    _auto_commit(work_dir, session_num, result.finish_reason)
                 write_checkpoint(artifact_dir, cfg.model, "completed")
                 success = True
                 break
@@ -853,7 +863,8 @@ def solve_task(
                 # Previously only the non-error path called _auto_commit, so the post-
                 # mortem digest lost the mutation list for any task that
                 # ended in an upstream API failure.
-                _auto_commit(work_dir, session_num, result.finish_reason)
+                if auto_commit:
+                    _auto_commit(work_dir, session_num, result.finish_reason)
                 write_checkpoint(artifact_dir, cfg.model, "error")
                 break
 
@@ -862,12 +873,14 @@ def solve_task(
                 break
 
             if result.finish_reason == "hook_block":
-                _auto_commit(work_dir, session_num, result.finish_reason)
+                if auto_commit:
+                    _auto_commit(work_dir, session_num, result.finish_reason)
                 write_checkpoint(artifact_dir, cfg.model, "blocked")
                 break
 
             # Auto-commit for non-error sessions.
-            _auto_commit(work_dir, session_num, result.finish_reason)
+            if auto_commit:
+                _auto_commit(work_dir, session_num, result.finish_reason)
 
             # The per-task wall-clock budget bounds how long one task can run.
             # It is checked after the session's

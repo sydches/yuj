@@ -156,6 +156,8 @@ continue through more than one run segment.
   resume the same session.
 - Yuj can shorten old command output when the model nears its input limit.
 - Yuj can suggest a next step when the model repeats a known failed step.
+- You can review a working tree, commit, or retained session with a dedicated
+  read-only model session.
 - Yuj can ask an isolated, read-only model to review a completed turn.
 - Yuj can list validated Agent Skills and let the model read one when needed.
 - A Yuj quirk is a TOML rule that users can read, share, and measure.
@@ -181,6 +183,7 @@ own repository.
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
 | `yuj init -C DIR --output AGENTS.md` | Propose a project instruction file and pause for review before writing it. |
+| `yuj review --working-tree -C DIR` | Review current Git changes with read-only model tools. |
 | `yuj trust status -C DIR` | Inspect the saved startup-trust decision for a workspace. |
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj export SESSION` | Print a redacted Markdown session report. |

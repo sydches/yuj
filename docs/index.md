@@ -33,6 +33,7 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 | Correct a stopped session before resume | [CLI reference](using-yuj.html#correct-a-stopped-session) |
 | Inspect token, cache, cost, or quota evidence | [CLI reference](using-yuj.html#inspect-usage) |
 | Label, fork, archive, restore, or purge a saved session | [CLI reference](using-yuj.html#inspect-sessions) |
+| Review a working tree, commit, or retained session | [CLI reference](using-yuj.html#review-code-without-changing-it) |
 | Choose a fixed assistant permission preset | [Configuration](configuration.html#select-a-fixed-assistant-permission-preset) |
 | See what tools the model can use | [Model tools](model-tools.html) |
 | Start a local model server | [Run a local model](serving_overlay.html) |

@@ -60,6 +60,12 @@ from ._auth import (
 from ._codex import CodexSubscriptionClient
 from ._images import ImageInputError, load_session_images
 from ._path_attachments import attach_saved_paths_to_prompt
+from ._reviews import (
+    REVIEW_TOOL_ALLOWLIST,
+    attach_saved_review_to_prompt,
+    load_review_target,
+    read_only_review_config,
+)
 from .forking import validate_correction_owner
 from .store import SessionRecord, SessionStore
 from .trust import (
@@ -317,6 +323,9 @@ def run_session(
 ) -> tuple[bool, str | None]:
     """Run exactly one harness outer session for an assistant record."""
     artifact_dir = record.artifact_path
+    review_target = load_review_target(
+        artifact_dir, prompt_text=record.prompt_text
+    )
     correction = validate_correction_trace(artifact_dir)
     validate_correction_owner(record, correction)
     clarification = clarification_state(artifact_dir)
@@ -341,6 +350,8 @@ def run_session(
         overrides=overrides,
         resolve_runtime_extensions=False,
     )
+    if review_target is not None:
+        inspection_cfg = read_only_review_config(inspection_cfg)
     require_runtime_mode(
         inspection_cfg, expected="assistant", caller="scripts.llm_assist"
     )
@@ -354,9 +365,16 @@ def run_session(
     )
 
     # Runtime extensions named by repository configuration are resolved only
-    # after the selected workspace has passed its trust gate.
-    cfg = load_config(user_config=config_paths, overrides=overrides)
+    # after the selected workspace has passed its trust gate. A review leaves
+    # its disabled extension paths unresolved.
+    cfg = load_config(
+        user_config=config_paths,
+        overrides=overrides,
+        resolve_runtime_extensions=review_target is None,
+    )
     require_runtime_mode(cfg, expected="assistant", caller="scripts.llm_assist")
+    if review_target is not None:
+        cfg = read_only_review_config(cfg)
     worktree_info, record = _resolve_session_worktree(
         store, record, cfg=cfg, resume=resume
     )
@@ -407,6 +425,9 @@ def run_session(
 
     prompt_text = attach_saved_paths_to_prompt(
         artifact_dir, record.prompt_text
+    )
+    prompt_text = attach_saved_review_to_prompt(
+        artifact_dir, prompt_text
     )
     if resume:
         approval = load_approval_request(record.artifact_path)
@@ -460,6 +481,12 @@ def run_session(
         resume_from_artifacts=resume,
         worktree_info=worktree_info,
         startup_guard=startup_guard,
+        tool_allowlist=(
+            REVIEW_TOOL_ALLOWLIST if review_target is not None else None
+        ),
+        auto_commit=review_target is None,
+        pretest_enabled=review_target is None,
+        normalize_repo_timestamps=review_target is None,
     )
     provider_auth_error = getattr(client, "_last_provider_auth_error", None)
     if isinstance(provider_auth_error, ProviderAuthError):

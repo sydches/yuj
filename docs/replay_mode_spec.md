@@ -52,6 +52,7 @@ Each saved file has one role:
 | Transcript | The saved pre-profile input and model reply for each turn. Replay checks the input fields named below. An image-bearing input keeps its transport-encoded image blocks here. |
 | `attachments.json` and `attachments/` | Nothing directly. Live assistant start and resume use these files to verify image bytes before writing the model request to the transcript. |
 | `path_attachments.json` and `path_attachments/` | Nothing directly during offline replay. Live assistant start and resume verify the admitted text and rebuild the path-labelled input block before writing the model request to the transcript. |
+| `review_target.json` and `review_target.patch` | Nothing directly during offline replay. Live review start and resume verify the admitted diff and rebuild its target block before writing the model request to the transcript. |
 | `clarification_request.json` | The exact assistant question and request identity. |
 | `clarification_answer.json` | The exact operator answer and its hash. |
 | `clarification_consumption.json` | The answer hash and the one permitted assistant-resume delivery attempt. |
@@ -74,6 +75,11 @@ record and never opens the original repository paths. The path manifest and
 admitted text prove the path identity and content hashes used by the live
 assistant. A live assistant resume verifies those saved files before it builds
 the next request.
+
+For a dedicated review, replay uses the saved transcript and never recaptures
+the working tree, commit, or retained session. A live review resume verifies
+the saved target patch and restores the fixed read-only tool and repository-
+write contract.
 
 A long run or an assistant resume may split its transcript into numbered
 files. If the main file is `repo.log`, replay first reads

@@ -21,6 +21,7 @@ from ..llm_solver.harness._loop._driver_setup import (
 from ..llm_solver.harness._loop.profile_resolution import build_tool_surface
 from ..llm_solver.harness._loop.session_io import _load_bash_transforms
 from ..llm_solver.harness.context_strategies import resolve_context_class
+from ..llm_solver.harness.schemas import get_tool_schemas
 from ..llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
 from ..llm_solver.harness.skills import discover_skills
 from ..llm_solver.harness.tools import _effective_command_environment
@@ -72,6 +73,7 @@ def preflight_assistant_startup(
     auth_binding: AuthBinding | None = None,
     auth_store: CredentialStore | None = None,
     startup_guard: Callable[[Path, object, Path | None], None] | None = None,
+    tool_allowlist: frozenset[str] | None = None,
 ) -> StartupPreflightReport:
     """Run ordinary local discovery and validation without model I/O or writes."""
     target = Path(cwd).expanduser().resolve()
@@ -109,7 +111,17 @@ def preflight_assistant_startup(
     )
     context_class = resolve_context_class(context_mode)
     local_client = SimpleNamespace(profile=profile)
-    tool_surface = build_tool_surface(cfg, local_client)
+    tool_schemas = get_tool_schemas(
+        cfg.tool_desc,
+        code_mode=bool(getattr(cfg, "tools_exec_cell_enabled", False)),
+    )
+    if tool_allowlist is not None:
+        tool_schemas = [
+            schema
+            for schema in tool_schemas
+            if schema.get("function", {}).get("name") in tool_allowlist
+        ]
+    tool_surface = build_tool_surface(cfg, local_client, tool_schemas)
     _effective_command_environment(cfg)
 
     ignore_policy = load_ignore_policy(
