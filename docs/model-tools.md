@@ -228,6 +228,21 @@ The model profile selects the normal format. Override it with
 [Configuration](configuration.html#select-the-models-edit-format) for the
 precedence rules.
 
+### Formatter results
+
+An explicitly configured formatter can run after `edit`, `write`,
+`apply_patch`, `udiff`, `notebook_edit`, or `structural_edit` changes a
+supported file. It is not a separate model tool. Yuj adds its report to the
+mutation tool's result.
+
+The report names the formatter status and project root. It also shows the
+target hash before and after formatting and the repository-visible paths that
+the formatter changed. A failure or timeout leaves the model edit in place and
+reports any formatter effects that Yuj can attribute. No formatter runs by
+default. Read
+[Format files after model edits](configuration.html#format-files-after-model-edits)
+for selection, permissions, sandboxing, and attribution limits.
+
 ### Notebook cell edits
 
 Enable `notebook_edit` when the task includes Jupyter notebooks:
@@ -250,7 +265,8 @@ or no clear selector changes no file.
 
 The tool uses the normal workspace, permission, approval, stale-file, workspace
 checkpoint, and post-edit controls. A configured post-edit check uses the
-`edit` trigger. Read
+`edit` trigger. A configured formatter selects the notebook by its `.ipynb`
+extension. Read
 [Configuration](configuration.html#edit-one-jupyter-notebook-cell) for the
 setting.
 
@@ -293,10 +309,10 @@ changed pattern, changed replacement, stale hash, overlapping match, missing
 capture, parse error, or unsupported language changes nothing.
 
 `structural_edit` follows the normal visibility, permission, approval,
-read-before-edit, workspace-checkpoint, language-server, and post-edit rules.
-When the stale-file mode is `block`, use `read` on the target before the edit.
-The structural preview does not replace that session read. A post-edit check
-uses the `edit` trigger. Read
+read-before-edit, workspace-checkpoint, language-server, formatter, and
+post-edit rules. When the stale-file mode is `block`, use `read` on the target
+before the edit. The structural preview does not replace that session read. A
+post-edit check uses the `edit` trigger. Read
 [Configuration](configuration.html#search-and-edit-source-structure) for the
 resource limits.
 

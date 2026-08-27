@@ -51,17 +51,17 @@ def udiff_tool(patch: str, *, cwd: str, cfg: Config) -> str:
     except UnifiedDiffApplyError as exc:
         return f"ERROR: udiff {exc.kind}: {exc}"
 
-    from ..post_edit import run_post_edit_checks
-    failed_tail = ""
+    from ..post_edit import run_post_edit_actions
+    action_tail = ""
     for operation in operations:
         if operation.kind == "delete":
             continue
-        check = run_post_edit_checks(
+        check = run_post_edit_actions(
             operation.path, cwd=cwd, cfg=cfg, trigger="udiff"
         )
-        if check.action != "ok":
-            failed_tail += check.output
-    return AppliedUnifiedDiffResult(result + failed_tail, operations)
+        if check.output:
+            action_tail += check.output
+    return AppliedUnifiedDiffResult(result + action_tail, operations)
 
 
 __all__ = ["AppliedUnifiedDiffResult", "udiff_tool"]

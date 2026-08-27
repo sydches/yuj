@@ -240,6 +240,15 @@ def _extract_config_fields(d: dict) -> dict:
             d.get("post_edit_check", {}).get("checks", []),
             path="post_edit_check.checks",
         ),
+        "formatter_enabled": d.get("formatter", {}).get("enabled", False),
+        "formatter_timeout": d.get("formatter", {}).get("timeout", 10),
+        "formatter_max_output_chars": d.get("formatter", {}).get(
+            "max_output_chars", 4000
+        ),
+        "formatters": _list_copy(
+            d.get("formatter", {}).get("formatters", []),
+            path="formatter.formatters",
+        ),
         "tools_lazy_loading_enabled": d.get("tools", {}).get(
             "lazy_loading_enabled", False
         ),

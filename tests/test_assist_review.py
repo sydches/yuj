@@ -217,6 +217,12 @@ def test_review_runtime_disables_optional_repository_writers():
     cfg = read_only_review_config(make_config(
         advisor_enabled=True,
         compaction_hook="module:hook",
+        formatter_enabled=True,
+        formatters=[{
+            "name": "example",
+            "extensions": [".py"],
+            "command": ["formatter", "{path}"],
+        }],
         hooks_enabled=True,
         hooks={"session_start": {"command": ["touch", "changed"]}},
         lsp_enabled=True,
@@ -246,6 +252,7 @@ def test_review_runtime_disables_optional_repository_writers():
     assert cfg.plan_mode == "off"
     for field in (
         "advisor_enabled",
+        "formatter_enabled",
         "lsp_enabled",
         "lsp_tool_enabled",
         "post_edit_check_enabled",

@@ -79,14 +79,16 @@ def apply_patch_tool(patch: str, *, cwd: str, cfg: Config) -> str:
     # block — multi-file backup before verify_and_apply is a larger
     # refactor; today the model sees the patch applied + the block
     # message and must issue a corrective patch on the next turn.
-    from ..post_edit import run_post_edit_checks
-    failed_tail = ""
+    from ..post_edit import run_post_edit_actions
+    action_tail = ""
     for op in ops:
         if op.kind == "delete":
             continue
-        res = run_post_edit_checks(op.path, cwd=cwd, cfg=cfg, trigger="apply_patch")
-        if res.action != "ok":
-            failed_tail += res.output
-    if failed_tail:
-        envelope = envelope + failed_tail
+        res = run_post_edit_actions(
+            op.path, cwd=cwd, cfg=cfg, trigger="apply_patch"
+        )
+        if res.output:
+            action_tail += res.output
+    if action_tail:
+        envelope = envelope + action_tail
     return AppliedPatchResult(envelope, ops)

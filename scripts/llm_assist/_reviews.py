@@ -435,6 +435,7 @@ def review_config_overrides() -> dict[str, object]:
     return {
         "advisor_enabled": False,
         "compaction_hook": "",
+        "formatter_enabled": False,
         "hooks_enabled": False,
         "hooks": {},
         "lsp_enabled": False,

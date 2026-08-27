@@ -156,6 +156,8 @@ continue through more than one run segment.
   resume the same session.
 - Yuj can shorten old command output when the model nears its input limit.
 - Yuj can suggest a next step when the model repeats a known failed step.
+- Yuj can run an explicitly configured formatter after supported model edits
+  and report its separate effects.
 - You can review a working tree, commit, or retained session with a dedicated
   read-only model session.
 - Yuj can ask an isolated, read-only model to review a completed turn.

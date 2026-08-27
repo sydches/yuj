@@ -485,10 +485,10 @@ def notebook_edit(
                 "has the requested source; no file change"
             )
         _atomic_write(target, proposal.text.encode("utf-8"))
-        from ..post_edit import run_post_edit_checks
+        from ..post_edit import run_post_edit_actions
 
         try:
-            check = run_post_edit_checks(
+            check = run_post_edit_actions(
                 path, cwd=cwd, cfg=cfg, trigger="edit",
             )
         except BaseException:

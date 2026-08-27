@@ -427,6 +427,8 @@ def discover_workspace_behavior(
         configured_categories.append("language_servers")
     if cfg.post_edit_checks:
         configured_categories.append("post_edit_checks")
+    if cfg.formatter_enabled and cfg.formatters:
+        configured_categories.append("formatter_commands")
     for category in configured_categories:
         for path in repository_configs:
             items.append(

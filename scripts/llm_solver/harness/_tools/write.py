@@ -55,8 +55,8 @@ def write(path: str, content: str, *, cwd: str,
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
         head = f"OK: wrote {len(content)} bytes to {path}"
-        from ..post_edit import run_post_edit_checks
-        res = run_post_edit_checks(path, cwd=cwd, cfg=cfg, trigger="write")
+        from ..post_edit import run_post_edit_actions
+        res = run_post_edit_actions(path, cwd=cwd, cfg=cfg, trigger="write")
         if res.action == "block":
             if previous_bytes is not None:
                 target.write_bytes(previous_bytes)

@@ -67,7 +67,7 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
     When cfg is None (test-only convenience), strict mode is used.
     """
     from ..edit_replacers import find_span, rank_candidates
-    from ..post_edit import run_post_edit_checks
+    from ..post_edit import run_post_edit_actions
     if "\n" in path or "\x00" in path:
         return f"ERROR: path contains forbidden character (newline or NUL)"
     if cfg is not None and _is_external_readonly_path(
@@ -129,7 +129,7 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
             return f"{head}\n{block}" if block else head
         out_text = new_text.replace("\n", "\r\n") if is_crlf else new_text
         target.write_bytes(out_text.encode("utf-8"))
-        res = run_post_edit_checks(path, cwd=cwd, cfg=cfg, trigger="edit")
+        res = run_post_edit_actions(path, cwd=cwd, cfg=cfg, trigger="edit")
         if res.action == "block":
             target.write_bytes(previous_bytes)
             return (

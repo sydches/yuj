@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
+from ._shared.formatter_spec import validate_formatter_specs
 from ._shared.post_edit_spec import validate_post_edit_check_dict
 from ._shared.paths import default_config_path, local_config_path, project_root
 from ._shared.toml_compat import tomllib
@@ -369,6 +370,12 @@ class Config:
     # List of declared check dicts. Each dict has: name, trigger,
     # when, cmd, on_fail. Empty list = no-op.
     post_edit_checks: list = field(default_factory=list)
+    # Explicit formatter integration. No formatter is detected or selected
+    # unless this gate and at least one declaration are present.
+    formatter_enabled: bool = False
+    formatter_timeout: int = 10
+    formatter_max_output_chars: int = 4000
+    formatters: list = field(default_factory=list)
     # Model-callable run_tests tool (pytest with deterministic flags
     # inside the sandbox). Filtered from the schema list when disabled
     # so the model does not see a tool it cannot use.
@@ -1092,6 +1099,7 @@ def resolve_config(
             _validate_config_field_types(cfg)
             raise
         _validate_post_edit_checks(cfg)
+        _validate_formatters(cfg)
     except Exception as exc:
         from ._config_redaction import (
             environment_string_values,
@@ -1150,6 +1158,16 @@ def _validate_post_edit_checks(cfg: Config) -> None:
     """Reject post_edit_checks entries with unknown trigger / on_fail."""
     for spec in (cfg.post_edit_checks or []):
         validate_post_edit_check_dict(spec)
+
+
+def _validate_formatters(cfg: Config) -> None:
+    """Reject incomplete, ambiguous, or unbounded formatter declarations."""
+    validate_formatter_specs(
+        cfg.formatters,
+        enabled=cfg.formatter_enabled,
+        timeout=cfg.formatter_timeout,
+        max_output_chars=cfg.formatter_max_output_chars,
+    )
 
 
 def require_runtime_mode(cfg: Config, *, expected: str, caller: str) -> None:

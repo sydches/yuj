@@ -479,6 +479,29 @@ timeout = 10                 # seconds; runs per matching mutation
 checks = []                  # no shipped defaults — user declares policy
 
 # ---------------------------------------------------------------------------
+# Explicit formatters (off by default; declared policy only)
+# ---------------------------------------------------------------------------
+# Yuj never detects or chooses a formatter. When enabled, it selects the first
+# declaration whose extension matches and whose optional root marker exists.
+# It runs only after a successful file-mutation tool call passes its post-edit
+# checks. The command is an argv array with exactly one {path} placeholder.
+# It runs from the nearest matching project root, or the task root when
+# root_markers is empty. Bash permissions, sandboxing, the fixed command
+# environment, and these output and time limits apply.
+[formatter]
+enabled = false
+timeout = 10
+max_output_chars = 4000
+formatters = []
+
+# Example for a project overlay:
+# [[formatter.formatters]]
+# name = "ruff-format"
+# extensions = [".py"]
+# root_markers = ["pyproject.toml", "ruff.toml", ".git"]
+# command = ["ruff", "format", "--", "{path}"]
+
+# ---------------------------------------------------------------------------
 # Language Server Protocol diagnostics and navigation
 # ---------------------------------------------------------------------------
 [lsp]

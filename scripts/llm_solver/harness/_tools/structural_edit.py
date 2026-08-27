@@ -120,10 +120,12 @@ def structural_edit(
                 "source changed after preview validation; no change was applied",
             )
         _atomic_write(target, plan.proposed)
-        from ..post_edit import run_post_edit_checks
+        from ..post_edit import run_post_edit_actions
 
         try:
-            check = run_post_edit_checks(path, cwd=cwd, cfg=cfg, trigger="edit")
+            check = run_post_edit_actions(
+                path, cwd=cwd, cfg=cfg, trigger="edit"
+            )
         except BaseException:
             _atomic_write(target, plan.original)
             raise

@@ -34,6 +34,8 @@ def _workspace_config(**overrides):
         "lsp_enabled": False,
         "lsp_servers": {},
         "post_edit_checks": [],
+        "formatter_enabled": False,
+        "formatters": [],
     }
     values.update(overrides)
     return replace(cfg, **values)
@@ -81,6 +83,12 @@ def test_manifest_lists_each_repository_behavior_category(tmp_path):
         lsp_enabled=True,
         lsp_servers={"python": {"command": ["pylsp"]}},
         post_edit_checks=[{"command": ["true"]}],
+        formatter_enabled=True,
+        formatters=[{
+            "name": "example",
+            "extensions": [".py"],
+            "command": ["formatter", "{path}"],
+        }],
     )
 
     manifest = discover_workspace_behavior(
@@ -92,6 +100,7 @@ def test_manifest_lists_each_repository_behavior_category(tmp_path):
     assert set(manifest.categories) == {
         "compaction_hook",
         "configuration",
+        "formatter_commands",
         "ignore_policy",
         "injections",
         "language_servers",

@@ -685,9 +685,9 @@ The review model receives only `read`, `grep`, `glob`, and `done`. Yuj also
 turns off lifecycle hooks, pretests, repository timestamp normalization,
 auto-commit, runtime worktrees, checkpoints, rewind, terminals, subagents,
 turn snapshots, language servers, post-edit checks, and the passive advisor.
-A settings file cannot re-enable those paths for a saved review session. The
-sandbox, workspace-behavior trust, secret handling, and injection scan still
-apply.
+It also turns off configured formatters. A settings file cannot re-enable
+those paths for a saved review session. The sandbox, workspace-behavior trust,
+secret handling, and injection scan still apply.
 
 The model reports confirmed defects first and orders them by likely impact.
 Each supported finding names a path and line, evidence, and likely impact.

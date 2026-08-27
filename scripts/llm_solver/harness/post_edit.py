@@ -256,6 +256,29 @@ def run_post_edit_checks(
     return PostEditResult()
 
 
+def run_post_edit_actions(
+    path: str,
+    *,
+    cwd: str,
+    cfg: Config | None,
+    trigger: str,
+) -> PostEditResult:
+    """Run validation first, then the selected formatter after success."""
+    checked = run_post_edit_checks(path, cwd=cwd, cfg=cfg, trigger=trigger)
+    if checked.action == "block":
+        return checked
+    from .formatter import format_edited_file
+
+    formatted = format_edited_file(path, cwd=cwd, cfg=cfg)
+    if not formatted.output:
+        return checked
+    return PostEditResult(
+        action=checked.action,
+        output=checked.output + formatted.output,
+        check_name=checked.check_name,
+    )
+
+
 # Back-compat shim for callers that used the old string-return contract.
 def run_post_edit_check(
     path: str, *, cwd: str, cfg: Config | None, trigger: str = "edit|write",

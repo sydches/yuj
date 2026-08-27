@@ -193,7 +193,7 @@ overlay and the limits that matter for that choice.
 | --- | --- |
 | Check which settings and source layers will apply | [Inspect the resolved settings](#inspect-the-resolved-settings) |
 | Choose a service or model | [Save model settings](#save-model-settings) |
-| Require a plan, correct a known response pattern, or choose an edit format | [Shape the model's work](#shape-the-models-work) |
+| Require a plan, correct a known response pattern, choose an edit format, or format edited files | [Shape the model's work](#shape-the-models-work) |
 | Select a sandbox, control command variables, or hide paths | [Control the command boundary](#control-the-command-boundary) |
 | Use a worktree, save file checkpoints, or rewind | [Isolate and restore work](#isolate-and-restore-work) |
 | Add diagnostics, search, a scratchpad, schema checks, or todos | [Configure model tools](#configure-model-tools) |
@@ -322,6 +322,68 @@ but retains `write`. The request includes `write` when `[tools].active_default`
 names it or the model loads it. An edit-dialect entry in
 `[tools].active_default` resolves to the selected replacement tool.
 
+### Format files after model edits
+
+Yuj does not detect or choose a formatter. Declare each formatter and turn the
+feature on in a project overlay:
+
+```toml
+[formatter]
+enabled = true
+timeout = 10
+max_output_chars = 4000
+
+[[formatter.formatters]]
+name = "ruff-format"
+extensions = [".py"]
+root_markers = ["pyproject.toml", "ruff.toml", ".git"]
+command = ["ruff", "format", "--", "{path}"]
+```
+
+Each command is an argument array. It must contain `{path}` exactly once. Yuj
+selects the first declaration whose extension matches. Extension matching
+ignores case.
+
+When `root_markers` is not empty, Yuj searches from the edited file's directory
+towards the task root. It selects the nearest directory that contains any
+listed marker. It skips that declaration if it finds no marker, then tries the
+next declaration. An empty marker list selects the task root. Yuj runs the
+command from the selected directory and replaces `{path}` with the file path
+relative to that directory.
+
+The formatter runs after a successful `edit`, `write`, `apply_patch`, `udiff`,
+`notebook_edit`, or `structural_edit` mutation. It runs only after configured
+post-edit checks finish without a `block` result. It formats added and updated
+paths, but skips deleted paths. A shell command that changes a file does not
+trigger a formatter. A multi-file patch processes its paths in patch order.
+
+Yuj captures a bounded Git snapshot before it starts the command. The task
+directory must be the Git root. The snapshot accepts at most 200
+repository-visible paths and 64 MiB of file content. Yuj does not run the
+formatter when it cannot capture this baseline.
+
+The mutation result includes one `formatter_run` block for each selected file.
+The block reports the command status, exit code, timeout state, project root,
+target hash before and after formatting, and every repository-visible path
+that the command changed. It also reports the full filtered-output size and
+hash. `max_output_chars` limits only the displayed formatter output. The normal
+session diff contains the resulting file state. The hashes and changed-path
+list identify the formatter's part of that state.
+
+A failed or timed-out formatter does not undo the model edit. It also does not
+hide partial formatter effects. Yuj captures and reports those effects when
+the ending Git snapshot succeeds. If that snapshot fails, Yuj reports that the
+changed paths are unknown and that partial effects may remain.
+
+Formatter commands use the fixed command environment, hidden-path policy,
+selected sandbox, timeout, and `bash` permission rules. A command that resolves
+to `ask` cannot open a second approval from inside a completed file mutation,
+so Yuj does not run it and reports `denied`. Repository settings that enable a
+formatter also enter the workspace-trust review as `formatter_commands`.
+
+Keep `enabled = false`, or omit the section, to preserve the normal mutation
+behavior exactly.
+
 ## Control the command boundary
 
 ### Select a shell sandbox backend
@@ -390,10 +452,10 @@ devices, privileges, or the security boundary. Read [Sandbox](sandbox.html)
 before you enable this backend.
 
 The same resolved policy runs foreground and background shell commands,
-`run_tests`, post-edit checks, language servers, Python cells, and named-agent
-sessions. `none` changes only the process-isolation boundary. Permission
-rules, approvals, command and path validation, hooks, output handling, and
-artifact ownership still apply.
+`run_tests`, post-edit checks, formatters, language servers, Python cells, and
+named-agent sessions. `none` changes only the process-isolation boundary.
+Permission rules, approvals, command and path validation, hooks, output
+handling, and artifact ownership still apply.
 
 ### Control the command environment
 
@@ -427,10 +489,11 @@ step 2, but it must still pass the final include list.
 Keep `allow_login_shell = false` unless startup files are part of the run you
 intend to test. Those files can change the environment after Yuj builds it.
 
-Yuj gives the same mapping to shell calls, test runners, post-edit checks, and
-language servers under every command backend. The mapping does not change the
-harness process, so the model client can still read its provider credentials.
-Saved provenance records variable names, not values, and redacts fixed values.
+Yuj gives the same mapping to shell calls, test runners, post-edit checks,
+formatters, and language servers under every command backend. The mapping does
+not change the harness process, so the model client can still read its provider
+credentials. Saved provenance records variable names, not values, and redacts
+fixed values.
 For a provider-scoped Claude or Codex API key, Yuj always removes that key's
 environment name from this mapping, even when `ignore_default_excludes` or a
 fixed value would otherwise restore it. Every provider-scoped Claude or Codex
@@ -453,8 +516,9 @@ last matching rule in one file wins. If you list several ignore files, the
 first file that decides a path wins.
 
 Yuj loads the policy once, before the first model request. It applies the same
-view to file tools, search tools, shell commands, tests, post-edit checks, and
-language servers. Editing `.yujignore` during a run does not change that run.
+view to file tools, search tools, shell commands, tests, post-edit checks,
+formatters, and language servers. Editing `.yujignore` during a run does not
+change that run.
 
 This setting hides paths from the model. It does not delete them, and an
 external test or scorer can still read them. The trace records the loaded file
@@ -889,9 +953,10 @@ model behavior:
 - injection and stream-rule files;
 - `.yujignore` and any other configured task-root ignore file;
 - a settings file inside the selected workspace; and
-- lifecycle hooks, compaction hooks, language servers, and post-edit checks
-  enabled by a workspace settings file. A compaction-hook Python source found
-  inside the workspace is also listed before Yuj imports it.
+- lifecycle hooks, compaction hooks, language servers, post-edit checks, and
+  formatter commands enabled by a workspace settings file. A compaction-hook
+  Python source found inside the workspace is also listed before Yuj imports
+  it.
 
 Yuj may parse a repository settings file to enumerate this list, but the
 inspection pass does not import a Python extension, run a hook, or add local
