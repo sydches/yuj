@@ -379,6 +379,7 @@ tools = ["read", "glob", "grep", "bash", "done"]
 system_prompt_file = "prompts/my-agent.md"
 max_turns = 12
 read_only = true
+workspace = "shared"
 ```
 
 The descriptor must contain one `[agent]` table:
@@ -390,8 +391,19 @@ The descriptor must contain one `[agent]` table:
 | `system_prompt_file` | Existing Markdown file below `agents/`. |
 | `max_turns` | Descriptor turn limit, still capped by the public tool setting. |
 | `read_only` | Reject mutation tools and allow only simple inspection commands through `bash`. Defaults to `true`. |
+| `workspace` | Use `shared` or `isolated`. Defaults to `shared`. Read-only agents must use `shared`. |
 
-Set `read_only = false` only when the agent should change the task directory.
+Set `read_only = false` only when the agent should write files. Use
+`workspace = "isolated"` to give that agent an exact temporary copy of the
+parent Git workspace. The child returns a bounded patch instead of changing
+parent files. Review the patch with `subagent_changes`, then apply it with
+`apply_subagent`. The apply tool checks normal permissions and rejects stale
+parent state.
+
+An isolated agent needs a Git repository with a valid `HEAD`. It also needs an
+active sandbox before its descriptor can include process-backed tools. Without
+a sandbox, it can still use contained file tools such as `read`, `write`, and
+`edit`.
 
 Enable the caller with `[tools].task_enabled = true`. The public depth and turn
 settings still cap descriptor values. See

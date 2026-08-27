@@ -290,6 +290,7 @@ def validate_configuration_references(
                 "name": spec.name,
                 "profile": profile.name,
                 "read_only": spec.read_only,
+                "workspace": spec.workspace,
             }
         )
     return {

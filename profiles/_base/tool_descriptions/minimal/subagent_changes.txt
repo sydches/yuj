@@ -1,0 +1,1 @@
+Review one saved patch from an isolated named agent. Use the task ID returned by task. Read more pages with offset and limit. This tool never changes the workspace.

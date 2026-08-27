@@ -1191,6 +1191,7 @@ Each tool matches one stable value:
 | `apply_patch`, `udiff` | `patch` |
 | `done` | `message` |
 | `task` | `agent` |
+| `subagent_changes`, `apply_subagent` | `task_id` |
 | `think` | `thought` |
 | `bash_poll`, `bash_kill` | `proc_id` |
 | `write_todos` | The canonical todo array |
@@ -1432,14 +1433,36 @@ for the descriptor format.
 
 The root session has depth `0`, and each nested `task` call adds one. At
 `subagent_depth`, Yuj removes `task` from the child and rejects a direct nested
-call. Agents are read-only unless their descriptor explicitly allows writes.
-A read-only agent may run only a small, fail-closed set of inspection commands.
+call. Children still run one at a time. Each child gets a fresh conversation
+and model client. Yuj saves a separate child trace and adds child use to the
+normal token totals.
 
-Children run one at a time in the parent's task directory and use the same
-sandbox policy. Each child gets a fresh conversation and model client. The
-parent receives only its final text. Yuj saves a separate child trace and adds
-child use to the normal token totals. Replay returns the saved result instead
-of calling the child model again.
+Each agent descriptor selects `workspace = "shared"` or
+`workspace = "isolated"`. The default `shared` mode runs in the parent's task
+directory. Read-only agents must use this mode. They retain the small,
+fail-closed inspection command set.
+
+Set `read_only = false` and `workspace = "isolated"` to keep a writing child
+away from parent files. Yuj creates a temporary Git worktree with the parent's
+exact starting state. The copy includes tracked, staged, unstaged, and
+untracked files. The child keeps the same sandbox policy. Without an active
+sandbox, its descriptor cannot include process-backed tools such as `bash`,
+`run_tests`, or `exec_cell`.
+
+After a successful child run, Yuj saves a Git patch and a change manifest. The
+handoff accepts at most 64 changed files, 256 KiB of combined before-and-after
+file content, and a 512 KiB patch. `subagent_changes(task_id, offset, limit)`
+returns up to 400 patch lines at a time. `apply_subagent(task_id)` is a
+write-classified action. It uses normal permissions, checks the exact parent
+state, validates the patch, and records a successful application. It rejects
+stale, repeated, incomplete, oversized, escaped, or invalid changes without
+changing parent files.
+
+Both handoff tools follow `task_enabled`, so they remain off by default. This
+mode does not add parallel or background agents. It does not change depth,
+turn, token, or measurement defaults. Replay returns the saved child result
+and copies its immutable change set. Replay never copies an earlier
+application marker.
 
 ### Run a sandboxed Python cell
 

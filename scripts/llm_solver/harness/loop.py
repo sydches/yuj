@@ -368,7 +368,9 @@ class Session:
             registered_tool_schemas = [
                 schema
                 for schema in registered_tool_schemas
-                if schema.get("function", {}).get("name") != "ask_user"
+                if schema.get("function", {}).get("name") not in {
+                    "ask_user", "subagent_changes", "apply_subagent",
+                }
             ]
         if self._subagent_level >= int(
             getattr(cfg, "tools_subagent_depth", 1) or 0
@@ -551,6 +553,24 @@ class Session:
                 args.get("prompt"),
             )
 
+        def _subagent_changes_handler(args, _cwd, _cfg):
+            if self._subagent_runtime is None:
+                return "ERROR: subagent_changes has no subagent runtime"
+            return self._subagent_runtime.review_changes(
+                self,
+                args.get("task_id"),
+                offset=args.get("offset", 0),
+                limit=args.get("limit", 200),
+            )
+
+        def _apply_subagent_handler(args, _cwd, _cfg):
+            if self._subagent_runtime is None:
+                return "ERROR: apply_subagent has no subagent runtime"
+            return self._subagent_runtime.apply_changes(
+                self,
+                args.get("task_id"),
+            )
+
         def _load_tools_handler(args, _cwd, _cfg):
             try:
                 activation = self._tool_surface.activate(args.get("names"))
@@ -575,6 +595,8 @@ class Session:
 
         handlers["lsp"] = _lsp_handler
         handlers["task"] = _task_handler
+        handlers["subagent_changes"] = _subagent_changes_handler
+        handlers["apply_subagent"] = _apply_subagent_handler
         handlers["load_tools"] = _load_tools_handler
         handlers["exit_plan_mode"] = _exit_plan_mode_handler
         handlers["bash"] = _bash_handler
@@ -1151,6 +1173,13 @@ class Session:
             registered_schemas = [
                 schema for schema in registered_schemas
                 if schema.get("function", {}).get("name") != "task"
+            ]
+        if self._subagent_level:
+            registered_schemas = [
+                schema for schema in registered_schemas
+                if schema.get("function", {}).get("name") not in {
+                    "ask_user", "subagent_changes", "apply_subagent",
+                }
             ]
         if self._tool_allowlist is not None:
             registered_schemas = [

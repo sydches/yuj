@@ -1,0 +1,1 @@
+Apply one isolated named-agent patch after review. The parent workspace must still match the child's exact starting state. This is a write operation and normal permissions apply.

@@ -2,9 +2,8 @@
 
 Agent descriptors own model/profile and tool policy.  This module owns the
 runtime boundary: deterministic IDs, isolated child traces, replay from those
-traces, read-only shell admission, and child token accounting.  A child uses
-the same task cwd and sandbox policy as its parent but a separate in-memory
-conversation and model client.
+traces, read-only shell admission, optional write-workspace isolation, and
+child token accounting. Shared-workspace children use the parent's task cwd.
 """
 from __future__ import annotations
 
@@ -32,6 +31,7 @@ _READ_ONLY_FORBIDDEN_TOOLS = frozenset({
     "notebook_edit",
     "structural_edit",
     "apply_patch",
+    "apply_subagent",
     "udiff",
     "exec_cell",
     "run_tests",
@@ -52,6 +52,18 @@ _READ_ONLY_SIMPLE_COMMANDS = frozenset({
     "wc",
 })
 _SHELL_CONTROL_TOKENS = ("\n", ";", "&&", "||", "|", ">", "<", "`", "$(")
+_AGENT_WORKSPACES = frozenset({"shared", "isolated"})
+_PARENT_ONLY_TOOLS = frozenset({"subagent_changes", "apply_subagent"})
+_UNSANDBOXED_PROCESS_TOOLS = frozenset({
+    "bash",
+    "bash_poll",
+    "bash_kill",
+    "exec_cell",
+    "lsp",
+    "run_tests",
+    "terminal_start",
+    "terminal_io",
+})
 
 
 class AgentConfigError(ValueError):
@@ -66,6 +78,7 @@ class AgentSpec:
     system_prompt_file: Path
     max_turns: int
     read_only: bool = True
+    workspace: str = "shared"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +103,11 @@ class SubagentOutcome:
     own_completion_tokens: int
     finish_reason: str
     done: bool
+    workspace: str = "shared"
+    changeset_status: str = ""
+    changeset_files: int = 0
+    changeset_bytes: int = 0
+    changeset_sha256: str = ""
 
     @property
     def tokens(self) -> int:
@@ -119,7 +137,8 @@ def load_agent_spec(name: str, agents_dir: Path | None = None) -> AgentSpec:
         )
     table = data["agent"]
     allowed_fields = {
-        "model_profile", "tools", "system_prompt_file", "max_turns", "read_only"
+        "model_profile", "tools", "system_prompt_file", "max_turns", "read_only",
+        "workspace",
     }
     unknown = set(table) - allowed_fields
     if unknown:
@@ -158,6 +177,21 @@ def load_agent_spec(name: str, agents_dir: Path | None = None) -> AgentSpec:
         raise AgentConfigError(
             f"{descriptor}: read-only agent cannot allow tools: {sorted(unsafe)}"
         )
+    parent_only = set(tools) & _PARENT_ONLY_TOOLS
+    if parent_only:
+        raise AgentConfigError(
+            f"{descriptor}: child agent cannot allow parent-only tools: "
+            f"{sorted(parent_only)}"
+        )
+    workspace = table.get("workspace", "shared")
+    if not isinstance(workspace, str) or workspace not in _AGENT_WORKSPACES:
+        raise AgentConfigError(
+            f"{descriptor}: agent.workspace must be 'shared' or 'isolated'"
+        )
+    if read_only and workspace != "shared":
+        raise AgentConfigError(
+            f"{descriptor}: read-only agents must use workspace='shared'"
+        )
 
     max_turns = table.get("max_turns")
     if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
@@ -187,6 +221,7 @@ def load_agent_spec(name: str, agents_dir: Path | None = None) -> AgentSpec:
         system_prompt_file=prompt_path,
         max_turns=max_turns,
         read_only=read_only,
+        workspace=workspace,
     )
 
 
@@ -337,6 +372,15 @@ class SubagentRuntime:
         parent._subagent_prompt_tokens += outcome.prompt_tokens
         parent._subagent_completion_tokens += outcome.completion_tokens
         parent._subagent_calls += 1
+        summary_fields: dict[str, object] = {}
+        if outcome.workspace == "isolated":
+            summary_fields.update({
+                "workspace": "isolated",
+                "changeset_status": outcome.changeset_status,
+                "changeset_files": outcome.changeset_files,
+                "changeset_bytes": outcome.changeset_bytes,
+                "changeset_sha256": outcome.changeset_sha256 or None,
+            })
         parent._emit(
             "subagent",
             session_number=parent._session_number,
@@ -346,8 +390,35 @@ class SubagentRuntime:
             turns=outcome.turns,
             tokens=outcome.tokens,
             result_chars=len(outcome.result),
+            **summary_fields,
         )
         return outcome.result
+
+    def review_changes(
+        self,
+        parent: Any,
+        task_id: object,
+        *,
+        offset: object = 0,
+        limit: object = 200,
+    ) -> str:
+        if int(getattr(parent, "_subagent_level", 0) or 0):
+            return "ERROR: subagent_changes is available only to the parent session"
+        from .subagent_workspace import review_subagent_changes
+
+        return review_subagent_changes(
+            self.run_root,
+            task_id,
+            offset=offset,
+            limit=limit,
+        )
+
+    def apply_changes(self, parent: Any, task_id: object) -> str:
+        if int(getattr(parent, "_subagent_level", 0) or 0):
+            return "ERROR: apply_subagent is available only to the parent session"
+        from .subagent_workspace import apply_subagent_changes
+
+        return apply_subagent_changes(self.run_root, Path(parent.cwd), task_id)
 
     def _binding(self, parent: Any, spec: AgentSpec, task_id: str) -> SubagentModelBinding:
         factory = self.client_factory or getattr(
@@ -362,11 +433,31 @@ class SubagentRuntime:
             "task tool requires a configured subagent model client factory"
         )
 
+    @staticmethod
+    def _validate_isolated_tools(parent: Any, spec: AgentSpec) -> None:
+        if spec.workspace != "isolated":
+            return
+        from .sandbox.policy import sandbox_execution_kwargs
+
+        sandboxed = bool(sandbox_execution_kwargs(parent.cfg)["sandbox"])
+        unsafe = set(spec.tools) & _UNSANDBOXED_PROCESS_TOOLS
+        if unsafe and not sandboxed:
+            raise AgentConfigError(
+                "isolated agents need an active sandbox for process-backed "
+                f"tools: {sorted(unsafe)}"
+            )
+
     def _run_live(self, parent: Any, spec: AgentSpec, prompt: str) -> SubagentOutcome:
         from ._loop.profile_resolution import _apply_profile_preamble, _resolve_token_estimator
         from ._loop.trace_schema import emit_trace_event
         from .context import FullTranscript
         from .loop import Session
+        from .subagent_workspace import (
+            SubagentChangeSet,
+            capture_isolated_changes,
+            prepare_isolated_workspace,
+            remove_isolated_workspace,
+        )
 
         task_id = self._allocate_id()
         child_dir = self.run_root / "subagents" / task_id
@@ -383,55 +474,73 @@ class SubagentRuntime:
         completion_tokens = 0
         own_prompt_tokens = 0
         own_completion_tokens = 0
-        try:
-            binding = self._binding(parent, spec, task_id)
-            child_cfg = replace(
-                binding.config,
-                profile_name=spec.model_profile,
-                max_turns=min(
-                    spec.max_turns,
-                    int(parent.cfg.tools_subagent_max_turns),
-                ),
-                max_sessions=1,
-                state_writer_enabled=False,
-                tools_file_checkpoints_enabled=False,
-                tools_background_enabled=False,
-                injections_enabled=False,
-                plan_mode="off",
-                pre_mutation_turn_cap=0,
-                rumination_enabled=False,
-                done_guard_enabled=False,
-                done_require_mutation=False,
-                done_require_verify=False,
-                done_require_pretest_parity=False,
-                cache_affinity=False,
-                cache_retention="off",
-                advisor_enabled=False,
-            )
-            if "cfg" in getattr(binding.client, "__dict__", {}):
-                binding.client.cfg = child_cfg
-            if binding.dedicated and hasattr(binding.client, "set_transcript"):
-                binding.client.set_transcript(child_dir / "transcript.log")
+        isolated_workspace = None
+        changeset: SubagentChangeSet | None = None
+        pending_interrupt: BaseException | None = None
+        child_cwd = Path(parent.cwd)
+        with open(child_trace, "x") as trace_file:
+            try:
+                self._validate_isolated_tools(parent, spec)
+                if spec.workspace == "isolated":
+                    isolated_workspace = prepare_isolated_workspace(
+                        Path(parent.cwd),
+                        run_root=self.run_root,
+                        task_id=task_id,
+                    )
+                    child_cwd = isolated_workspace.info.session_cwd
+                binding = self._binding(parent, spec, task_id)
+                child_cfg = replace(
+                    binding.config,
+                    profile_name=spec.model_profile,
+                    max_turns=min(
+                        spec.max_turns,
+                        int(parent.cfg.tools_subagent_max_turns),
+                    ),
+                    max_sessions=1,
+                    state_writer_enabled=False,
+                    tools_file_checkpoints_enabled=False,
+                    tools_background_enabled=False,
+                    injections_enabled=False,
+                    plan_mode="off",
+                    pre_mutation_turn_cap=0,
+                    rumination_enabled=False,
+                    done_guard_enabled=False,
+                    done_require_mutation=False,
+                    done_require_verify=False,
+                    done_require_pretest_parity=False,
+                    cache_affinity=False,
+                    cache_retention="off",
+                    advisor_enabled=False,
+                )
+                if "cfg" in getattr(binding.client, "__dict__", {}):
+                    binding.client.cfg = child_cfg
+                if binding.dedicated and hasattr(binding.client, "set_transcript"):
+                    binding.client.set_transcript(child_dir / "transcript.log")
 
-            arm = resolve_system_prompt_source(
-                spec.system_prompt_file,
-                imports_enabled=child_cfg.imports_enabled,
-                allowed_dirs=(self.agents_dir.resolve(),),
-                max_depth=child_cfg.imports_max_depth,
-                unreadable_paths=child_cfg.unreadable_paths,
-            )
-            system_prompt = _apply_profile_preamble(
-                assemble_system_prompt(
-                    child_cfg.system_header,
-                    resolved_arm=arm.content if arm is not None else None,
-                ),
-                binding.client,
-            )
-            context = FullTranscript(
-                token_estimator=_resolve_token_estimator(binding.client)
-                or (lambda messages: sum(len(str(item)) for item in messages) // 4)
-            )
-            with open(child_trace, "x") as trace_file:
+                arm = resolve_system_prompt_source(
+                    spec.system_prompt_file,
+                    imports_enabled=child_cfg.imports_enabled,
+                    allowed_dirs=(self.agents_dir.resolve(),),
+                    max_depth=child_cfg.imports_max_depth,
+                    unreadable_paths=child_cfg.unreadable_paths,
+                )
+                system_prompt = _apply_profile_preamble(
+                    assemble_system_prompt(
+                        child_cfg.system_header,
+                        resolved_arm=arm.content if arm is not None else None,
+                    ),
+                    binding.client,
+                )
+                context = FullTranscript(
+                    token_estimator=_resolve_token_estimator(binding.client)
+                    or (lambda messages: sum(len(str(item)) for item in messages) // 4)
+                )
+                start_fields: dict[str, object] = {}
+                if isolated_workspace is not None:
+                    start_fields.update({
+                        "workspace": "isolated",
+                        "workspace_base_sha256": isolated_workspace.baseline.sha256,
+                    })
                 emit_trace_event(
                     trace_file,
                     "subagent_start",
@@ -444,6 +553,7 @@ class SubagentRuntime:
                     tools=list(spec.tools),
                     read_only=spec.read_only,
                     max_turns=child_cfg.max_turns,
+                    **start_fields,
                 )
                 child_env = dict(parent._effective_env)
                 if spec.read_only:
@@ -454,7 +564,7 @@ class SubagentRuntime:
                     binding.client,
                     system_prompt,
                     prompt,
-                    parent.cwd,
+                    str(child_cwd),
                     context_manager=context,
                     trace_file=trace_file,
                     trace_path=child_trace,
@@ -471,7 +581,10 @@ class SubagentRuntime:
                     subagent_runtime=self,
                     subagent_read_only=spec.read_only,
                     artifact_dir=child_dir,
-                    ignore_policy=parent._ignore_policy,
+                    ignore_policy=(
+                        None if isolated_workspace is not None
+                        else parent._ignore_policy
+                    ),
                     effective_env=child_env,
                     allow_login_shell=(
                         False if spec.read_only else parent._allow_login_shell
@@ -520,57 +633,77 @@ class SubagentRuntime:
                         f"ERROR: subagent {task_id} ended with {finish_reason}; "
                         f"task_id={task_id}"
                     )
-                emit_trace_event(
-                    trace_file,
-                    "subagent_result",
-                    id=task_id,
-                    agent=spec.name,
-                    turns=turns,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    own_prompt_tokens=own_prompt_tokens,
-                    own_completion_tokens=own_completion_tokens,
-                    tokens=prompt_tokens + completion_tokens,
-                    finish_reason=finish_reason,
-                    done=done,
-                    result=result_text,
-                    result_chars=len(result_text),
-                    result_sha256=hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
+                if isolated_workspace is not None:
+                    changeset = capture_isolated_changes(
+                        isolated_workspace,
+                        parent_cwd=Path(parent.cwd),
+                        child_dir=child_dir,
+                        outcome_ready=done,
+                    )
+                    result_text += "\n\n" + changeset.result_suffix()
+            except BaseException as exc:
+                result_text = (
+                    f"ERROR: subagent {task_id} failed with {type(exc).__name__}: "
+                    f"{str(exc)[:400]}; task_id={task_id}"
                 )
-        except Exception as exc:
-            result_text = (
-                f"ERROR: subagent {task_id} failed with {type(exc).__name__}: "
-                f"{str(exc)[:400]}; task_id={task_id}"
+                finish_reason = "error"
+                done = False
+                if not isinstance(exc, Exception):
+                    pending_interrupt = exc
+            finally:
+                if (
+                    binding is not None
+                    and binding.dedicated
+                    and hasattr(binding.client, "close_transcript")
+                ):
+                    try:
+                        binding.client.close_transcript()
+                    except Exception as exc:
+                        result_text += (
+                            "\n\nERROR: subagent transcript close failed: "
+                            f"{type(exc).__name__}: {str(exc)[:200]}"
+                        )
+                if isolated_workspace is not None:
+                    try:
+                        remove_isolated_workspace(
+                            Path(parent.cwd), isolated_workspace
+                        )
+                    except Exception as exc:
+                        result_text += (
+                            "\n\nERROR: isolated workspace cleanup failed: "
+                            f"{type(exc).__name__}: {str(exc)[:200]}"
+                        )
+
+            changeset_fields: dict[str, object] = {}
+            if changeset is not None:
+                changeset_fields.update({
+                    "workspace": "isolated",
+                    "changeset_status": changeset.status,
+                    "changeset_files": changeset.file_count,
+                    "changeset_bytes": changeset.patch_bytes,
+                    "changeset_sha256": changeset.patch_sha256 or None,
+                })
+            emit_trace_event(
+                trace_file,
+                "subagent_result",
+                id=task_id,
+                agent=spec.name,
+                turns=turns,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                own_prompt_tokens=own_prompt_tokens,
+                own_completion_tokens=own_completion_tokens,
+                tokens=prompt_tokens + completion_tokens,
+                finish_reason=finish_reason,
+                done=done,
+                result=result_text,
+                result_chars=len(result_text),
+                result_sha256=hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
+                **changeset_fields,
             )
-            if not child_trace.exists():
-                child_trace.touch()
-            with open(child_trace, "a") as trace_file:
-                emit_trace_event(
-                    trace_file,
-                    "subagent_result",
-                    id=task_id,
-                    agent=spec.name,
-                    turns=turns,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    own_prompt_tokens=own_prompt_tokens,
-                    own_completion_tokens=own_completion_tokens,
-                    tokens=prompt_tokens + completion_tokens,
-                    finish_reason="error",
-                    done=False,
-                    result=result_text,
-                    result_chars=len(result_text),
-                    result_sha256=hashlib.sha256(result_text.encode("utf-8")).hexdigest(),
-                )
-            finish_reason = "error"
-            done = False
-        finally:
-            if (
-                binding is not None
-                and binding.dedicated
-                and hasattr(binding.client, "close_transcript")
-            ):
-                binding.client.close_transcript()
+
+        if pending_interrupt is not None:
+            raise pending_interrupt
 
         return SubagentOutcome(
             task_id=task_id,
@@ -583,6 +716,13 @@ class SubagentRuntime:
             own_completion_tokens=own_completion_tokens,
             finish_reason=finish_reason,
             done=done,
+            workspace=spec.workspace,
+            changeset_status=changeset.status if changeset is not None else "",
+            changeset_files=changeset.file_count if changeset is not None else 0,
+            changeset_bytes=changeset.patch_bytes if changeset is not None else 0,
+            changeset_sha256=(
+                changeset.patch_sha256 if changeset is not None else ""
+            ),
         )
 
     def _replay(self, parent: Any, agent: str) -> SubagentOutcome:
@@ -621,6 +761,10 @@ class SubagentRuntime:
         if replay_child.resolve(strict=False) != child_source.resolve(strict=False):
             replay_child.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(child_source, replay_child)
+            if terminal.get("workspace") == "isolated":
+                from .subagent_workspace import copy_replay_changeset
+
+                copy_replay_changeset(child_source.parent, replay_child.parent)
         return SubagentOutcome(
             task_id=task_id,
             agent=agent,
@@ -634,6 +778,11 @@ class SubagentRuntime:
             ),
             finish_reason=str(terminal.get("finish_reason") or ""),
             done=bool(terminal.get("done", False)),
+            workspace=str(terminal.get("workspace") or "shared"),
+            changeset_status=str(terminal.get("changeset_status") or ""),
+            changeset_files=int(terminal.get("changeset_files", 0)),
+            changeset_bytes=int(terminal.get("changeset_bytes", 0)),
+            changeset_sha256=str(terminal.get("changeset_sha256") or ""),
         )
 
 

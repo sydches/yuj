@@ -38,6 +38,8 @@ person types into a terminal.
 | `structural_search` | `path`, `language`, `query` | `glob`, `replacement`, `page` | Find syntax nodes with a Tree-sitter query. Add `replacement` to preview a single-file rewrite without changing the file. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
 | `task` | `agent`, `prompt` | None | Run one named agent in a separate context and return its final text. |
+| `subagent_changes` | `task_id` | `offset`, `limit` | Read one bounded page from an isolated child's saved patch. |
+| `apply_subagent` | `task_id` | None | Apply one isolated child patch after permission and stale-state checks. |
 | `udiff` | `patch` | None | Apply a checked standard unified diff with safe unique-context recovery. |
 | `list_functions` | None | None | In code mode, list the function names injected into `exec_cell`. |
 | `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
@@ -64,7 +66,7 @@ schema, description, or result rule.
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `ask_user` | On for the top-level assistant session. Never present in child-agent or measurement requests. |
-| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `terminal_start`, `terminal_io`, `task` | Off |
+| `think`, `write_todos`, `checkpoint`, `rewind`, `list_definitions`, `run_tests`, `lsp`, `bash_poll`, `bash_kill`, `terminal_start`, `terminal_io`, `task`, `subagent_changes`, `apply_subagent` | Off |
 | `list_functions`, `get_function_details`, `exec_cell` | Off; enabled together by code mode. |
 
 Turn on the optional tools in a small settings file:
@@ -415,14 +417,22 @@ a setup error instead of downloading one.
 
 With `task_enabled = true`, `task(agent, prompt)` selects
 `agents/<name>.toml`. That file chooses the child's model profile, tool
-allowlist, system prompt, turn limit, and read-only status. Agents are
-read-only by default.
+allowlist, system prompt, turn limit, read-only status, and workspace mode.
+Agents are read-only by default.
 
-A child uses the parent's task directory and sandbox policy, but starts a new
-conversation and model client. Children run one at a time. Depth and turn
-settings limit their work. The parent sees only the final text. Yuj saves a
-separate child trace for audit and replay and includes child tokens in the run
-metrics. See [Configuration](configuration.html#run-named-subagents) and
+The default `shared` mode uses the parent's task directory. A write-capable
+agent can instead select `workspace = "isolated"`. Yuj gives that child an
+exact temporary Git worktree. The child cannot change parent files directly.
+It returns a bounded patch beside its separate trace and final text.
+
+Use `subagent_changes(task_id, offset, limit)` to inspect that patch. Use
+`apply_subagent(task_id)` to apply it. Application is a separate mutation
+action, so normal permissions still apply. Yuj also rejects the patch when the
+parent state has changed since the child started.
+
+Children run one at a time. Depth and turn settings still limit their work.
+Yuj includes child tokens in the run metrics. See
+[Configuration](configuration.html#run-named-subagents) and
 [`agents/README.md`](https://github.com/sydches/yuj/blob/main/agents/README.md).
 
 ## Argument schema rejection

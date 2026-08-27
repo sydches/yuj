@@ -180,7 +180,7 @@ def test_tool_specs_drive_surface_metadata():
     assert GUARDRAIL_MUTATION_TOOL_NAMES == frozenset(
         {
             "write", "edit", "notebook_edit", "structural_edit",
-            "apply_patch", "udiff",
+            "apply_patch", "udiff", "apply_subagent",
             "str_replace",
         }
     )
@@ -197,6 +197,8 @@ def test_tool_specs_drive_surface_metadata():
         "structural_search": "tools_structural_enabled",
         "exit_plan_mode": "plan_mode_enabled",
         "task": "tools_task_enabled",
+        "subagent_changes": "tools_task_enabled",
+        "apply_subagent": "tools_task_enabled",
         "think": "tools_think_enabled",
         "write_todos": "tools_todos_enabled",
         "list_functions": "tools_exec_cell_enabled",

@@ -290,6 +290,12 @@ _DISPATCH = {
     "task": lambda args, cwd, cfg: (
         "ERROR: task tool is unavailable outside a configured Session"
     ),
+    "subagent_changes": lambda args, cwd, cfg: (
+        "ERROR: subagent_changes is unavailable outside a configured Session"
+    ),
+    "apply_subagent": lambda args, cwd, cfg: (
+        "ERROR: apply_subagent is unavailable outside a configured Session"
+    ),
     "ask_user": lambda args, cwd, cfg: (
         "ERROR: ask_user is handled only by an assistant session"
     ),
@@ -673,7 +679,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name
                 )
-            elif succeeded and name in {"apply_patch", "udiff"}:
+            elif succeeded and name in {
+                "apply_patch", "udiff", "apply_subagent",
+            }:
                 for operation_kind, operation_path in applied_operations:
                     if operation_kind == "delete":
                         stale_guard.forget(operation_path, source=name)

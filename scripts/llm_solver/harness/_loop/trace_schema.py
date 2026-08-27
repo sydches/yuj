@@ -120,6 +120,10 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "session_number", "turn_number", "id", "agent", "turns",
             "tokens", "result_chars",
         }),
+        frozenset({
+            "workspace", "changeset_status", "changeset_files",
+            "changeset_bytes", "changeset_sha256",
+        }),
     ),
     TraceEventSpec(
         "subagent_start",
@@ -127,6 +131,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "id", "agent", "parent_session_number", "parent_turn_number",
             "depth", "model_profile", "tools", "read_only", "max_turns",
         }),
+        frozenset({"workspace", "workspace_base_sha256"}),
     ),
     TraceEventSpec(
         "subagent_result",
@@ -135,6 +140,10 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "completion_tokens", "own_prompt_tokens",
             "own_completion_tokens", "tokens", "finish_reason", "done",
             "result", "result_chars", "result_sha256",
+        }),
+        frozenset({
+            "workspace", "changeset_status", "changeset_files",
+            "changeset_bytes", "changeset_sha256",
         }),
     ),
     TraceEventSpec(

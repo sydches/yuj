@@ -124,6 +124,16 @@ required = ["agent", "prompt"]
 properties = { agent = { type = "string" }, prompt = { type = "string" } }
 
 [[tools]]
+name = "subagent_changes"
+required = ["task_id"]
+properties = { task_id = { type = "string" }, offset = { type = "integer" }, limit = { type = "integer" } }
+
+[[tools]]
+name = "apply_subagent"
+required = ["task_id"]
+properties = { task_id = { type = "string" } }
+
+[[tools]]
 name = "ask_user"
 required = ["question"]
 properties = { question = { type = "string", minLength = 1, maxLength = 4096 } }

@@ -62,6 +62,24 @@ class RemovedWorktree:
     forced: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WorkspaceEntry:
+    kind: str
+    sha256: str
+    mode: int
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceSnapshot:
+    entries: tuple[tuple[str, WorkspaceEntry], ...]
+    sha256: str
+
+    @property
+    def by_path(self) -> dict[str, WorkspaceEntry]:
+        return dict(self.entries)
+
+
 @dataclass(frozen=True)
 class _RegisteredWorktree:
     path: Path
@@ -481,10 +499,67 @@ def fork_session_worktree(
         raise WorktreeRuntimeError(str(exc)) from exc
 
 
-def _worktree_snapshot(root: Path) -> dict[str, tuple[str, str, int]]:
+def copy_workspace_to_worktree(
+    source_cwd: Path,
+    *,
+    child_run_id: str,
+) -> tuple[WorktreeRuntimeInfo, WorkspaceSnapshot]:
+    """Copy one Git workspace endpoint into a new owned worktree.
+
+    The source may be the main checkout or another worktree. Its tracked,
+    untracked, staged, and unstaged file bytes become the child's starting
+    point. Git metadata and Yuj-owned worktrees stay outside the snapshot.
+    """
+    source_cwd = Path(source_cwd).resolve()
+    repo_root = _repo_root(source_cwd)
+    source_snapshot = snapshot_workspace(repo_root)
+    endpoint_commit = _git(
+        repo_root, "rev-parse", "--verify", "HEAD^{commit}"
+    ).stdout.strip()
+    child: WorktreeRuntimeInfo | None = None
+    try:
+        child = create_session_worktree(
+            source_cwd,
+            mode="auto",
+            run_id=child_run_id,
+            base_commit=endpoint_commit,
+            reuse=False,
+            require_clean=False,
+        )
+        assert child is not None
+        _replace_worktree_contents(
+            repo_root,
+            child.worktree_path,
+            source_snapshot,
+        )
+        if snapshot_workspace(repo_root) != source_snapshot:
+            raise WorktreeRuntimeError(
+                "source workspace changed while its isolated copy was created"
+            )
+        if snapshot_workspace(child.worktree_path) != source_snapshot:
+            raise WorktreeRuntimeError(
+                "isolated worktree does not match the selected source endpoint"
+            )
+        return child, source_snapshot
+    except BaseException as exc:
+        if child is not None:
+            try:
+                remove_session_worktree(source_cwd, child_run_id, force=True)
+            except Exception as cleanup_exc:
+                raise WorktreeRuntimeError(
+                    f"{exc}; isolated worktree cleanup also failed: {cleanup_exc}"
+                ) from exc
+        if isinstance(exc, WorktreeRuntimeError):
+            raise
+        if not isinstance(exc, Exception):
+            raise
+        raise WorktreeRuntimeError(str(exc)) from exc
+
+
+def snapshot_workspace(root: Path) -> WorkspaceSnapshot:
     """Return a byte-and-mode snapshot without following workspace links."""
-    root = Path(root)
-    entries: dict[str, tuple[str, str, int]] = {}
+    root = Path(root).resolve()
+    entries: dict[str, WorkspaceEntry] = {}
 
     def visit(directory: Path) -> None:
         try:
@@ -497,6 +572,8 @@ def _worktree_snapshot(root: Path) -> dict[str, tuple[str, str, int]]:
             path = Path(entry.path)
             relative = path.relative_to(root)
             if relative == Path(".git"):
+                continue
+            if relative == Path(WORKTREE_DIR_NAME):
                 continue
             if ".git" in relative.parts:
                 raise WorktreeRuntimeError(
@@ -515,7 +592,12 @@ def _worktree_snapshot(root: Path) -> dict[str, tuple[str, str, int]]:
                     f"source worktree contains a symbolic link: {relative}"
                 )
             if stat.S_ISDIR(metadata.st_mode):
-                entries[name] = ("dir", hashlib.sha256(b"").hexdigest(), mode)
+                entries[name] = WorkspaceEntry(
+                    kind="dir",
+                    sha256=hashlib.sha256(b"").hexdigest(),
+                    mode=mode,
+                    size=0,
+                )
                 visit(path)
                 continue
             if not stat.S_ISREG(metadata.st_mode):
@@ -523,9 +605,31 @@ def _worktree_snapshot(root: Path) -> dict[str, tuple[str, str, int]]:
                     f"source worktree contains an unsupported file: {relative}"
                 )
             payload = _read_regular_bytes(path, metadata)
-            entries[name] = ("file", hashlib.sha256(payload).hexdigest(), mode)
+            entries[name] = WorkspaceEntry(
+                kind="file",
+                sha256=hashlib.sha256(payload).hexdigest(),
+                mode=mode,
+                size=len(payload),
+            )
     visit(root)
-    return entries
+    ordered = tuple(sorted(entries.items()))
+    digest_payload = json.dumps(
+        [
+            [path, item.kind, item.sha256, item.mode, item.size]
+            for path, item in ordered
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return WorkspaceSnapshot(
+        entries=ordered,
+        sha256=hashlib.sha256(digest_payload).hexdigest(),
+    )
+
+
+def _worktree_snapshot(root: Path) -> WorkspaceSnapshot:
+    """Compatibility name for the internal snapshot call sites."""
+    return snapshot_workspace(root)
 
 
 def _read_regular_bytes(path: Path, expected: os.stat_result) -> bytes:
@@ -570,7 +674,7 @@ def _read_regular_bytes(path: Path, expected: os.stat_result) -> bytes:
 def _replace_worktree_contents(
     source: Path,
     child: Path,
-    expected: dict[str, tuple[str, str, int]],
+    expected: WorkspaceSnapshot,
 ) -> None:
     for entry in os.scandir(child):
         if entry.name == ".git":
@@ -584,8 +688,8 @@ def _replace_worktree_contents(
     directories = sorted(
         (
             (relative, details)
-            for relative, details in expected.items()
-            if details[0] == "dir"
+            for relative, details in expected.entries
+            if details.kind == "dir"
         ),
         key=lambda item: (len(Path(item[0]).parts), item[0]),
     )
@@ -595,32 +699,32 @@ def _replace_worktree_contents(
     files = sorted(
         (
             (relative, details)
-            for relative, details in expected.items()
-            if details[0] == "file"
+            for relative, details in expected.entries
+            if details.kind == "file"
         ),
         key=lambda item: item[0],
     )
-    for relative, (_kind, expected_hash, mode) in files:
+    for relative, details in files:
         source_path = source / relative
         metadata = os.lstat(source_path)
         payload = _read_regular_bytes(source_path, metadata)
-        if hashlib.sha256(payload).hexdigest() != expected_hash:
+        if hashlib.sha256(payload).hexdigest() != details.sha256:
             raise WorktreeRuntimeError(
                 f"source worktree file changed while copying: {relative}"
             )
         target = child / relative
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(target, flags, mode or 0o600)
+        descriptor = os.open(target, flags, details.mode or 0o600)
         try:
             _write_all(descriptor, payload)
-            os.fchmod(descriptor, mode)
+            os.fchmod(descriptor, details.mode)
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
 
-    for relative, (_kind, _digest, mode) in reversed(directories):
-        os.chmod(child / relative, mode)
+    for relative, details in reversed(directories):
+        os.chmod(child / relative, details.mode)
 
 
 def remove_session_worktree(

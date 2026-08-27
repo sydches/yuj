@@ -12,9 +12,11 @@ from scripts.llm_solver.harness.worktree_runtime import (
     WorktreeDirtyError,
     WorktreeExistsError,
     WorktreeRuntimeError,
+    copy_workspace_to_worktree,
     create_session_worktree,
     inspect_session_worktree,
     remove_session_worktree,
+    snapshot_workspace,
 )
 
 
@@ -73,6 +75,26 @@ def test_auto_worktree_isolates_bytes_and_preserves_original_checkout(tmp_path):
     assert not (repo / "new.txt").exists()
     assert _git(repo, "status", "--porcelain=v1") == status_before
     assert f"/{WORKTREE_DIR_NAME}/" in (repo / ".git" / "info" / "exclude").read_text()
+
+
+def test_workspace_copy_preserves_dirty_endpoint_and_excludes_owned_children(tmp_path):
+    repo = _make_repo(tmp_path)
+    (repo / "README.md").write_text("dirty tracked\n")
+    (repo / "new.txt").write_text("dirty untracked\n")
+    before = snapshot_workspace(repo)
+
+    info, copied = copy_workspace_to_worktree(
+        repo, child_run_id="subagent-copy"
+    )
+
+    assert copied == before
+    assert snapshot_workspace(repo) == before
+    assert snapshot_workspace(info.worktree_path) == before
+    assert (info.worktree_path / "README.md").read_text() == "dirty tracked\n"
+    assert (info.worktree_path / "new.txt").read_text() == "dirty untracked\n"
+    (info.worktree_path / "README.md").write_text("child only\n")
+    assert (repo / "README.md").read_text() == "dirty tracked\n"
+    remove_session_worktree(repo, "subagent-copy", force=True)
 
 
 def test_subdirectory_invocation_maps_to_same_relative_cwd(tmp_path):

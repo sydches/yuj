@@ -49,6 +49,8 @@ Each saved file has one role:
 | --- | --- |
 | `.trace.jsonl` | The main time-ordered event record, session numbers, per-session 0-based turn numbers, saved tool calls and results, and recorded lifecycle-hook effects. |
 | `subagents/<id>/.trace.jsonl` | The exact terminal result and accounting for the matching parent `subagent` event. |
+| `subagents/<id>/changeset.json` and `changes.patch` | The immutable manifest and bounded patch returned by an isolated writing child. Replay copies them when it writes to another run directory. |
+| `subagents/<id>/application.json` | Nothing. Replay never copies an earlier application receipt. |
 | Transcript | The saved pre-profile input and model reply for each turn. Replay checks the input fields named below. An image-bearing input keeps its transport-encoded image blocks here. |
 | `attachments.json` and `attachments/` | Nothing directly. Live assistant start and resume use these files to verify image bytes before writing the model request to the transcript. |
 | `path_attachments.json` and `path_attachments/` | Nothing directly during offline replay. Live assistant start and resume verify the admitted text and rebuild the path-labelled input block before writing the model request to the transcript. |
@@ -110,7 +112,7 @@ Some recorded features need special replay behavior:
 | Model `checkpoint` and `rewind(report)` | Run both through their normal turn-boundary handlers. Restore the conversation and report, but leave file changes in place. The new trace remains append-only. |
 | Background command | Check the saved start-command hash. Return recorded poll bytes and consume recorded kills without starting a process. |
 | Lifecycle hook | Match the saved hook position and apply its recorded block, rewrite, note, timeout, or error. Never start the external command. Stop if the configured command differs from the source. |
-| Named subagent | Verify the saved child identity, result hash and size, turns, and tokens. Return the recorded final text instead of running a child model. Copy the child trace when the replay writes to another run directory. |
+| Named subagent | Verify the saved child identity, result hash and size, turns, tokens, workspace mode, and change-set metadata. Return the recorded final text instead of running a child model. Copy the child trace and immutable change-set files when the replay writes to another run directory. Do not copy the application receipt. A later `apply_subagent` call checks the fresh replay workspace and normal permissions. |
 | Stream rule | Reproduce the saved interrupt and hidden injection, then consume the next response for the same logical turn. Do not read the current rule file to rebuild the retry. |
 | Assistant image input | Use the recorded turn and never reopen or substitute the original local file. The general request-check limit below still applies. |
 | Assistant clarification | Require one matching request, answer, and consumption record and one of each matching trace event. Return the saved `ask_user` reply, then replace context with the exact recorded `messages` array from the next request. Do not contact an operator or model, enter `input_required`, or create clarification files in the replay run. |

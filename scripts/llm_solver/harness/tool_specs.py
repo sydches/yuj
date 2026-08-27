@@ -126,27 +126,39 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=19,
     ),
     ToolSpec(
+        "subagent_changes",
+        profile_gate_attr="tools_task_enabled",
+        schema_order=20,
+    ),
+    ToolSpec(
+        "apply_subagent",
+        guardrail_mutation=True,
+        action_write_like=True,
+        profile_gate_attr="tools_task_enabled",
+        schema_order=21,
+    ),
+    ToolSpec(
         "ask_user",
         cap_immune=True,
-        schema_order=20,
+        schema_order=22,
         schema_surface="both",
         permission_scoped=False,
     ),
     ToolSpec(
         "done",
         cap_immune=True,
-        schema_order=21,
+        schema_order=23,
         schema_surface="both",
     ),
     ToolSpec(
         "terminal_start",
         profile_gate_attr="tools_terminal_enabled",
-        schema_order=22,
+        schema_order=24,
     ),
     ToolSpec(
         "terminal_io",
         profile_gate_attr="tools_terminal_enabled",
-        schema_order=23,
+        schema_order=25,
     ),
     ToolSpec(
         "run_tests",

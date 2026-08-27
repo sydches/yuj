@@ -1,8 +1,10 @@
 """Acceptance coverage for issue #14's sequential ``task`` subagents."""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,6 +27,12 @@ from llm_solver.harness.subagents import (
     SubagentRuntime,
     load_agent_spec,
     prepare_readonly_bash,
+)
+from llm_solver.harness.subagent_workspace import (
+    APPLICATION_FILE,
+    CHANGESET_FILE,
+    MAX_CHANGESET_INPUT_BYTES,
+    PATCH_FILE,
 )
 from llm_solver.harness.tool_policy import permission_match_argument
 from llm_solver.harness.tool_specs import PARALLEL_READ_SAFE_TOOL_NAMES
@@ -96,6 +104,7 @@ def _write_agent(
     tools: tuple[str, ...] = ("read", "bash", "done"),
     read_only: bool = True,
     max_turns: int = 5,
+    workspace: str | None = None,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "prompts").mkdir(exist_ok=True)
@@ -108,8 +117,33 @@ def _write_agent(
         f'system_prompt_file = "prompts/{name}.md"\n'
         f"max_turns = {max_turns}\n"
         f"read_only = {'true' if read_only else 'false'}\n"
+        + (f'workspace = "{workspace}"\n' if workspace is not None else "")
     )
     return root
+
+
+def _git(repo: Path, *args: str, check: bool = True) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "project"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    (repo / "app.py").write_text("value = 1\n")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "base")
+    return repo
 
 
 def _task_cfg(**overrides):
@@ -198,12 +232,16 @@ def test_public_config_defaults_overlay_validation_and_tool_gate(tmp_path):
         )
         return {item["function"]["name"] for item in schemas}
 
-    assert "task" not in names(make_config(tools_task_enabled=False))
-    assert "task" in names(make_config(tools_task_enabled=True))
-    assert "task" not in PARALLEL_READ_SAFE_TOOL_NAMES
+    gated = {"task", "subagent_changes", "apply_subagent"}
+    assert not gated & names(make_config(tools_task_enabled=False))
+    assert gated <= names(make_config(tools_task_enabled=True))
+    assert not gated & PARALLEL_READ_SAFE_TOOL_NAMES
     assert permission_match_argument(
         "task", {"agent": "research", "prompt": "private request"}
     ) == ("agent", "research")
+    assert permission_match_argument(
+        "apply_subagent", {"task_id": "task-000001"}
+    ) == ("task_id", "task-000001")
 
 
 def test_agent_descriptor_is_read_only_by_default_and_fail_closed(tmp_path):
@@ -224,6 +262,21 @@ def test_agent_descriptor_is_read_only_by_default_and_fail_closed(tmp_path):
             load_agent_spec(name, agents)
     with pytest.raises(AgentConfigError, match="agent must start"):
         load_agent_spec("../probe", agents)
+    _write_agent(
+        agents,
+        name="isolated-reader",
+        workspace="isolated",
+    )
+    with pytest.raises(AgentConfigError, match="must use workspace='shared'"):
+        load_agent_spec("isolated-reader", agents)
+    _write_agent(
+        agents,
+        name="bad-workspace",
+        read_only=False,
+        workspace="remote",
+    )
+    with pytest.raises(AgentConfigError, match="workspace must be"):
+        load_agent_spec("bad-workspace", agents)
     assert prepare_readonly_bash("pwd") == ("command -p pwd", "")
     assert prepare_readonly_bash("touch changed.txt")[0] is None
     assert prepare_readonly_bash("file -C")[0] is None
@@ -333,6 +386,328 @@ def test_subagent_does_not_inherit_primary_advisor(tmp_path):
     assert not (
         tmp_path / "run" / "subagents" / "task-000001" / "advisor.jsonl"
     ).exists()
+
+
+def test_isolated_writer_returns_reviewable_patch_then_applies_explicitly(tmp_path):
+    repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("read", "write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    child = ScriptedClient([
+        _calls(ToolCall("write-1", "write", {
+            "path": "app.py", "content": "value = 2\n",
+        })),
+        _stop("Changed app.py in the isolated workspace.", 11, 4),
+    ])
+    run_root = tmp_path / "run"
+    cfg, parent, _runtime, _trace = _parent_session(
+        repo,
+        child_client=child,
+        agents_dir=agents,
+        run_root=run_root,
+    )
+
+    result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Change the value."},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+
+    assert (repo / "app.py").read_text() == "value = 1\n"
+    assert "Isolated change set task-000001: ready." in result
+    assert 'subagent_changes(task_id="task-000001")' in result
+    child_dir = run_root / "subagents" / "task-000001"
+    manifest = json.loads((child_dir / CHANGESET_FILE).read_text())
+    assert manifest["status"] == "ready"
+    file_mode = (repo / "app.py").stat().st_mode & 0o777
+    assert manifest["operations"] == [{
+        "after_bytes": 10,
+        "after_mode": file_mode,
+        "after_sha256": hashlib.sha256(b"value = 2\n").hexdigest(),
+        "before_bytes": 10,
+        "before_mode": file_mode,
+        "before_sha256": hashlib.sha256(b"value = 1\n").hexdigest(),
+        "kind": "update",
+        "path": "app.py",
+    }]
+    assert (child_dir / PATCH_FILE).is_file()
+    assert not any((repo / ".yuj_worktrees").glob("subagent-*"))
+
+    review = dispatch(
+        "subagent_changes",
+        {"task_id": "task-000001"},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+    assert "-value = 1" in review
+    assert "+value = 2" in review
+    applied = dispatch(
+        "apply_subagent",
+        {"task_id": "task-000001"},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+    assert applied.startswith("OK: applied isolated change set task-000001")
+    assert (repo / "app.py").read_text() == "value = 2\n"
+    assert (child_dir / APPLICATION_FILE).is_file()
+    assert "already applied" in dispatch(
+        "apply_subagent",
+        {"task_id": "task-000001"},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+
+
+def test_isolated_change_application_rejects_stale_parent_state(tmp_path):
+    repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    child = ScriptedClient([
+        _calls(ToolCall("write-1", "write", {
+            "path": "app.py", "content": "child value\n",
+        })),
+        _stop("Prepared the change.", 8, 3),
+    ])
+    cfg, parent, _runtime, _trace = _parent_session(
+        repo,
+        child_client=child,
+        agents_dir=agents,
+        run_root=tmp_path / "run",
+    )
+    assert "ready" in dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Change app.py."},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+
+    (repo / "app.py").write_text("operator value\n")
+    result = dispatch(
+        "apply_subagent",
+        {"task_id": "task-000001"},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+    assert "stale_subagent_changes" in result
+    assert (repo / "app.py").read_text() == "operator value\n"
+    assert not (
+        tmp_path / "run" / "subagents" / "task-000001" / APPLICATION_FILE
+    ).exists()
+
+
+def test_isolated_application_obeys_parent_permission_policy(tmp_path):
+    repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    child = ScriptedClient([
+        _calls(ToolCall("write-1", "write", {
+            "path": "app.py", "content": "child value\n",
+        })),
+        _stop("Prepared the change.", 8, 3),
+    ])
+    caller = ScriptedClient([
+        _calls(ToolCall("task-1", "task", {
+            "agent": "probe", "prompt": "Change app.py.",
+        })),
+        _calls(ToolCall("apply-1", "apply_subagent", {
+            "task_id": "task-000001",
+        })),
+        _stop("The parent rejected the application.", 8, 2),
+    ])
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    trace_path = run_root / "parent.trace.jsonl"
+    with trace_path.open("w+") as trace:
+        cfg, parent, _runtime, _trace = _parent_session(
+            repo,
+            child_client=child,
+            agents_dir=agents,
+            client=caller,
+            run_root=run_root,
+            trace_file=trace,
+            cfg=_task_cfg(
+                max_turns=3,
+                permissions_rules={"apply_subagent": {"*": "deny"}},
+                error_nudge_threshold=99,
+                error_abort_threshold=99,
+                error_same_class_threshold=99,
+            ),
+        )
+        assert parent.run().finish_reason == "stop"
+    assert (repo / "app.py").read_text() == "value = 1\n"
+    assert not (
+        run_root / "subagents" / "task-000001" / APPLICATION_FILE
+    ).exists()
+    permissions = [
+        event for event in map(json.loads, trace_path.read_text().splitlines())
+        if event.get("event") == "permission"
+        and event.get("tool") == "apply_subagent"
+    ]
+    assert permissions[-1]["decision"] == "deny"
+
+
+def test_isolated_process_tools_fail_closed_without_a_sandbox(tmp_path):
+    repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("bash", "write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    child = ScriptedClient([_stop("must not run", 1, 1)])
+    cfg, parent, _runtime, _trace = _parent_session(
+        repo,
+        child_client=child,
+        agents_dir=agents,
+        run_root=tmp_path / "run",
+    )
+
+    result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Use bash."},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+    assert "need an active sandbox" in result
+    assert child.responses
+    assert (repo / "app.py").read_text() == "value = 1\n"
+
+
+def test_isolated_setup_failure_never_starts_the_child_model(tmp_path):
+    workspace = tmp_path / "not-a-repository"
+    workspace.mkdir()
+    (workspace / "app.py").write_text("value = 1\n")
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    child = ScriptedClient([_stop("must not run", 1, 1)])
+    cfg, parent, _runtime, _trace = _parent_session(
+        workspace,
+        child_client=child,
+        agents_dir=agents,
+        run_root=tmp_path / "run",
+    )
+
+    result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Change app.py."},
+        cwd=str(workspace),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+    assert result.startswith("ERROR: subagent task-000001 failed")
+    assert "not a git repository" in result.lower()
+    assert child.responses
+    assert (workspace / "app.py").read_text() == "value = 1\n"
+
+
+def test_interrupted_isolated_child_cleans_up_without_parent_mutation(tmp_path):
+    class InterruptingClient(ScriptedClient):
+        def chat(self, messages, tools, turn=0):
+            raise KeyboardInterrupt()
+
+    repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    child = InterruptingClient([])
+    run_root = tmp_path / "run"
+    cfg, parent, _runtime, _trace = _parent_session(
+        repo,
+        child_client=child,
+        agents_dir=agents,
+        run_root=run_root,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        dispatch(
+            "task",
+            {"agent": "probe", "prompt": "Change app.py."},
+            cwd=str(repo),
+            cfg=cfg,
+            tool_registry=parent._tool_registry,
+        )
+    assert (repo / "app.py").read_text() == "value = 1\n"
+    assert not any((repo / ".yuj_worktrees").glob("subagent-*"))
+    events = [
+        json.loads(line)
+        for line in (
+            run_root / "subagents" / "task-000001" / ".trace.jsonl"
+        ).read_text().splitlines()
+    ]
+    assert events[-1]["event"] == "subagent_result"
+    assert events[-1]["finish_reason"] == "error"
+
+
+def test_isolated_change_set_refuses_an_over_limit_payload(tmp_path):
+    repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    oversized = "x" * (MAX_CHANGESET_INPUT_BYTES + 1)
+    child = ScriptedClient([
+        _calls(ToolCall("write-1", "write", {
+            "path": "app.py", "content": oversized,
+        })),
+        _stop("Prepared a large change.", 8, 3),
+    ])
+    run_root = tmp_path / "run"
+    cfg, parent, _runtime, _trace = _parent_session(
+        repo,
+        child_client=child,
+        agents_dir=agents,
+        run_root=run_root,
+    )
+
+    result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Replace app.py."},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
+    assert "Isolated change set task-000001: too_large." in result
+    assert (repo / "app.py").read_text() == "value = 1\n"
+    manifest = json.loads((
+        run_root / "subagents" / "task-000001" / CHANGESET_FILE
+    ).read_text())
+    assert manifest["status"] == "too_large"
+    assert manifest["patch_file"] is None
+    assert "not ready" in dispatch(
+        "apply_subagent",
+        {"task_id": "task-000001"},
+        cwd=str(repo),
+        cfg=cfg,
+        tool_registry=parent._tool_registry,
+    )
 
 
 def test_production_model_router_builds_a_fresh_profiled_child(tmp_path):
@@ -553,6 +928,89 @@ def test_parent_replay_reads_child_trace_without_starting_child(tmp_path):
         "cached_tokens": 0,
         "total_tokens": 18,
     }
+
+
+def test_replay_copies_isolated_patch_and_applies_it_to_fresh_workspace(tmp_path):
+    source_repo = _repo(tmp_path)
+    agents = _write_agent(
+        tmp_path / "agents",
+        tools=("write", "done"),
+        read_only=False,
+        workspace="isolated",
+    )
+    source_root = tmp_path / "source-run"
+    child = ScriptedClient([
+        _calls(ToolCall("write-1", "write", {
+            "path": "app.py", "content": "value = 2\n",
+        })),
+        _stop("Prepared app.py.", 9, 3),
+    ])
+    cfg, source_parent, _runtime, source_trace_buffer = _parent_session(
+        source_repo,
+        child_client=child,
+        agents_dir=agents,
+        run_root=source_root,
+    )
+    recorded_result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Change app.py."},
+        cwd=str(source_repo),
+        cfg=cfg,
+        tool_registry=source_parent._tool_registry,
+    )
+    source_trace = source_root / ".trace.jsonl"
+    source_trace.write_text(source_trace_buffer.getvalue())
+    transcript = source_root / "parent.log"
+    transcript.write_text(
+        "=== turn 001 input ===\n{}\n"
+        "=== turn 001 output ===\n"
+        '{"choices":[{"message":{"content":"done","tool_calls":[]},'
+        '"finish_reason":"stop"}],"usage":{"prompt_tokens":1,'
+        '"completion_tokens":1}}\n'
+    )
+
+    replay_repo = tmp_path / "replay-project"
+    _git(tmp_path, "clone", "-q", str(source_repo), str(replay_repo))
+    replay = ReplayClient(
+        transcript,
+        source_trace_path=source_trace,
+        strict_fidelity=True,
+    )
+    replay_root = tmp_path / "replay-run"
+    runtime = SubagentRuntime(replay_root, agents_dir=agents)
+    replay_parent = Session(
+        cfg,
+        replay,
+        "system",
+        "parent task",
+        str(replay_repo),
+        subagent_runtime=runtime,
+        trace_path=replay_root / ".trace.jsonl",
+        artifact_dir=replay_root,
+    )
+
+    replayed_result = dispatch(
+        "task",
+        {"agent": "probe", "prompt": "Change app.py."},
+        cwd=str(replay_repo),
+        cfg=cfg,
+        tool_registry=replay_parent._tool_registry,
+    )
+    assert replayed_result == recorded_result
+    replay_child = replay_root / "subagents" / "task-000001"
+    assert (replay_child / CHANGESET_FILE).is_file()
+    assert (replay_child / PATCH_FILE).is_file()
+    assert not (replay_child / APPLICATION_FILE).exists()
+    applied = dispatch(
+        "apply_subagent",
+        {"task_id": "task-000001"},
+        cwd=str(replay_repo),
+        cfg=cfg,
+        tool_registry=replay_parent._tool_registry,
+    )
+    assert applied.startswith("OK: applied isolated change set")
+    assert (replay_repo / "app.py").read_text() == "value = 2\n"
+    assert (source_repo / "app.py").read_text() == "value = 1\n"
 
 
 def test_child_tokens_flow_into_metrics_json(tmp_path):

@@ -34,6 +34,7 @@ DEFAULT_PERMISSION_RULE = "<default>"
 PERMISSION_MATCH_FIELDS = MappingProxyType(
     {
         "apply_patch": ("patch", ""),
+        "apply_subagent": ("task_id", ""),
         "udiff": ("patch", ""),
         "bash": ("cmd", ""),
         "bash_kill": ("proc_id", ""),
@@ -53,6 +54,7 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "notebook_edit": ("path", ""),
         "structural_edit": ("path", ""),
         "structural_search": ("path", ""),
+        "subagent_changes": ("task_id", ""),
         "read": ("path", ""),
         "rewind": ("report", ""),
         "run_tests": ("path", ""),
