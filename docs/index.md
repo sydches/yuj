@@ -61,6 +61,7 @@ cd /path/to/your-project
 yuj config
 yuj doctor
 yuj smoke
+yuj init -C /path/to/your-project --output AGENTS.md
 yuj
 yuj status
 yuj show

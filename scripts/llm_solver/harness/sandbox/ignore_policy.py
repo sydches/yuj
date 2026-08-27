@@ -32,6 +32,13 @@ from typing import Iterator
 
 
 DEFAULT_IGNORE_FILE_NAMES: tuple[str, ...] = (".yujignore",)
+PROJECT_INIT_PRIVATE_RULES: tuple[str, ...] = (
+    "/.git/",
+    "/.internal/",
+    "/.solver/",
+    "/.tool_output/",
+    "/.procs/",
+)
 MAX_IGNORE_FILE_BYTES = 1024 * 1024
 MAX_IGNORE_RULES = 50_000
 
@@ -530,6 +537,7 @@ def load_ignore_policy(
     *,
     enabled: bool = True,
     file_names: Sequence[str] = DEFAULT_IGNORE_FILE_NAMES,
+    builtin_rules: Sequence[str] = (),
 ) -> IgnorePolicy:
     """Load configured ignore files from ``root`` once, with stable hashes."""
     root_path = Path(root).resolve()
@@ -542,6 +550,18 @@ def load_ignore_policy(
         return IgnorePolicy(root_path, (), enabled=False)
 
     sources: list[IgnoreSource] = []
+    if builtin_rules:
+        rule_text = "\n".join(str(line) for line in builtin_rules) + "\n"
+        raw = rule_text.encode("utf-8")
+        sources.append(IgnoreSource(
+            name="<project-init-private-paths>",
+            sha256=hashlib.sha256(raw).hexdigest(),
+            size_bytes=len(raw),
+            rules=parse_ignore_lines(
+                rule_text.splitlines(),
+                source_name="<project-init-private-paths>",
+            ),
+        ))
     for name in names:
         candidate = root_path / name
         if not candidate.exists() and not candidate.is_symlink():

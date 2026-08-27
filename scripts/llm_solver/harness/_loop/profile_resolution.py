@@ -1,6 +1,7 @@
 """Profile-application helpers for the harness loop — extracted from loop.py."""
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Callable
 from dataclasses import replace
@@ -291,12 +292,43 @@ def _build_registered_tool_schemas(
             ),
         )
 
-    return _apply_profile_schema_simplify(
+    output = _apply_profile_schema_simplify(
         _filter_edit_format_tools(
             _filter_disabled_tools(tool_schemas, cfg), cfg, client,
         ),
         client,
     )
+    destination = str(
+        getattr(cfg, "assistant_project_init_destination", "") or ""
+    )
+    if not destination:
+        return output
+    allowed_names = {"read", "write", "glob", "grep", "ask_user", "done"}
+    constrained = [
+        copy.deepcopy(schema)
+        for schema in output
+        if schema.get("function", {}).get("name") in allowed_names
+    ]
+    max_lines = int(cfg.assistant_project_init_max_lines)
+    for schema in constrained:
+        function = schema.get("function", {})
+        if function.get("name") != "write":
+            continue
+        properties = function["parameters"]["properties"]
+        properties["path"]["const"] = destination
+        properties["content"].update({
+            "minLength": 1,
+            "maxLength": int(cfg.assistant_project_init_max_chars),
+            "pattern": (
+                r"\A(?:(?:[^\n]*\n){0,"
+                + str(max_lines - 1)
+                + r"}[^\n]+|(?:[^\n]*\n){1,"
+                + str(max_lines)
+                + r"})\Z"
+            ),
+        })
+        break
+    return constrained
 
 
 def build_plan_mode_schemas(

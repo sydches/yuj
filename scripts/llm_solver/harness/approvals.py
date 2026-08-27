@@ -140,6 +140,16 @@ def approval_decision(
     command_field = "input" if tool_name == "terminal_io" else "cmd"
     cmd = str(tool_args.get(command_field) or "")
     reason = required_reason
+    init_destination = str(
+        getattr(cfg, "assistant_project_init_destination", "") or ""
+    )
+    if (
+        reason is None
+        and init_destination
+        and tool_name == "write"
+        and str(tool_args.get("path") or "") == init_destination
+    ):
+        reason = "project instruction writes require operator approval"
     if reason is None and tool_name in {
         "bash", "terminal_start", "terminal_io",
     }:

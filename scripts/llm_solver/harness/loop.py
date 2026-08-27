@@ -57,7 +57,11 @@ from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
 from .tool_validation import ToolSchemaSet
 from .tool_policy import PermissionPolicy
-from .sandbox.ignore_policy import IgnorePolicy, load_ignore_policy
+from .sandbox.ignore_policy import (
+    PROJECT_INIT_PRIVATE_RULES,
+    IgnorePolicy,
+    load_ignore_policy,
+)
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import active_events, write_state_from_events, write_state_from_trace
 from .tools import (
@@ -283,6 +287,11 @@ class Session:
             enabled=getattr(cfg, "state_ignore_file_enabled", True),
             file_names=getattr(
                 cfg, "state_ignore_file_names", (".yujignore",)
+            ),
+            builtin_rules=(
+                PROJECT_INIT_PRIVATE_RULES
+                if getattr(cfg, "assistant_project_init_destination", "")
+                else ()
             ),
         )
         self._session_number = session_number

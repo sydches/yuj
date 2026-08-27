@@ -225,9 +225,30 @@ def _unified_text_diff(
     return rendered
 
 
-def _write_preview(cwd: str, arguments: Mapping[str, object]) -> dict[str, object]:
+def _write_preview(
+    cwd: str,
+    arguments: Mapping[str, object],
+    *,
+    cfg=None,
+) -> dict[str, object]:
     path = _string_argument(arguments, "path")
     content = _string_argument(arguments, "content")
+    init_destination = str(
+        getattr(cfg, "assistant_project_init_destination", "") or ""
+    )
+    if init_destination and path == init_destination:
+        target = _target(cwd, path)
+        _workspace_text, existed = _read_workspace_text(target, path)
+        return _available(
+            format_name="complete_file",
+            paths=[path],
+            content=content,
+            summary=(
+                "Complete proposed replacement; the existing file is unchanged."
+                if existed
+                else "Complete proposed file; the destination does not exist."
+            ),
+        )
     target = _target(cwd, path)
     workspace_text, existed = _read_workspace_text(target, path)
     diff = _unified_text_diff(
@@ -447,7 +468,7 @@ def build_approval_preview(
     """Build a bounded proposal preview without invoking a tool handler."""
     try:
         if tool_name == "write":
-            return _write_preview(cwd, tool_args)
+            return _write_preview(cwd, tool_args, cfg=cfg)
         if tool_name == "edit":
             return _edit_preview(cwd, tool_args)
         if tool_name == "notebook_edit":

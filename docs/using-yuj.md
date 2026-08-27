@@ -38,6 +38,7 @@ this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 | `yuj models` | List models from the selected service. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Ask the model to fix and test a small throwaway directory. |
+| `yuj init` | Analyze one repository and propose one project instruction file for review. |
 | `yuj` | Start a coding session. Enter the task when prompted or pass it as an argument. |
 | `yuj current` | Run `yuj status latest` over unarchived sessions. |
 | `yuj status` | Show one session's status and the next user action. |
@@ -124,6 +125,53 @@ The model can read files, change code, run commands, and run tests. Yuj
 continues until the model finishes or a stopping rule ends the session.
 
 Keep the terminal process running while the run segment is active.
+
+### Create a project instruction file
+
+Use `yuj init` when a repository needs its first useful instruction file:
+
+```bash
+yuj init -C /path/to/project --output AGENTS.md
+```
+
+You must name the output file. The name must be `AGENTS.override.md` or one of
+the names in `prompts.project_doc_names`. Use `-C` to select the directory
+where that file belongs.
+
+The command gives the model only `read`, `glob`, `grep`, `ask_user`, `done`,
+and one constrained `write`. The write accepts only the selected filename.
+The proposed file can contain at most 80 lines and 8,000 characters. Yuj also
+hides Git-ignored paths, configured ignore paths, `.git`, `.internal`,
+`.solver`, `.tool_output`, and `.procs` during this analysis.
+
+Yuj prints the absolute destination and the complete proposed content. It
+does not write the file yet. Inspect the proposal in that output, or show it
+again later:
+
+```bash
+yuj show SESSION
+```
+
+Approve and resume only when the content is correct:
+
+```bash
+yuj approve SESSION
+yuj resume SESSION
+```
+
+The approval belongs to the exact filename and content. A changed proposal
+needs another approval. If the file already exists, Yuj still pauses before
+replacing it. Reject the proposal when you want to keep the repository
+unchanged:
+
+```bash
+yuj reject SESSION --reason "Keep the current instructions."
+```
+
+The command keeps workspace trust, the configured permission policy, file
+permissions, sandboxing, and security scanning active. It writes to the
+selected checkout instead of creating an isolated worktree. A rejection,
+interruption, or failure before approval leaves the repository unchanged.
 
 ### Trust repository behavior
 

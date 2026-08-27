@@ -182,12 +182,20 @@ def solve_task(
     # One immutable snapshot is shared by every session and command surface;
     # later host-process environment mutations cannot change this run.
     effective_env = MappingProxyType(resolved_env)
-    from ..sandbox.ignore_policy import load_ignore_policy
+    from ..sandbox.ignore_policy import (
+        PROJECT_INIT_PRIVATE_RULES,
+        load_ignore_policy,
+    )
     ignore_policy = load_ignore_policy(
         work_dir,
         enabled=getattr(cfg, "state_ignore_file_enabled", True),
         file_names=getattr(
             cfg, "state_ignore_file_names", (".yujignore",)
+        ),
+        builtin_rules=(
+            PROJECT_INIT_PRIVATE_RULES
+            if getattr(cfg, "assistant_project_init_destination", "")
+            else ()
         ),
     )
     # Context discovery happens before the first model call. Give it the same

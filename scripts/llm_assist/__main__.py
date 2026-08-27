@@ -183,6 +183,8 @@ _PROVIDER_PRESETS = {
 _MANAGED_PROVIDERS = frozenset({"claude", "codex"})
 _TREATMENT_CONFIG = PROJECT_ROOT / "configs/regimes/treatment.toml"
 _PLAIN_CONFIG = PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml"
+_PROJECT_INIT_MAX_CHARS = 8000
+_PROJECT_INIT_MAX_LINES = 80
 
 
 def _cli_version() -> str:
@@ -373,6 +375,49 @@ def main(argv: list[str] | None = None) -> int:
         help="named agent descriptor to validate; repeat for more agents",
     )
     config_parser.set_defaults(func=cmd_config)
+
+    init_parser = sub.add_parser(
+        "init",
+        help="propose a reviewed project instruction file",
+    )
+    init_parser.add_argument(
+        "-C", "--cd", "--cwd",
+        dest="cwd",
+        metavar="DIR",
+        type=Path,
+        default=Path.cwd(),
+        help="repository directory to analyze (default: current directory)",
+    )
+    init_parser.add_argument(
+        "--output",
+        required=True,
+        metavar="NAME",
+        help="configured instruction filename to propose, such as AGENTS.md",
+    )
+    init_parser.add_argument("-m", "--model", help="model name or short alias")
+    init_parser.add_argument(
+        "--thinking", choices=THINKING_LEVELS,
+        help="per-request reasoning effort",
+    )
+    init_parser.add_argument(
+        "--provider",
+        choices=sorted(_PROVIDER_PRESETS),
+        help="model service setting for this session",
+    )
+    init_parser.add_argument("--base-url", help="model API base URL override")
+    init_parser.add_argument(
+        "--api-key-env",
+        help="environment variable containing the API key",
+    )
+    init_parser.add_argument(
+        "--config", "-c",
+        type=Path,
+        action="append",
+        default=[],
+        help="extra TOML settings file; repeat to apply more files",
+    )
+    _attach_workspace_trust_arg(init_parser)
+    init_parser.set_defaults(func=cmd_init)
 
     setup_parser = sub.add_parser("setup", help="save model settings for this machine")
     setup_parser.add_argument(
@@ -1085,6 +1130,134 @@ def _workspace_behavior_startup_guard(
     return guard
 
 
+def _normalize_project_init_destination(cwd: Path, raw_name: str) -> str:
+    name = str(raw_name or "").strip()
+    candidate = Path(name)
+    if (
+        not name
+        or candidate.is_absolute()
+        or candidate.name != name
+        or name in {".", ".."}
+    ):
+        raise SystemExit(
+            "--output must be one instruction filename in the selected directory"
+        )
+    if "\x00" in name or "\n" in name or "*" in name or "?" in name:
+        raise SystemExit("--output contains an unsupported character")
+    if candidate.suffix.lower() != ".md":
+        raise SystemExit("--output must name a Markdown instruction file")
+    root = cwd.expanduser().resolve()
+    if not root.is_dir():
+        raise SystemExit(f"repository directory does not exist: {root}")
+    target = root / name
+    if target.is_symlink():
+        raise SystemExit("--output must not be a symbolic link")
+    if target.exists() and not target.is_file():
+        raise SystemExit("--output must name a regular file")
+    return name
+
+
+def _git_path_state(cwd: Path, name: str) -> tuple[bool, bool]:
+    """Return tracked and ignored state without invoking a shell."""
+    tracked = subprocess.run(
+        ["git", "-C", str(cwd), "ls-files", "--error-unmatch", "--", name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    ignored = subprocess.run(
+        ["git", "-C", str(cwd), "check-ignore", "--quiet", "--no-index", "--", name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    return tracked, ignored
+
+
+def _validate_project_init_destination(cwd: Path, name: str, cfg) -> None:
+    allowed = tuple(dict.fromkeys((
+        "AGENTS.override.md",
+        *tuple(getattr(cfg, "project_doc_names", ()) or ()),
+    )))
+    if name not in allowed:
+        raise SystemExit(
+            f"--output must be a configured instruction filename: "
+            + ", ".join(allowed)
+        )
+
+    from ..llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
+
+    ignore_names = tuple(
+        dict.fromkeys(tuple(getattr(cfg, "state_ignore_file_names", ()) or ()))
+    )
+    policy = load_ignore_policy(cwd, enabled=True, file_names=ignore_names)
+    if policy.is_ignored(name, is_dir=False):
+        raise SystemExit(f"--output is hidden by a configured ignore file: {name}")
+
+    tracked, ignored = _git_path_state(cwd, name)
+    if ignored and not tracked:
+        raise SystemExit(f"--output is ignored by Git: {name}")
+
+
+def _project_init_prompt(destination: str) -> str:
+    return (
+        "Analyze this repository and propose its initial project instruction "
+        f"file at exactly {destination}.\n\n"
+        "Use read, glob, and grep to learn the repository's real commands, "
+        "layout, conventions, and ownership boundaries. Read an existing "
+        f"{destination} before replacing it.\n\n"
+        "Write concise, repository-specific instructions for future coding "
+        "agents. Keep the complete file within 80 lines and 8,000 characters. "
+        "Do not copy secrets, credential values, ignored content, .internal, "
+        ".solver, .tool_output, or private session data. Do not add generic "
+        "advice that the repository does not support.\n\n"
+        f"When the proposal is ready, call write once with path={destination!r} "
+        "and the complete file content. Yuj will pause before the write so the "
+        "operator can review it. Do not propose or perform any other mutation. "
+        "If the operator rejects the write, stop without retrying it. If you "
+        "cannot produce a safe repository-specific file, stop and explain why."
+    )
+
+
+def _project_init_overrides(destination: str, cfg) -> dict[str, object]:
+    ignore_names = tuple(dict.fromkeys((
+        ".gitignore",
+        *tuple(getattr(cfg, "state_ignore_file_names", ()) or ()),
+    )))
+    return {
+        "assistant_project_init_destination": destination,
+        "assistant_project_init_max_chars": _PROJECT_INIT_MAX_CHARS,
+        "assistant_project_init_max_lines": _PROJECT_INIT_MAX_LINES,
+        "plan_mode": "off",
+        "runtime_worktree": "off",
+        "state_ignore_file_enabled": True,
+        "state_ignore_file_names": ignore_names,
+        "tools_constrained_decoding": "off",
+        "tools_edit_format": "whole",
+        "tools_exec_cell_enabled": False,
+        "tools_lazy_loading_enabled": False,
+        "tools_schema_validation": "reject",
+    }
+
+
+def cmd_init(args) -> int:
+    destination = _normalize_project_init_destination(args.cwd, args.output)
+    args.cwd = args.cwd.expanduser().resolve()
+    args.project_init_destination = destination
+    args.task = []
+    args.prompt_text = _project_init_prompt(destination)
+    args.prompt_file = None
+    args.image = []
+    args.plan_mode = "off"
+    args.permission_preset = None
+    args.edit_format = "whole"
+    args.system_prompt = None
+    args.treatment = True
+    args.context = "full"
+    args.dry_run = False
+    return cmd_run(args)
+
+
 def cmd_run(args) -> int:
     pending_images = read_image_inputs(args.image)
     if not args.dry_run:
@@ -1098,11 +1271,27 @@ def cmd_run(args) -> int:
     transport_overrides = _transport_overrides_from_args(
         args, auth_binding=auth_binding
     )
+    config_overrides = dict(transport_overrides)
     try:
+        destination = str(
+            getattr(args, "project_init_destination", "") or ""
+        )
+        if destination:
+            baseline_cfg = _assistant_config_for_workspace_trust(
+                config_paths,
+                requested_model=args.model,
+                config_overrides=config_overrides,
+            )
+            _validate_project_init_destination(
+                args.cwd, destination, baseline_cfg
+            )
+            config_overrides.update(
+                _project_init_overrides(destination, baseline_cfg)
+            )
         trust_cfg = _assistant_config_for_workspace_trust(
             config_paths,
             requested_model=args.model,
-            config_overrides=transport_overrides,
+            config_overrides=config_overrides,
         )
         trust_manifest = discover_workspace_behavior(
             trust_cfg,
@@ -1122,7 +1311,7 @@ def cmd_run(args) -> int:
         validate_image_capability(
             config_paths,
             model=trust_cfg.model,
-            config_overrides=transport_overrides,
+            config_overrides=config_overrides,
             auth_binding=auth_binding,
         )
     try:
@@ -1131,7 +1320,7 @@ def cmd_run(args) -> int:
             cwd=args.cwd,
             context_mode=context_mode,
             requested_model=args.model,
-            config_overrides=transport_overrides,
+            config_overrides=config_overrides,
             system_prompt_file=args.system_prompt,
             auth_binding=auth_binding,
             auth_store=auth_store,
@@ -1152,7 +1341,7 @@ def cmd_run(args) -> int:
     model, served = _resolve_model_or_exit(
         config_paths,
         requested_model=args.model,
-        config_overrides=transport_overrides,
+        config_overrides=config_overrides,
         auth_binding=auth_binding,
         auth_store=auth_store,
     )
@@ -1160,7 +1349,7 @@ def cmd_run(args) -> int:
         validate_image_capability(
             config_paths,
             model=model,
-            config_overrides=transport_overrides,
+            config_overrides=config_overrides,
             auth_binding=auth_binding,
         )
     record = create_session(
@@ -1178,7 +1367,7 @@ def cmd_run(args) -> int:
         store,
         record,
         base_config_paths=config_paths,
-        transport_overrides=transport_overrides,
+        transport_overrides=config_overrides,
     )
     if pending_images:
         save_image_segment(
@@ -1192,6 +1381,8 @@ def cmd_run(args) -> int:
         action="starting",
         served_models=served,
     )
+    if destination:
+        print(f"instruction_destination: {args.cwd / destination}")
     try:
         with _session_lock(store, record), TraceFollower(record.artifact_path):
             success, finish_reason = run_session(store, record, resume=False)
@@ -1208,6 +1399,12 @@ def cmd_run(args) -> int:
     refreshed = store.get_session(record.session_id)
     final_record = refreshed or record
     _print_session_result(final_record, success, finish_reason)
+    if destination and finish_reason == "approval_required":
+        approval = load_approval_request(final_record.artifact_path)
+        if approval is not None and approval.get("status") == "pending":
+            print(render_approval_preview(approval.get("preview")))
+            print(f"approve_with: yuj approve {final_record.short_id}")
+            print(f"reject_with: yuj reject {final_record.short_id}")
     _notify_session_result(
         final_record,
         success=success,
@@ -3509,36 +3706,91 @@ def _persist_session_config_overlay(
 
 def _render_provider_overlay(overrides: dict) -> str:
     lines: list[str] = []
+
+    def add_section(name: str, values: list[str]) -> None:
+        if not values:
+            return
+        if lines:
+            lines.append("")
+        lines.extend([f"[{name}]", *values])
+
+    def quoted(value: object) -> str:
+        return f'"{_toml_escape(str(value))}"'
+
+    def string_array(values: object) -> str:
+        return "[" + ", ".join(quoted(value) for value in values) + "]"
+
     server_lines: list[str] = []
     for key in ("provider", "base_url", "api_key"):
         if key in overrides and overrides[key] is not None:
-            value = str(overrides[key]).replace("\\", "\\\\").replace('"', '\\"')
-            server_lines.append(f'{key} = "{value}"')
-    if server_lines:
-        lines.extend(["[server]", *server_lines])
+            server_lines.append(f"{key} = {quoted(overrides[key])}")
+    add_section("server", server_lines)
     if overrides.get("thinking_level") is not None:
-        if lines:
-            lines.append("")
-        value = str(overrides["thinking_level"])
-        lines.extend(["[model]", f'thinking_level = "{value}"'])
+        add_section(
+            "model", [f"thinking_level = {quoted(overrides['thinking_level'])}"]
+        )
     if overrides.get("plan_mode") is not None:
-        if lines:
-            lines.append("")
-        value = str(overrides["plan_mode"])
-        lines.extend(["[loop]", f'plan_mode = "{value}"'])
+        add_section("loop", [f"plan_mode = {quoted(overrides['plan_mode'])}"])
+
+    tool_lines: list[str] = []
     if overrides.get("tools_edit_format") is not None:
-        if lines:
-            lines.append("")
-        value = str(overrides["tools_edit_format"])
-        lines.extend(["[tools]", f'edit_format = "{value}"'])
+        tool_lines.append(f"edit_format = {quoted(overrides['tools_edit_format'])}")
+    for key, public_name in (
+        ("tools_lazy_loading_enabled", "lazy_loading_enabled"),
+        ("tools_exec_cell_enabled", "exec_cell_enabled"),
+    ):
+        if key in overrides:
+            tool_lines.append(
+                f"{public_name} = {str(bool(overrides[key])).lower()}"
+            )
+    if overrides.get("tools_schema_validation") is not None:
+        tool_lines.append(
+            "schema_validation = "
+            + quoted(overrides["tools_schema_validation"])
+        )
+    if overrides.get("tools_constrained_decoding") is not None:
+        tool_lines.append(
+            "constrained_decoding = "
+            + quoted(overrides["tools_constrained_decoding"])
+        )
+    add_section("tools", tool_lines)
+
+    assistant_lines: list[str] = []
     if overrides.get("assistant_permission_preset") is not None:
-        if lines:
-            lines.append("")
-        value = str(overrides["assistant_permission_preset"])
-        lines.extend([
-            "[assistant]",
-            f'permission_preset = "{value}"',
-        ])
+        assistant_lines.append(
+            "permission_preset = "
+            + quoted(overrides["assistant_permission_preset"])
+        )
+    for key, public_name in (
+        ("assistant_project_init_destination", "project_init_destination"),
+        ("assistant_project_init_max_chars", "project_init_max_chars"),
+        ("assistant_project_init_max_lines", "project_init_max_lines"),
+    ):
+        if key not in overrides:
+            continue
+        value = overrides[key]
+        rendered = quoted(value) if key.endswith("destination") else str(int(value))
+        assistant_lines.append(f"{public_name} = {rendered}")
+    add_section("assistant", assistant_lines)
+
+    if overrides.get("runtime_worktree") is not None:
+        add_section(
+            "runtime", [f"worktree = {quoted(overrides['runtime_worktree'])}"]
+        )
+
+    state_lines: list[str] = []
+    if "state_ignore_file_enabled" in overrides:
+        state_lines.append(
+            "ignore_file_enabled = "
+            + str(bool(overrides["state_ignore_file_enabled"])).lower()
+        )
+    if overrides.get("state_ignore_file_names") is not None:
+        state_lines.append(
+            "ignore_file_names = "
+            + string_array(overrides["state_ignore_file_names"])
+        )
+    add_section("state", state_lines)
+
     return "\n".join(lines) + "\n"
 
 

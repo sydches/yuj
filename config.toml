@@ -533,6 +533,11 @@ block_classes = [
 [assistant]
 permission_preset = ""  # read-only | ask-before-changes | allow-edits
 notifications = "off"   # off | bell; interactive assistant sessions only
+# `yuj init` owns these persisted session constraints. Ordinary sessions keep
+# the destination empty and do not change the normal write schema or preview.
+project_init_destination = ""
+project_init_max_chars = 8000
+project_init_max_lines = 80
 
 # ---------------------------------------------------------------------------
 # Declarative per-tool permission policy. Empty rules preserve allow-by-default

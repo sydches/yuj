@@ -792,6 +792,15 @@ def _extract_config_fields(d: dict) -> dict:
         "assistant_notifications": d.get("assistant", {}).get(
             "notifications", "off"
         ),
+        "assistant_project_init_destination": d.get("assistant", {}).get(
+            "project_init_destination", ""
+        ),
+        "assistant_project_init_max_chars": d.get("assistant", {}).get(
+            "project_init_max_chars", 8000
+        ),
+        "assistant_project_init_max_lines": d.get("assistant", {}).get(
+            "project_init_max_lines", 80
+        ),
         "security_scan_mode": _require(d, "security", "scan_mode"),
         "security_patterns_file": _require(d, "security", "patterns_file"),
         "security_block_classes": _string_tuple(
@@ -1166,6 +1175,18 @@ def _validate_coupling(
             "config error: assistant.notifications must be 'off' or 'bell', "
             f"got {cfg.assistant_notifications!r}."
         )
+    if not isinstance(cfg.assistant_project_init_destination, str):
+        raise ValueError(
+            "config error: assistant.project_init_destination must be a string."
+        )
+    for field_name, value in (
+        ("project_init_max_chars", cfg.assistant_project_init_max_chars),
+        ("project_init_max_lines", cfg.assistant_project_init_max_lines),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                f"config error: assistant.{field_name} must be an integer >= 1."
+            )
     if (
         isinstance(cfg.length_continue_max, bool)
         or not isinstance(cfg.length_continue_max, int)

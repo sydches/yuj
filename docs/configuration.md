@@ -1827,6 +1827,16 @@ imports_enabled = true
 imports_max_depth = 5
 ```
 
+Use `yuj init -C DIR --output AGENTS.md` to ask the model for a concise first
+instruction file. Yuj shows the complete proposal and pauses before it writes
+anything. The [CLI guide](using-yuj.html#create-a-project-instruction-file)
+explains the review, approval, and cancellation flow.
+
+The command saves `assistant.project_init_destination`,
+`assistant.project_init_max_chars`, and `assistant.project_init_max_lines` in
+the session overlay. These command-owned values keep the same path and limits
+after `yuj resume`. Leave them at their shipped defaults in ordinary settings.
+
 When enabled, Yuj finds instruction files in this order:
 
 1. Check the global directory, unless `project_doc_global_dir` is blank.

@@ -170,6 +170,7 @@ own repository.
 | `yuj config` | Validate and explain every resolved setting without contacting a model. |
 | `yuj doctor` | Check the settings, sandbox resolution, model connection, and Git. |
 | `yuj smoke` | Test Yuj in a small throwaway directory. |
+| `yuj init -C DIR --output AGENTS.md` | Propose a project instruction file and pause for review before writing it. |
 | `yuj trust status -C DIR` | Inspect the saved startup-trust decision for a workspace. |
 | `yuj status` | Show a session's status and the next user action. |
 | `yuj export SESSION` | Print a redacted Markdown session report. |

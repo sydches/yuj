@@ -257,6 +257,11 @@ class Config:
     variant_name: str = ""
     runtime_mode: str = "measurement"
     assistant_notifications: str = "off"
+    # Session-owned constraints for ``yuj init``. Ordinary sessions keep an
+    # empty destination and therefore retain the normal write schema.
+    assistant_project_init_destination: str = ""
+    assistant_project_init_max_chars: int = 8000
+    assistant_project_init_max_lines: int = 80
     # Derived assistant-only base table. Configuration expansion owns this
     # value; user-declared rules remain separate and compile after it.
     permissions_preset_rules: dict[str, object] = field(default_factory=dict)
@@ -839,6 +844,15 @@ class ResolvedConfig:
 # those real overrides update the owning TOML leaf and provenance before field
 # extraction instead of being guessed after the fact.
 _OVERRIDE_SETTING_PATHS: dict[str, SettingPath] = {
+    "assistant_project_init_destination": (
+        "assistant", "project_init_destination",
+    ),
+    "assistant_project_init_max_chars": (
+        "assistant", "project_init_max_chars",
+    ),
+    "assistant_project_init_max_lines": (
+        "assistant", "project_init_max_lines",
+    ),
     "assistant_permission_preset": ("assistant", "permission_preset"),
     "api_key": ("server", "api_key"),
     "base_url": ("server", "base_url"),
@@ -852,12 +866,19 @@ _OVERRIDE_SETTING_PATHS: dict[str, SettingPath] = {
     "require_intent": ("loop", "require_intent"),
     "rumination_nudge_threshold": ("loop", "rumination_nudge_threshold"),
     "runtime_mode": ("runtime", "mode"),
+    "runtime_worktree": ("runtime", "worktree"),
     "sandbox_backend": ("sandbox", "backend"),
     "sandbox_container_image": ("sandbox", "container_image"),
     "sandbox_container_flags": ("sandbox", "container_flags"),
     "thinking_level": ("model", "thinking_level"),
     "tool_desc": ("experiment", "tool_desc"),
+    "tools_constrained_decoding": ("tools", "constrained_decoding"),
     "tools_edit_format": ("tools", "edit_format"),
+    "tools_exec_cell_enabled": ("tools", "exec_cell_enabled"),
+    "tools_lazy_loading_enabled": ("tools", "lazy_loading_enabled"),
+    "tools_schema_validation": ("tools", "schema_validation"),
+    "state_ignore_file_enabled": ("state", "ignore_file_enabled"),
+    "state_ignore_file_names": ("state", "ignore_file_names"),
     "variant_name": ("experiment", "variant_name"),
 }
 
