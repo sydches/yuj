@@ -30,6 +30,7 @@ _READ_ONLY_FORBIDDEN_TOOLS = frozenset({
     "write",
     "edit",
     "notebook_edit",
+    "structural_edit",
     "apply_patch",
     "udiff",
     "exec_cell",

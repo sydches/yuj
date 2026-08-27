@@ -51,6 +51,8 @@ PERMISSION_MATCH_FIELDS = MappingProxyType(
         "lsp": ("path", ""),
         "list_functions": ("arguments", ""),
         "notebook_edit": ("path", ""),
+        "structural_edit": ("path", ""),
+        "structural_search": ("path", ""),
         "read": ("path", ""),
         "rewind": ("report", ""),
         "run_tests": ("path", ""),

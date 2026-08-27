@@ -30,6 +30,7 @@ _INSPECTION_TOOLS = (
     "glob",
     "grep",
     "list_definitions",
+    "structural_search",
     "list_functions",
     "get_function_details",
     "lsp",
@@ -47,6 +48,7 @@ _FILE_EDIT_TOOLS = (
     "apply_patch",
     "edit",
     "notebook_edit",
+    "structural_edit",
     "udiff",
     "write",
 )

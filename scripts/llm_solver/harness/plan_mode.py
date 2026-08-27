@@ -19,7 +19,9 @@ from .command_redirect import split_shell_fragments
 
 PLAN_FILE = ".solver/plan.md"
 PLAN_MODES = ("off", "required")
-_INSPECTION_TOOLS = frozenset({"read", "glob", "grep", "list_definitions"})
+_INSPECTION_TOOLS = frozenset({
+    "read", "glob", "grep", "list_definitions", "structural_search",
+})
 _PLAN_TOOL_SURFACE = frozenset({
     *_INSPECTION_TOOLS, "bash", "write", "exit_plan_mode", "ask_user",
 })

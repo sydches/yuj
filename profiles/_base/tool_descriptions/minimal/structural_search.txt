@@ -1,0 +1,1 @@
+Search visible source with a Tree-sitter query. The query must capture exactly one target node as @match. Set replacement to preview a single-file rewrite and receive the expected_sha256 required by structural_edit. Replacement templates can reuse a uniquely captured node as ${capture}. Search never changes files.

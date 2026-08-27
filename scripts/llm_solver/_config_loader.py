@@ -293,6 +293,21 @@ def _extract_config_fields(d: dict) -> dict:
         "tools_notebook_edit_enabled": d.get("tools", {}).get(
             "notebook_edit_enabled", False
         ),
+        "tools_structural_enabled": d.get("tools", {}).get(
+            "structural_enabled", False
+        ),
+        "tools_structural_max_files": d.get("tools", {}).get(
+            "structural_max_files", 1000
+        ),
+        "tools_structural_max_matches": d.get("tools", {}).get(
+            "structural_max_matches", 100
+        ),
+        "tools_structural_matches_per_page": d.get("tools", {}).get(
+            "structural_matches_per_page", 25
+        ),
+        "tools_structural_max_file_bytes": d.get("tools", {}).get(
+            "structural_max_file_bytes", 4_194_304
+        ),
         "tools_bash_redirect_read_side": d.get("tools", {}).get(
             "bash_redirect_read_side", False
         ),
@@ -999,6 +1014,22 @@ def _validate_coupling(
         raise ValueError(
             "config error: tools.notebook_edit_enabled must be a boolean."
         )
+    if not isinstance(cfg.tools_structural_enabled, bool):
+        raise ValueError(
+            "config error: tools.structural_enabled must be a boolean."
+        )
+    for field_name in (
+        "tools_structural_max_files",
+        "tools_structural_max_matches",
+        "tools_structural_matches_per_page",
+        "tools_structural_max_file_bytes",
+    ):
+        value = getattr(cfg, field_name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            public_name = field_name.removeprefix("tools_")
+            raise ValueError(
+                f"config error: tools.{public_name} must be an integer >= 1."
+            )
     from .harness.tool_policy import (
         PermissionPolicy,
         normalize_ask_fallback,

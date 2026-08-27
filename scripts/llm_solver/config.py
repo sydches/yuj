@@ -413,6 +413,13 @@ class Config:
     # Source-only Jupyter notebook cell editing. This specialized mutation
     # tool stays off the model-facing surface unless explicitly enabled.
     tools_notebook_edit_enabled: bool = False
+    # Tree-sitter query search and preview-bound single-file rewrites. Both
+    # model tools share one default-off gate and deterministic resource caps.
+    tools_structural_enabled: bool = False
+    tools_structural_max_files: int = 1000
+    tools_structural_max_matches: int = 100
+    tools_structural_matches_per_page: int = 25
+    tools_structural_max_file_bytes: int = 4_194_304
     # Compound-aware shell redirects. Read-side interception is an opt-in;
     # write-side rules remain gated by the availability of their target tool.
     tools_bash_redirect_read_side: bool = False

@@ -33,6 +33,8 @@ from ._tools.list_definitions import list_definitions
 from ._tools.notebook_edit import notebook_edit
 from ._tools.read import read
 from ._tools.run_tests import run_tests
+from ._tools.structural_edit import structural_edit
+from ._tools.structural_search import structural_search
 from ._tools.think import think
 from ._tools.udiff import udiff_tool
 from ._tools.write import write
@@ -253,6 +255,10 @@ _DISPATCH = {
         cwd=cwd, cell_index=args.get("cell_index"),
         cell_id=args.get("cell_id"), cfg=cfg,
     ),
+    "structural_edit": lambda args, cwd, cfg: structural_edit(
+        args["path"], args["language"], args["query"], args["replacement"],
+        args["expected_sha256"], cwd=cwd, cfg=cfg,
+    ),
     "glob": lambda args, cwd, cfg: glob_files(
         args["pattern"], args.get("path", "."), cwd=cwd,
         page=int(args.get("page", 1)), cfg=cfg,
@@ -305,6 +311,11 @@ _DISPATCH = {
         symbol=args.get("symbol"), kind=args.get("kind"),
         repo_wide=bool(args.get("repo_wide", False)),
         page=int(args.get("page", 1)),
+    ),
+    "structural_search": lambda args, cwd, cfg: structural_search(
+        args["path"], args["language"], args["query"], cwd=cwd, cfg=cfg,
+        glob=args.get("glob", ""), replacement=args.get("replacement"),
+        page=args.get("page", 1),
     ),
     "apply_patch": lambda args, cwd, cfg: apply_patch_tool(
         args["patch"], cwd=cwd, cfg=cfg,
@@ -549,7 +560,11 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
 
     stale_decision = None
     stale_precheck_error = ""
-    if name in {"edit", "notebook_edit"} and stale_guard is not None and not redirected:
+    if (
+        name in {"edit", "notebook_edit", "structural_edit"}
+        and stale_guard is not None
+        and not redirected
+    ):
         try:
             stale_decision = stale_guard.check_edit(str(arguments.get("path", "")))
         except Exception as exc:
@@ -652,7 +667,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                     or Path(cwd).resolve() in candidate.resolve(strict=False).parents
                 ):
                     stale_guard.observe_read(read_path)
-            elif succeeded and name in {"write", "edit", "notebook_edit"}:
+            elif succeeded and name in {
+                "write", "edit", "notebook_edit", "structural_edit",
+            }:
                 stale_guard.observe_mutation(
                     str(arguments.get("path", "")), source=name
                 )

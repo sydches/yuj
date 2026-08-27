@@ -14,7 +14,12 @@ _MAX_PREVIEW_CHARS = 16_000
 _MAX_PREVIEW_LINES = 120
 _MAX_PREVIEW_PATHS = 32
 _FILE_MUTATION_TOOLS = frozenset({
-    "write", "edit", "notebook_edit", "apply_patch", "udiff",
+    "write",
+    "edit",
+    "notebook_edit",
+    "structural_edit",
+    "apply_patch",
+    "udiff",
 })
 
 
@@ -316,6 +321,52 @@ def _notebook_edit_preview(
     )
 
 
+def _structural_edit_preview(
+    cwd: str,
+    arguments: Mapping[str, object],
+    *,
+    cfg=None,
+) -> dict[str, object]:
+    path = _string_argument(arguments, "path")
+    language = _string_argument(arguments, "language")
+    query = _string_argument(arguments, "query")
+    replacement = _string_argument(arguments, "replacement")
+    expected_sha256 = _string_argument(arguments, "expected_sha256")
+    from ._tools.structural_search import propose_structural_edit
+    from .structural_patterns import StructuralPatternError
+
+    try:
+        plan = propose_structural_edit(
+            path,
+            language,
+            query,
+            replacement,
+            cwd=cwd,
+            cfg=cfg,
+        )
+    except StructuralPatternError as exc:
+        raise ApprovalPreviewError(str(exc)) from exc
+    if plan.preview_sha256 != expected_sha256:
+        raise ApprovalPreviewError(
+            "the preview hash does not match the current source and rewrite"
+        )
+    diff = _unified_text_diff(
+        path=path,
+        workspace_text=plan.original.decode("utf-8"),
+        proposed_text=plan.proposed.decode("utf-8"),
+        existed=True,
+    )
+    return _available(
+        format_name="unified_diff",
+        paths=[path],
+        content=diff,
+        summary=(
+            f"Exact structural rewrite for {len(plan.matches)} matched "
+            "location(s). It has not been applied."
+        ),
+    )
+
+
 def _apply_patch_preview(
     cwd: str,
     arguments: Mapping[str, object],
@@ -391,6 +442,7 @@ def build_approval_preview(
     cwd: str,
     tool_name: str,
     tool_args: Mapping[str, object],
+    cfg=None,
 ) -> dict[str, object]:
     """Build a bounded proposal preview without invoking a tool handler."""
     try:
@@ -400,6 +452,8 @@ def build_approval_preview(
             return _edit_preview(cwd, tool_args)
         if tool_name == "notebook_edit":
             return _notebook_edit_preview(cwd, tool_args)
+        if tool_name == "structural_edit":
+            return _structural_edit_preview(cwd, tool_args, cfg=cfg)
         if tool_name == "apply_patch":
             return _apply_patch_preview(cwd, tool_args)
         if tool_name == "udiff":

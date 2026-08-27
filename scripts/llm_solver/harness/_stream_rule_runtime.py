@@ -107,6 +107,7 @@ def _tool_snapshot(
         "bash": "cmd",
         "edit": "new_str",
         "notebook_edit": "new_source",
+        "structural_edit": "replacement",
         "write": "content",
         "apply_patch": "patch",
     }.get(tool_name)

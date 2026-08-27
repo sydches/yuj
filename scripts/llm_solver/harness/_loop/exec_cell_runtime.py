@@ -86,6 +86,7 @@ def build_session_exec_cell_handler(
                 permission_rule=(
                     resolution.rule if resolution.approval_required else None
                 ),
+                cfg=inner_cfg,
             )
             if not approval_allowed:
                 execution_metadata["executed"] = False

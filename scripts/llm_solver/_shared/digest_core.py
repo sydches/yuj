@@ -17,7 +17,7 @@ _SR_CLOSE_RE = re.compile(r"</(?:search_result|file_content|test_results|tool_re
 _HARNESS_RE = re.compile(r"\[HARNESS:[^\]]*\]")
 _OUTSIDE_CWD_RE = re.compile(r"(?<![\w])/(?:home/(?!task)[^/\s'\"`]+|usr/|etc/|proc/|sys/|var/|root/|opt/)")
 _WRITE_TOOLS = {
-    "write", "edit", "notebook_edit", "str_replace", "create",
+    "write", "edit", "notebook_edit", "structural_edit", "str_replace", "create",
     "apply_patch", "udiff",
 }
 

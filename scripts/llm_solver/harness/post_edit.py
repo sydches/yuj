@@ -1,5 +1,6 @@
 """Post-edit validation hook — declared checks run after successful
-``edit`` / ``notebook_edit`` / ``write`` / ``apply_patch`` / ``udiff`` calls.
+``edit`` / ``notebook_edit`` / ``structural_edit`` / ``write`` /
+``apply_patch`` / ``udiff`` calls.
 
 Borrowed in spirit from Goose's recipe ``retry.checks`` with
 ``SuccessCheck::Shell`` (``crates/goose/src/agents/retry.rs``). The
@@ -11,7 +12,7 @@ Schema per check (see config.toml [post_edit_check]):
     name     — ledger mechanism tag
     trigger  — "edit" | "write" | "apply_patch" | "udiff" | combinations
                separated by "|" (e.g. "edit|write|apply_patch|udiff")
-               notebook_edit uses the "edit" trigger
+               notebook_edit and structural_edit use the "edit" trigger
     when     — safe-eval predicate over {path, ext}; "" = always
     cmd      — shell command; {path} substituted with shlex-quoted path
     on_fail  — "append" | "warn" | "block"

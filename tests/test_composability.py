@@ -174,10 +174,13 @@ def test_tool_specs_drive_surface_metadata():
         for schema in get_tool_schemas("minimal", code_mode=True)
     ) == CODE_MODE_SCHEMA_TOOL_NAMES
     assert tuple(build_tool_registry().handlers) == ACTIVE_TOOL_NAMES
-    assert PARALLEL_READ_SAFE_TOOL_NAMES == frozenset({"read", "glob", "grep"})
+    assert PARALLEL_READ_SAFE_TOOL_NAMES == frozenset(
+        {"read", "glob", "grep", "structural_search"}
+    )
     assert GUARDRAIL_MUTATION_TOOL_NAMES == frozenset(
         {
-            "write", "edit", "notebook_edit", "apply_patch", "udiff",
+            "write", "edit", "notebook_edit", "structural_edit",
+            "apply_patch", "udiff",
             "str_replace",
         }
     )
@@ -190,6 +193,8 @@ def test_tool_specs_drive_surface_metadata():
         "terminal_start": "tools_terminal_enabled",
         "terminal_io": "tools_terminal_enabled",
         "notebook_edit": "tools_notebook_edit_enabled",
+        "structural_edit": "tools_structural_enabled",
+        "structural_search": "tools_structural_enabled",
         "exit_plan_mode": "plan_mode_enabled",
         "task": "tools_task_enabled",
         "think": "tools_think_enabled",

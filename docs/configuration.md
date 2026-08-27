@@ -626,7 +626,8 @@ file contents before it edits:
 | `block` | Refuse the edit with `ERROR: stale_file: read PATH first`. |
 
 A successful `read` records the file's content hash and metadata. A successful
-file edit, including `notebook_edit`, refreshes that record. A simple,
+file edit, including `notebook_edit` and `structural_edit`, refreshes that
+record. A simple,
 single-file `cat`, `head`, `tail`, `sed -n`, `grep`, or `rg` command also
 counts as a read. Compound commands, pipelines, redirects, recursive searches,
 and count-only searches do not.
@@ -654,6 +655,64 @@ unrelated notebook bytes and data, including metadata, outputs, attachments,
 IDs, and cell order. The tool follows the normal workspace, permission,
 approval, stale-file, and workspace-checkpoint controls. Post-edit checks use
 the `edit` trigger.
+
+### Search and edit source structure
+
+Enable syntax-aware search and preview-bound editing with one setting:
+
+```toml
+[tools]
+structural_enabled = true
+structural_max_files = 1000
+structural_max_matches = 100
+structural_matches_per_page = 25
+structural_max_file_bytes = 4194304
+```
+
+This adds `structural_search` and `structural_edit` to the model tool set. Both
+are off by default. Yuj gives both tools priority inside a model profile's
+tool-count limit when they are enabled.
+
+`structural_search` takes `path`, `language`, and `query`. The path may name one
+file or a directory. A directory search may use `glob` and `page`. The language
+must be `python`, `javascript`, `typescript`, `tsx`, `go`, `rust`, or `java`.
+Yuj uses the shipped local grammars and never downloads one during a call.
+
+The query uses Tree-sitter query syntax. It must capture exactly one target as
+`@match` for every returned query match. Other named captures are available to
+a replacement template as `${capture}`. Each referenced capture must occur
+exactly once in that match.
+
+To preview a rewrite, pass `replacement` to `structural_search` and name one
+file in `path`. Yuj parses the current file, builds every replacement, rejects
+overlapping ranges, and parses the proposed result. It then reports every
+changed location, a unified diff, the source and result digests, and a
+`preview_sha256`. It does not write the file.
+
+To apply the preview, call `structural_edit` with the same `path`, `language`,
+`query`, and `replacement`. Pass the preview hash as `expected_sha256`. Yuj
+rebuilds the plan from the current file. It writes only when the plan produces
+the same hash. The write is atomic. A blocked post-edit check or check error
+restores the exact original bytes.
+
+The preview hash and stale-file ledger are separate controls. In `block` mode,
+the model must still use `read` on the target before `structural_edit`.
+
+The limits bound each call:
+
+| Setting | Effect |
+| --- | --- |
+| `structural_max_files` | Maximum matching source files in one directory search. |
+| `structural_max_matches` | Maximum stored search results and maximum matches in one rewrite. |
+| `structural_matches_per_page` | Search rows returned on one page. |
+| `structural_max_file_bytes` | Maximum bytes read from one source file. |
+
+Invalid patterns, unsupported languages, hidden or unreadable paths, malformed
+source, no matches, ambiguous captures, overlapping matches, and
+syntax-breaking replacements change no file. The normal path boundary, ignore
+policy, permission rules, approval preview, stale-file guard, workspace
+checkpoints, session diff, language-server diagnostics, and post-edit checks
+still apply.
 
 ### Redirect shell commands to dedicated tools
 
@@ -926,11 +985,12 @@ these three presets. All three set `permissions.ask_fallback = "deny"`.
 
 The groups expand to these exact tool names:
 
-- Inspection: `read`, `glob`, `grep`, `list_definitions`, `list_functions`,
-  `get_function_details`, and `lsp`.
+- Inspection: `read`, `glob`, `grep`, `list_definitions`, `structural_search`,
+  `list_functions`, `get_function_details`, and `lsp`.
 - Session control: `ask_user`, `checkpoint`, `done`, `exit_plan_mode`,
   `load_tools`, `think`, and `write_todos`.
-- File edit: `apply_patch`, `edit`, `notebook_edit`, `udiff`, and `write`.
+- File edit: `apply_patch`, `edit`, `notebook_edit`, `structural_edit`, `udiff`,
+  and `write`.
 
 Yuj adds an `allow` rule for every tool in the listed groups after the preset's
 catch-all rule. Every tool outside those groups keeps the catch-all result.
@@ -994,7 +1054,7 @@ Each tool matches one stable value:
 | `bash` | `cmd` |
 | `terminal_start` | `cmd` |
 | `terminal_io` | `input`; an omitted input uses an empty value for status reads and termination |
-| `read`, `write`, `edit`, `notebook_edit`, `glob`, `grep`, `run_tests`, `list_definitions`, `lsp` | `path`; `glob` and `grep` use `.` when omitted |
+| `read`, `write`, `edit`, `notebook_edit`, `structural_edit`, `structural_search`, `glob`, `grep`, `run_tests`, `list_definitions`, `lsp` | `path`; `glob` and `grep` use `.` when omitted |
 | `apply_patch`, `udiff` | `patch` |
 | `done` | `message` |
 | `task` | `agent` |

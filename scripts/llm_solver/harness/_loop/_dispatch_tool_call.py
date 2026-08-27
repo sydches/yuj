@@ -264,7 +264,10 @@ def _emit_todos_event(tc, state: "TurnState", execution_metadata: dict) -> None:
 def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
     """Run automatic diagnostics after a successful edit-dialect call."""
     from ..._shared.edit_formats import EDIT_FORMAT_TOOL_NAMES
-    if tc.name not in EDIT_FORMAT_TOOL_NAMES or is_error_result(result):
+    if (
+        tc.name not in EDIT_FORMAT_TOOL_NAMES | {"structural_edit"}
+        or is_error_result(result)
+    ):
         return result
     manager = getattr(state.session, "_lsp_manager", None)
     if manager is None:

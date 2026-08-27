@@ -80,7 +80,7 @@ def edit_operations(
     """
     arguments = arguments or {}
     if tool_name in {
-        "write", "edit", "notebook_edit", "str_replace", "create", "insert",
+        "write", "edit", "notebook_edit", "structural_edit", "str_replace", "create", "insert",
     }:
         path = arguments.get("path") or arguments.get("file_path")
         return _deduplicate([("update", str(path or ""))])

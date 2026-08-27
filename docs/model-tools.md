@@ -25,6 +25,7 @@ person types into a terminal.
 | `write` | `path`, `content` | None | Create or replace a file. Create missing parent directories. |
 | `edit` | `path`, `old_str`, `new_str` | None | Replace the first exact copy of `old_str`. |
 | `notebook_edit` | `path`, `old_source`, `new_source` | One of `cell_index` or `cell_id` | Replace the exact source of one existing code or Markdown cell without rewriting unrelated notebook data. |
+| `structural_edit` | `path`, `language`, `query`, `replacement`, `expected_sha256` | None | Apply the exact single-file structural rewrite shown by `structural_search`. |
 | `glob` | `pattern` | `path`, `page` | Find paths that match a glob pattern. `path` defaults to `.`. `page` defaults to 1. |
 | `grep` | `pattern` | `path`, `glob`, `page` | Search file text with a regular expression. `path` defaults to `.`. `glob` limits file names. `page` defaults to 1. |
 | `write_todos` | `todos` | None | Replace the whole session todo list. Each item has a `description` and `status`; at most one item may be `in_progress`. |
@@ -34,6 +35,7 @@ person types into a terminal.
 | `think` | `thought` | None | Record free-form scratchpad reasoning without running a process or touching the filesystem. Return an empty success envelope. |
 | `run_tests` | None | `path`, `k`, `last_failed` | Run the detected test runner. Limit the run by path or test name. `last_failed=true` repeats failed tests with pytest, Jest, or CTest. Cargo and Go ignore it. |
 | `list_definitions` | `path` | `symbol`, `kind`, `repo_wide`, `page` | With `path` alone, list one Python file's outline. With `repo_wide=true`, find exact symbol definitions or references across the repository. Do not run source files. |
+| `structural_search` | `path`, `language`, `query` | `glob`, `replacement`, `page` | Find syntax nodes with a Tree-sitter query. Add `replacement` to preview a single-file rewrite without changing the file. |
 | `apply_patch` | `patch` | None | Apply one checked patch that may add, change, or delete several files. |
 | `task` | `agent`, `prompt` | None | Run one named agent in a separate context and return its final text. |
 | `udiff` | `patch` | None | Apply a checked standard unified diff with safe unique-context recovery. |
@@ -58,7 +60,7 @@ schema, description, or result rule.
 | `edit` | Selected by the shipped profile's `exact` edit format. |
 | `write` | On as the file-creation companion to the selected `exact` replacement tool. |
 | `apply_patch`, `udiff` | Available replacement dialects, but not selected by the shipped profile. |
-| `notebook_edit` | Off |
+| `notebook_edit`, `structural_search`, `structural_edit` | Off |
 | `load_tools` | On only while `[tools].lazy_loading_enabled` is true. |
 | `exit_plan_mode` | On only when `[loop].plan_mode = "required"`. |
 | `ask_user` | On for the top-level assistant session. Never present in child-agent or measurement requests. |
@@ -84,6 +86,7 @@ task_enabled = true
 todos_enabled = true
 checkpoint_enabled = true
 notebook_edit_enabled = true
+structural_enabled = true
 
 [lsp]
 tool_enabled = true
@@ -113,7 +116,9 @@ The top-level assistant session also keeps `ask_user`. Deferred loading keeps
 `load_tools`. Required plan mode keeps `exit_plan_mode` and the exact plan-file
 write so the model can leave the phase. When interactive terminals are enabled,
 Yuj keeps both terminal controls inside the limit. The shipped eight-tool
-profiles still keep `bash`, `read`, `write`, and the selected edit tool.
+profiles still keep `bash`, `read`, `write`, and the selected edit tool. When
+structural tools are enabled, Yuj gives `structural_search` and
+`structural_edit` priority inside the profile limit.
 
 ## Choose a tool set
 
@@ -249,6 +254,52 @@ checkpoint, and post-edit controls. A configured post-edit check uses the
 [Configuration](configuration.html#edit-one-jupyter-notebook-cell) for the
 setting.
 
+### Structural pattern search and edits
+
+Turn on both structural tools with one setting:
+
+```toml
+[tools]
+structural_enabled = true
+```
+
+`structural_search` accepts a file or directory in `path`. Select one of the
+shipped languages: `python`, `javascript`, `typescript`, `tsx`, `go`, `rust`,
+or `java`. A directory search can also use `glob` and `page`.
+
+Write the pattern as a Tree-sitter query. Use node types in parentheses,
+field names such as `left:`, captures such as `@name`, and query predicates
+such as `#eq?`. Every returned query match must contain exactly one `@match`
+capture. This example finds each Python identifier named `old_name`:
+
+```scm
+((identifier) @match
+  (#eq? @match "old_name"))
+```
+
+Search results use stable repository paths, one-based lines, one-based UTF-8
+byte columns, and byte ranges. They also include a digest and a short text
+preview for each match. The tool never runs source files.
+
+Add `replacement` only when `path` names one file. The replacement may contain
+`${capture}` for a capture that occurs exactly once in that query match. Yuj
+shows every changed location and a unified diff. It also returns a
+`preview_sha256`. The preview does not change the file.
+
+Pass the same `path`, `language`, `query`, and `replacement` to
+`structural_edit`. Set `expected_sha256` to the preview hash. Yuj builds the
+change again and applies it only when the hash still matches. A changed file,
+changed pattern, changed replacement, stale hash, overlapping match, missing
+capture, parse error, or unsupported language changes nothing.
+
+`structural_edit` follows the normal visibility, permission, approval,
+read-before-edit, workspace-checkpoint, language-server, and post-edit rules.
+When the stale-file mode is `block`, use `read` on the target before the edit.
+The structural preview does not replace that session read. A post-edit check
+uses the `edit` trigger. Read
+[Configuration](configuration.html#search-and-edit-source-structure) for the
+resource limits.
+
 ### Language-server feedback
 
 With `[lsp].enabled = true`, Yuj adds matching diagnostics to a successful edit
@@ -321,7 +372,7 @@ Narrow its pattern or path when that happens.
 ### Read before edit
 
 The stale-file guard can require current contents before an edit, including a
-`notebook_edit`. A typed
+`notebook_edit` or `structural_edit`. A typed
 `read` or one simple single-file shell read records the content hash. If the
 file changes later, that read becomes stale. `warn` applies the edit and adds a
 warning. `block` returns `ERROR: stale_file: read PATH first` without changing

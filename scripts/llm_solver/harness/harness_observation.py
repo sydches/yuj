@@ -37,6 +37,7 @@ _READ_SEARCH_TOOLS = frozenset({
     "glob",
     "list_files",
     "list_definitions",
+    "structural_search",
 })
 _TEST_RESULTS_STATUS_RE = re.compile(r'<test_results\b[^>]*\bstatus="([^"]+)"')
 _TOOL_RESULT_STATUS_RE = re.compile(r'<tool_result\b[^>]*\bstatus="([^"]+)"')

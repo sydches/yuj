@@ -364,10 +364,10 @@ class StaleFileGuard:
 
     def observe_mutation(self, path: str, *, source: str) -> FileFingerprint:
         if source not in {
-            "write", "edit", "notebook_edit", "apply_patch", "udiff",
+            "write", "edit", "notebook_edit", "structural_edit", "apply_patch", "udiff",
         }:
             raise ValueError(
-                "mutation source must be write, edit, notebook_edit, "
+                "mutation source must be write, edit, notebook_edit, structural_edit, "
                 "apply_patch, or udiff"
             )
         return self.observe(path, source=source)

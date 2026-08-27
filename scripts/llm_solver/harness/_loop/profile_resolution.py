@@ -236,6 +236,8 @@ def _priority_tools(cfg) -> frozenset[str]:
         cfg, "runtime_mode", "measurement"
     ) == "assistant":
         names.update(TERMINAL_TOOL_NAMES)
+    if bool(getattr(cfg, "tools_structural_enabled", False)):
+        names.update({"structural_search", "structural_edit"})
     return frozenset(names)
 
 

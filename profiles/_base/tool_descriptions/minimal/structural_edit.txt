@@ -1,0 +1,1 @@
+Apply the exact single-file rewrite previously shown by structural_search. Pass the same path, language, query, and replacement with that preview's expected_sha256. The call fails without changing the file if the source, query, replacement, visibility, or preview hash has changed.

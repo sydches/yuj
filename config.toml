@@ -333,6 +333,14 @@ stale_guard_mode = "warn"  # off | warn | block
 # Precise source-only edits for existing Jupyter code and Markdown cells.
 # The tool is absent from the model-facing surface until enabled.
 notebook_edit_enabled = false
+# Tree-sitter query search and preview-bound source rewrites. Search and edit
+# share this gate. A rewrite applies only to one file and requires its preview
+# hash from structural_search.
+structural_enabled = false
+structural_max_files = 1000
+structural_max_matches = 100
+structural_matches_per_page = 25
+structural_max_file_bytes = 4194304
 # Redirect shell reads such as cat/grep/find to the corresponding bounded
 # model tool. Write-side redirect rules remain active independently.
 bash_redirect_read_side = false

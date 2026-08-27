@@ -131,6 +131,7 @@ def approval_decision(
     args_summary: str,
     required_reason: str | None = None,
     permission_rule: str | None = None,
+    cfg=None,
 ) -> tuple[bool, str | None]:
     """Return whether an action may execute now, recording a pause if needed."""
     if runtime_mode != "assistant":
@@ -183,6 +184,7 @@ def approval_decision(
         cwd=cwd,
         tool_name=tool_name,
         tool_args=tool_args,
+        cfg=cfg,
     )
     if tool_name == "bash":
         payload["cmd"] = cmd

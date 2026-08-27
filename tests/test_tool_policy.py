@@ -97,7 +97,11 @@ def test_star_and_question_are_the_only_wildcards():
 
 
 @pytest.mark.parametrize(
-    "tool_name", ("read", "write", "edit", "notebook_edit")
+    "tool_name",
+    (
+        "read", "write", "edit", "notebook_edit", "structural_edit",
+        "structural_search",
+    ),
 )
 def test_file_tool_rules_match_path_not_other_arguments(tool_name):
     policy = PermissionPolicy.from_rule_tables(

@@ -29,7 +29,9 @@ class _FakeTC:
 class TestReadonlyPartition:
 
     def test_readonly_set_is_stable(self):
-        assert loop_mod._READONLY_TOOLS == frozenset({"read", "glob", "grep"})
+        assert loop_mod._READONLY_TOOLS == frozenset(
+            {"read", "glob", "grep", "structural_search"}
+        )
 
     def test_write_not_in_readonly(self):
         assert "write" not in loop_mod._READONLY_TOOLS

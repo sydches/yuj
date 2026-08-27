@@ -36,8 +36,12 @@ _EXIT_MARKER_TAIL_RE = re.compile(
     r"(?:\s*\n\[HARNESS:[^\]]*\])*\s*\Z"
 )
 
-_INSPECT_TOOLS = {"read", "grep", "glob", "list_definitions"}
-_WRITE_TOOLS = {"write", "edit", "notebook_edit", "apply_patch", "udiff"}
+_INSPECT_TOOLS = {
+    "read", "grep", "glob", "list_definitions", "structural_search",
+}
+_WRITE_TOOLS = {
+    "write", "edit", "notebook_edit", "structural_edit", "apply_patch", "udiff",
+}
 
 
 def build_tool_call_trace_fields(

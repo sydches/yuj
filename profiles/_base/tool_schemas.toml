@@ -44,6 +44,11 @@ required = ["path", "old_source", "new_source"]
 properties = { path = { type = "string" }, old_source = { type = "string" }, new_source = { type = "string" }, cell_index = { type = "integer" }, cell_id = { type = "string", minLength = 1 } }
 
 [[tools]]
+name = "structural_edit"
+required = ["path", "language", "query", "replacement", "expected_sha256"]
+properties = { path = { type = "string" }, language = { type = "string", enum = ["python", "javascript", "typescript", "tsx", "go", "rust", "java"] }, query = { type = "string", minLength = 1 }, replacement = { type = "string" }, expected_sha256 = { type = "string", minLength = 64, maxLength = 64 } }
+
+[[tools]]
 name = "glob"
 required = ["pattern"]
 properties = { pattern = { type = "string" }, path = { type = "string" }, page = { type = "integer" } }
@@ -77,6 +82,11 @@ properties = { path = { type = "string" }, k = { type = "string" }, last_failed 
 name = "list_definitions"
 required = ["path"]
 properties = { path = { type = "string" }, symbol = { type = "string" }, kind = { type = "string", enum = ["def", "ref"] }, repo_wide = { type = "boolean" }, page = { type = "integer" } }
+
+[[tools]]
+name = "structural_search"
+required = ["path", "language", "query"]
+properties = { path = { type = "string" }, language = { type = "string", enum = ["python", "javascript", "typescript", "tsx", "go", "rust", "java"] }, query = { type = "string", minLength = 1 }, glob = { type = "string" }, replacement = { type = "string" }, page = { type = "integer" } }
 
 [[tools]]
 name = "apply_patch"

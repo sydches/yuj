@@ -221,6 +221,17 @@ def _mutation_signature(
             sort_keys=True,
             ensure_ascii=True,
         )
+    elif tc_name == "structural_edit":
+        payload = json.dumps(
+            {
+                "language": tc_args.get("language", ""),
+                "query": tc_args.get("query", ""),
+                "replacement": tc_args.get("replacement", ""),
+                "expected_sha256": tc_args.get("expected_sha256", ""),
+            },
+            sort_keys=True,
+            ensure_ascii=True,
+        )
     else:
         payload = str(tc_args.get("content", ""))
     digest = hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]

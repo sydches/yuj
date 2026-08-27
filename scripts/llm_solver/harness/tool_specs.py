@@ -64,6 +64,13 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         schema_order=5,
     ),
     ToolSpec(
+        "structural_edit",
+        guardrail_mutation=True,
+        action_write_like=True,
+        profile_gate_attr="tools_structural_enabled",
+        schema_order=5,
+    ),
+    ToolSpec(
         "glob",
         parallel_read_safe=True,
         schema_order=6,
@@ -151,6 +158,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "list_definitions",
         profile_gate_attr="tools_list_definitions_enabled",
         native_envelope_prefix="<list_definitions",
+        schema_order=12,
+    ),
+    ToolSpec(
+        "structural_search",
+        parallel_read_safe=True,
+        profile_gate_attr="tools_structural_enabled",
         schema_order=12,
     ),
     ToolSpec(

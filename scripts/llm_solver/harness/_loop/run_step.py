@@ -1304,6 +1304,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                             if resolution.approval_required
                             else None
                         ),
+                        cfg=cfg,
                     )
                     if not approval_allowed:
                         result = (

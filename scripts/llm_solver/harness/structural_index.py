@@ -50,6 +50,7 @@ _PREINSTALLED_GRAMMARS = {
     "rust": ("tree_sitter_rust", "language"),
     "java": ("tree_sitter_java", "language"),
 }
+SUPPORTED_STRUCTURAL_LANGUAGES = tuple(_PREINSTALLED_GRAMMARS)
 
 
 class StructuralIndexError(RuntimeError):
@@ -62,6 +63,26 @@ class StructuralBackendUnavailable(StructuralIndexError):
 
 class StructuralLanguageUnsupported(StructuralIndexError):
     """Raised when a language has no usable tags query."""
+
+
+def detect_structural_language(path: str | Path) -> str | None:
+    """Return the shipped Tree-sitter language for one source path."""
+    return _CORE_LANGUAGE_BY_SUFFIX.get(Path(path).suffix.lower())
+
+
+def load_structural_language(language: str):
+    """Load one preinstalled grammar without using a network downloader."""
+    try:
+        module_name, function_name = _PREINSTALLED_GRAMMARS[language]
+        module = importlib.import_module(module_name)
+        capsule = getattr(module, function_name)()
+        from tree_sitter import Language
+        return Language(capsule)
+    except (KeyError, ImportError, AttributeError) as exc:
+        raise StructuralBackendUnavailable(
+            f"preinstalled tree-sitter grammar unavailable for {language!r}; "
+            "reinstall Yuj with its structural-search dependencies"
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,25 +239,12 @@ class TreeSitterTagExtractor:
             # The public runtime preinstalls grammar wheels for the supported
             # acceptance languages. Do not call language-pack's on-demand
             # grammar downloader from a sealed model tool call.
-            def load_preinstalled_language(name: str):
-                try:
-                    module_name, function_name = _PREINSTALLED_GRAMMARS[name]
-                    module = importlib.import_module(module_name)
-                    capsule = getattr(module, function_name)()
-                    from tree_sitter import Language
-                    return Language(capsule)
-                except (KeyError, ImportError, AttributeError) as exc:
-                    raise StructuralBackendUnavailable(
-                        f"preinstalled tree-sitter grammar unavailable for {name!r}; "
-                        "reinstall Yuj with its structural-search dependencies"
-                    ) from exc
-
-            self._language_loader = load_preinstalled_language
+            self._language_loader = load_structural_language
         if self._tags_query_loader is None:
             self._tags_query_loader = get_tags_query
 
     def detect_language(self, path: Path) -> str | None:
-        core = _CORE_LANGUAGE_BY_SUFFIX.get(path.suffix.lower())
+        core = detect_structural_language(path)
         if core is not None:
             return core
         if self._language_detector is None:
@@ -744,8 +752,11 @@ __all__ = [
     "StructuralLanguageUnsupported",
     "StructuralRow",
     "StructuralSearchPage",
+    "SUPPORTED_STRUCTURAL_LANGUAGES",
     "SymbolKind",
     "TreeSitterTagExtractor",
+    "detect_structural_language",
     "format_rows",
+    "load_structural_language",
     "search_repository",
 ]
