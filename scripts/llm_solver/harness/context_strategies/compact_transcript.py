@@ -284,25 +284,24 @@ class CompactTranscript(ContextManager):
             )
         else:
             self._msg_cache = self._build_compact()
-            # Token accounting: the projection replaces the full append log
-            # with a compact summary. Record the exact delta vs. what a
-            # FullTranscript would have emitted for the same turn state.
-            from ..savings import get_ledger
-            full_chars = sum(len(str(m)) for m in self._all_messages)
-            actual_chars = sum(len(str(m)) for m in self._msg_cache)
-            get_ledger().record(
-                bucket="context_projection",
-                layer="context_strategy",
-                mechanism="compact_transcript",
-                input_chars=full_chars,
-                output_chars=actual_chars,
-                measure_type="exact",
-                ctx={"turn_count": self._turn_count,
-                     "messages": len(self._msg_cache)},
-            )
         self._msg_cache = preserve_rewind_reports(
             self._msg_cache, self._all_messages
         )
+        if self._turn_count >= self._min_turns:
+            from ..savings import get_ledger, serialize_messages
+            get_ledger().record_transform(
+                bucket="context_projection",
+                layer="context_strategy",
+                mechanism="compact_transcript",
+                before=serialize_messages(self._all_messages),
+                after=serialize_messages(self._msg_cache),
+                surface="context_render",
+                ctx={
+                    "turn_count": self._turn_count,
+                    "messages": len(self._msg_cache),
+                    "encoding": "message_list_json_utf8_v1",
+                },
+            )
         return self._msg_cache
 
     def estimate_tokens(self) -> int:
@@ -492,29 +491,13 @@ class CompactTranscript(ContextManager):
                     for path in paths:
                         mutation_indices.setdefault(path, []).append(i)
 
-            elided_count = 0
-            elided_chars_saved = 0
             if elidable:
                 for i in elidable:
                     p = meta_list[i].get("path") or "?"
                     later_idx = latest_read_idx.get(p, i)
                     later_turn = self._turn_entries[-(n - later_idx)].turn if (n - later_idx) <= len(self._turn_entries) else later_idx
                     stub = f"[duplicate read of {p} elided — see entry from T{later_turn}]"
-                    elided_chars_saved += max(0, len(results_list[i]) - len(stub))
                     results_list[i] = stub
-                    elided_count += 1
-                # Record the savings exactly as a context_strategy mechanism.
-                if elided_chars_saved > 0:
-                    from ..savings import get_ledger
-                    get_ledger().record(
-                        bucket="context_projection",
-                        layer="context_strategy",
-                        mechanism="compact_transcript_read_dedup",
-                        input_chars=elided_chars_saved + sum(len(r) for r in results_list),
-                        output_chars=sum(len(r) for r in results_list),
-                        measure_type="exact",
-                        ctx={"elided_reads": elided_count},
-                    )
 
             # Rolling tool-result window, char-budgeted newest-first.
             # Walk from the most recent result backward, keeping entries

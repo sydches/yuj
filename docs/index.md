@@ -48,6 +48,7 @@ A Yuj quirk is a TOML rule that users can read, share, and measure.
 | Add trusted Python at the compaction boundary | [Compaction hooks](compaction.html) |
 | Choose `bwrap`, Docker, Podman, automatic selection, or no sandbox | [Sandbox](sandbox.html#choose-a-mode) |
 | Understand the files that Yuj saves | [Saved files](harness_artifacts.html) |
+| Measure exact command, output, and context changes | [Transformation and savings accounting](token_savings.html) |
 | Run a fixed comparison | [Measurements](measurement.html) |
 | Run recorded actions again | [Replay](replay_mode_spec.html) |
 | Read the experiment and results | [Paper and results](https://github.com/sydches/yuj/tree/main/paper) |

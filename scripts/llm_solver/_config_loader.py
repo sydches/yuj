@@ -434,6 +434,7 @@ def _extract_config_fields(d: dict) -> dict:
         "rumination_enabled": d.get("loop", {}).get("rumination_enabled", True),
         "error_ladder_enabled": d.get("loop", {}).get("error_ladder_enabled", True),
         "preflight_reclip_enabled": d.get("loop", {}).get("preflight_reclip_enabled", True),
+        "transform_log_mode": d.get("loop", {}).get("transform_log_mode", "counts"),
         "bash_transforms_universal_enabled": d.get("loop", {}).get("bash_transforms_universal_enabled", True),
         "bash_transforms_task_format_enabled": d.get("loop", {}).get("bash_transforms_task_format_enabled", True),
         "bash_transforms_structured_output_enabled": d.get("loop", {}).get("bash_transforms_structured_output_enabled", False),

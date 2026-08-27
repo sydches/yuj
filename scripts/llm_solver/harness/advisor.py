@@ -213,6 +213,19 @@ class AdvisorRuntime:
             "</injected-fragment>"
         )
         self._session.context.add_injected_fragment(fragment)
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="advisor_intervention",
+            layer="harness",
+            mechanism="advisor_note",
+            before="",
+            after=fragment,
+            surface="injected_message",
+            ctx={
+                "source_turn": advisory.source_turn,
+                "severity": advisory.severity,
+            },
+        )
         self._append(
             "advisory_injected",
             source_turn=advisory.source_turn,

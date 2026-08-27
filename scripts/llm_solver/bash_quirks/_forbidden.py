@@ -59,7 +59,13 @@ def load_forbidden_rules(path: Path | None = None) -> list[ForbiddenRule]:
     return out
 
 
-def apply_forbidden(cmd: str, rules: list[ForbiddenRule] | None) -> str:
+def apply_forbidden(
+    cmd: str,
+    rules: list[ForbiddenRule] | None,
+    *,
+    rule_log: list | None = None,
+    transform_log: list | None = None,
+) -> str:
     """If any forbidden rule matches, replace cmd with a refusal `false` no-op.
 
     Returns the original cmd when no rule matches.
@@ -72,6 +78,19 @@ def apply_forbidden(cmd: str, rules: list[ForbiddenRule] | None) -> str:
             # permitted command instead of repeating the refused command.
             safe = rule.reason.replace("\\", "").replace('"', "'")
             safe = safe.replace("$", "").replace("`", "")
-            return (f'echo "[HARNESS refused this command: {safe}]" >&2; '
-                    f'false  # [HARNESS: {rule.reason}]')
+            replacement = (
+                f'echo "[HARNESS refused this command: {safe}]" >&2; '
+                f'false  # [HARNESS: {rule.reason}]'
+            )
+            if rule_log is not None:
+                rule_log.append({"kind": "forbidden"})
+            if transform_log is not None:
+                transform_log.append({
+                    "kind": "forbidden",
+                    "name": rule.name,
+                    "reason": rule.reason,
+                    "before": cmd,
+                    "after": replacement,
+                })
+            return replacement
     return cmd

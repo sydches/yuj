@@ -63,5 +63,17 @@ def apply_redactions(text: str, rules: list[RedactionRule] | None) -> str:
     if not rules:
         return text
     for rule in rules:
-        text = rule.pattern.sub(rule.replace, text)
+        before = text
+        text, count = rule.pattern.subn(rule.replace, text)
+        if text != before:
+            from ..harness.savings import get_ledger
+            get_ledger().record_transform(
+                bucket="tool_output_redaction",
+                layer="L2_bash_quirks",
+                mechanism=rule.name,
+                before=before,
+                after=text,
+                surface="tool_output",
+                change_count=count,
+            )
     return text

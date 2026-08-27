@@ -630,6 +630,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # the turn whose tool call triggered the service.
         session._current_turn = turn
         cfg = session.cfg
+        # Stamp before any turn-boundary intervention is inserted.
+        get_ledger().set_turn(session._session_number, turn)
         # Freeze the planning phase for this model response.  A successful
         # exit changes the next turn's surface, but cannot unlock a mutating
         # sibling call that arrived in the same response.
@@ -652,6 +654,15 @@ def run_session_loop(session: "Session") -> "SessionResult":
         _pending_user_turn = getattr(session, "_adaptive_user_turn_pending", None)
         if _pending_user_turn:
             session.context.add_user(_pending_user_turn)
+            get_ledger().record_transform(
+                bucket="adaptive_intervention",
+                layer="harness",
+                mechanism="adaptive_user_turn",
+                before="",
+                after=_pending_user_turn,
+                surface="injected_message",
+                ctx={"delivery": "user_turn"},
+            )
             session._adaptive_user_turn_pending = None
             log.info("adaptive_user_turn: injected fake-restart message at turn %d", turn)
         # Per-turn phase timing. Captured fields land on every tool_call
@@ -665,9 +676,6 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # writes are visible (the bottom emit itself isn't counted in
         # the value it carries — that write happens after read).
         session._turn_trace_write_ms = 0.0
-        # Stamp the savings ledger with (session, turn) so every record
-        # written by transforms downstream carries the turn context.
-        get_ledger().set_turn(session._session_number, turn)
         # Deferred, non-interrupting prose rules become a hidden user
         # fragment only at a clean turn boundary. Tool-source reminders are
         # bound to their own tool result during dispatch instead.
@@ -1273,6 +1281,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         ignore_policy=session._ignore_policy,
                         effective_env=session._effective_env,
                         allow_login_shell=session._allow_login_shell,
+                        tool_call_id=tc.id,
                     )
                 for tc_id, fut in futures.items():
                     try:

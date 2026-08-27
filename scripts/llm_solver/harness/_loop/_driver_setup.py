@@ -131,7 +131,11 @@ def setup_run_outputs(
 
     from ..savings import open_ledger
     from ..system_log import open_system_log
-    open_ledger(artifact_dir / "savings.jsonl")
+    open_ledger(
+        artifact_dir / "savings.jsonl",
+        transform_log_mode=getattr(cfg, "transform_log_mode", "counts"),
+        task=work_dir.name,
+    )
     open_system_log(artifact_dir / "system_log.jsonl").set_task(work_dir.name)
     _record_session_start_costs(
         cfg, client, system_prompt, system_prompt_file, prompt_metadata
@@ -454,7 +458,11 @@ def setup_savings_and_transcript(
     # where they want without depending on this path-arithmetic accident.
     _savings_dir = savings_dir if savings_dir is not None else (repo_dir.parent.parent / "savings")
     _savings_dir.mkdir(parents=True, exist_ok=True)
-    open_ledger(_savings_dir / f"{repo_dir.name}.jsonl")
+    open_ledger(
+        _savings_dir / f"{repo_dir.name}.jsonl",
+        transform_log_mode=getattr(cfg, "transform_log_mode", "counts"),
+        task=repo_dir.name,
+    )
     # System log (harness self-observations — see harness/system_log.py):
     # one file per run beside savings/ and transcripts/, outside the
     # sandbox cwd for the same mtime-determinism reason as the ledger.

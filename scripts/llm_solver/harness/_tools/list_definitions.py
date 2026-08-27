@@ -107,13 +107,13 @@ def list_definitions(
     # envelopes are not savings events because the model still has to recover.
     if envelope.startswith('<list_definitions status="ok"'):
         from ..savings import get_ledger
-        get_ledger().record(
+        get_ledger().record_transform(
             bucket="outline_vs_read",
             layer="harness",
             mechanism="list_definitions",
-            input_chars=len(text),
-            output_chars=len(envelope),
-            measure_type="exact",
+            before=text,
+            after=envelope,
+            surface="tool_output",
             ctx={"path": path, "suffix": abs_path.suffix.lower()},
         )
     return envelope

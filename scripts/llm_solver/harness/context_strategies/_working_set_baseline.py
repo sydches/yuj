@@ -292,17 +292,19 @@ class WorkingSetBaselineContext(ContextManager):
         self._msg_cache = preserve_rewind_reports(
             self._build(), self._all_messages
         )
-        from ..savings import get_ledger
-        full_chars = sum(len(str(m)) for m in self._all_messages)
-        actual_chars = sum(len(str(m)) for m in self._msg_cache)
-        get_ledger().record(
+        from ..savings import get_ledger, serialize_messages
+        get_ledger().record_transform(
             bucket="context_projection",
             layer="context_strategy",
             mechanism=self._savings_mechanism,
-            input_chars=full_chars,
-            output_chars=actual_chars,
-            measure_type="exact",
-            ctx={"turn_count": self._turn_count, "messages": len(self._msg_cache)},
+            before=serialize_messages(self._all_messages),
+            after=serialize_messages(self._msg_cache),
+            surface="context_render",
+            ctx={
+                "turn_count": self._turn_count,
+                "messages": len(self._msg_cache),
+                "encoding": "message_list_json_utf8_v1",
+            },
         )
         return self._msg_cache
 

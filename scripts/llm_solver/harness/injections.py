@@ -571,21 +571,31 @@ def fire_candidates(
     return fired
 
 
-def record_fire(name: str, *, body_chars: int, match_mode: str) -> None:
-    """Ledger helper — emit an injection event.
+def record_fire(
+    name: str,
+    *,
+    before: str,
+    after: str,
+    match_mode: str,
+    surface: str,
+    ctx: dict | None = None,
+) -> None:
+    """Record the exact model-visible text change made by an injection.
 
     bucket = "injection"; mechanism = the injection's name so the
     aggregator groups by (bucket, name).
     """
     from .savings import get_ledger
-    get_ledger().record(
+    details = {"match_mode": match_mode}
+    details.update(ctx or {})
+    get_ledger().record_transform(
         bucket="injection",
         layer="harness",
         mechanism=name,
-        input_chars=0,
-        output_chars=int(body_chars),
-        measure_type="exact",
-        ctx={"match_mode": match_mode},
+        before=before,
+        after=after,
+        surface=surface,
+        ctx=details,
     )
 
 

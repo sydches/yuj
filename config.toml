@@ -126,6 +126,7 @@ error_same_class_threshold = 0  # 0 = disabled. End session after N errors with 
 bash_quirks_forbidden_enabled = true  # bash_quirks/forbidden.toml layer — refuse cd into paths outside the sandbox cwd (cd /, cd /home/<other>/, etc.).
 turn_snapshots_enabled = false  # invisible per-turn git snapshots (dangling commits, private index) after each source-write turn; turn->sha map in telemetry dir. Enables rewind/branch at any turn. See harness/turn_snapshots.py.
 preflight_reclip_enabled = true  # Pre-flight overflow backstop: instead of ending the session when the projected prompt exceeds context_fill_ratio, re-clip the single largest oversized message in token space (head+tail with a visible notice, targeting ctx/2 tokens for that message) and re-project once; only if the projection STILL exceeds the window does the session end context_full. Anomalies land in the per-run system_log.jsonl.
+transform_log_mode = "counts"  # counts | debug. Debug also saves complete before/after text beside the savings ledger; it can retain text that later redaction removes.
 pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls after N orientation turns if no mutation has occurred. 0 = disabled (default). Opt in via configs/toggles/orientation-cap-15.toml.
 # Symmetric to error_nudge: after N consecutive non-mutation tool calls,
 # append a strong directive and activate the rumination gate that rejects

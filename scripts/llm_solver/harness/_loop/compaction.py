@@ -336,6 +336,25 @@ def preflight_reclip_oversized(session) -> dict | None:
     if not ctx.replace_all_messages(new_msgs):
         return None  # strategy cannot persist a replacement
     new_pt = _count(new_target)
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="preflight_reclip",
+        layer="harness",
+        mechanism="oversized_message_head_tail",
+        before=content,
+        after=clipped,
+        surface="context_render",
+        change_count=1,
+        tool_call_id=str(target.get("tool_call_id", "") or ""),
+        ctx={
+            "index": best_i,
+            "role": target.get("role", ""),
+            "orig_pt": best_pt,
+            "new_pt": new_pt,
+            "budget_pt": budget_pt,
+            "context_size": ctx_size,
+        },
+    )
     log.warning(
         "preflight re-clip: message %d (role=%s) %d -> %d tokens "
         "(budget=%d, ctx=%d)",
@@ -827,6 +846,29 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         threshold, est_pt, ctx_size, mutation_count,
         event_method, hook_outcome,
         len(messages), len(new_messages),
+    )
+    from ..savings import get_ledger, serialize_messages
+    get_ledger().record_transform(
+        bucket="context_compaction",
+        layer="harness",
+        mechanism=(
+            f"{event_method}_fallback_{compaction_fallback}"
+            if compaction_fallback
+            else event_method
+        ),
+        before=serialize_messages(messages),
+        after=serialize_messages(new_messages),
+        surface="context_render",
+        ctx={
+            "encoding": "message_list_json_utf8_v1",
+            "tokens_before": est_pt,
+            "tokens_after": final_count,
+            "message_count_before": len(messages),
+            "message_count_after": len(new_messages),
+            "first_kept_turn": first_kept_turn,
+            "hook": hook_reference,
+            "hook_outcome": hook_outcome,
+        },
     )
     # Persist compaction into the context manager so subsequent turns
     # extend the compacted base instead of re-rendering the original

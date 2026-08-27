@@ -28,11 +28,6 @@ HALFLIFE_SECTION_LABELS = {
     "decayed_tool_results_when_active": "<halflife tool-result stubs>",
 }
 
-
-def _message_chars(messages: list[dict]) -> int:
-    return sum(len(str(message)) for message in messages)
-
-
 class HalfLifeContext(ContextManager):
     """Full transcript until pressure, then age-band old tool outputs."""
 
@@ -209,6 +204,7 @@ class HalfLifeContext(ContextManager):
         tier_chars: dict[str, int] = {}
         saved_chars = 0
         decayed_messages: list[dict] = []
+        changed_tool_results: list[tuple[str, str, str, int, str]] = []
 
         for index, message in enumerate(visible_messages):
             if message.get("role") != "tool":
@@ -232,17 +228,22 @@ class HalfLifeContext(ContextManager):
                 replacement = dict(message)
                 replacement["content"] = new_content
                 decayed_messages.append(replacement)
+                changed_tool_results.append((
+                    str(message.get("tool_call_id", "")),
+                    content,
+                    new_content,
+                    age,
+                    tier,
+                ))
 
         if saved_chars > 0:
             from ..savings import get_ledger
-            get_ledger().record(
-                bucket="context_projection",
-                layer="context_strategy",
-                mechanism="halflife_decay",
-                input_chars=_message_chars(visible_messages),
-                output_chars=_message_chars(decayed_messages),
-                measure_type="exact",
-                ctx={
+            ledger = get_ledger()
+            render_id = (
+                f"halflife-turn-{self._turn_count}-"
+                f"render-{self._decay_render_count}"
+            )
+            common_ctx = {
                     "turn_count": self._turn_count,
                     "full_tokens_est": full_tokens,
                     "activation_threshold_tokens": threshold,
@@ -252,8 +253,24 @@ class HalfLifeContext(ContextManager):
                     "tool_result_count": len(tool_indices),
                     "tier_counts": tier_counts,
                     "tier_chars": tier_chars,
-                },
-            )
+                    "render_id": render_id,
+            }
+            for step, (
+                tool_call_id, before, after, age, tier,
+            ) in enumerate(changed_tool_results, start=1):
+                ledger.record_transform(
+                    bucket="context_projection",
+                    layer="context_strategy",
+                    mechanism="halflife_decay",
+                    before=before,
+                    after=after,
+                    surface="context_render",
+                    change_count=1,
+                    tool_call_id=tool_call_id,
+                    chain_id=f"{render_id}-tool-{step}",
+                    chain_step=1,
+                    ctx={**common_ctx, "age": age, "tier": tier},
+                )
         return decayed_messages
 
 

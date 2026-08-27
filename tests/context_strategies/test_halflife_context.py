@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -9,6 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from _config_helpers import make_config
 from llm_solver.harness._loop._session_setup import build_context_manager
 from llm_solver.harness.context_strategies import HalfLifeContext
+from llm_solver.harness import savings
 
 
 def _fixed_tokens(messages: list[dict]) -> int:
@@ -107,3 +109,46 @@ def test_halflife_replace_all_messages_rebases_append_log():
 
     assert ctx.replace_all_messages(replacement) is True
     assert ctx.get_messages() == replacement
+
+
+def test_halflife_logs_only_the_first_active_render(tmp_path: Path):
+    ledger_path = tmp_path / "halflife.jsonl"
+    ledger = savings.open_ledger(ledger_path, task="halflife-task")
+    try:
+        ledger.set_turn(1, 4)
+        ctx = HalfLifeContext(
+            context_size=400,
+            activation_ratio=0.50,
+            verbatim_tool_results=1,
+            cap_7_chars=80,
+            token_estimator=_fixed_tokens,
+        )
+        ctx.add_system("SYSTEM")
+        ctx.add_user("TASK")
+        ctx.add_assistant({"role": "assistant", "content": "one"})
+        ctx.add_tool_result("call-1", "A" * 100)
+
+        # Still below the 50% gate: no half-life mutation record.
+        assert ctx.get_messages() is ctx._messages
+        assert ledger_path.read_text() == ""
+
+        ctx.add_assistant({"role": "assistant", "content": "two"})
+        ctx.add_tool_result("call-2", "B" * 700)
+        rendered = ctx.get_messages()
+        # Cached reads do not count the same request render twice.
+        assert ctx.get_messages() is rendered
+    finally:
+        savings.close_ledger()
+
+    records = [
+        json.loads(line)
+        for line in ledger_path.read_text().splitlines()
+        if line
+    ]
+    assert records
+    assert all(record["mechanism"] == "halflife_decay" for record in records)
+    assert all(record["ctx"]["activation_threshold_tokens"] == 200
+               for record in records)
+    assert all(record["ctx"]["full_tokens_est"] >= 200 for record in records)
+    assert all(record["chain_step"] == 1 for record in records)
+    assert len({record["chain_id"] for record in records}) == len(records)

@@ -185,7 +185,7 @@ def _xml_body(s: str) -> str:
 
 def _paginated_envelope(
     *, tool: str, pattern: str, scope: str, lines: list[str],
-    page: int, per_page: int,
+    page: int, per_page: int, before_text: str | None = None,
 ) -> str:
     """Wrap ``lines`` in a ``<search_result/>`` envelope for grep/glob."""
     total = len(lines)
@@ -203,4 +203,25 @@ def _paginated_envelope(
         f'scope="{_xml_attr(scope)}">'
     )
     body = "\n".join(shown_slice) if shown_slice else ""
-    return f"{opening}\n{body}\n</search_result>"
+    result = f"{opening}\n{body}\n</search_result>"
+    before = "\n".join(lines) if before_text is None else before_text
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="search_pagination",
+        layer="harness",
+        mechanism=f"{tool}_page",
+        before=before,
+        after=result,
+        surface="tool_output",
+        change_count=max(1, total - len(shown_slice)),
+        ctx={
+            "tool": tool,
+            "total": total,
+            "shown": len(shown_slice),
+            "page": page,
+            "next_page": next_page,
+            "pattern": pattern,
+            "scope": scope,
+        },
+    )
+    return result

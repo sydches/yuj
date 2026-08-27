@@ -18,6 +18,7 @@ function entry and hands them through.
 """
 from __future__ import annotations
 
+import functools
 import time
 
 from ..action_metadata import action_metadata
@@ -40,7 +41,74 @@ def _append_hook_context(result: str, *blocks: str) -> str:
     present = [block for block in blocks if block]
     if not present:
         return result
-    return result + "\n\n" + "\n\n".join(present)
+    after = result + "\n\n" + "\n\n".join(present)
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="hook_intervention",
+        layer="harness",
+        mechanism="tool_result_hook_context",
+        before=result,
+        after=after,
+        surface="tool_output",
+        change_count=len(present),
+        ctx={"delivery": "tool_result"},
+    )
+    return after
+
+
+def _append_intervention(
+    result: str,
+    text: str,
+    *,
+    mechanism: str,
+    ctx: dict | None = None,
+) -> str:
+    """Append one harness message and record its exact output change."""
+    if not text:
+        return result
+    after = result + "\n\n" + text
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="guardrail_intervention",
+        layer="harness",
+        mechanism=mechanism,
+        before=result,
+        after=after,
+        surface="tool_output",
+        ctx=ctx,
+    )
+    return after
+
+
+def _record_generated_intervention(
+    text: str,
+    *,
+    mechanism: str,
+    ctx: dict | None = None,
+) -> None:
+    """Record a new harness-authored tool-result body."""
+    if not text:
+        return
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="guardrail_intervention",
+        layer="harness",
+        mechanism=mechanism,
+        before="",
+        after=text,
+        surface="tool_output",
+        ctx=ctx,
+    )
+
+
+def _tool_call_transform_scope(function):
+    """Keep every text change under the current tool-call ID."""
+    @functools.wraps(function)
+    def wrapped(tc, *args, **kwargs):
+        from ..savings import transform_scope
+        with transform_scope(str(getattr(tc, "id", "") or "")):
+            return function(tc, *args, **kwargs)
+    return wrapped
 
 
 def _tool_action_metadata(tc, session) -> dict:
@@ -82,6 +150,11 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
         )
         if hook_effect.blocked:
             result = f"ERROR: done hook blocked completion: {hook_effect.reason}"
+            _record_generated_intervention(
+                result,
+                mechanism="done_hook_block",
+                ctx={"reason": hook_effect.reason},
+            )
             result = session._decorate_stream_rule_tool_result(
                 tc.id, result, turn=state.turn
             )
@@ -109,6 +182,11 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
         _emit_done(tc, state, result)
         return TCOutcome(end=True, reason="model_done", done=True)
     if done_decision.action == Action.REWIND:
+        _record_generated_intervention(
+            done_decision.text,
+            mechanism="done_guard_rewind",
+            ctx={"reason": done_decision.reason},
+        )
         result = session._decorate_stream_rule_tool_result(
             tc.id, done_decision.text, turn=state.turn
         )
@@ -123,6 +201,11 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
         )
         return TCOutcome(rewind=True)
     # BLOCK or END: store rejection text in trace; END terminates.
+    _record_generated_intervention(
+        done_decision.text,
+        mechanism="done_guard_rejection",
+        ctx={"reason": done_decision.reason},
+    )
     result = session._decorate_stream_rule_tool_result(
         tc.id, done_decision.text, turn=state.turn
     )
@@ -191,6 +274,11 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
     cfg = state.cfg
     trace_args_summary = _summarize_args(tc.arguments, cfg.trace_args_summary_chars)
     metadata = _tool_action_metadata(tc, session)
+    _record_generated_intervention(
+        decision.text,
+        mechanism=f"gate_block:{decision.reason or 'unspecified'}",
+        ctx={"reason": decision.reason, "tool_name": tc.name},
+    )
     result = session._decorate_stream_rule_tool_result(
         tc.id, decision.text, turn=state.turn
     )
@@ -278,11 +366,22 @@ def _append_lsp_diagnostics(tc, state: "TurnState", result: str) -> str:
         if kind == "delete":
             continue
         report = manager.after_edit(path)
+        before_diagnostics = result
         result = append_diagnostics_to_tool_result(
             result,
             report,
             max_output_chars=state.cfg.max_output_chars,
             tool_name=tc.name,
+        )
+        from ..savings import get_ledger
+        get_ledger().record_transform(
+            bucket="diagnostic_intervention",
+            layer="harness",
+            mechanism="lsp_diagnostics",
+            before=before_diagnostics,
+            after=result,
+            surface="tool_output",
+            ctx={"path": path, "tool_name": tc.name},
         )
     return result
 
@@ -311,6 +410,11 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     session = state.session
     cfg = state.cfg
     result = validation.error_envelope()
+    _record_generated_intervention(
+        result,
+        mechanism="schema_rejection",
+        ctx={"tool_name": tc.name},
+    )
     session._emit(
         "schema_reject",
         session_number=session._session_number,
@@ -320,7 +424,11 @@ def _handle_schema_reject(tc, state: "TurnState", validation) -> TCOutcome:
     error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
-        result += "\n\n" + error_decision.text
+        result = _append_intervention(
+            result,
+            error_decision.text,
+            mechanism="schema_reject_error_warning",
+        )
     result = session._decorate_stream_rule_tool_result(
         tc.id, result, turn=state.turn
     )
@@ -391,10 +499,19 @@ def _handle_inactive_tool(tc, state: "TurnState") -> TCOutcome:
     session = state.session
     cfg = state.cfg
     result = inactive_tool_error(tc.name)
+    _record_generated_intervention(
+        result,
+        mechanism="inactive_tool_rejection",
+        ctx={"tool_name": tc.name},
+    )
     error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
-        result += "\n\n" + error_decision.text
+        result = _append_intervention(
+            result,
+            error_decision.text,
+            mechanism="inactive_tool_error_warning",
+        )
 
     result = session._decorate_stream_rule_tool_result(
         tc.id, result, turn=state.turn
@@ -453,10 +570,19 @@ def _handle_permission_denial(tc, state: "TurnState", resolution) -> TCOutcome:
     session = state.session
     cfg = state.cfg
     result = resolution.denial_envelope()
+    _record_generated_intervention(
+        result,
+        mechanism="permission_denial",
+        ctx={"tool_name": tc.name},
+    )
     error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
-        result += "\n\n" + error_decision.text
+        result = _append_intervention(
+            result,
+            error_decision.text,
+            mechanism="permission_denial_error_warning",
+        )
     result = session._decorate_stream_rule_tool_result(
         tc.id, result, turn=state.turn
     )
@@ -525,10 +651,19 @@ def _handle_plan_mode_reject(tc, state: "TurnState", message: str) -> TCOutcome:
     from ..plan_mode import render_plan_mode_error
 
     result = render_plan_mode_error(tc.name, message, cfg.max_output_chars)
+    _record_generated_intervention(
+        result,
+        mechanism="plan_mode_rejection",
+        ctx={"tool_name": tc.name},
+    )
     error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
-        result += "\n\n" + error_decision.text
+        result = _append_intervention(
+            result,
+            error_decision.text,
+            mechanism="plan_mode_error_warning",
+        )
     result = session._decorate_stream_rule_tool_result(
         tc.id, result, turn=state.turn
     )
@@ -592,9 +727,15 @@ def _handle_pre_tool_hook_block(tc, state: "TurnState", effect) -> TCOutcome:
     cfg = state.cfg
     from ..tools import admit_tool_output
 
+    blocked_result = f"ERROR: pre_tool hook blocked this call: {effect.reason}"
+    _record_generated_intervention(
+        blocked_result,
+        mechanism="pre_tool_hook_block",
+        ctx={"tool_name": tc.name},
+    )
     result = admit_tool_output(
         tc.name,
-        f"ERROR: pre_tool hook blocked this call: {effect.reason}",
+        blocked_result,
         arguments=tc.arguments,
         cfg=cfg,
         redactions=session.redactions,
@@ -603,7 +744,11 @@ def _handle_pre_tool_hook_block(tc, state: "TurnState", effect) -> TCOutcome:
     error_decision = _run_rejection_error_ladder(tc, state, result)
     state.turn_had_pressure = True
     if error_decision.action == Action.WARN:
-        result += "\n\n" + error_decision.text
+        result = _append_intervention(
+            result,
+            error_decision.text,
+            mechanism="pre_tool_hook_error_warning",
+        )
     result = session._decorate_stream_rule_tool_result(
         tc.id, result, turn=state.turn
     )
@@ -671,9 +816,23 @@ def _apply_tool_hook_effects(
     if effect.blocked:
         from ..tools import admit_tool_output
 
+        before_hook_block = result
+        blocked_result = (
+            f"ERROR: post_tool hook blocked this result: {effect.reason}"
+        )
+        from ..savings import get_ledger
+        get_ledger().record_transform(
+            bucket="hook_intervention",
+            layer="harness",
+            mechanism="post_tool_block",
+            before=before_hook_block,
+            after=blocked_result,
+            surface="tool_output",
+            ctx={"tool_name": tc.name},
+        )
         result = admit_tool_output(
             tc.name,
-            f"ERROR: post_tool hook blocked this result: {effect.reason}",
+            blocked_result,
             arguments=tc.arguments,
             cfg=state.cfg,
             redactions=session.redactions,
@@ -880,6 +1039,7 @@ def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) ->
     }
 
 
+@_tool_call_transform_scope
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 
@@ -991,6 +1151,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         state.turn_had_pressure = True
         log.info("Mutation repeat guard blocked %s", tc.name)
         result = mutation_decision.text
+        _record_generated_intervention(
+            result,
+            mechanism="mutation_repeat_block",
+            ctx={"reason": mutation_decision.reason, "tool_name": tc.name},
+        )
         gate_blocked_flag = True
         gate_intercepted = True
     elif mutation_decision.action == Action.WARN:
@@ -1017,6 +1182,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             state.turn_had_pressure = True
             log.info("Contract gate blocked %s", tc.name)
             result = contract_decision.text
+            _record_generated_intervention(
+                result,
+                mechanism="contract_gate_block",
+                ctx={"reason": contract_decision.reason, "tool_name": tc.name},
+            )
             gate_blocked_flag = True
             gate_intercepted = True
         elif contract_decision.action == Action.WARN:
@@ -1061,6 +1231,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             state.turn_had_pressure = True
             log.info("Rumination gate blocked %s", tc.name)
             result = gate_decision.text
+            _record_generated_intervention(
+                result,
+                mechanism="rumination_gate_block",
+                ctx={"reason": gate_decision.reason, "tool_name": tc.name},
+            )
             gate_blocked_flag = True
             gate_intercepted = True
         elif gate_decision.action == Action.WARN:
@@ -1095,7 +1270,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   effective_env=session._effective_env,
                                   allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
-                                  execution_metadata=execution_metadata)
+                                  execution_metadata=execution_metadata,
+                                  tool_call_id=tc.id)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
             blocked_stage = security_block_stage(result)
             if blocked_stage == "args":
@@ -1136,8 +1312,16 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                         gate_blocked=gate_blocked_flag,
                     )
                 if security_error_decision.action == Action.WARN:
-                    result += "\n\n" + security_error_decision.text
-            result += "\n\n" + gate_decision.text
+                    result = _append_intervention(
+                        result,
+                        security_error_decision.text,
+                        mechanism="security_error_warning",
+                    )
+            result = _append_intervention(
+                result,
+                gate_decision.text,
+                mechanism="rumination_gate_grace_warning",
+            )
             gate_intercepted = True
         else:
             # 6d. Dispatch.
@@ -1169,7 +1353,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   effective_env=session._effective_env,
                                   allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
-                                  execution_metadata=execution_metadata)
+                                  execution_metadata=execution_metadata,
+                                  tool_call_id=tc.id)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
             blocked_stage = security_block_stage(result)
             if blocked_stage == "args":
@@ -1267,7 +1452,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                     return TCOutcome(rewind=True)
                 return TCOutcome(end=True, reason=err_decision.reason, done=False)
             if err_decision.action == Action.WARN:
-                result += "\n\n" + err_decision.text
+                result = _append_intervention(
+                    result,
+                    err_decision.text,
+                    mechanism="tool_error_warning",
+                )
 
             # Post-dispatch: structured output projection + sink.
             # Only for bash, only on non-error results, only when
@@ -1281,13 +1470,28 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 result = session._project_and_sink(tc.name, cmd, result, turn)
 
         if contract_warn_text and not gate_blocked_flag:
-            result += "\n\n" + contract_warn_text
+            result = _append_intervention(
+                result,
+                contract_warn_text,
+                mechanism="contract_warning",
+            )
 
         # In tool_result delivery mode, append the queued note to the first
         # unblocked tool result and then clear it.
         _pending_tool_note = getattr(session, "_adaptive_tool_note_pending", None)
         if _pending_tool_note and not gate_blocked_flag:
+            before_adaptive_note = result
             result += "\n\n" + _pending_tool_note
+            from ..savings import get_ledger as _get_ledger
+            _get_ledger().record_transform(
+                bucket="adaptive_intervention",
+                layer="harness",
+                mechanism="adaptive_tool_result_note",
+                before=before_adaptive_note,
+                after=result,
+                surface="tool_output",
+                ctx={"delivery": "tool_result"},
+            )
             session._adaptive_tool_note_pending = None
             state.log.info("adaptive_tool_note: appended callout to %s result at turn %d",
                            tc.name, turn)
@@ -1303,7 +1507,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         tc_args=tc.arguments,
     )
     if test_read_decision.action == Action.WARN:
-        result += "\n\n" + test_read_decision.text
+        result = _append_intervention(
+            result,
+            test_read_decision.text,
+            mechanism="test_read_warning",
+        )
 
     rum_decision = PASS if plan_policy_call else tool_post["rumination_ladder"](
         session._guards, cfg,
@@ -1315,7 +1523,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         focus_display=focus_display,
     )
     if rum_decision.action == Action.WARN:
-        result += "\n\n" + rum_decision.text
+        result = _append_intervention(
+            result,
+            rum_decision.text,
+            mechanism="rumination_warning",
+        )
     post_rewind = next(
         (
             decision
@@ -1363,7 +1575,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # Append turn-level WARN (from duplicate ladder) after all
     # tc-level appends so it reads last.
     if state.turn_warn_text:
-        result += "\n\n" + state.turn_warn_text
+        result = _append_intervention(
+            result,
+            state.turn_warn_text,
+            mechanism="duplicate_tool_warning",
+        )
 
     path_call_executed = (
         not gate_blocked_flag
@@ -1475,19 +1691,20 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         key = (tc.name, focus_key)
         prev = session._output_dedup_cache.get(key)
         if prev is not None and prev[0] == digest:
-            original_chars = len(result)
+            before_dedup = result
             result = (
                 f"[harness: identical to turn {prev[1]}'s "
                 f"{tc.name} output for {focus_display or focus_key}]"
             )
             from ..savings import get_ledger as _get_ledger
-            _get_ledger().record(
+            _get_ledger().record_transform(
                 bucket="output_dedup",
                 layer="harness",
                 mechanism=tc.name,
-                input_chars=original_chars,
-                output_chars=len(result),
-                measure_type="exact",
+                before=before_dedup,
+                after=result,
+                surface="tool_output",
+                change_count=1,
                 ctx={
                     "turn": turn,
                     "prior_turn": prev[1],

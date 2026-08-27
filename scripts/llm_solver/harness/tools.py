@@ -80,6 +80,7 @@ from .sandbox.env_policy import (
     activate_environment,
     active_environment,
 )
+from .savings import transformation_scoped
 
 log = logging.getLogger(__name__)
 
@@ -194,9 +195,13 @@ def _dispatch_exec_cell(args, cwd, cfg):
     if effective_env is None:
         effective_env, allow_login_shell = _effective_command_environment(cfg)
     inherited = dict(_ACTIVE_DISPATCH_OPTIONS.get() or {})
+    inner_call_count = 0
 
     def _inner_dispatch(name, arguments, inner_cfg):
+        nonlocal inner_call_count
+        inner_call_count += 1
         metadata: dict = {}
+        outer_id = str(inherited.get("tool_call_id") or "exec_cell")
         result = dispatch(
             name,
             arguments,
@@ -216,6 +221,7 @@ def _dispatch_exec_cell(args, cwd, cfg):
             execution_metadata=metadata,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
+            tool_call_id=f"{outer_id}:cell:{inner_call_count}",
         )
         metadata["gate_blocked"] = security_block_stage(result) == "args"
         return result, metadata
@@ -394,6 +400,7 @@ def admit_tool_output(
     without a second transform.
     """
     result = str(result)
+    security_findings = tuple(security_findings)
     if name in {"bash", "bash_poll", "terminal_io"} and filter_shell_output:
         cmd = str(arguments.get("cmd", ""))
         result = _filter_bash_output(result, cmd, cfg)
@@ -427,6 +434,7 @@ def admit_tool_output(
         finding.marker() for finding in security_findings
     )
     if finding_markers and result.startswith("<tool_result"):
+        before = result
         open_end = result.find(">")
         if open_end >= 0:
             result = (
@@ -435,10 +443,22 @@ def admit_tool_output(
                 + finding_markers
                 + result[open_end + 1 :]
             )
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="tool_result_envelope",
+            layer="harness",
+            mechanism="security_finding_insertion",
+            before=before,
+            after=result,
+            surface="tool_output",
+            change_count=len(security_findings),
+            ctx={"tool_name": name},
+        )
     elif finding_markers or (
         getattr(cfg, "tools_unified_envelope_enabled", False)
         and not owns_native_envelope
     ):
+        before = result
         from .._shared.classification import derive_envelope_status
         status, error_kind = derive_envelope_status(result)
         attrs = f' tool_name="{_xml_attr(name)}" status="{status}"'
@@ -447,10 +467,22 @@ def admit_tool_output(
         attrs += f' v="{_UNIFIED_ENVELOPE_VERSION}"'
         body = f"{finding_markers}\n{result}" if finding_markers else result
         result = f'<tool_result{attrs}>\n{body}\n</tool_result>'
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="tool_result_envelope",
+            layer="harness",
+            mechanism="unified_result_envelope",
+            before=before,
+            after=result,
+            surface="tool_output",
+            change_count=1,
+            ctx={"tool_name": name, "status": status},
+        )
 
     return truncate_output(result, cfg)
 
 
+@transformation_scoped
 def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              output_control=None, universal_rewrites=None,
              forbidden_rules=None, redirect_rules=None, redactions=None,
@@ -462,7 +494,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              execution_metadata: dict | None = None,
              ignore_policy: IgnorePolicy | None = None,
              effective_env=None,
-             allow_login_shell: bool | None = None) -> str:
+             allow_login_shell: bool | None = None,
+             tool_call_id: str = "") -> str:
     """Route a tool call to its implementation, truncate output.
 
     output_control: optional OutputControl from bash_quirks, loaded
@@ -495,6 +528,17 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     security_findings = list(argument_scan.findings)
     if argument_scan.blocked:
         result = render_security_block(name, argument_scan)
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="security_intervention",
+            layer="harness",
+            mechanism="argument_block",
+            before="",
+            after=result,
+            surface="tool_output",
+            change_count=len(argument_scan.findings),
+            ctx={"tool_name": name, "stage": "args"},
+        )
         if execution_metadata is not None:
             execution_metadata["executed"] = False
             execution_metadata["security_blocked_stage"] = "args"
@@ -524,6 +568,26 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             result = render_redirect_error(
                 decision, max_chars=int(cfg.max_output_chars)
             )
+            from .savings import get_ledger
+            original_redirect_cmd = str(arguments.get("cmd", ""))
+            get_ledger().record_transform(
+                bucket="bash_command_transform",
+                layer="harness",
+                mechanism=f"redirect:{decision.rule_name}",
+                before=original_redirect_cmd,
+                after="",
+                surface="execution_command",
+                ctx=decision.trace_fields(),
+            )
+            get_ledger().record_transform(
+                bucket="command_intervention",
+                layer="harness",
+                mechanism=f"redirect_refusal:{decision.rule_name}",
+                before="",
+                after=result,
+                surface="tool_output",
+                ctx=decision.trace_fields(),
+            )
             if redirect_event_sink is not None:
                 try:
                     redirect_event_sink({
@@ -549,13 +613,48 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         from ..bash_quirks import rewrite_command
         original_cmd = arguments.get("cmd", "")
         _rules_fired: list = []
+        _transform_steps: list = []
         rewritten_cmd = rewrite_command(
             original_cmd, output_control, universal_rewrites,
-            forbidden_rules=forbidden_rules, rule_log=_rules_fired,
+            forbidden_rules=forbidden_rules,
+            rule_log=_rules_fired,
+            transform_log=_transform_steps,
         )
         if rewritten_cmd != original_cmd:
             bash_was_rewritten = True
             arguments = {**arguments, "cmd": rewritten_cmd}
+            from .savings import get_ledger
+            if not _transform_steps:
+                get_ledger().record_transform(
+                    bucket="bash_command_transform",
+                    layer="L2_bash_quirks",
+                    mechanism="command_rewrite",
+                    before=str(original_cmd),
+                    after=str(rewritten_cmd),
+                    surface="execution_command",
+                )
+            for rule in _transform_steps:
+                kind = str(rule.get("kind", "unknown"))
+                name_or_flag = str(
+                    rule.get("name") or rule.get("flag") or ""
+                )
+                mechanism = (
+                    f"{kind}:{name_or_flag}" if name_or_flag else kind
+                )
+                public_rule = {
+                    key: value
+                    for key, value in rule.items()
+                    if key not in {"before", "after"}
+                }
+                get_ledger().record_transform(
+                    bucket="bash_command_transform",
+                    layer="L2_bash_quirks",
+                    mechanism=mechanism,
+                    before=str(rule.get("before", original_cmd)),
+                    after=str(rule.get("after", rewritten_cmd)),
+                    surface="execution_command",
+                    ctx={"rule": public_rule},
+                )
             if rewrite_log is not None:
                 rewrite_log.append({
                     "tool": name,
@@ -584,8 +683,24 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         pass
     elif stale_precheck_error:
         result = stale_precheck_error
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="stale_file_intervention",
+            layer="harness",
+            mechanism="stale_precheck_error",
+            before="", after=result, surface="tool_output",
+            ctx={"tool_name": name},
+        )
     elif stale_decision is not None and stale_decision.blocked:
         result = stale_decision.message
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="stale_file_intervention",
+            layer="harness",
+            mechanism="stale_edit_block",
+            before="", after=str(result), surface="tool_output",
+            ctx={"tool_name": name},
+        )
     else:
         if effective_env is None:
             effective_env, resolved_login_shell = (
@@ -617,6 +732,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                     "redirect_event_sink": redirect_event_sink,
                     "security_event_sink": security_event_sink,
                     "ignore_policy": ignore_policy,
+                    "tool_call_id": tool_call_id,
                 })
                 try:
                     result = handler(arguments, cwd, cfg)
@@ -640,6 +756,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     # callback before their trace event records the exact model-visible bytes.
     # Do not create a second finding when that admitted value returns through
     # dispatch.
+    result_before_security_scan = str(result)
     result_scan = (
         SecurityScanOutcome()
         if already_admitted
@@ -653,6 +770,17 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     if result_scan.blocked:
         combined_scan = SecurityScanOutcome(tuple(security_findings))
         result = render_security_block(name, combined_scan)
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="security_intervention",
+            layer="harness",
+            mechanism="result_block",
+            before=result_before_security_scan,
+            after=result,
+            surface="tool_output",
+            change_count=len(result_scan.findings),
+            ctx={"tool_name": name, "stage": "result"},
+        )
         if execution_metadata is not None:
             execution_metadata["security_blocked_stage"] = "result"
 
@@ -703,7 +831,16 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             log.warning("stale guard observation failed for %s: %s", name, exc)
 
     if stale_decision is not None and stale_decision.message and not stale_decision.blocked:
-        result = str(result) + "\n\n" + stale_decision.message
+        before_stale_warning = str(result)
+        result = before_stale_warning + "\n\n" + stale_decision.message
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="stale_file_intervention",
+            layer="harness",
+            mechanism="stale_edit_warning",
+            before=before_stale_warning, after=result, surface="tool_output",
+            ctx={"tool_name": name},
+        )
 
     if execution_metadata is not None:
         execution_metadata["executed"] = executed

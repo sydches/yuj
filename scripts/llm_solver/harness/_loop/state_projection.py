@@ -84,7 +84,6 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
     cfg = session.cfg
     projected = False
     pointer_line = ""
-    raw_input_chars = len(result)
     if (cfg.bash_transforms_structured_output_enabled
             and session.output_parser is not None
             and session.output_control is not None):
@@ -101,21 +100,22 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
             # Update the parity-streak state from the parsed record.
             update_parity_from_parsed(session, parsed)
             if digest:
+                before_projection = result
                 pointer_line = sink_to_disk(session, result, turn)
                 result = digest + ("\n" + pointer_line if pointer_line else "")
                 projected = True
-                # Token accounting: exact raw-vs-digest delta.
+                # Exact raw-vs-digest transformation record.
                 from ..savings import get_ledger
-                get_ledger().record(
+                get_ledger().record_transform(
                     bucket="structured_projection",
                     layer="L2_bash_quirks",
                     mechanism=f"{cfg.analysis_task_format}_digest",
-                    input_chars=raw_input_chars,
-                    output_chars=len(result),
-                    measure_type="exact",
-                    ctx={"cmd": cmd[:120],
-                         "n_tests_parsed": len(parsed.get("tests") or {}),
-                         "summary": parsed.get("summary")},
+                    before=before_projection,
+                    after=result,
+                    surface="tool_output",
+                    ctx={
+                        "n_tests_parsed": len(parsed.get("tests") or {}),
+                    },
                 )
 
     if (not projected
@@ -127,23 +127,25 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
             # SOMETHING without needing to open the file. Slice sizes
             # and the body-truncated marker text live in cfg (no
             # prompt literal in harness code).
-            head = result[:cfg.sink_head_bytes]
-            tail = result[-cfg.sink_tail_bytes:]
+            before_sink = result
+            head = before_sink[:cfg.sink_head_bytes]
+            tail = before_sink[-cfg.sink_tail_bytes:]
             result = (
                 f"{head}\n{cfg.sink_body_marker}\n{tail}\n"
                 f"{pointer_line}"
             )
-            # Token accounting: exact raw-vs-preview delta.
+            # Exact raw-vs-preview transformation record.
             from ..savings import get_ledger
-            get_ledger().record(
+            get_ledger().record_transform(
                 bucket="sink_surface",
                 layer="L2_bash_quirks",
                 mechanism="head_tail_with_pointer",
-                input_chars=raw_input_chars,
-                output_chars=len(result),
-                measure_type="exact",
-                ctx={"cmd": cmd[:120],
-                     "threshold": cfg.bash_transforms_sink_threshold_chars},
+                before=before_sink,
+                after=result,
+                surface="tool_output",
+                ctx={
+                    "threshold": cfg.bash_transforms_sink_threshold_chars,
+                },
             )
 
     return result

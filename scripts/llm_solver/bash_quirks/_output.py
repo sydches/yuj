@@ -312,16 +312,17 @@ def condense_output(output: str, cmd: str, oc: OutputControl | None) -> str:
         kept.insert(max(len(kept) - 1, 0), f"[{passed_count} tests passed]")
     result = "\n".join(kept)
     if passed_count:
-        # Token accounting: record exact savings (raw chars vs. stripped).
+        # Record the exact before/after text, not only an inferred saving.
         from ..harness.savings import get_ledger
-        get_ledger().record(
+        get_ledger().record_transform(
             bucket="bash_output_condense",
             layer="L2_bash_quirks",
             mechanism="passed_line_stripping",
-            input_chars=len(output),
-            output_chars=len(result),
-            measure_type="exact",
-            ctx={"cmd": cmd[:120], "passed_stripped": passed_count,
+            before=output,
+            after=result,
+            surface="tool_output",
+            change_count=passed_count,
+            ctx={"passed_stripped": passed_count,
                  "passed_marker": oc.passed_marker},
         )
     return result

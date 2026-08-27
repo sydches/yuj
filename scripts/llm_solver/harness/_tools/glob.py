@@ -44,13 +44,16 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         # tool_quirks gate: refuse panic globs (unscoped recursive + over-broad)
         # before rendering the paged envelope.
         from ...tool_quirks.transforms import apply_glob_caps
-        refusal = apply_glob_caps(pattern=pattern, scope=path, total=len(rel), cfg=cfg)
+        refusal = apply_glob_caps(
+            pattern=pattern, scope=path, total=len(rel), cfg=cfg, lines=rel,
+        )
         if refusal is not None:
             return refusal
         return _paginated_envelope(
             tool="glob", pattern=pattern, scope=path,
             lines=rel, page=page,
             per_page=cfg.glob_max_matches_per_page,
+            before_text="\n".join(rel),
         )
     except Exception as e:
         return f"ERROR: {e}"

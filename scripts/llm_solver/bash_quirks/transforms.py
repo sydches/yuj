@@ -35,7 +35,8 @@ from ._rewrites import RewriteRule, load_universal_rewrites
 def rewrite_command(cmd: str, oc: OutputControl | None,
                     universal_rewrites: list[RewriteRule] | None = None,
                     forbidden_rules: list[ForbiddenRule] | None = None,
-                    rule_log: list | None = None) -> str:
+                    rule_log: list | None = None,
+                    transform_log: list | None = None) -> str:
     """Rewrite a bash command to reduce output volume — or refuse it.
 
     Order of operations:
@@ -47,10 +48,13 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
     Forbidden runs first because once we refuse, the rewrites and
     test-flag transforms are moot.
     """
-    cmd = apply_forbidden(cmd, forbidden_rules)
+    cmd = apply_forbidden(
+        cmd,
+        forbidden_rules,
+        rule_log=rule_log,
+        transform_log=transform_log,
+    )
     if "false  # [HARNESS:" in cmd:
-        if rule_log is not None:
-            rule_log.append({"kind": "forbidden"})
         return cmd
 
     # Append flags only to single-line commands. A flag after a heredoc
@@ -67,6 +71,7 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
             if any(skip in cmd for skip in rule.skip_if):
                 continue
             # Append flag before trailing pipe chain.
+            before = cmd
             pipe_idx = cmd.find("|")
             if pipe_idx > 0:
                 cmd = cmd[:pipe_idx].rstrip() + " " + rule.flag + " " + cmd[pipe_idx:]
@@ -74,11 +79,20 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
                 cmd = cmd.rstrip() + " " + rule.flag
             if rule_log is not None:
                 rule_log.append({"kind": "universal", "flag": rule.flag})
+            if transform_log is not None:
+                transform_log.append({
+                    "kind": "universal",
+                    "name": rule.name,
+                    "flag": rule.flag,
+                    "before": before,
+                    "after": cmd,
+                })
             break  # one rewrite per command
 
     # Task-format rewrite — test runner flags.
     if oc and oc.failure_only_flag:
         if _is_test_command(cmd, oc) and oc.failure_only_flag not in cmd:
+            before = cmd
             pipe_idx = cmd.find("|")
             if pipe_idx > 0:
                 cmd = cmd[:pipe_idx].rstrip() + " " + oc.failure_only_flag + " " + cmd[pipe_idx:]
@@ -87,5 +101,12 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
             if rule_log is not None:
                 rule_log.append({"kind": "test_flag",
                                  "flag": oc.failure_only_flag})
+            if transform_log is not None:
+                transform_log.append({
+                    "kind": "test_flag",
+                    "flag": oc.failure_only_flag,
+                    "before": before,
+                    "after": cmd,
+                })
 
     return cmd

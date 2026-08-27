@@ -1273,8 +1273,10 @@ class Session:
             add_fragment(block)
             record_fire(
                 inj.name,
-                body_chars=len(block),
+                before="",
+                after=block,
                 match_mode="keyword" if inj.keywords else "always",
+                surface="injected_message",
             )
             if inj.keywords:
                 emit_injection = getattr(self, "_emit_injection_event", None)
@@ -1324,11 +1326,15 @@ class Session:
             block = fire.injection.format_block(
                 trigger="path", path=fire.path,
             )
+            before_injection = result
             result += ("\n\n" if result else "") + block
             record_fire(
                 fire.injection.name,
-                body_chars=len(block),
+                before=before_injection,
+                after=result,
                 match_mode="path",
+                surface="tool_output",
+                ctx={"path": fire.path, "tool_name": tool_name},
             )
             self._emit_injection_event(
                 rule=fire.injection.name,
@@ -1405,8 +1411,23 @@ class Session:
         records = runtime.take_prose_injections(turn=turn)
         if not records:
             return
-        self.context.add_user(
-            "\n\n".join(format_interrupt_fragment(record) for record in records)
+        inserted = "\n\n".join(
+            format_interrupt_fragment(record) for record in records
+        )
+        self.context.add_user(inserted)
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="stream_rule_intervention",
+            layer="harness",
+            mechanism="next_turn_interrupt_fragment",
+            before="",
+            after=inserted,
+            surface="injected_message",
+            change_count=len(records),
+            ctx={
+                "rules": [str(record.get("rule") or "") for record in records],
+                "delivery": "next_turn",
+            },
         )
         self._record_stream_rule_injection(
             records, turn=turn, delivery="next_turn"
@@ -1427,6 +1448,23 @@ class Session:
             tool_call_id, result, turn=turn
         )
         if records:
+            from .savings import get_ledger
+            get_ledger().record_transform(
+                bucket="stream_rule_intervention",
+                layer="harness",
+                mechanism="tool_result_reminder",
+                before=result,
+                after=decorated,
+                surface="tool_output",
+                change_count=len(records),
+                tool_call_id=tool_call_id,
+                ctx={
+                    "rules": [
+                        str(record.get("rule") or "") for record in records
+                    ],
+                    "delivery": "tool_result",
+                },
+            )
             self._stream_rule_decorated_call_ids.add(tool_call_id)
             self._record_stream_rule_injection(
                 records, turn=turn, delivery="tool_result"
@@ -1448,6 +1486,16 @@ class Session:
         block = effect.context_block()
         if block:
             self.context.add_user(block)
+            from .savings import get_ledger
+            get_ledger().record_transform(
+                bucket="hook_intervention",
+                layer="harness",
+                mechanism="lifecycle_hook_context",
+                before="",
+                after=block,
+                surface="injected_message",
+                ctx={"delivery": "next_request"},
+            )
 
     def _get_server_ctx(self) -> int:
         from ._loop.compaction import get_server_ctx

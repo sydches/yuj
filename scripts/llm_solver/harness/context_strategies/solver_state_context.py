@@ -168,7 +168,7 @@ class SolverStateContext(ContextManager):
         self._dedup_epoch += 1
 
     def add_tool_result(self, tool_call_id: str, content: str, *, tool_name: str = "", cmd_signature: str = "", gate_blocked: bool = False) -> None:
-        original_chars = len(content)
+        original_content = content
         content, dedup_fired, dedup_tier = apply_dedup(
             content,
             tool_name=tool_name,
@@ -180,15 +180,15 @@ class SolverStateContext(ContextManager):
         )
 
         # Token accounting: record exact dedup savings when either tier fires.
-        if dedup_fired and original_chars != len(content):
+        if dedup_fired and original_content != content:
             from ..savings import get_ledger
-            get_ledger().record(
+            get_ledger().record_transform(
                 bucket="dedup",
                 layer="context_strategy",
                 mechanism=dedup_tier,
-                input_chars=original_chars,
-                output_chars=len(content),
-                measure_type="exact",
+                before=original_content,
+                after=content,
+                surface="stored_tool_output",
                 ctx={"tool_name": tool_name, "gate_blocked": gate_blocked},
             )
 
@@ -229,22 +229,28 @@ class SolverStateContext(ContextManager):
         else:
             self._msg_cache = self._build_from_solver(solver_dir)
             # Token accounting: solver-state projection vs. full append log.
-            from ..savings import get_ledger
-            full_chars = sum(len(str(m)) for m in self._all_messages)
-            actual_chars = sum(len(str(m)) for m in self._msg_cache)
-            get_ledger().record(
-                bucket="context_projection",
-                layer="context_strategy",
-                mechanism=type(self).__name__,
-                input_chars=full_chars,
-                output_chars=actual_chars,
-                measure_type="exact",
-                ctx={"turn_count": self._turn_count,
-                     "messages": len(self._msg_cache)},
-            )
         self._msg_cache = preserve_rewind_reports(
             self._msg_cache, self._all_messages
         )
+        if not (
+            self._ignore_state
+            or not (solver_dir / "state.json").is_file()
+            or self._turn_count < self._min_turns
+        ):
+            from ..savings import get_ledger, serialize_messages
+            get_ledger().record_transform(
+                bucket="context_projection",
+                layer="context_strategy",
+                mechanism=type(self).__name__,
+                before=serialize_messages(self._all_messages),
+                after=serialize_messages(self._msg_cache),
+                surface="context_render",
+                ctx={
+                    "turn_count": self._turn_count,
+                    "messages": len(self._msg_cache),
+                    "encoding": "message_list_json_utf8_v1",
+                },
+            )
         return self._msg_cache
 
     def estimate_tokens(self) -> int:

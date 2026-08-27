@@ -52,7 +52,7 @@ def _hint_envelope(tool: str, pattern: str, scope: str, total: int, hint: str) -
 
 def apply_glob_caps(
     pattern: str, scope: str, total: int, cfg: Any,
-    *, data: dict | None = None,
+    *, data: dict | None = None, lines: list[str] | None = None,
 ) -> str | None:
     """Decide whether to refuse the glob listing.
 
@@ -74,6 +74,7 @@ def apply_glob_caps(
         _record_refusal(
             mechanism="unscoped",
             pattern=pattern, scope=scope, total=total, envelope=envelope,
+            lines=lines,
         )
         return envelope
     if max_listed > 0 and total > max_listed:
@@ -84,6 +85,7 @@ def apply_glob_caps(
         _record_refusal(
             mechanism="cap",
             pattern=pattern, scope=scope, total=total, envelope=envelope,
+            lines=lines,
         )
         return envelope
     return None
@@ -91,6 +93,7 @@ def apply_glob_caps(
 
 def _record_refusal(
     *, mechanism: str, pattern: str, scope: str, total: int, envelope: str,
+    lines: list[str] | None,
 ) -> None:
     """Record glob-refusal savings.
 
@@ -101,18 +104,30 @@ def _record_refusal(
     """
     try:
         from ..harness.savings import get_ledger
-        # Conservative estimate: ~40 chars per path (typical filename
-        # + newline) for the listing the model would have seen.
-        approx_listing_chars = max(0, total) * 40
-        get_ledger().record(
-            bucket="tool_quirks_glob_refusal",
-            layer="L2_tool_quirks",
-            mechanism=mechanism,
-            input_chars=approx_listing_chars,
-            output_chars=len(envelope),
-            measure_type="estimate",
-            ctx={"pattern": pattern, "scope": scope, "total": total},
-        )
+        ledger = get_ledger()
+        if lines is not None:
+            ledger.record_transform(
+                bucket="tool_quirks_glob_refusal",
+                layer="L2_tool_quirks",
+                mechanism=mechanism,
+                before="\n".join(lines),
+                after=envelope,
+                surface="tool_output",
+                change_count=max(1, len(lines)),
+                ctx={"pattern": pattern, "scope": scope, "total": total},
+            )
+        else:
+            # Compatibility for direct callers that supply only a count.
+            approx_listing_chars = max(0, total) * 40
+            ledger.record(
+                bucket="tool_quirks_glob_refusal",
+                layer="L2_tool_quirks",
+                mechanism=mechanism,
+                input_chars=approx_listing_chars,
+                output_chars=len(envelope),
+                measure_type="estimate",
+                ctx={"pattern": pattern, "scope": scope, "total": total},
+            )
     except Exception:
         # Savings ledger is best-effort. A failure here must never
         # block the refusal itself.

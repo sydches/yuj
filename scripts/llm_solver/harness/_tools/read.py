@@ -4,23 +4,22 @@ from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _path_hint, _require_external_readable, _resolve_read
 
 
-def _record_read_reminder(kind: str, path: str, reminder_chars: int) -> None:
-    """Record a read-tool reminder injection on the savings ledger.
-
-    Bucket ``tool_result_reminder``; ``kind`` ∈ {"truncated", "empty"}.
-    Input chars = 0 (nothing pre-existed); output chars = reminder length,
-    so ``delta_chars`` is the positive cost paid to inject the block.
-    """
+def _record_read_reminder(
+    kind: str, path: str, before: str, after: str,
+) -> str:
+    """Record one exact read-tool reminder insertion."""
     from ..savings import get_ledger
-    get_ledger().record(
+    get_ledger().record_transform(
         bucket="tool_result_reminder",
         layer="harness",
         mechanism=f"read_{kind}",
-        input_chars=0,
-        output_chars=int(reminder_chars),
-        measure_type="exact",
+        before=before,
+        after=after,
+        surface="tool_output",
+        change_count=1,
         ctx={"kind": kind, "path": path},
     )
+    return after
 
 
 def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
@@ -70,7 +69,8 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
                 f"ERROR: {path} is a directory — "
                 f"use glob to list contents."
             )
-        all_lines = target.read_text().splitlines()
+        raw_full = target.read_text()
+        all_lines = raw_full.splitlines()
         total = len(all_lines)
         if offset > 0:
             lines = all_lines[offset:]
@@ -82,25 +82,48 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
             lines = lines[:limit]
             returned = limit
             truncated = True
+        raw_selected = "\n".join(lines)
+        from ..savings import get_ledger
+        get_ledger().record_transform(
+            bucket="read_projection",
+            layer="harness",
+            mechanism="read_range_selection",
+            before=raw_full,
+            after=raw_selected,
+            surface="tool_output",
+            change_count=max(1, total - returned),
+            ctx={"path": path, "offset": offset, "limit": limit},
+        )
         start = (offset or 0) + 1
         numbered = [f"{start + i}: {line}" for i, line in enumerate(lines)]
         body = "\n".join(numbered)
+        get_ledger().record_transform(
+            bucket="read_projection",
+            layer="harness",
+            mechanism="read_line_numbering",
+            before=raw_selected,
+            after=body,
+            surface="tool_output",
+            change_count=max(1, len(lines)),
+            ctx={"path": path, "start_line": start},
+        )
         if cfg is None:
             return body
         if total == 0:
             tail = cfg.read_empty_reminder.format(path=path)
-            _record_read_reminder("empty", path, len(tail))
-            return body + ("\n" if body else "") + tail
+            result = body + ("\n" if body else "") + tail
+            return _record_read_reminder("empty", path, body, result)
         if offset >= total and offset > 0:
             tail = cfg.read_offset_past_eof_reminder.format(
                 offset=offset, total=total, path=path)
-            _record_read_reminder("offset_past_eof", path, len(tail))
-            return tail
+            return _record_read_reminder(
+                "offset_past_eof", path, body, tail,
+            )
         if truncated:
             tail = cfg.read_truncated_reminder.format(
                 returned_lines=returned, path=path)
-            _record_read_reminder("truncated", path, len(tail))
-            return body + "\n" + tail
+            result = body + "\n" + tail
+            return _record_read_reminder("truncated", path, body, result)
         return body
     except FileNotFoundError:
         return f"ERROR: file not found: {path}" + _path_hint(cwd, path)

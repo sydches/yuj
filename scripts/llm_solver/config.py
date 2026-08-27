@@ -673,6 +673,9 @@ class Config:
     # budget, visible notice) and re-project once before ending the
     # session context_full. See _loop/compaction.py::preflight_reclip_oversized.
     preflight_reclip_enabled: bool = True
+    # Text-transformation accounting. counts stores exact sizes and hashes;
+    # debug also stores complete before/after values beside the savings ledger.
+    transform_log_mode: str = "counts"
     bash_transforms_universal_enabled: bool = True
     bash_transforms_task_format_enabled: bool = True
     bash_transforms_structured_output_enabled: bool = False  # parse test output into digest; replace raw with digest in context

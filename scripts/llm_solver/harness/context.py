@@ -77,9 +77,24 @@ class ContextManager(ABC):
     def _filter_expired_thought_messages(
         self, messages: list[dict],
     ) -> list[dict]:
-        return filter_expired_thought_messages(
+        filtered = filter_expired_thought_messages(
             messages, self._think_keep_turns,
         )
+        if filtered is not messages:
+            from .savings import get_ledger, serialize_messages
+            get_ledger().record_transform(
+                bucket="context_projection",
+                layer="context_strategy",
+                mechanism="think_retention_window",
+                before=serialize_messages(messages),
+                after=serialize_messages(filtered),
+                surface="context_render",
+                ctx={
+                    "keep_turns": self._think_keep_turns,
+                    "encoding": "message_list_json_utf8_v1",
+                },
+            )
+        return filtered
 
     def _thought_turn_expired(self, turn: object) -> bool:
         return thought_is_expired(
@@ -243,24 +258,26 @@ class FullTranscript(ContextManager):
     ):
         super().__init__(token_estimator)
         self._messages: list[dict] = []
-        # Token-count cache. Invalidated on every mutation. get_messages is
-        # already O(1) (returns the stored list by reference) so it does not
-        # need its own cache; estimate_tokens scans all message bytes and is
-        # called once per turn — caching eliminates the redundant scan when
-        # estimate_tokens is invoked more than once between mutations.
+        # Caches are invalidated on every mutation. The message cache prevents
+        # token estimation and request rendering from logging the same thought
+        # expiry twice for one unchanged transcript.
         self._tok_cache: int | None = None
+        self._msg_cache: list[dict] | None = None
 
     def add_system(self, content: str) -> None:
         self._messages.append({"role": "system", "content": content})
         self._tok_cache = None
+        self._msg_cache = None
 
     def add_user(self, content: str) -> None:
         self._messages.append({"role": "user", "content": content})
         self._tok_cache = None
+        self._msg_cache = None
 
     def add_assistant(self, message: dict) -> None:
         self._messages.append(message)
         self._tok_cache = None
+        self._msg_cache = None
 
     def add_tool_result(self, tool_call_id: str, content: str, *, tool_name: str = "", cmd_signature: str = "", gate_blocked: bool = False) -> None:
         self._messages.append({
@@ -269,13 +286,19 @@ class FullTranscript(ContextManager):
             "content": content,
         })
         self._tok_cache = None
+        self._msg_cache = None
 
     def get_messages(self) -> list[dict]:
-        return self._filter_expired_thought_messages(self._messages)
+        if self._msg_cache is None:
+            self._msg_cache = self._filter_expired_thought_messages(
+                self._messages
+            )
+        return self._msg_cache
 
     def replace_all_messages(self, new_messages: list[dict]) -> bool:
         self._messages = list(new_messages)
         self._tok_cache = None
+        self._msg_cache = None
         return True
 
     def estimate_tokens(self) -> int:
@@ -285,3 +308,14 @@ class FullTranscript(ContextManager):
 
     def message_count(self) -> int:
         return len(self._messages)
+
+    def pin_model_messages(self, new_messages: list[dict]) -> bool:
+        """Pin only the thought-filtered view of the restored append log."""
+        expected = filter_expired_thought_messages(
+            self._messages, self._think_keep_turns,
+        )
+        if expected != new_messages:
+            return False
+        self._msg_cache = copy.deepcopy(new_messages)
+        self._tok_cache = None
+        return True

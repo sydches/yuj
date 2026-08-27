@@ -275,10 +275,26 @@ def chat_with_retry(session: "Session", turn: int):
                             "role": "assistant",
                             "content": partial_content,
                         })
-                session.context.add_user(
-                    "\n\n".join(
-                        format_interrupt_fragment(record) for record in records
-                    )
+                inserted = "\n\n".join(
+                    format_interrupt_fragment(record) for record in records
+                )
+                session.context.add_user(inserted)
+                from ..savings import get_ledger
+                get_ledger().record_transform(
+                    bucket="stream_rule_intervention",
+                    layer="harness",
+                    mechanism="retry_interrupt_fragment",
+                    before="",
+                    after=inserted,
+                    surface="injected_message",
+                    change_count=len(records),
+                    ctx={
+                        "rules": [
+                            str(record.get("rule") or "")
+                            for record in records
+                        ],
+                        "delivery": "retry",
+                    },
                 )
                 runtime = getattr(session, "_stream_rule_runtime", None)
                 if runtime is not None:

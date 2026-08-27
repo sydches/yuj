@@ -41,7 +41,18 @@ def _sorted_matches(raw: str) -> str:
     lines = raw.splitlines()
     trailing_newline = raw.endswith("\n")
     out = "\n".join(sorted(lines, key=_sort_key))
-    return out + "\n" if trailing_newline and out else out
+    result = out + "\n" if trailing_newline and out else out
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="search_normalize",
+        layer="harness",
+        mechanism="grep_match_sort",
+        before=raw,
+        after=result,
+        surface="tool_output",
+        change_count=1,
+    )
+    return result
 
 
 def _filter_ignored_matches(raw: str, policy: IgnorePolicy) -> str:
@@ -55,7 +66,20 @@ def _filter_ignored_matches(raw: str, policy: IgnorePolicy) -> str:
             match.group(1), is_dir=False
         ):
             kept.append(line)
-    return "\n".join(kept) + ("\n" if kept and raw.endswith("\n") else "")
+    result = "\n".join(kept) + (
+        "\n" if kept and raw.endswith("\n") else ""
+    )
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="search_filter",
+        layer="harness",
+        mechanism="ignored_match_filter",
+        before=raw,
+        after=result,
+        surface="tool_output",
+        change_count=max(1, len(raw.splitlines()) - len(kept)),
+    )
+    return result
 
 
 def grep_files(
@@ -115,6 +139,7 @@ def grep_files(
             tool="grep", pattern=pattern, scope=scope,
             lines=lines, page=page,
             per_page=cfg.grep_max_matches_per_page,
+            before_text=raw,
         )
     except subprocess.TimeoutExpired:
         return f"ERROR: grep timed out after {timeout}s"

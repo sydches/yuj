@@ -3,7 +3,6 @@
 All pure functions; the bash() tool uses these to normalize subprocess
 output before returning to the model.
 """
-"""Tool implementations — bash, read, write, edit, glob, grep + dispatch."""
 from dataclasses import dataclass
 import logging
 import re
@@ -63,7 +62,13 @@ def _strip_ls_timestamps(output: str) -> str:
     Only touches lines matching the exact ls long-format shape; other
     dates elsewhere in output are left alone.
     """
-    return _LS_LONG_RE.sub(r'\1Jan  1  2020\2', output)
+    result, count = _LS_LONG_RE.subn(r'\1Jan  1  2020\2', output)
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_normalize",
+        mechanism="ls_timestamp_normalization",
+        change_count=count,
+    )
 
 
 def _resolve(cwd: str, path: str) -> Path:
@@ -91,21 +96,10 @@ def _path_hint(cwd: str, path: str) -> str:
     return ""
 
 
-def _record_truncation_savings(input_chars: int, output_chars: int,
-                               head_ratio: float) -> None:
-    """Log head+tail truncation savings to the ledger when a cut happened."""
-    if output_chars >= input_chars:
-        return
-    from .savings import get_ledger
-    get_ledger().record(
-        bucket="truncate_output",
-        layer="harness",
-        mechanism="head_tail_truncation",
-        input_chars=input_chars,
-        output_chars=output_chars,
-        measure_type="exact",
-        ctx={"head_ratio": head_ratio},
-    )
+def _record_text_change(*args, **kwargs) -> str:
+    """Record one tool-output text change and return its output."""
+    from .savings import record_text_transform
+    return record_text_transform(*args, **kwargs)
 
 
 def truncate_output(text: str, cfg: Config) -> str:
@@ -157,8 +151,12 @@ def truncate_output(text: str, cfg: Config) -> str:
 
     omitted = len(text) - len(head) - len(tail)
     truncated = f"{head}\n[... {omitted} chars omitted ...]\n{tail}"
-    _record_truncation_savings(len(text), len(truncated), cfg.truncate_head_ratio)
-    return truncated
+    return _record_text_change(
+        text, truncated,
+        bucket="truncate_output",
+        mechanism="head_tail_truncation",
+        ctx={"head_ratio": cfg.truncate_head_ratio},
+    )
 
 
 def _collapse_duplicate_lines(output: str) -> str:
@@ -178,6 +176,7 @@ def _collapse_duplicate_lines(output: str) -> str:
     out: list[str] = []
     prev: str | None = None
     count = 0
+    collapsed_runs = 0
     for line in lines:
         if prev is not None and line == prev:
             count += 1
@@ -185,6 +184,7 @@ def _collapse_duplicate_lines(output: str) -> str:
         if prev is not None:
             if count > 1:
                 out.append(f"{prev} [×{count}]")
+                collapsed_runs += 1
             else:
                 out.append(prev)
         prev = line
@@ -192,9 +192,16 @@ def _collapse_duplicate_lines(output: str) -> str:
     if prev is not None:
         if count > 1:
             out.append(f"{prev} [×{count}]")
+            collapsed_runs += 1
         else:
             out.append(prev)
-    return "\n".join(out)
+    result = "\n".join(out)
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_filter",
+        mechanism="collapse_duplicate_lines",
+        change_count=collapsed_runs,
+    )
 
 
 # ── Structural skeleton patterns ────────────────────────────────────────
@@ -265,6 +272,7 @@ def _collapse_similar_lines(output: str) -> str:
     # Pass 2: emit. Consecutive bulk lines collapse; rare lines pass through.
     out: list[str] = []
     i = 0
+    collapsed_runs = 0
     while i < len(lines):
         skel = skeletons[i]
         if skel not in bulk:
@@ -283,9 +291,16 @@ def _collapse_similar_lines(output: str) -> str:
             out.append(lines[i])
             out.append(f"  ... [×{run_len} similar lines]")
             out.append(lines[j - 1])
+            collapsed_runs += 1
         i = j
 
-    return "\n".join(out)
+    result = "\n".join(out)
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_filter",
+        mechanism="collapse_similar_lines",
+        change_count=collapsed_runs,
+    )
 
 
 
@@ -305,11 +320,25 @@ def _filter_bash_output(output: str, cmd: str, cfg: Config) -> str:
     """
     # 1. ANSI escapes — terminal control protocol, universal noise.
     if cfg.strip_ansi:
-        output = _ANSI_RE.sub("", output)
+        before = output
+        output, count = _ANSI_RE.subn("", output)
+        output = _record_text_change(
+            before, output,
+            bucket="tool_output_filter",
+            mechanism="strip_ansi",
+            change_count=count,
+        )
 
     # 2. Collapse blank-line runs (3+ consecutive newlines → 2).
     if cfg.collapse_blank_lines:
-        output = re.sub(r"\n{3,}", "\n\n", output)
+        before = output
+        output, count = re.subn(r"\n{3,}", "\n\n", output)
+        output = _record_text_change(
+            before, output,
+            bucket="tool_output_filter",
+            mechanism="collapse_blank_lines",
+            change_count=count,
+        )
 
     # 3. Collapse runs of byte-identical consecutive lines.
     if cfg.collapse_duplicate_lines:
@@ -378,6 +407,7 @@ def _fold_traceback_frames(output: str, *, min_run: int = 3) -> str:
     out_parts: list[str] = []
     cursor = 0
     i = 0
+    collapsed_runs = 0
     while i < len(matches):
         m = matches[i]
         # Walk forward as long as the next match abuts and has identical text.
@@ -393,9 +423,16 @@ def _fold_traceback_frames(output: str, *, min_run: int = 3) -> str:
             out_parts.append(m.group(0))
             out_parts.append(f"  [... above frame repeated ×{run_len} (folded by harness) ...]\n")
             cursor = matches[run_end].end()
+            collapsed_runs += 1
         i = run_end + 1
     out_parts.append(output[cursor:])
-    return "".join(out_parts)
+    result = "".join(out_parts)
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_filter",
+        mechanism="fold_traceback_frames",
+        change_count=collapsed_runs,
+    )
 
 
 _STATUS_WORD_RE = re.compile(
@@ -413,11 +450,19 @@ def _strip_runner_timing(output: str) -> str:
     flips temp=0 paths.
     """
     out_lines = []
+    change_count = 0
     for line in output.split('\n'):
         if _STATUS_WORD_RE.search(line):
-            line = _TIMING_RE.sub('', line)
+            line, count = _TIMING_RE.subn('', line)
+            change_count += count
         out_lines.append(line)
-    return '\n'.join(out_lines)
+    result = '\n'.join(out_lines)
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_normalize",
+        mechanism="runner_timing_normalization",
+        change_count=change_count,
+    )
 
 
 def _strip_cwd_absolute(output: str, cwd: str) -> str:
@@ -428,7 +473,14 @@ def _strip_cwd_absolute(output: str, cwd: str) -> str:
     bytes flip the model's sampled next token on subsequent turns.
     Collapsing to ``.`` makes output byte-identical across runs.
     """
-    return output.replace(cwd, ".")
+    change_count = output.count(cwd) if cwd else 0
+    result = output.replace(cwd, ".") if cwd else output
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_normalize",
+        mechanism="cwd_path_normalization",
+        change_count=change_count,
+    )
 
 
 # Python object repr at hex memory address: "at 0x7ff2a756e110".
@@ -439,4 +491,10 @@ _HEX_ADDR_RE = re.compile(r'\bat 0x[0-9a-fA-F]+\b')
 
 def _strip_hex_addresses(output: str) -> str:
     """Replace ``at 0xDEADBEEF`` with ``at 0xXXXX`` for determinism."""
-    return _HEX_ADDR_RE.sub('at 0xXXXX', output)
+    result, count = _HEX_ADDR_RE.subn('at 0xXXXX', output)
+    return _record_text_change(
+        output, result,
+        bucket="tool_output_normalize",
+        mechanism="hex_address_normalization",
+        change_count=count,
+    )

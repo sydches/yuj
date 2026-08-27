@@ -149,18 +149,30 @@ class PostEditResult:
 # ── Ledger helper ────────────────────────────────────────────────────────
 
 def _record_event(
-    mechanism: str, *, check_name: str, path: str, output_chars: int
+    mechanism: str, *, check_name: str, path: str, output: str
 ) -> None:
     from .savings import get_ledger
-    get_ledger().record(
-        bucket="post_edit_validation",
-        layer="harness",
-        mechanism=mechanism,
-        input_chars=0,
-        output_chars=int(output_chars),
-        measure_type="exact",
-        ctx={"check": check_name, "path": path},
-    )
+    ledger = get_ledger()
+    if output:
+        ledger.record_transform(
+            bucket="post_edit_validation",
+            layer="harness",
+            mechanism=mechanism,
+            before="",
+            after=output,
+            surface="tool_output_fragment",
+            ctx={"check": check_name, "path": path},
+        )
+    else:
+        ledger.record(
+            bucket="post_edit_validation",
+            layer="harness",
+            mechanism=mechanism,
+            input_chars=0,
+            output_chars=0,
+            measure_type="exact",
+            ctx={"check": check_name, "path": path},
+        )
 
 
 # ── Entry point ──────────────────────────────────────────────────────────
@@ -238,7 +250,7 @@ def run_post_edit_checks(
         failed = ("[exit code:" in out) or out.startswith("ERROR")
         if not failed:
             _record_event(
-                "ok", check_name=spec.name, path=path, output_chars=0,
+                "ok", check_name=spec.name, path=path, output="",
             )
             continue
         tail = (
@@ -248,7 +260,7 @@ def run_post_edit_checks(
         on_fail = spec.on_fail
         _record_event(
             on_fail, check_name=spec.name, path=path,
-            output_chars=len(tail),
+            output=tail,
         )
         return PostEditResult(
             action=on_fail, output=tail, check_name=spec.name,

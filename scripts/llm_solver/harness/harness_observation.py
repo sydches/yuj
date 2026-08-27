@@ -132,6 +132,20 @@ def maybe_emit_observation(session: Any, *, turn: int) -> str | None:
     if not packet:
         return None
     session.context.add_user(packet)
+    from .savings import get_ledger
+    get_ledger().record_transform(
+        bucket="harness_observation",
+        layer="harness",
+        mechanism="open_red_observation_packet",
+        before="",
+        after=packet,
+        surface="injected_message",
+        ctx={
+            "concern_id": concern.concern_id,
+            "reason": reason,
+            "context_mode": context_mode,
+        },
+    )
     concern.emit_count += 1
     concern.last_emitted_at_turn = int(turn)
     concern.last_emitted_evidence_turn = concern.last_evidence_turn
