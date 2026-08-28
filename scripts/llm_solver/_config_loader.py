@@ -16,6 +16,52 @@ from ._shared.toml_compat import tomllib
 from .config import Config, _REQUIRED_SECTIONS
 
 
+TRANSFORMATION_KEYS = (
+    "output_cleanup_and_normalization",
+    "command_rewrites",
+    "task_format_command_output_handling",
+    "forbidden_command_replacement",
+    "preflight_reclip",
+    "halflife_context",
+    "detector_and_interventions",
+    "detector_activated_guardrails",
+)
+
+
+def _transformation_switches(data: Mapping[str, object]) -> dict[str, bool] | None:
+    """Return the complete high-level transformation table, when supplied."""
+    raw = data.get("transformations")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError("config error: transformations must be a TOML table")
+
+    keys = set(raw)
+    expected = set(TRANSFORMATION_KEYS)
+    missing = sorted(expected - keys)
+    unknown = sorted(keys - expected)
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing={missing}")
+        if unknown:
+            details.append(f"unknown={unknown}")
+        raise ValueError(
+            "config error: transformations must contain exactly the eight "
+            f"declared switches ({', '.join(details)})"
+        )
+
+    switches: dict[str, bool] = {}
+    for key in TRANSFORMATION_KEYS:
+        value = raw[key]
+        if not isinstance(value, bool):
+            raise TypeError(
+                f"config error: transformations.{key} must be true or false"
+            )
+        switches[key] = value
+    return switches
+
+
 def _matches_annotation(value: object, annotation: object) -> bool:
     """Return whether a TOML-derived value matches one Config annotation."""
     if annotation in {Any, object}:
@@ -129,6 +175,13 @@ def _extract_config_fields(d: dict) -> dict:
     if missing:
         raise KeyError(f"config.toml missing section(s): {missing}")
 
+    transformations = _transformation_switches(d)
+
+    def transformation(key: str, legacy: bool) -> bool:
+        if transformations is None:
+            return legacy
+        return transformations[key]
+
     experiment = d.get("experiment", {})
     analysis = d.get("analysis", {})
     from .harness.sandbox.env_policy import (
@@ -216,7 +269,12 @@ def _extract_config_fields(d: dict) -> dict:
         "rumination_same_target_arm_count": d.get("loop", {}).get("rumination_same_target_arm_count", 0),
         "test_read_warn_after": d.get("loop", {}).get("test_read_warn_after", 0),
         "context_inspect_repeat_threshold": d.get("loop", {}).get("context_inspect_repeat_threshold", 0),
-        "tools_output_dedup_enabled": d.get("loop", {}).get("tools_output_dedup_enabled", True),
+        "tools_output_dedup_enabled": (
+            False
+            if transformations is not None
+            and not transformations["output_cleanup_and_normalization"]
+            else d.get("loop", {}).get("tools_output_dedup_enabled", True)
+        ),
         "contract_commit_warn_after": d.get("loop", {}).get("contract_commit_warn_after", 0),
         "contract_commit_block_after": d.get("loop", {}).get("contract_commit_block_after", 0),
         "contract_recovery_same_target_threshold": d.get("loop", {}).get("contract_recovery_same_target_threshold", 0),
@@ -261,7 +319,14 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "tools_run_tests_enabled": d.get("tools", {}).get("run_tests", {}).get("enabled", False),
         "tools_run_tests_timeout": d.get("tools", {}).get("run_tests", {}).get("timeout", 240),
-        "tools_run_tests_structured_output": d.get("tools", {}).get("run_tests", {}).get("structured_output", True),
+        "tools_run_tests_structured_output": (
+            False
+            if transformations is not None
+            and not transformations["task_format_command_output_handling"]
+            else d.get("tools", {}).get("run_tests", {}).get(
+                "structured_output", True
+            )
+        ),
         "tools_run_tests_assertion_context_lines": d.get("tools", {}).get("run_tests", {}).get("assertion_context_lines", 5),
         "tools_run_tests_assertion_context_max": d.get("tools", {}).get("run_tests", {}).get("assertion_context_max", 3),
         "tools_think_enabled": d.get("tools", {}).get(
@@ -433,10 +498,60 @@ def _extract_config_fields(d: dict) -> dict:
         "done_guard_enabled": d.get("loop", {}).get("done_guard_enabled", True),
         "rumination_enabled": d.get("loop", {}).get("rumination_enabled", True),
         "error_ladder_enabled": d.get("loop", {}).get("error_ladder_enabled", True),
-        "preflight_reclip_enabled": d.get("loop", {}).get("preflight_reclip_enabled", True),
+        "preflight_reclip_enabled": transformation(
+            "preflight_reclip",
+            d.get("loop", {}).get("preflight_reclip_enabled", True),
+        ),
         "transform_log_mode": d.get("loop", {}).get("transform_log_mode", "counts"),
-        "bash_transforms_universal_enabled": d.get("loop", {}).get("bash_transforms_universal_enabled", True),
-        "bash_transforms_task_format_enabled": d.get("loop", {}).get("bash_transforms_task_format_enabled", True),
+        "transformations_explicit": transformations is not None,
+        "output_cleanup_and_normalization": (
+            transformations["output_cleanup_and_normalization"]
+            if transformations is not None
+            else all(
+                bool(d.get("tools", {}).get(key, True))
+                for key in (
+                    "strip_ansi",
+                    "collapse_blank_lines",
+                    "collapse_duplicate_lines",
+                    "collapse_similar_lines",
+                    "search_pagination_enabled",
+                )
+            )
+        ),
+        "command_rewrites": transformation(
+            "command_rewrites",
+            d.get("loop", {}).get("bash_transforms_universal_enabled", True),
+        ),
+        "task_format_command_output_handling": transformation(
+            "task_format_command_output_handling",
+            d.get("loop", {}).get("bash_transforms_task_format_enabled", True),
+        ),
+        "forbidden_command_replacement": transformation(
+            "forbidden_command_replacement",
+            d.get("loop", {}).get("bash_quirks_forbidden_enabled", True),
+        ),
+        "halflife_context": (
+            transformations["halflife_context"]
+            if transformations is not None else False
+        ),
+        "detector_and_interventions": transformation(
+            "detector_and_interventions",
+            d.get("adaptive_control", {}).get("enabled", False)
+            and d.get("llm_hurdle_detector", {}).get("enabled", False),
+        ),
+        "detector_activated_guardrails": (
+            transformations["detector_activated_guardrails"]
+            if transformations is not None
+            else bool(d.get("adaptive_control", {}).get("enabled", False))
+        ),
+        "bash_transforms_universal_enabled": transformation(
+            "command_rewrites",
+            d.get("loop", {}).get("bash_transforms_universal_enabled", True),
+        ),
+        "bash_transforms_task_format_enabled": transformation(
+            "task_format_command_output_handling",
+            d.get("loop", {}).get("bash_transforms_task_format_enabled", True),
+        ),
         "bash_transforms_structured_output_enabled": d.get("loop", {}).get("bash_transforms_structured_output_enabled", False),
         "bash_transforms_sink_threshold_chars": d.get("loop", {}).get("bash_transforms_sink_threshold_chars", 0),
         "rumination_gate_grace_calls": d.get("loop", {}).get("rumination_gate_grace_calls", 1),
@@ -457,7 +572,10 @@ def _extract_config_fields(d: dict) -> dict:
         "adaptive_phase2_bash_task_format_enabled": d.get("loop", {}).get("adaptive_phase2_bash_task_format_enabled", True),
         "adaptive_phase2_bash_structured_output_enabled": d.get("loop", {}).get("adaptive_phase2_bash_structured_output_enabled", True),
         "adaptive_phase2_bash_sink_threshold_chars": d.get("loop", {}).get("adaptive_phase2_bash_sink_threshold_chars", 0),
-        "adaptive_control_enabled": d.get("adaptive_control", {}).get("enabled", False),
+        "adaptive_control_enabled": transformation(
+            "detector_and_interventions",
+            d.get("adaptive_control", {}).get("enabled", False),
+        ),
         "adaptive_control_delivery": d.get("adaptive_control", {}).get("delivery", "in_place"),
         "adaptive_control_ledger_path": d.get("adaptive_control", {}).get("ledger_path", ""),
         "adaptive_control_evidence_regime": d.get("adaptive_control", {}).get("evidence_regime", "causal_live"),
@@ -516,7 +634,10 @@ def _extract_config_fields(d: dict) -> dict:
         "harness_observation_cadence_turns": d.get("harness_observation", {}).get("cadence_turns", 10),
         "harness_observation_packet_char_budget": d.get("harness_observation", {}).get("packet_char_budget", 1200),
         "harness_observation_evidence_lines": d.get("harness_observation", {}).get("evidence_lines", 3),
-        "llm_hurdle_detector_enabled": d.get("llm_hurdle_detector", {}).get("enabled", False),
+        "llm_hurdle_detector_enabled": transformation(
+            "detector_and_interventions",
+            d.get("llm_hurdle_detector", {}).get("enabled", False),
+        ),
         "llm_hurdle_detector_cadence_turns": d.get("llm_hurdle_detector", {}).get("cadence_turns", 1),
         "llm_hurdle_detector_atlas_dictionary_path": d.get("llm_hurdle_detector", {}).get("atlas_dictionary_path", ""),
         "llm_hurdle_detector_input_contract_path": d.get("llm_hurdle_detector", {}).get("input_contract_path", ""),
@@ -581,12 +702,18 @@ def _extract_config_fields(d: dict) -> dict:
         "pretest_tail_chars": _require(d, "output", "pretest_tail_chars"),
         "bash_timeout": _require(d, "tools", "bash_timeout"),
         "grep_timeout": _require(d, "tools", "grep_timeout"),
-        "search_pagination_enabled": d.get("tools", {}).get("search_pagination_enabled", True),
+        "search_pagination_enabled": transformation(
+            "output_cleanup_and_normalization",
+            d.get("tools", {}).get("search_pagination_enabled", True),
+        ),
         "grep_max_matches_per_page": d.get("tools", {}).get("grep_max_matches_per_page", 25),
         "glob_max_matches_per_page": d.get("tools", {}).get("glob_max_matches_per_page", 25),
         "tools_glob_max_listed_paths": d.get("tools", {}).get("glob_max_listed_paths", 50),
         "tools_glob_refuse_unscoped_recursive": d.get("tools", {}).get("glob_refuse_unscoped_recursive", True),
-        "bash_quirks_forbidden_enabled": d.get("loop", {}).get("bash_quirks_forbidden_enabled", True),
+        "bash_quirks_forbidden_enabled": transformation(
+            "forbidden_command_replacement",
+            d.get("loop", {}).get("bash_quirks_forbidden_enabled", True),
+        ),
         "pre_mutation_turn_cap": d.get("loop", {}).get("pre_mutation_turn_cap", 0),
         "plan_mode": d.get("loop", {}).get("plan_mode", "off"),
         "plan_mode_max_turns": d.get("loop", {}).get("plan_mode_max_turns", 15),
@@ -609,10 +736,22 @@ def _extract_config_fields(d: dict) -> dict:
         # Runtime compatibility fields are derived from the one canonical
         # sandbox.backend choice. They are not independent settings.
         "sandbox_bash": sandbox_backend != "none",
-        "strip_ansi": _require(d, "tools", "strip_ansi"),
-        "collapse_blank_lines": _require(d, "tools", "collapse_blank_lines"),
-        "collapse_duplicate_lines": _require(d, "tools", "collapse_duplicate_lines"),
-        "collapse_similar_lines": _require(d, "tools", "collapse_similar_lines"),
+        "strip_ansi": transformation(
+            "output_cleanup_and_normalization",
+            _require(d, "tools", "strip_ansi"),
+        ),
+        "collapse_blank_lines": transformation(
+            "output_cleanup_and_normalization",
+            _require(d, "tools", "collapse_blank_lines"),
+        ),
+        "collapse_duplicate_lines": transformation(
+            "output_cleanup_and_normalization",
+            _require(d, "tools", "collapse_duplicate_lines"),
+        ),
+        "collapse_similar_lines": transformation(
+            "output_cleanup_and_normalization",
+            _require(d, "tools", "collapse_similar_lines"),
+        ),
         "bwrap_bin": _require(d, "tools", "bwrap_bin"),
         "sandbox_required": sandbox_backend != "none",
         "unreadable_paths": _string_tuple(

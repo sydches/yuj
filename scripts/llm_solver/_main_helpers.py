@@ -28,7 +28,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import dump_config, PROJECT_ROOT
+from .config import dump_config, dump_transformations, PROJECT_ROOT
 from .server import LlamaClient
 
 log = logging.getLogger(__name__)
@@ -284,6 +284,7 @@ def _build_run_metadata(
         "run_dir": str(run_dir),
         "model": cfg.model,
         "context_mode": args.context,
+        "transformations": dump_transformations(cfg),
         "system_prompt_path": str(args.system_prompt.resolve())
                               if args.system_prompt is not None else None,
         "config_paths": [layer["path"] for layer in layers],

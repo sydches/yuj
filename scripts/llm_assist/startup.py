@@ -20,6 +20,7 @@ from ..llm_solver.harness._loop._driver_setup import (
 )
 from ..llm_solver.harness._loop.profile_resolution import build_tool_surface
 from ..llm_solver.harness._loop.session_io import _load_bash_transforms
+from ..llm_solver.harness._tool_filters import output_cleanup_enabled
 from ..llm_solver.harness.context_strategies import resolve_context_class
 from ..llm_solver.harness.schemas import get_tool_schemas
 from ..llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
@@ -182,8 +183,12 @@ def preflight_assistant_startup(
                 cfg.bash_quirks_forbidden_enabled,
                 transforms[2],
             ),
-            ("redirect rules", True, transforms[3]),
-            ("redactions", True, transforms[4]),
+            (
+                "redirect rules",
+                cfg.bash_transforms_task_format_enabled,
+                transforms[3],
+            ),
+            ("redactions", output_cleanup_enabled(cfg), transforms[4]),
         )
         if required and transform is None
     ]

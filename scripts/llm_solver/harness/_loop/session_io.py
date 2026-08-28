@@ -353,8 +353,8 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
                                 (pip -q, npm --loglevel=error, make -s)
       3. forbidden_rules      — bash_quirks forbidden-rule list
       4. redirect_rules       — compound-aware dedicated-tool redirects
-      5. redactions           — secret-redaction patterns applied to
-                                tool output
+      5. redactions           — secret-redaction patterns applied to tool
+                                output when output cleanup is enabled
       6. output_parser        — structured test-run digest parser
 
     Any element can be None if the corresponding layer is disabled or
@@ -377,7 +377,10 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
         )
         from ...bash_quirks.transforms import load_forbidden_rules
         from ..command_redirect import load_redirect_rules
-        if cfg.bash_transforms_universal_enabled or force_load_all:
+        allow_force_load = force_load_all and not bool(
+            getattr(cfg, "transformations_explicit", False)
+        )
+        if cfg.bash_transforms_universal_enabled or allow_force_load:
             universal_rewrites = load_universal_rewrites()
             if universal_rewrites:
                 log.info("Loaded %d universal bash rewrites", len(universal_rewrites))
@@ -390,16 +393,21 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
         else:
             # This flag controls forbidden command rules.
             log.info("Bash forbidden rules disabled via config")
-        redirect_rules = load_redirect_rules()
-        if redirect_rules:
-            log.info("Loaded %d bash redirect rules", len(redirect_rules))
-        # Secret redaction always loads; redactions.toml presence is
-        # sufficient to enable. No config gate — redacting tokens is
-        # always-on safety.
-        redactions = load_redactions()
-        if redactions:
-            log.info("Loaded %d secret-redaction patterns", len(redactions))
-        if cfg.bash_transforms_task_format_enabled or force_load_all:
+        if cfg.bash_transforms_task_format_enabled or allow_force_load:
+            redirect_rules = load_redirect_rules()
+            if redirect_rules:
+                log.info("Loaded %d bash redirect rules", len(redirect_rules))
+        cleanup_enabled = (
+            not bool(getattr(cfg, "transformations_explicit", False))
+            or bool(getattr(cfg, "output_cleanup_and_normalization", True))
+        )
+        if cleanup_enabled:
+            redactions = load_redactions()
+            if redactions:
+                log.info("Loaded %d secret-redaction patterns", len(redactions))
+        else:
+            log.info("Secret redactions disabled by transformations config")
+        if cfg.bash_transforms_task_format_enabled or allow_force_load:
             _analysis_fmt = cfg.analysis_task_format if hasattr(cfg, "analysis_task_format") else None
             # Real runs resolve "auto" -> the detected runner in the driver
             # (resolve_task_format) before we get here. This is the no-repo

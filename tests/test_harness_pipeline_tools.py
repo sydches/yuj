@@ -56,6 +56,32 @@ class TestHarnessTools:
         assert "line 199" in result
         assert "omitted" in result
 
+    def test_output_cleanup_switch_keeps_shell_text_unchanged(self):
+        from llm_solver.harness.tools import _filter_bash_output, truncate_output
+
+        cfg = make_config(
+            transformations_explicit=True,
+            output_cleanup_and_normalization=False,
+            max_output_chars=8,
+        )
+        text = "\x1b[31mred\x1b[0m\n\n\nrepeat\nrepeat\n"
+
+        assert _filter_bash_output(text, "printf", cfg) == text
+        assert truncate_output(text, cfg) == text
+
+    def test_output_cleanup_switch_keeps_read_bytes_unchanged(self, tmp_path):
+        from llm_solver.harness.tools import read
+
+        target = tmp_path / "sample.txt"
+        raw = b"first\r\n\r\nthird\r\n"
+        target.write_bytes(raw)
+        cfg = make_config(
+            transformations_explicit=True,
+            output_cleanup_and_normalization=False,
+        )
+
+        assert read("sample.txt", cwd=str(tmp_path), cfg=cfg) == raw.decode()
+
     def test_truncate_output_huge_single_line(self):
         """Cap a very long single line by its character count.
 

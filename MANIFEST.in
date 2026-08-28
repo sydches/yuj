@@ -16,6 +16,7 @@ include configs/regimes/README.md
 include configs/regimes/treatment.toml
 include configs/regimes/baselines/plain_long_solve.toml
 recursive-include configs/runtime *.toml
+include configs/transformations.toml
 include configs/treatment/README.md
 recursive-include configs/treatment *.toml *.tsv
 recursive-include profiles *.py *.toml *.txt *.jinja

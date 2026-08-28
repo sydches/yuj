@@ -101,6 +101,7 @@ def _run_in_sandbox(
     container_flags: tuple[str, ...] = (),
     effective_env: Mapping[str, str] | None = None,
     allow_login_shell: bool = False,
+    normalize_output: bool = True,
 ) -> tuple[str, int | None, bool]:
     """Execute a shell command and return (filtered_text, exit_code, timed_out).
 
@@ -111,9 +112,9 @@ def _run_in_sandbox(
     wraps the triple in a structured envelope.
 
     Returns:
-      text       — combined stdout+stderr after content-blind strips
-                   (ANSI, ls timestamps, runner timing, cwd absolutes,
-                   hex addresses). Empty on timeout/exception.
+      text       — combined stdout+stderr. When ``normalize_output`` is true,
+                   content-blind strips remove ls timestamps, runner timing,
+                   cwd absolutes, and hex addresses. Empty on timeout/error.
       exit_code  — process exit code, or ``None`` on timeout/exception.
       timed_out  — True iff the timeout fired before exit.
     """
@@ -238,10 +239,11 @@ def _run_in_sandbox(
                 # Apply the same content-blind strips as the
                 # subprocess path. _strip_cwd_absolute uses the
                 # runner's cwd (== caller cwd here, by the gate above).
-                out = _strip_ls_timestamps(out)
-                out = _strip_runner_timing(out)
-                out = _strip_cwd_absolute(out, cwd)
-                out = _strip_hex_addresses(out)
+                if normalize_output:
+                    out = _strip_ls_timestamps(out)
+                    out = _strip_runner_timing(out)
+                    out = _strip_cwd_absolute(out, cwd)
+                    out = _strip_hex_addresses(out)
                 return out, int(exit_code), False
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
@@ -264,10 +266,11 @@ def _run_in_sandbox(
                 )
             result = _run_host()
         out = result.stdout + result.stderr
-        out = _strip_ls_timestamps(out)
-        out = _strip_runner_timing(out)
-        out = _strip_cwd_absolute(out, cwd)
-        out = _strip_hex_addresses(out)
+        if normalize_output:
+            out = _strip_ls_timestamps(out)
+            out = _strip_runner_timing(out)
+            out = _strip_cwd_absolute(out, cwd)
+            out = _strip_hex_addresses(out)
         return out, int(result.returncode), False
     except subprocess.TimeoutExpired:
         return "", None, True

@@ -1,5 +1,6 @@
 """read tool: return file contents with line numbers + optional reminders."""
 from ...config import Config
+from .._tool_filters import output_cleanup_enabled
 from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _path_hint, _require_external_readable, _resolve_read
 
@@ -32,8 +33,9 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
         (``read_truncated_reminder``);
       - the file exists but is 0-byte (``read_empty_reminder``).
 
-    Reminders are off when ``cfg`` is None — preserves the signature
-    for non-dispatch callers (tests, direct imports).
+    Reminders are off when ``cfg`` is None. An explicit
+    ``output_cleanup_and_normalization=false`` also returns the selected file
+    bytes without line numbers or reminders.
 
     Argument validation: offset/limit must be >= 0. Negative values are
     refused with a structured ERROR; previously they fell through to
@@ -69,6 +71,17 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
                 f"ERROR: {path} is a directory — "
                 f"use glob to list contents."
             )
+        cleanup_enabled = cfg is None or output_cleanup_enabled(cfg)
+        if not cleanup_enabled:
+            raw_verbatim = target.read_bytes().decode(
+                "utf-8",
+                errors="replace",
+            )
+            raw_lines = raw_verbatim.splitlines(keepends=True)
+            selected_lines = raw_lines[offset:] if offset > 0 else raw_lines
+            if limit > 0:
+                selected_lines = selected_lines[:limit]
+            return "".join(selected_lines)
         raw_full = target.read_text()
         all_lines = raw_full.splitlines()
         total = len(all_lines)

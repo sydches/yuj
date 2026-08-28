@@ -350,7 +350,8 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
          container_image: str = "",
          container_flags: tuple[str, ...] = (),
          effective_env=None,
-         allow_login_shell: bool = False) -> str:
+         allow_login_shell: bool = False,
+         transform_output: bool = True) -> str:
     """Run a shell command, return stdout+stderr.
 
     With the bwrap backend, the command runs in a mount namespace that treats
@@ -361,6 +362,10 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     A selected sandbox backend must be available. Missing sandbox machinery
     fails closed; host execution occurs only when the resolved policy is the
     explicit ``none`` choice and the caller supplies ``sandbox=False``.
+
+    ``transform_output=False`` returns the captured stdout and stderr without
+    deterministic normalization, exit annotations, hints, or empty-output
+    replacement.
     """
     # In-process fast path for whitelisted trivial reads (cat / head)
     # that would otherwise round-trip through bwrap+bash. Only when
@@ -412,6 +417,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             container_flags=container_flags,
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
+            normalize_output=transform_output,
         )
     if timed_out:
         return ToolExecutionText(
@@ -422,7 +428,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     if exit_code is None:
         # Non-timeout exception path; out already carries "ERROR: …".
         return ToolExecutionText(out, exit_status=None)
-    if exit_code != 0:
+    if transform_output and exit_code != 0:
         # Semantic exit-code annotation for known non-error verbs (grep,
         # rg, find, diff). Without this, exit=1 from `grep pattern foo`
         # looks like a generic failure and the model spends 1-2 turns
@@ -441,14 +447,15 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     # Only applied on success — failures need to surface their actual
     # (possibly empty) error stream rather than a misleading "no output"
     # message.
-    if exit_code == 0 and out.strip() == "":
+    if transform_output and exit_code == 0 and out.strip() == "":
         out = "(command produced no output)"
-    if _pytest_binary_missing(out, exit_code):
-        out += _PYTEST_BINARY_MISSING_HINT
-    elif _pytest_path_missing(out, exit_code):
-        out += _PYTEST_PATH_MISSING_HINT
-    elif _sealed_install_failure(cmd, out, exit_code):
-        out += _SEALED_INSTALL_FAILURE_HINT
-    elif _python_env_missing(out, exit_code):
-        out += _PYTHON_ENV_MISSING_HINT
+    if transform_output:
+        if _pytest_binary_missing(out, exit_code):
+            out += _PYTEST_BINARY_MISSING_HINT
+        elif _pytest_path_missing(out, exit_code):
+            out += _PYTEST_PATH_MISSING_HINT
+        elif _sealed_install_failure(cmd, out, exit_code):
+            out += _SEALED_INSTALL_FAILURE_HINT
+        elif _python_env_missing(out, exit_code):
+            out += _PYTHON_ENV_MISSING_HINT
     return ToolExecutionText(out, exit_status=exit_code)

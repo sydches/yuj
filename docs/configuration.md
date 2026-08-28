@@ -269,6 +269,7 @@ overlay and the limits that matter for that choice.
 | Trust repository startup behavior, receive session notifications, select a fixed permission preset, set permission rules, scan untrusted text, or run lifecycle hooks | [Add policy and trusted automation](#add-policy-and-trusted-automation) |
 | Route side requests, ask an advisor, or fall back to another model | [Route model requests](#route-model-requests) |
 | Control prompt caching or reasoning effort | [Tune model requests](#tune-model-requests) |
+| Set the complete model-visible transformation vector | [Select transformations](#select-transformations) |
 | Choose, compact, or continue context | [Choose a context mode](#choose-a-context-mode) |
 | Load project instructions or Agent Skills | [Load project instruction files](#load-project-instruction-files) |
 
@@ -1724,6 +1725,28 @@ requests.
 Profile server launch fields do not replace this per-request setting. The
 trace and run provenance record the requested and effective levels and whether
 Yuj clamped the request.
+
+## Select transformations
+
+Use `configs/transformations.toml` when a run must state all eight
+model-visible transformation choices. The checked-in file sets all eight to
+`false`, which is the true-control vector. Copy the file, change the required
+booleans, and apply the copy as an overlay:
+
+```bash
+cp configs/transformations.toml my-transformations.toml
+yuj --no-treatment --config my-transformations.toml "Run the task."
+```
+
+When an overlay contains `[transformations]`, it must contain exactly the
+eight named booleans. These values override the older low-level gates.
+`halflife_context = true` selects `halflife`; `false` selects `full`. Yuj
+rejects an explicit `--context` value that conflicts with this switch.
+
+The comments in `configs/transformations.toml` state the true control,
+current paper control, and current paper treatment vectors. To reproduce the
+paper runs, keep using the frozen layer order in the
+[paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md).
 
 ## Choose a context mode
 

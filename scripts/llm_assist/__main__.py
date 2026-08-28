@@ -22,6 +22,7 @@ from ..llm_solver.config import (
     get_server_base_url,
     load_config,
     resolve_config,
+    resolve_transformation_context_mode,
 )
 from ..llm_solver.config_inspection import (
     build_error_document,
@@ -350,7 +351,10 @@ def _build_cli_parsers() -> tuple[
         p.add_argument(
             "--context",
             default=None,
-            help="context mode (default: halflife with treatment, full without)",
+            help=(
+                "context mode (transformations config wins; otherwise "
+                "halflife with treatment, full without)"
+            ),
         )
         p.add_argument(
             "--dry-run",
@@ -423,7 +427,7 @@ def _build_cli_parsers() -> tuple[
     config_parser.add_argument(
         "--context",
         default=None,
-        help="context mode to validate (base default when omitted)",
+        help="context mode to validate (transformations config wins)",
     )
     config_parser.add_argument(
         "--agent",
@@ -670,7 +674,10 @@ def _build_cli_parsers() -> tuple[
     smoke_parser.add_argument(
         "--context",
         default=None,
-        help="context mode (default: halflife with treatment, full without)",
+        help=(
+            "context mode (transformations config wins; otherwise "
+            "halflife with treatment, full without)"
+        ),
     )
     _attach_workspace_trust_arg(smoke_parser)
     smoke_parser.set_defaults(func=cmd_smoke)
@@ -1613,6 +1620,11 @@ def cmd_run(args) -> int:
         raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except Exception as exc:
         raise SystemExit(f"startup preflight failed: {exc}") from exc
+    context_mode = _resolve_transformation_context_for_args(
+        trust_cfg,
+        args,
+        context_mode,
+    )
     pending_paths = None
     if requested_paths:
         ignore_policy = load_ignore_policy(
@@ -1812,9 +1824,6 @@ def _cmd_config_edit(args) -> int:
                 for index, path in enumerate(config_paths[1:], 1)
             ],
         ]
-        from ..llm_solver.harness.context_strategies import resolve_context_class
-
-        resolve_context_class(context_mode)
         overrides = {
             "runtime_mode": "assistant",
             "max_sessions": 1,
@@ -1824,6 +1833,16 @@ def _cmd_config_edit(args) -> int:
             overrides["model"] = resolve_model(args.model)
 
         def validate(resolved) -> None:
+            from ..llm_solver.harness.context_strategies import (
+                resolve_context_class,
+            )
+
+            effective_context = _resolve_transformation_context_for_args(
+                resolved.config,
+                args,
+                context_mode,
+            )
+            resolve_context_class(effective_context)
             validate_configuration_references(
                 resolved.config,
                 named_agents=args.agent,
@@ -1906,9 +1925,6 @@ def cmd_config(args) -> int:
     resolved = None
     try:
         config_paths, context_mode = _effective_run_settings(args)
-        from ..llm_solver.harness.context_strategies import resolve_context_class
-
-        resolve_context_class(context_mode)
         transport_overrides = _transport_overrides_from_args(args)
         overrides = {
             "runtime_mode": "assistant",
@@ -1940,6 +1956,14 @@ def cmd_config(args) -> int:
             overrides=overrides,
             layer_specs=layer_specs,
         )
+        context_mode = _resolve_transformation_context_for_args(
+            resolved.config,
+            args,
+            context_mode,
+        )
+        from ..llm_solver.harness.context_strategies import resolve_context_class
+
+        resolve_context_class(context_mode)
         references = validate_configuration_references(
             resolved.config,
             named_agents=args.agent,
@@ -1955,7 +1979,15 @@ def cmd_config(args) -> int:
                 "base": base_label,
                 "treatment": bool(args.treatment),
                 "context_mode": context_mode,
-                "context_source": "command-line" if args.context else "base",
+                "context_source": (
+                    "command-line"
+                    if args.context
+                    else (
+                        "transformations"
+                        if resolved.config.transformations_explicit
+                        else "base"
+                    )
+                ),
                 "sandbox": sandbox_resolution.as_dict(),
             },
             references=references,
@@ -2048,6 +2080,11 @@ def cmd_smoke(args) -> int:
         raise SystemExit(f"workspace trust check failed: {exc}") from exc
     except Exception as exc:
         raise SystemExit(f"startup preflight failed: {exc}") from exc
+    context_mode = _resolve_transformation_context_for_args(
+        trust_cfg,
+        args,
+        context_mode,
+    )
     try:
         preflight_assistant_startup(
             config_paths=config_paths,
@@ -4107,10 +4144,27 @@ def _effective_run_settings(args) -> tuple[list[Path], str]:
     """Return the selected package first and user overlays last."""
     treatment = bool(getattr(args, "treatment", True))
     package = _TREATMENT_CONFIG if treatment else _PLAIN_CONFIG
-    context_mode = getattr(args, "context", None) or (
+    requested_context = getattr(args, "context", None)
+    context_mode = requested_context or (
         "halflife" if treatment else "full"
     )
     return [package, *list(getattr(args, "config", []))], context_mode
+
+
+def _resolve_transformation_context_for_args(
+    cfg,
+    args,
+    requested: str,
+) -> str:
+    """Apply the explicit transformation context switch to one CLI request."""
+    try:
+        return resolve_transformation_context_mode(
+            cfg,
+            requested,
+            requested_explicitly=getattr(args, "context", None) is not None,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc).replace("context choice", "--context")) from exc
 
 
 def _needs_first_run_setup() -> bool:

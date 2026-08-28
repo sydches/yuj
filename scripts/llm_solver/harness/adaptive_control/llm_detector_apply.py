@@ -16,6 +16,18 @@ def _maybe_apply_detector_intervention(
 ) -> None:
     """Route a positive detector verdict through the ranked Atlas ladder."""
     cfg = getattr(session, "cfg", None)
+    if (
+        bool(getattr(cfg, "transformations_explicit", False))
+        and not bool(getattr(cfg, "detector_activated_guardrails", True))
+    ):
+        if verdict.hurdle_present == "yes":
+            row["intervention_selection"] = {
+                "selection_status": "not_attempted",
+                "selection_blocked_reason": (
+                    "detector_activated_guardrails_disabled"
+                ),
+            }
+        return
     pending = _pending_watch(session)
     if pending:
         try:

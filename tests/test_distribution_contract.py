@@ -18,7 +18,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 def test_resource_manifest_is_exact_and_present():
-    assert len(ROOT_RUNTIME_FILES) == 64
+    assert len(ROOT_RUNTIME_FILES) == 65
     assert len(PACKAGE_RUNTIME_FILES) == 10
     assert tuple(sorted(ROOT_RUNTIME_FILES)) == ROOT_RUNTIME_FILES
     assert tuple(sorted(PACKAGE_RUNTIME_FILES)) == PACKAGE_RUNTIME_FILES
@@ -49,7 +49,7 @@ def test_wheel_member_allowlist_rejects_missing_and_private_paths():
         f"{dist_info}/licenses/THIRD_PARTY_NOTICES.md",
     }
     counts = validate_wheel_members(members)
-    assert counts["root_resources"] == 64
+    assert counts["root_resources"] == 65
 
     missing = set(members)
     missing.remove("scripts/llm_solver/_resources/config.toml")
@@ -64,7 +64,7 @@ def test_sdist_member_allowlist_rejects_tests_and_internal_records():
     top = "yuj-0.1.0"
     payload = expected_sdist_payload() | SDIST_GENERATED_FILES
     members = {f"{top}/{path}" for path in payload}
-    assert validate_sdist_members(members)["root_resources"] == 64
+    assert validate_sdist_members(members)["root_resources"] == 65
 
     with pytest.raises(AssertionError, match="tests"):
         validate_sdist_members(members | {f"{top}/tests/test_private.py"})

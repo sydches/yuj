@@ -1,4 +1,4 @@
-# Adaptive-control overlay.
+# Detector-activated identical-call guardrail and recovery message.
 
 [loop]
 loop_detect_enabled = true

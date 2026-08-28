@@ -8,7 +8,12 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import load_config, PROJECT_ROOT, require_runtime_mode
+from .config import (
+    load_config,
+    PROJECT_ROOT,
+    require_runtime_mode,
+    resolve_transformation_context_mode,
+)
 from ._shared.edit_formats import EDIT_FORMATS
 from .harness import collect_pending, solve_task
 from .harness.context_strategies import (
@@ -100,6 +105,11 @@ def _prepare_task_worktree(
 
 
 def main(argv: list[str] | None = None) -> int:
+    cli_argv = list(sys.argv[1:] if argv is None else argv)
+    context_was_explicit = any(
+        token == "--context" or token.startswith("--context=")
+        for token in cli_argv
+    )
     parser = argparse.ArgumentParser(
         description="Run fixed coding measurements through the Yuj harness"
     )
@@ -184,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replay-extra-config", type=Path, action="append", default=[],
                         help="measurement-only settings appended after source settings; "
                              "repeatable; request parity is not currently checked")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(cli_argv)
     if args.prompt_file is not None and args.prompt_text is not None:
         parser.error("--prompt-file and --prompt-text are mutually exclusive")
     if (args.prompt_file is not None or args.prompt_text is not None) and args.task is None:
@@ -281,6 +291,21 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(user_config=args.config, overrides=overrides)
     require_runtime_mode(cfg, expected="measurement", caller="scripts.llm_solver")
+    if bool(getattr(cfg, "transformations_explicit", False)):
+        try:
+            args.context = resolve_transformation_context_mode(
+                cfg,
+                args.context,
+                requested_explicitly=(
+                    context_was_explicit or args.replay_from is not None
+                ),
+            )
+        except ValueError as exc:
+            parser.error(
+                str(exc).replace("context choice", "--context")
+            )
+    else:
+        cfg = replace(cfg, halflife_context=args.context == "halflife")
     try:
         sandbox_resolution = preflight_sandbox(cfg)
     except SandboxResolutionError as exc:

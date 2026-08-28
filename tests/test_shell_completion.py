@@ -18,7 +18,7 @@ from scripts.llm_assist.completion import (
 
 
 EXPECTED_COMMAND_SURFACE_SHA256 = (
-    "ac34b33fe6458bcc6d266c5b4bda05577dd0aca95db3f36d7dcf3445e9539027"
+    "57991dc2e8a84d7fb9f65eeeba360134d82ccecb69369106300f3ad395f97171"
 )
 
 

@@ -676,6 +676,17 @@ class Config:
     # Text-transformation accounting. counts stores exact sizes and hashes;
     # debug also stores complete before/after values beside the savings ledger.
     transform_log_mode: str = "counts"
+    # A [transformations] table is optional for older configs. When present,
+    # it contains exactly the eight high-level experiment switches below and
+    # overrides their older low-level gates.
+    transformations_explicit: bool = False
+    output_cleanup_and_normalization: bool = True
+    command_rewrites: bool = True
+    task_format_command_output_handling: bool = True
+    forbidden_command_replacement: bool = True
+    halflife_context: bool = False
+    detector_and_interventions: bool = False
+    detector_activated_guardrails: bool = False
     bash_transforms_universal_enabled: bool = True
     bash_transforms_task_format_enabled: bool = True
     bash_transforms_structured_output_enabled: bool = False  # parse test output into digest; replace raw with digest in context
@@ -833,6 +844,7 @@ _REQUIRED_SECTIONS = (
 from ._config_loader import (
     _extract_config_fields,
     _require,
+    _transformation_switches,
     _validate_config_field_types,
     _validate_coupling,
 )
@@ -1016,6 +1028,72 @@ def _normalize_sandbox_settings(
         )
 
 
+def _apply_transformation_switches(
+    data: dict[str, object],
+    provenance: dict[SettingPath, ConfigSource],
+) -> None:
+    """Make the eight high-level switches authoritative over old gates."""
+    switches = _transformation_switches(data)
+    if switches is None:
+        return
+
+    def apply(key: str, path: SettingPath, value: bool | None = None) -> None:
+        source = provenance[("transformations", key)]
+        apply_resolved_value(
+            data,
+            provenance,
+            path,
+            switches[key] if value is None else value,
+            source=source,
+        )
+
+    for path in (
+        ("tools", "strip_ansi"),
+        ("tools", "collapse_blank_lines"),
+        ("tools", "collapse_duplicate_lines"),
+        ("tools", "collapse_similar_lines"),
+        ("tools", "search_pagination_enabled"),
+    ):
+        apply("output_cleanup_and_normalization", path)
+    if not switches["output_cleanup_and_normalization"]:
+        apply(
+            "output_cleanup_and_normalization",
+            ("loop", "tools_output_dedup_enabled"),
+            False,
+        )
+
+    apply(
+        "command_rewrites",
+        ("loop", "bash_transforms_universal_enabled"),
+    )
+    apply(
+        "task_format_command_output_handling",
+        ("loop", "bash_transforms_task_format_enabled"),
+    )
+    if not switches["task_format_command_output_handling"]:
+        apply(
+            "task_format_command_output_handling",
+            ("tools", "run_tests", "structured_output"),
+            False,
+        )
+    apply(
+        "forbidden_command_replacement",
+        ("loop", "bash_quirks_forbidden_enabled"),
+    )
+    apply("preflight_reclip", ("loop", "preflight_reclip_enabled"))
+    apply("detector_and_interventions", ("adaptive_control", "enabled"))
+    apply("detector_and_interventions", ("llm_hurdle_detector", "enabled"))
+
+    if not switches["detector_activated_guardrails"]:
+        for path in (
+            ("loop", "loop_detect_enabled"),
+            ("loop", "duplicate_guard_enabled"),
+            ("loop", "require_intent"),
+            ("tools", "unified_envelope", "enabled"),
+        ):
+            apply("detector_activated_guardrails", path, False)
+
+
 def resolve_config(
     user_config: Path | list[Path] | None = None,
     overrides: dict | None = None,
@@ -1072,6 +1150,8 @@ def resolve_config(
                 value,
                 source=command_line_source,
             )
+
+    _apply_transformation_switches(data, provenance)
 
     expanded, environment_references = expand_environment_references(data)
     _normalize_sandbox_settings(expanded, provenance)
@@ -1201,3 +1281,44 @@ def dump_config(cfg: Config) -> dict:
     snapshot.pop("sandbox_legacy_container", None)
     redacted, _changed, _reasons = redact_config_value(snapshot)
     return redacted  # type: ignore[return-value]
+
+
+def dump_transformations(cfg: Config) -> dict[str, bool]:
+    """Return the eight effective high-level transformation switches."""
+    return {
+        "output_cleanup_and_normalization": bool(
+            cfg.output_cleanup_and_normalization
+        ),
+        "command_rewrites": bool(cfg.command_rewrites),
+        "task_format_command_output_handling": bool(
+            cfg.task_format_command_output_handling
+        ),
+        "forbidden_command_replacement": bool(
+            cfg.forbidden_command_replacement
+        ),
+        "preflight_reclip": bool(cfg.preflight_reclip_enabled),
+        "halflife_context": bool(cfg.halflife_context),
+        "detector_and_interventions": bool(cfg.detector_and_interventions),
+        "detector_activated_guardrails": bool(
+            cfg.detector_activated_guardrails
+        ),
+    }
+
+
+def resolve_transformation_context_mode(
+    cfg: Config,
+    requested: str,
+    *,
+    requested_explicitly: bool = False,
+) -> str:
+    """Resolve the context switch and reject a conflicting CLI choice."""
+    if not cfg.transformations_explicit:
+        return requested
+    configured = "halflife" if cfg.halflife_context else "full"
+    if requested_explicitly and requested != configured:
+        raise ValueError(
+            "context choice conflicts with "
+            "transformations.halflife_context="
+            f"{str(cfg.halflife_context).lower()}"
+        )
+    return configured

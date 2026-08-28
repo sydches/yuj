@@ -1,4 +1,4 @@
-# Adaptive-control overlay.
+# Detector-activated intent gate and repeat message.
 
 [loop]
 require_intent = true

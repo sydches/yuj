@@ -1,4 +1,4 @@
-# Adaptive-control overlay.
+# Detector-activated duplicate-call guardrail.
 
 [loop]
 duplicate_guard_enabled = true

@@ -104,6 +104,7 @@ def run_tests(
         _effective_command_environment,
         _run_in_sandbox,
     )
+    from .._tool_filters import output_cleanup_enabled
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
         effective_env, allow_login_shell = _effective_command_environment(cfg)
@@ -116,6 +117,7 @@ def run_tests(
         readable_paths=_bash_readable_paths(cfg),
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
+        normalize_output=output_cleanup_enabled(cfg),
         **sandbox_execution_kwargs(cfg),
     )
 

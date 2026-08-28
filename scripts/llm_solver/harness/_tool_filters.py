@@ -102,6 +102,13 @@ def _record_text_change(*args, **kwargs) -> str:
     return record_text_transform(*args, **kwargs)
 
 
+def output_cleanup_enabled(cfg: Config) -> bool:
+    """Return whether the high-level output transformation is active."""
+    return not bool(getattr(cfg, "transformations_explicit", False)) or bool(
+        getattr(cfg, "output_cleanup_and_normalization", True)
+    )
+
+
 def truncate_output(text: str, cfg: Config) -> str:
     """Head+tail truncation when output exceeds max_output_chars.
 
@@ -126,6 +133,9 @@ def truncate_output(text: str, cfg: Config) -> str:
     even if the char budget math would leave nothing. This preserves
     the readability property for bash log tails.
     """
+    if not output_cleanup_enabled(cfg):
+        return text
+
     budget = cfg.max_output_chars
     if len(text) <= budget:
         return text
@@ -318,6 +328,9 @@ def _filter_bash_output(output: str, cmd: str, cfg: Config) -> str:
     protocol, whitespace, byte equality. Task-format parsing belongs
     in the analysis layer, never in the solve loop.
     """
+    if not output_cleanup_enabled(cfg):
+        return output
+
     # 1. ANSI escapes — terminal control protocol, universal noise.
     if cfg.strip_ansi:
         before = output

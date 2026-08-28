@@ -17,6 +17,7 @@ ROOT_RUNTIME_FILES = (
     "config.toml",
     "configs/regimes/baselines/plain_long_solve.toml",
     "configs/regimes/treatment.toml",
+    "configs/transformations.toml",
     "configs/treatment/hurdle_dictionary.trace_nets.v1.tsv",
     "configs/treatment/medicine_ladder.v1.tsv",
     "configs/treatment/overlays/duplicate_guard.toml",

@@ -376,6 +376,18 @@ def run_session(
     require_runtime_mode(cfg, expected="assistant", caller="scripts.llm_assist")
     if review_target is not None:
         cfg = read_only_review_config(cfg)
+    if cfg.transformations_explicit:
+        configured_context = "halflife" if cfg.halflife_context else "full"
+        if record.context_mode != configured_context:
+            raise RuntimeError(
+                "saved session context conflicts with "
+                "transformations.halflife_context"
+            )
+    else:
+        cfg = replace(
+            cfg,
+            halflife_context=record.context_mode == "halflife",
+        )
     worktree_info, record = _resolve_session_worktree(
         store, record, cfg=cfg, resume=resume
     )

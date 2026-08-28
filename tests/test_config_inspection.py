@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +15,13 @@ import pytest
 
 from scripts.llm_assist.__main__ import main
 from scripts.llm_solver import config as config_module
-from scripts.llm_solver.config import ConfigLayerSpec, resolve_config
+from scripts.llm_solver.config import (
+    ConfigLayerSpec,
+    dump_transformations,
+    load_config,
+    resolve_config,
+    resolve_transformation_context_mode,
+)
 from scripts.llm_solver.config_inspection import (
     build_inspection_document,
     render_inspection_json,
@@ -563,3 +570,219 @@ def test_root_help_discovers_config_inspection(
         main(["--help"])
     assert exc.value.code == 0
     assert "config" in capsys.readouterr().out
+
+
+TRANSFORMATION_KEYS = {
+    "output_cleanup_and_normalization",
+    "command_rewrites",
+    "task_format_command_output_handling",
+    "forbidden_command_replacement",
+    "preflight_reclip",
+    "halflife_context",
+    "detector_and_interventions",
+    "detector_activated_guardrails",
+}
+
+
+def test_transformations_file_is_the_complete_true_control_vector() -> None:
+    path = PROJECT_ROOT / "configs/transformations.toml"
+    values = tomllib.loads(path.read_text())["transformations"]
+
+    assert set(values) == TRANSFORMATION_KEYS
+    assert all(value is False for value in values.values())
+
+    cfg = load_config(user_config=path)
+    assert cfg.transformations_explicit is True
+    assert cfg.output_cleanup_and_normalization is False
+    assert cfg.bash_transforms_universal_enabled is False
+    assert cfg.bash_transforms_task_format_enabled is False
+    assert cfg.bash_quirks_forbidden_enabled is False
+    assert cfg.preflight_reclip_enabled is False
+    assert cfg.halflife_context is False
+    assert cfg.adaptive_control_enabled is False
+    assert cfg.llm_hurdle_detector_enabled is False
+    assert cfg.detector_activated_guardrails is False
+
+    from scripts.llm_solver.harness._loop.session_io import (
+        _load_bash_transforms,
+    )
+
+    assert _load_bash_transforms(cfg, force_load_all=True) == (
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def test_all_true_transformations_override_plain_arm_gates(tmp_path: Path) -> None:
+    overlay = tmp_path / "all-true.toml"
+    body = "\n".join(f"{key} = true" for key in sorted(TRANSFORMATION_KEYS))
+    overlay.write_text(f"[transformations]\n{body}\n")
+    plain = PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml"
+
+    cfg = load_config(user_config=[plain, overlay])
+
+    assert cfg.output_cleanup_and_normalization is True
+    assert cfg.bash_transforms_universal_enabled is True
+    assert cfg.bash_transforms_task_format_enabled is True
+    assert cfg.bash_quirks_forbidden_enabled is True
+    assert cfg.preflight_reclip_enabled is True
+    assert cfg.halflife_context is True
+    assert cfg.adaptive_control_enabled is True
+    assert cfg.llm_hurdle_detector_enabled is True
+    assert cfg.detector_activated_guardrails is True
+
+
+@pytest.mark.parametrize("enabled", sorted(TRANSFORMATION_KEYS))
+def test_each_transformation_switch_can_be_selected_alone(
+    enabled: str,
+    tmp_path: Path,
+) -> None:
+    overlay = tmp_path / f"only-{enabled}.toml"
+    values = {key: key == enabled for key in TRANSFORMATION_KEYS}
+    body = "\n".join(
+        f"{key} = {str(value).lower()}"
+        for key, value in sorted(values.items())
+    )
+    overlay.write_text(f"[transformations]\n{body}\n")
+    treatment = PROJECT_ROOT / "configs/regimes/treatment.toml"
+
+    cfg = load_config(user_config=[treatment, overlay])
+
+    assert dump_transformations(cfg) == values
+    assert cfg.strip_ansi is values["output_cleanup_and_normalization"]
+    assert cfg.collapse_blank_lines is values[
+        "output_cleanup_and_normalization"
+    ]
+    assert cfg.search_pagination_enabled is values[
+        "output_cleanup_and_normalization"
+    ]
+    assert cfg.bash_transforms_universal_enabled is values["command_rewrites"]
+    assert cfg.bash_transforms_task_format_enabled is values[
+        "task_format_command_output_handling"
+    ]
+    assert cfg.bash_quirks_forbidden_enabled is values[
+        "forbidden_command_replacement"
+    ]
+    assert cfg.preflight_reclip_enabled is values["preflight_reclip"]
+    assert cfg.adaptive_control_enabled is values[
+        "detector_and_interventions"
+    ]
+    assert cfg.llm_hurdle_detector_enabled is values[
+        "detector_and_interventions"
+    ]
+
+
+def test_current_paper_arm_transformation_vectors_match_the_file_comments() -> None:
+    control = load_config(
+        user_config=(
+            PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml"
+        )
+    )
+    treatment = replace(
+        load_config(user_config=PROJECT_ROOT / "configs/regimes/treatment.toml"),
+        halflife_context=True,
+    )
+
+    assert list(dump_transformations(control).values()) == [
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+    ]
+    assert all(dump_transformations(treatment).values())
+
+
+def test_halflife_switch_owns_context_selection(tmp_path: Path) -> None:
+    overlay = tmp_path / "halflife.toml"
+    values = {
+        key: key == "halflife_context"
+        for key in TRANSFORMATION_KEYS
+    }
+    body = "\n".join(
+        f"{key} = {str(value).lower()}" for key, value in sorted(values.items())
+    )
+    overlay.write_text(f"[transformations]\n{body}\n")
+    cfg = load_config(user_config=overlay)
+
+    assert resolve_transformation_context_mode(cfg, "full") == "halflife"
+    with pytest.raises(ValueError, match="halflife_context=true"):
+        resolve_transformation_context_mode(
+            cfg,
+            "full",
+            requested_explicitly=True,
+        )
+
+
+def test_public_cli_uses_the_explicit_halflife_switch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    transformations = PROJECT_ROOT / "configs/transformations.toml"
+
+    rc = main(["config", "--json", "--config", str(transformations)])
+
+    document = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert document["selection"]["context_mode"] == "full"
+    assert document["selection"]["context_source"] == "transformations"
+
+
+def test_public_cli_rejects_context_that_conflicts_with_the_switch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    transformations = PROJECT_ROOT / "configs/transformations.toml"
+
+    rc = main([
+        "config",
+        "--json",
+        "--config",
+        str(transformations),
+        "--context",
+        "halflife",
+    ])
+
+    document = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert "transformations.halflife_context=false" in str(
+        document["diagnostics"]
+    )
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "[transformations]\ncommand_rewrites = false\n",
+        "\n".join(
+            [
+                "[transformations]",
+                *(f"{key} = false" for key in sorted(TRANSFORMATION_KEYS)),
+                "ninth_switch = false",
+            ]
+        ),
+        "\n".join(
+            [
+                "[transformations]",
+                *(
+                    f'{key} = "false"' if key == "command_rewrites" else f"{key} = false"
+                    for key in sorted(TRANSFORMATION_KEYS)
+                ),
+            ]
+        ),
+    ],
+)
+def test_transformations_table_rejects_partial_unknown_or_non_boolean_values(
+    table: str,
+    tmp_path: Path,
+) -> None:
+    overlay = tmp_path / "invalid-transformations.toml"
+    overlay.write_text(table + "\n")
+
+    with pytest.raises((TypeError, ValueError), match="transformations"):
+        load_config(user_config=overlay)

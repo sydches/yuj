@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import csv
 import json
-
-import pytest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 import _ac_bootstrap  # noqa: F401
 from llm_solver.config import load_config
@@ -656,6 +657,44 @@ loop_detect_enabled = true
     assert ledger_rows[0]["active_hurdle_mode"] == "loop_churn"
     assert ledger_rows[0]["apply_status"] == "applied"
     assert ledger_rows[0]["candidate_config_path"] == str(candidate)
+
+
+def test_detector_guardrail_switch_blocks_a_positive_intervention(
+    tmp_path: Path,
+) -> None:
+    atlas_path = _llm_atlas(tmp_path / "hurdle_dictionary.llm.v1.tsv")
+    candidate = tmp_path / "candidate.toml"
+    candidate.write_text("[loop]\nloop_detect_enabled = true\n", encoding="utf-8")
+    lookup_path = _write_family_lookup(
+        tmp_path / "family_lookup.tsv",
+        candidate_config_path=candidate,
+    )
+    baseline_path = tmp_path / "baseline.toml"
+    cfg = replace(
+        _live_detector_cfg(tmp_path, atlas_path, lookup_path, baseline_path),
+        transformations_explicit=True,
+        detector_activated_guardrails=False,
+    )
+    client = _FakeDetectorClient(_response(
+        hurdle_present="yes",
+        hurdle_family="loop_churn",
+        confidence="high",
+        evidence_refs=["host_task/.trace.jsonl:T1:result_summary"],
+    ))
+    session = SimpleNamespace(
+        cfg=cfg,
+        client=client,
+        _trace_path=tmp_path / ".trace.jsonl",
+        _trace_events=[_event(1, result_summary="same probe again")],
+    )
+
+    row = maybe_run_llm_hurdle_detector(session, turn=1)
+
+    assert row["intervention_selection"] == {
+        "selection_status": "not_attempted",
+        "selection_blocked_reason": "detector_activated_guardrails_disabled",
+    }
+    assert session.cfg.loop_detect_enabled is False
 
 
 def test_relative_control_logs_resolve_beside_trace(tmp_path: Path) -> None:

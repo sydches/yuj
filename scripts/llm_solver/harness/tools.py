@@ -53,7 +53,8 @@ from ._tools._pytest_hints import (
 # Filter helpers (test_harness_pipeline_tools.py imports them via this module)
 from ._tool_filters import (
     _collapse_duplicate_lines, _collapse_similar_lines,
-    _filter_bash_output, _line_skeleton, truncate_output,
+    _filter_bash_output, _line_skeleton, output_cleanup_enabled,
+    truncate_output,
 )
 from .tool_specs import (
     ACTIVE_TOOL_NAMES,
@@ -142,6 +143,7 @@ def _dispatch_bash(args, cwd, cfg):
         readable_paths=_bash_readable_paths(cfg),
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
+        transform_output=output_cleanup_enabled(cfg),
         **sandbox_execution_kwargs(cfg),
     )
 
@@ -426,7 +428,7 @@ def admit_tool_output(
     # the content-based compatibility shortcut that trusted handlers use.
     owns_native_envelope = name != "exec_cell" and is_native_envelope(result)
 
-    if redactions and not owns_native_envelope:
+    if redactions and output_cleanup_enabled(cfg) and not owns_native_envelope:
         from ..bash_quirks import apply_redactions
         result = apply_redactions(result, redactions)
 
@@ -518,6 +520,19 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     handler = reg.handlers.get(name)
     if handler is None:
         return f"ERROR: unknown tool '{name}'"
+
+    if bool(getattr(cfg, "transformations_explicit", False)):
+        if not bool(getattr(cfg, "command_rewrites", False)):
+            universal_rewrites = None
+        if not bool(
+            getattr(cfg, "task_format_command_output_handling", False)
+        ):
+            output_control = None
+            redirect_rules = None
+        if not bool(getattr(cfg, "forbidden_command_replacement", False)):
+            forbidden_rules = None
+        if not output_cleanup_enabled(cfg):
+            redactions = None
 
     scanner = SecurityScanner.from_config(cfg)
     argument_scan = scanner.scan_arguments(arguments)

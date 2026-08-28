@@ -1,0 +1,24 @@
+# Model-visible transformation switches.
+#
+# true means enabled. A conditional transformation may still have no reason
+# to fire during a run.
+#
+# True control:
+#   All eight are false.
+#
+# Current paper control:
+#   output_cleanup_and_normalization = true
+#   All other transformations are false.
+#
+# Current paper treatment:
+#   All eight are true.
+
+[transformations]
+output_cleanup_and_normalization = false
+command_rewrites = false
+task_format_command_output_handling = false
+forbidden_command_replacement = false
+preflight_reclip = false
+halflife_context = false
+detector_and_interventions = false
+detector_activated_guardrails = false

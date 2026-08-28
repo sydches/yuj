@@ -1,5 +1,6 @@
 """glob tool: find files matching a glob pattern, optionally paginated."""
 from ...config import Config
+from .._tool_filters import output_cleanup_enabled
 from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _paginated_envelope, _resolve
 
@@ -27,7 +28,9 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
             base, is_dir=base.is_dir()
         ):
             return "No files found."
-        matches = sorted(base.glob(pattern))
+        cleanup_enabled = cfg is None or output_cleanup_enabled(cfg)
+        raw_matches = base.glob(pattern)
+        matches = sorted(raw_matches) if cleanup_enabled else list(raw_matches)
         rel = [
             str(m.relative_to(cwd))
             for m in matches
