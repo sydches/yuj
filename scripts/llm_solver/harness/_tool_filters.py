@@ -511,18 +511,28 @@ def _strip_cwd_absolute(output: str, cwd: str) -> str:
     )
 
 
-# Python object repr at hex memory address: "at 0x7ff2a756e110".
-# Memory allocation is non-deterministic (ASLR, allocator state),
-# so the same object has different addresses across runs.
-_HEX_ADDR_RE = re.compile(r'\bat 0x[0-9a-fA-F]+\b')
+# Memory allocation is non-deterministic across otherwise identical runs.
+# Match only word-bounded address-shaped values on subprocess output. File
+# reads do not pass through this function, so source hex constants stay exact.
+_MEMORY_ADDRESS_RE = re.compile(r'\b0x[0-9a-fA-F]{6,16}\b')
 
 
-def _strip_hex_addresses(output: str) -> str:
-    """Replace ``at 0xDEADBEEF`` with ``at 0xXXXX`` for determinism."""
-    result, count = _HEX_ADDR_RE.subn('at 0xXXXX', output)
+def _normalize_memory_addresses(output: str) -> str:
+    """Replace memory addresses with stable per-output identity tokens."""
+    identities: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        address = match.group(0).lower()
+        token = identities.get(address)
+        if token is None:
+            token = f"0xADDR{len(identities) + 1}"
+            identities[address] = token
+        return token
+
+    result, count = _MEMORY_ADDRESS_RE.subn(replace, output)
     return _record_text_change(
         output, result,
         bucket="tool_output_normalize",
-        mechanism="hex_address_normalization",
+        mechanism="memory_address_normalization",
         change_count=count,
     )

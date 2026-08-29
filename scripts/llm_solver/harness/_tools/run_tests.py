@@ -5,12 +5,36 @@ from pathlib import Path
 
 from ...config import Config
 from ...language_quirks import load_run_tests_quirk_object
+from ..savings import record_text_transform
 from ._common import _resolve, _xml_attr
 from ._pytest_hints import (
     _PYTEST_BINARY_MISSING_HINT, _PYTEST_LF_CACHE_EMPTY_HINT,
     _PYTEST_PATH_MISSING_HINT, _PYTEST_STATUS,
     _pytest_binary_missing, _pytest_path_missing,
 )
+
+
+def _record_test_advice(
+    before: str,
+    hint: str,
+    *,
+    mechanism: str,
+    runner: str,
+    exit_code: int,
+) -> str:
+    """Append and account for one model-visible test recovery hint."""
+    return record_text_transform(
+        before,
+        before + hint,
+        bucket="advice_injection",
+        mechanism=mechanism,
+        surface="tool_output",
+        ctx={
+            "tool_name": "run_tests",
+            "runner": runner,
+            "exit_code": exit_code,
+        },
+    )
 
 
 def run_tests(
@@ -132,9 +156,21 @@ def run_tests(
             out += f"\n[exit code: {exit_code}]"
         if quirk.runner == "pytest":
             if _pytest_binary_missing(out, exit_code):
-                out += _PYTEST_BINARY_MISSING_HINT
+                out = _record_test_advice(
+                    out,
+                    _PYTEST_BINARY_MISSING_HINT,
+                    mechanism="pytest_binary_missing_hint",
+                    runner=quirk.runner,
+                    exit_code=exit_code,
+                )
             elif _pytest_path_missing(out, exit_code):
-                out += _PYTEST_PATH_MISSING_HINT
+                out = _record_test_advice(
+                    out,
+                    _PYTEST_PATH_MISSING_HINT,
+                    mechanism="pytest_path_missing_hint",
+                    runner=quirk.runner,
+                    exit_code=exit_code,
+                )
         return out
 
     if timed_out:
@@ -171,16 +207,34 @@ def run_tests(
         # dance that doesn't apply.
         if quirk.runner == "pytest":
             if _pytest_binary_missing(body, exit_code):
-                body += _PYTEST_BINARY_MISSING_HINT
+                body = _record_test_advice(
+                    body,
+                    _PYTEST_BINARY_MISSING_HINT,
+                    mechanism="pytest_binary_missing_hint",
+                    runner=quirk.runner,
+                    exit_code=exit_code,
+                )
             elif _pytest_path_missing(body, exit_code):
-                body += _PYTEST_PATH_MISSING_HINT
+                body = _record_test_advice(
+                    body,
+                    _PYTEST_PATH_MISSING_HINT,
+                    mechanism="pytest_path_missing_hint",
+                    runner=quirk.runner,
+                    exit_code=exit_code,
+                )
             # `--lf` with an empty lastfailed cache → exit 5
             # (no_tests_collected), indistinguishable from "no tests at
             # all" without the harness hint. Tied to the input arg so we
             # don't false-fire on legitimately-empty test directories
             # called without --lf.
             if last_failed and status == "no_tests_collected":
-                body += _PYTEST_LF_CACHE_EMPTY_HINT
+                body = _record_test_advice(
+                    body,
+                    _PYTEST_LF_CACHE_EMPTY_HINT,
+                    mechanism="pytest_lf_cache_empty_hint",
+                    runner=quirk.runner,
+                    exit_code=exit_code,
+                )
         # Add source context around each failing assertion so the model
         # can see the surrounding code with the verdict. This runs for
         # `failed` and

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .._tool_filters import (
-    _strip_cwd_absolute, _strip_hex_addresses,
+    _normalize_memory_addresses, _strip_cwd_absolute,
     _strip_ls_timestamps, _strip_runner_timing,
 )
 from ..sandbox import (
@@ -112,9 +112,10 @@ def _run_in_sandbox(
     wraps the triple in a structured envelope.
 
     Returns:
-      text       — combined stdout+stderr. When ``normalize_output`` is true,
+      text       — combined stdout+stderr. Memory addresses are always
+                   normalized. When ``normalize_output`` is true, other
                    content-blind strips remove ls timestamps, runner timing,
-                   cwd absolutes, and hex addresses. Empty on timeout/error.
+                   and cwd absolutes. Empty on timeout/error.
       exit_code  — process exit code, or ``None`` on timeout/exception.
       timed_out  — True iff the timeout fired before exit.
     """
@@ -235,7 +236,11 @@ def _run_in_sandbox(
                     cmd, cwd=cwd, timeout=timeout,
                 )
                 if timed_out or exit_code is None:
-                    return out, exit_code, timed_out
+                    return (
+                        _normalize_memory_addresses(out),
+                        exit_code,
+                        timed_out,
+                    )
                 # Apply the same content-blind strips as the
                 # subprocess path. _strip_cwd_absolute uses the
                 # runner's cwd (== caller cwd here, by the gate above).
@@ -243,7 +248,7 @@ def _run_in_sandbox(
                     out = _strip_ls_timestamps(out)
                     out = _strip_runner_timing(out)
                     out = _strip_cwd_absolute(out, cwd)
-                    out = _strip_hex_addresses(out)
+                out = _normalize_memory_addresses(out)
                 return out, int(exit_code), False
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
@@ -270,9 +275,9 @@ def _run_in_sandbox(
             out = _strip_ls_timestamps(out)
             out = _strip_runner_timing(out)
             out = _strip_cwd_absolute(out, cwd)
-            out = _strip_hex_addresses(out)
+        out = _normalize_memory_addresses(out)
         return out, int(result.returncode), False
     except subprocess.TimeoutExpired:
         return "", None, True
     except Exception as e:
-        return f"ERROR: {e}", None, False
+        return _normalize_memory_addresses(f"ERROR: {e}"), None, False

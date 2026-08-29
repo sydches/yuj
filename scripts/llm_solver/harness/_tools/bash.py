@@ -4,6 +4,7 @@ import shlex
 
 from ..sandbox import _DEFAULT_BWRAP_BIN, container_mode
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
+from ..savings import record_text_transform
 from ._common import (
     ToolExecutionText,
     _require_external_readable,
@@ -19,11 +20,17 @@ from ._pytest_hints import (
 )
 
 
-# Shell metachars that change cmd semantics if interpreted by bash.
-# Any token containing one of these is ineligible for the in-process
-# fast path — fall through to the sandbox so bash handles the
-# expansion / pipe / redir / subshell correctly.
+# Shell metacharacters require the sandboxed shell, not the in-process path.
 _SHELL_METACHARS = frozenset("*?[]$`|&;()<>\\")
+
+
+def _record_output_change(before: str, after: str, *, bucket: str,
+                          mechanism: str, exit_code: int) -> str:
+    """Record one bash result mutation and return the changed text."""
+    return record_text_transform(
+        before, after, bucket=bucket, mechanism=mechanism, surface="tool_output",
+        ctx={"tool_name": "bash", "exit_code": exit_code},
+    )
 
 
 def _try_inproc_trivial_read(
@@ -436,9 +443,15 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
         # simply found no matches. This follows Hermes `_interpret_exit_code`.
         annotation = _semantic_exit_annotation(cmd, exit_code)
         if annotation is not None:
-            out += f"\n[exit code: {exit_code} — {annotation}]"
+            changed = f"{out}\n[exit code: {exit_code} — {annotation}]"
+            mechanism = "semantic_exit_annotation"
         else:
-            out += f"\n[exit code: {exit_code}]"
+            changed = f"{out}\n[exit code: {exit_code}]"
+            mechanism = "exit_code_annotation"
+        out = _record_output_change(
+            out, changed, bucket="exit_annotation", mechanism=mechanism,
+            exit_code=exit_code,
+        )
     # Empty-output substitution. When the command produced no characters
     # at all (e.g. silent `mv`, `chmod`, `git add`, `touch`, `rm` on a
     # pre-existing file, sed -i with no match), the model otherwise re-
@@ -448,14 +461,38 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     # (possibly empty) error stream rather than a misleading "no output"
     # message.
     if transform_output and exit_code == 0 and out.strip() == "":
-        out = "(command produced no output)"
+        out = _record_output_change(
+            out, "(command produced no output)", bucket="empty_output_sub",
+            mechanism="empty_output_substitution",
+            exit_code=exit_code,
+        )
     if transform_output:
         if _pytest_binary_missing(out, exit_code):
-            out += _PYTEST_BINARY_MISSING_HINT
+            out = _record_output_change(
+                out, out + _PYTEST_BINARY_MISSING_HINT,
+                bucket="advice_injection",
+                mechanism="pytest_binary_missing_hint",
+                exit_code=exit_code,
+            )
         elif _pytest_path_missing(out, exit_code):
-            out += _PYTEST_PATH_MISSING_HINT
+            out = _record_output_change(
+                out, out + _PYTEST_PATH_MISSING_HINT,
+                bucket="advice_injection",
+                mechanism="pytest_path_missing_hint",
+                exit_code=exit_code,
+            )
         elif _sealed_install_failure(cmd, out, exit_code):
-            out += _SEALED_INSTALL_FAILURE_HINT
+            out = _record_output_change(
+                out, out + _SEALED_INSTALL_FAILURE_HINT,
+                bucket="advice_injection",
+                mechanism="sealed_install_failure_hint",
+                exit_code=exit_code,
+            )
         elif _python_env_missing(out, exit_code):
-            out += _PYTHON_ENV_MISSING_HINT
+            out = _record_output_change(
+                out, out + _PYTHON_ENV_MISSING_HINT,
+                bucket="advice_injection",
+                mechanism="python_env_missing_hint",
+                exit_code=exit_code,
+            )
     return ToolExecutionText(out, exit_status=exit_code)

@@ -11,6 +11,8 @@ Covers:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -23,7 +25,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
 from _config_helpers import make_config
+from llm_solver.harness import savings
 from llm_solver.harness import tools as tools_mod
+from llm_solver.harness._tool_filters import _normalize_memory_addresses
 from llm_solver.harness.loop import _filter_disabled_tools
 from llm_solver.harness.schemas import get_tool_schemas
 from llm_solver.harness.tools import run_tests
@@ -42,6 +46,14 @@ def _patch_sandbox(captured: dict, *, exit_code: int = 0,
         return (text, None, True) if timed_out else (text, exit_code, False)
 
     return patch.object(tools_mod, "_run_in_sandbox", side_effect=fake)
+
+
+def _ledger_rows(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text().splitlines()
+        if line.strip()
+    ]
 
 
 # ── Handler: gating ──────────────────────────────────────────────────────
@@ -430,6 +442,227 @@ class TestStructuredOutput:
         with _patch_sandbox({}, timed_out=True):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
         assert out == "ERROR: command timed out after 7s"
+
+
+@pytest.mark.parametrize(
+    ("cmd", "exit_code", "text", "mechanisms", "buckets"),
+    [
+        (
+            "grep missing sample.py",
+            1,
+            "",
+            ["semantic_exit_annotation"],
+            ["exit_annotation"],
+        ),
+        (
+            "touch marker",
+            0,
+            "",
+            ["empty_output_substitution"],
+            ["empty_output_sub"],
+        ),
+        (
+            "python -m pytest",
+            1,
+            "/usr/bin/python: No module named pytest",
+            ["exit_code_annotation", "pytest_binary_missing_hint"],
+            ["exit_annotation", "advice_injection"],
+        ),
+        (
+            "python -m pytest tests/missing.py",
+            4,
+            "ERROR: file or directory not found: tests/missing.py\nno tests ran",
+            ["exit_code_annotation", "pytest_path_missing_hint"],
+            ["exit_annotation", "advice_injection"],
+        ),
+        (
+            "pip install numpy",
+            1,
+            "Could not find a version that satisfies the requirement numpy",
+            ["exit_code_annotation", "sealed_install_failure_hint"],
+            ["exit_annotation", "advice_injection"],
+        ),
+        (
+            "python -c 'import numpy'",
+            1,
+            "ModuleNotFoundError: No module named 'numpy'",
+            ["exit_code_annotation", "python_env_missing_hint"],
+            ["exit_annotation", "advice_injection"],
+        ),
+    ],
+)
+def test_bash_output_injections_are_accounted(
+    tmp_path,
+    cmd,
+    exit_code,
+    text,
+    mechanisms,
+    buckets,
+):
+    ledger_path = tmp_path / "bash-savings.jsonl"
+    savings.open_ledger(ledger_path)
+    try:
+        with _patch_sandbox({}, exit_code=exit_code, text=text):
+            output = tools_mod.bash(
+                cmd,
+                cwd=str(tmp_path),
+                timeout=5,
+                sandbox=False,
+                bwrap_bin="/nonexistent",
+                transform_output=True,
+            )
+    finally:
+        savings.close_ledger()
+
+    rows = _ledger_rows(ledger_path)
+    assert [row["mechanism"] for row in rows] == mechanisms
+    assert [row["bucket"] for row in rows] == buckets
+    assert rows[0]["input_sha256"] == hashlib.sha256(text.encode()).hexdigest()
+    assert rows[-1]["output_sha256"] == hashlib.sha256(
+        str(output).encode()
+    ).hexdigest()
+    for left, right in zip(rows, rows[1:]):
+        assert left["output_sha256"] == right["input_sha256"]
+
+
+def test_bash_disabled_output_cleanup_emits_no_injection_or_event(tmp_path):
+    ledger_path = tmp_path / "control-savings.jsonl"
+    savings.open_ledger(ledger_path)
+    try:
+        with _patch_sandbox(
+            {},
+            exit_code=1,
+            text="ModuleNotFoundError: No module named 'numpy'",
+        ):
+            output = tools_mod.bash(
+                "python -c 'import numpy'",
+                cwd=str(tmp_path),
+                timeout=5,
+                sandbox=False,
+                bwrap_bin="/nonexistent",
+                transform_output=False,
+            )
+    finally:
+        savings.close_ledger()
+
+    assert "[HARNESS:" not in output
+    assert "[exit code:" not in output
+    assert _ledger_rows(ledger_path) == []
+
+
+def test_memory_addresses_use_stable_per_output_identities(tmp_path):
+    raw = (
+        "first=0xABCDEF12 repeat=0xabcdef12 "
+        "second=0x765c77f78160 literal=0x12345"
+    )
+    ledger_path = tmp_path / "address-savings.jsonl"
+    savings.open_ledger(ledger_path)
+    try:
+        output = _normalize_memory_addresses(raw)
+    finally:
+        savings.close_ledger()
+
+    assert output == (
+        "first=0xADDR1 repeat=0xADDR1 "
+        "second=0xADDR2 literal=0x12345"
+    )
+    rows = _ledger_rows(ledger_path)
+    assert len(rows) == 1
+    assert rows[0]["bucket"] == "tool_output_normalize"
+    assert rows[0]["mechanism"] == "memory_address_normalization"
+    assert rows[0]["change_count"] == 3
+
+
+def test_memory_address_normalization_is_always_on_for_process_output(tmp_path):
+    outputs = []
+    ledger_path = tmp_path / "process-address-savings.jsonl"
+    savings.open_ledger(ledger_path)
+    try:
+        for _ in range(2):
+            output, exit_code, timed_out = tools_mod._run_in_sandbox(
+                "python3 -c 'print(object())'",
+                cwd=str(tmp_path),
+                timeout=5,
+                sandbox=False,
+                bwrap_bin="/nonexistent",
+                normalize_output=False,
+            )
+            assert exit_code == 0
+            assert timed_out is False
+            outputs.append(output)
+    finally:
+        savings.close_ledger()
+
+    assert outputs == ["<object object at 0xADDR1>\n"] * 2
+    rows = _ledger_rows(ledger_path)
+    assert len(rows) == 2
+    assert all(
+        row["mechanism"] == "memory_address_normalization"
+        for row in rows
+    )
+
+
+def test_memory_address_normalization_does_not_change_read_content(tmp_path):
+    source = tmp_path / "constants.py"
+    source.write_text("MASK = 0x12345678\n")
+
+    output = tools_mod.read(
+        "constants.py",
+        cwd=str(tmp_path),
+        cfg=make_config(),
+    )
+
+    assert "0x12345678" in output
+
+
+@pytest.mark.parametrize(
+    ("structured", "exit_code", "text", "last_failed", "mechanism"),
+    [
+        (False, 1, "/usr/bin/python: No module named pytest", False,
+         "pytest_binary_missing_hint"),
+        (False, 4,
+         "ERROR: file or directory not found: tests/missing.py\nno tests ran",
+         False, "pytest_path_missing_hint"),
+        (True, 1, "/usr/bin/python: No module named pytest", False,
+         "pytest_binary_missing_hint"),
+        (True, 4,
+         "ERROR: file or directory not found: tests/missing.py\nno tests ran",
+         False, "pytest_path_missing_hint"),
+        (True, 5, "no tests ran in 0.00s", True,
+         "pytest_lf_cache_empty_hint"),
+    ],
+)
+def test_run_tests_advice_is_accounted(
+    tmp_path,
+    structured,
+    exit_code,
+    text,
+    last_failed,
+    mechanism,
+):
+    cfg = make_config(
+        tools_run_tests_enabled=True,
+        tools_run_tests_structured_output=structured,
+    )
+    ledger_path = tmp_path / "run-tests-savings.jsonl"
+    savings.open_ledger(ledger_path)
+    try:
+        with _patch_sandbox({}, exit_code=exit_code, text=text):
+            output = run_tests(
+                last_failed=last_failed,
+                cwd=str(tmp_path),
+                cfg=cfg,
+            )
+    finally:
+        savings.close_ledger()
+
+    rows = _ledger_rows(ledger_path)
+    assert len(rows) == 1
+    assert rows[0]["bucket"] == "advice_injection"
+    assert rows[0]["mechanism"] == mechanism
+    assert rows[0]["ctx"]["tool_name"] == "run_tests"
+    assert rows[0]["input_sha256"] != rows[0]["output_sha256"]
+    assert "[HARNESS:" in output
 
 
 # ── Schema filtering ─────────────────────────────────────────────────────
