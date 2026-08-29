@@ -4,7 +4,11 @@ import subprocess
 
 from scripts.llm_solver.bash_quirks._forbidden import load_forbidden_rules
 from scripts.llm_solver.bash_quirks._rewrites import load_universal_rewrites
-from scripts.llm_solver.bash_quirks.transforms import OutputControl, rewrite_command
+from scripts.llm_solver.bash_quirks.transforms import (
+    OutputControl,
+    condense_output,
+    rewrite_command,
+)
 
 UR = load_universal_rewrites()
 FR = load_forbidden_rules()
@@ -95,6 +99,20 @@ def test_task_flag_targets_test_fragment_only():
     )
     command = 'echo "pytest tests && echo done"'
     assert rewrite_command(command, oc) == command
+
+
+def test_condensation_does_not_claim_the_suite_passed():
+    oc = OutputControl(
+        failure_only_flag="",
+        passed_marker="PASSED",
+        failed_marker="FAILED",
+        verification_patterns=(re.compile(r"^pytest\b"),),
+    )
+    output = "PASSED tests/test_ok.py::test_ok\nFAILED tests/test_bad.py::test_bad\n"
+    condensed = condense_output(output, "pytest tests", oc)
+    assert "[1 passing-result lines omitted]" in condensed
+    assert "tests passed" not in condensed
+    assert "FAILED tests/test_bad.py::test_bad" in condensed
 
 
 def test_rule_log_records_kind():

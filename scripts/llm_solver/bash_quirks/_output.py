@@ -398,11 +398,13 @@ def _is_test_command(cmd: str, oc: OutputControl) -> bool:
 
 
 def condense_output(output: str, cmd: str, oc: OutputControl | None) -> str:
-    """Strip passing-test lines from test command output.
+    """Strip passing-result lines from test command output.
 
-    Replaces lines containing passed_marker (but not failed_marker) with
-    a single count summary. No-op when oc is None, markers are empty,
-    or the command isn't a test invocation.
+    Replaces lines containing passed_marker (but not failed_marker) with a
+    neutral omission count. It does not claim that the command or suite
+    passed; the exit status and retained failure lines own that verdict.
+    No-op when oc is None, markers are empty, or the command isn't a test
+    invocation.
     """
     if not oc or not oc.passed_marker:
         return output
@@ -418,7 +420,10 @@ def condense_output(output: str, cmd: str, oc: OutputControl | None) -> str:
             continue
         kept.append(line)
     if passed_count:
-        kept.insert(max(len(kept) - 1, 0), f"[{passed_count} tests passed]")
+        kept.insert(
+            max(len(kept) - 1, 0),
+            f"[{passed_count} passing-result lines omitted]",
+        )
     result = "\n".join(kept)
     if passed_count:
         # Record the exact before/after text, not only an inferred saving.
