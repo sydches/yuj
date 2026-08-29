@@ -104,6 +104,11 @@ def _detect_files_from_dict(runner: str, run_tests: dict) -> tuple[str, ...]:
             f"{_run_tests_path(runner)} [run_tests].detect_files "
             "must be a list of strings"
         )
+    if not detect_files or any(not marker.strip() for marker in detect_files):
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].detect_files "
+            "must contain non-empty marker paths"
+        )
     return tuple(detect_files)
 
 
@@ -118,7 +123,7 @@ def _descriptor_from_dict(runner: str, cfg: dict) -> RunnerDescriptor | None:
             f"{_run_tests_path(runner)} has name={name!r}; expected {runner!r}"
         )
     priority = run_tests.get("detection_priority")
-    if not isinstance(priority, int):
+    if not isinstance(priority, int) or isinstance(priority, bool):
         raise ValueError(
             f"{_run_tests_path(runner)} [run_tests] missing integer "
             "detection_priority"
@@ -148,6 +153,16 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
                 f"{_run_tests_path(runner)} [run_tests].{key} must be a string"
             )
         values[key] = value
+
+    if not values["base_cmd"].strip():
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].base_cmd must be non-empty"
+        )
+    if values["arg_path_style"] not in {"ignored", "positional"}:
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].arg_path_style "
+            "must be 'ignored' or 'positional'"
+        )
 
     status_map = _status_map_from_dict(runner, run_tests)
     status_default = run_tests.get("status_default", "")

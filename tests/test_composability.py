@@ -28,6 +28,10 @@ from scripts.llm_solver.bash_quirks import (
     parse_structured,
     render_digest,
 )
+from scripts.llm_solver.language_quirks import (
+    _descriptor_from_dict,
+    _run_tests_quirk_from_dict,
+)
 from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
 
 
@@ -298,6 +302,40 @@ def test_language_quirks_drop_in_output_parser(tmp_path: Path):
         "tests/a.py::test_x": "PASSED",
         "tests/a.py::test_y": "FAILED",
     }
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"base_cmd": ""}, "base_cmd must be non-empty"),
+        ({"detect_files": []}, "detect_files must contain"),
+        ({"arg_path_style": "flag"}, "arg_path_style"),
+    ],
+)
+def test_run_tests_descriptor_rejects_unusable_metadata(override, message):
+    run_tests = {
+        "base_cmd": "fixture-runner test",
+        "detect_files": ["fixture.toml"],
+        "arg_path_style": "positional",
+    }
+    run_tests.update(override)
+
+    with pytest.raises(ValueError, match=message):
+        _run_tests_quirk_from_dict("fixture", run_tests)
+
+
+def test_runner_descriptor_rejects_boolean_detection_priority():
+    with pytest.raises(ValueError, match="integer detection_priority"):
+        _descriptor_from_dict(
+            "fixture",
+            {
+                "name": "fixture",
+                "run_tests": {
+                    "detection_priority": True,
+                    "detect_files": ["fixture.toml"],
+                },
+            },
+        )
 
 
 def test_language_quirks_render_digest_on_synthetic_output(tmp_path: Path):
