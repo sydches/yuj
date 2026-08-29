@@ -357,6 +357,11 @@ def test_exhausted_attempts_feed_existing_metrics_and_length_rollover(
     assert not ({"content", "messages", "request"} & set(continuation))
     end = next(event for event in events if event["event"] == "session_end")
     assert end["finish_reason"] == "length"
+    exit_event = next(
+        event for event in events if event["event"] == "session_exit"
+    )
+    assert exit_event["kind"] == "truncated"
+    assert exit_event["reason"] == "length"
     state = json.loads((tmp_path / ".solver" / "state.json").read_text())
     assert "length_continue" not in json.dumps(state)
 

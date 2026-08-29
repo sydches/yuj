@@ -91,7 +91,12 @@ def test_ordering_barrier_runs_before_durable_append(tmp_path):
 
 @pytest.mark.parametrize(
     ("kind", "reason"),
-    [("signal", "SIGTERM"), ("signal", "SIGINT"), ("fatal", "RuntimeError: boom")],
+    [
+        ("signal", "SIGTERM"),
+        ("signal", "SIGINT"),
+        ("fatal", "RuntimeError: boom"),
+        ("truncated", "length"),
+    ],
 )
 def test_session_exit_contains_pending_call(tmp_path, kind, reason):
     trace = tmp_path / ".trace.jsonl"
@@ -100,7 +105,7 @@ def test_session_exit_contains_pending_call(tmp_path, kind, reason):
     if kind == "fatal":
         recorder.record_fatal_exception(RuntimeError("boom"))
     else:
-        recorder.record_exit(reason=reason, kind="signal")
+        recorder.record_exit(reason=reason, kind=kind)
 
     exit_event = _rows(trace)[-1]
     assert exit_event["event"] == "session_exit"

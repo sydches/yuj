@@ -23,10 +23,10 @@ import orjson
 from .trace_schema import TRACE_SCHEMA_VERSION
 
 InterruptedTurnMode = Literal["off", "mechanical"]
-ExitKind = Literal["normal", "signal", "fatal", "process_exit"]
+ExitKind = Literal["normal", "truncated", "signal", "fatal", "process_exit"]
 
 INTERRUPTED_TURN_MODES = frozenset({"off", "mechanical"})
-EXIT_KINDS = frozenset({"normal", "signal", "fatal", "process_exit"})
+EXIT_KINDS = frozenset({"normal", "truncated", "signal", "fatal", "process_exit"})
 
 
 def _utc_now() -> datetime:

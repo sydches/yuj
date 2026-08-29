@@ -1593,9 +1593,14 @@ class Session:
                     diagnostics.record_fatal_exception(exc)
                 raise
             if diagnostics is not None:
-                diagnostics.record_exit(
-                    reason="session scope completed", kind="normal"
-                )
+                if result.finish_reason in {"length", "context_full"}:
+                    diagnostics.record_exit(
+                        reason=result.finish_reason, kind="truncated"
+                    )
+                else:
+                    diagnostics.record_exit(
+                        reason="session scope completed", kind="normal"
+                    )
             return result
         finally:
             if diagnostics is not None:
