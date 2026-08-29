@@ -479,15 +479,30 @@ def _strip_runner_timing(output: str) -> str:
 
 
 def _strip_cwd_absolute(output: str, cwd: str) -> str:
-    """Rewrite cwd absolute path to ``.`` in bash output.
+    """Rewrite lexical and resolved cwd paths to ``.`` in tool output.
 
     ``pwd`` and Python ``__file__`` resolve to the task's absolute path
     which embeds the run_dir timestamp. Under temp=0 the timestamp
     bytes flip the model's sampled next token on subsequent turns.
     Collapsing to ``.`` makes output byte-identical across runs.
     """
-    change_count = output.count(cwd) if cwd else 0
-    result = output.replace(cwd, ".") if cwd else output
+    roots = sorted(
+        {
+            root
+            for root in (
+                cwd,
+                str(Path(cwd).resolve(strict=False)) if cwd else "",
+            )
+            if root
+        },
+        key=len,
+        reverse=True,
+    )
+    result = output
+    change_count = 0
+    for root in roots:
+        change_count += result.count(root)
+        result = result.replace(root, ".")
     return _record_text_change(
         output, result,
         bucket="tool_output_normalize",

@@ -117,13 +117,11 @@ def inject_resume_messages(
     from .resume import parse_resume_transcript, build_resumed_messages
     prior_msgs, last_assistant = parse_resume_transcript(resume_path)
     if recovery is not None and recovery.recovered and initial is None:
-        if recovery.pending_tool_calls:
-            raise RuntimeError(
-                "transparent resume cannot cross an interrupted tool call; "
-                "use an explicit recovery message"
-            )
+        # The last assistant response owns any interrupted tool call. Drop
+        # that incomplete response and restart from the balanced request
+        # boundary recorded in prior_msgs.
         resumed_msgs = build_resumed_messages(
-            prior_msgs, last_assistant, None
+            prior_msgs, None, None
         )
     elif recovery is not None and recovery.recovered:
         from .interrupted_turn import build_interrupted_resume_messages

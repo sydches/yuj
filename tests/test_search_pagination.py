@@ -105,6 +105,20 @@ class TestGlobPagination:
         assert "&amp;" in result
         assert "&quot;" in result
 
+    def test_symlinked_workspace_returns_relative_paths(self, tmp_path):
+        real_root = tmp_path / "real"
+        real_root.mkdir()
+        (real_root / "a.py").write_text("")
+        linked_root = tmp_path / "txscreen_a00_repo"
+        linked_root.symlink_to(real_root, target_is_directory=True)
+
+        result = glob_files("*.py", cwd=str(linked_root), cfg=make_config())
+
+        assert "ERROR" not in result
+        assert "a.py" in result
+        assert str(real_root) not in result
+        assert str(linked_root) not in result
+
 
 class TestGrepPagination:
 
@@ -158,6 +172,19 @@ class TestGrepPagination:
             "./a.py:1:needle",
             "./z.py:1:needle",
         ]
+
+    def test_symlinked_workspace_hides_resolved_host_path(self, tmp_path):
+        real_root = tmp_path / "real"
+        real_root.mkdir()
+        (real_root / "a.py").write_text("needle\n")
+        linked_root = tmp_path / "txscreen_a00_repo"
+        linked_root.symlink_to(real_root, target_is_directory=True)
+
+        result = grep_files("needle", cwd=str(linked_root), cfg=make_config())
+
+        assert "./a.py:1:needle" in result
+        assert str(real_root) not in result
+        assert str(linked_root) not in result
 
 
 class TestDispatchSurface:

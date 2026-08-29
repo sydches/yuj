@@ -126,6 +126,7 @@ def grep_files(
         if result.returncode >= 2:
             stderr = (result.stderr or "").strip().splitlines()
             first = stderr[0] if stderr else f"exit code {result.returncode}"
+            first = _strip_cwd_absolute(first, cwd)
             return f"ERROR: grep failed: {first}"
         raw = result.stdout
         # Stable ordering and arm-neutral paths are harness invariants. They

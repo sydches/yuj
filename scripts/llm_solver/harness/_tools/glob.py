@@ -1,5 +1,6 @@
 """glob tool: find files matching a glob pattern, optionally paginated."""
 from ...config import Config
+from .._tool_filters import _strip_cwd_absolute
 from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _paginated_envelope, _resolve
 
@@ -21,6 +22,7 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
             "use the `path` argument for the search scope"
         )
     try:
+        root = _resolve(cwd, ".")
         base = _resolve(cwd, path)
         policy = active_ignore_policy(cwd)
         if policy is not None and policy.is_model_hidden(
@@ -32,7 +34,7 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         # byte-identical worktree copies.
         matches = sorted(base.glob(pattern))
         rel = [
-            str(m.relative_to(cwd))
+            str(m.relative_to(root))
             for m in matches
             if m.is_file()
             and (
@@ -60,4 +62,4 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
             before_text="\n".join(rel),
         )
     except Exception as e:
-        return f"ERROR: {e}"
+        return f"ERROR: {_strip_cwd_absolute(str(e), cwd)}"

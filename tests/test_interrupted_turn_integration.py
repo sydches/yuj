@@ -323,6 +323,51 @@ def test_transparent_resume_drops_interrupted_generation_without_message(
     assert messages[-1]["role"] == "tool"
 
 
+def test_transparent_resume_drops_interrupted_tool_call(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    prior = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+    ]
+    assistant = _assistant_message(
+        "Edit it.",
+        [ToolCall(id="call-cut", name="edit", arguments={"path": "a.py"})],
+    )
+    transcript.write_text(
+        "=== turn 001 input ===\n"
+        + json.dumps({"messages": prior})
+        + "\n=== turn 001 output ===\n"
+        + json.dumps({"choices": [{"message": assistant}]})
+        + "\n"
+    )
+    pending = PendingToolCall(
+        tool_call_id="call-cut",
+        tool_name="edit",
+        session_number=1,
+        turn_number=1,
+        started_at="2026-08-29T12:00:00Z",
+    )
+    recovery = RecoveryPlan(
+        recovered=True,
+        pending_tool_calls=(pending,),
+        resume_prompt_line="unused in transparent mode",
+    )
+    context = MagicMock()
+    context.replace_all_messages.return_value = True
+    session = MagicMock(context=context)
+
+    inject_resume_messages(
+        session,
+        transcript,
+        None,
+        recovery=recovery,
+    )
+
+    assert context.replace_all_messages.call_args.args[0] == prior
+
+
 def test_interrupted_diagnostic_events_are_registered() -> None:
     assert {
         "tool_call_id", "tool_name", "started_at", "args_summary", "intent",
