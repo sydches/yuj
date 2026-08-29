@@ -11,10 +11,10 @@ Transcript format (written by LlamaClient._write_transcript):
 
 Each request payload contains a `messages` field with the entire chat history
 at that point. To resume, we take the LAST input's messages list and append the
-LAST output's assistant message — that's the conversation state at the moment
-the prior session ended.
+LAST output's assistant message when that response completed.
 
-The caller then adds whatever new user message they want as the next turn.
+An explicit handoff adds a new user message. A transparent resume instead
+requires a balanced request boundary and adds no message.
 """
 
 from __future__ import annotations
@@ -130,10 +130,8 @@ def parse_resume_transcript(path: Path) -> Tuple[list[dict], dict | None]:
     assistant message returned in the last HTTP response (or None if the last
     response was an error / truncated).
 
-    To resume the conversation, the caller should:
-        ctx.replace_all_messages(prior_messages + [last_assistant])
-        ctx.add_user(<new prompt>)
-    Then proceed with Session.run() as normal.
+    The caller can either restore ``prior_messages`` unchanged at a balanced
+    request boundary or append ``last_assistant`` and an explicit handoff.
     """
     text = Path(path).read_text()
     headers = list(_HEADER_RE.finditer(text))
@@ -187,12 +185,18 @@ def parse_resume_transcript(path: Path) -> Tuple[list[dict], dict | None]:
 def build_resumed_messages(
     prior_messages: list[dict],
     last_assistant: dict | None,
-    new_user_message: str,
+    new_user_message: str | None,
 ) -> list[dict]:
-    """Assemble a clean message list for resume = continue the conversation.
+    """Assemble a message list for transparent resume or explicit handoff.
 
-    Returns: prior_messages + [last_assistant] + [synthesized tool_results
-    for any unanswered tool_calls in last_assistant] + [new user message].
+    ``new_user_message=None`` requests transparent resume. The saved request
+    must already end at a balanced boundary, and the returned list is exactly
+    ``prior_messages``. A missing or malformed final response therefore drops
+    the incomplete assistant turn and regenerates it from the last request.
+
+    A string requests the historical explicit-handoff behavior:
+    prior_messages + [last_assistant] + [synthesized tool_results for any
+    unanswered tool_calls in last_assistant] + [new user message].
 
     The synthesized tool_results are required by the OpenAI API: an
     assistant message with `tool_calls` MUST be followed by a tool message
@@ -204,6 +208,49 @@ def build_resumed_messages(
     so the conversation is well-formed for resumption.
     """
     out = list(prior_messages)
+
+    if new_user_message is None:
+        if last_assistant is not None:
+            raise ValueError(
+                "transparent resume requires a transcript ending before the "
+                "next assistant response completed"
+            )
+        pending: set[str] = set()
+        for message in out:
+            role = message.get("role")
+            if role == "assistant":
+                if pending:
+                    raise ValueError(
+                        "transparent resume crosses an unanswered tool call"
+                    )
+                for tool_call in message.get("tool_calls") or []:
+                    call_id = str(tool_call.get("id") or "")
+                    if not call_id or call_id in pending:
+                        raise ValueError(
+                            "transparent resume has an invalid tool-call id"
+                        )
+                    pending.add(call_id)
+            elif role == "tool":
+                call_id = str(message.get("tool_call_id") or "")
+                if call_id not in pending:
+                    raise ValueError(
+                        "transparent resume has an unmatched tool result"
+                    )
+                pending.remove(call_id)
+            elif pending:
+                raise ValueError(
+                    "transparent resume crosses an unanswered tool call"
+                )
+        if pending:
+            raise ValueError(
+                "transparent resume ends before every tool result"
+            )
+        return out
+
+    if not new_user_message.strip():
+        raise ValueError(
+            "explicit resume message is empty; use transparent resume instead"
+        )
 
     if last_assistant is not None:
         out.append(last_assistant)

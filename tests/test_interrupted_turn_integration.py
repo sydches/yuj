@@ -268,6 +268,61 @@ def test_resume_injection_uses_interrupted_unknown_outcome_message(
     assert messages[-1]["content"].endswith("Continue the task.")
 
 
+def test_transparent_resume_drops_interrupted_generation_without_message(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    prior = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {
+            "role": "assistant",
+            "content": "Read it.",
+            "tool_calls": [
+                {
+                    "id": "call-read",
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "arguments": '{"path":"a.py"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-read",
+            "content": "source",
+        },
+    ]
+    transcript.write_text(
+        "=== turn 002 input ===\n"
+        + json.dumps({"messages": prior})
+        + "\n"
+    )
+    recovery = RecoveryPlan(
+        recovered=True,
+        pending_tool_calls=(),
+        resume_prompt_line=(
+            "The previous session ended during a non-terminal turn."
+        ),
+    )
+    context = MagicMock()
+    context.replace_all_messages.return_value = True
+    session = MagicMock(context=context)
+
+    inject_resume_messages(
+        session,
+        transcript,
+        None,
+        recovery=recovery,
+    )
+
+    messages = context.replace_all_messages.call_args.args[0]
+    assert messages == prior
+    assert messages[-1]["role"] == "tool"
+
+
 def test_interrupted_diagnostic_events_are_registered() -> None:
     assert {
         "tool_call_id", "tool_name", "started_at", "args_summary", "intent",

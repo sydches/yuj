@@ -77,6 +77,7 @@ def solve_task(
     run_metadata: dict | None = None,
     artifacts_dir: Path | None = None,
     resume_from_artifacts: bool = False,
+    transparent_resume: bool = False,
     worktree_info=None,
     startup_guard: Callable[[Path, Config, Path | None], None] | None = None,
     tool_allowlist: frozenset[str] | None = None,
@@ -95,6 +96,8 @@ def solve_task(
     work_dir = Path(repo_dir)
     if startup_guard is not None:
         startup_guard(work_dir, cfg, system_prompt_file)
+    if transparent_resume and resume_path is None:
+        raise ValueError("transparent resume requires resume_path")
 
     # Late-bind names that tests patch on the public ``loop`` module.
     # See module docstring; same pattern as run_step.py.
@@ -652,6 +655,17 @@ def solve_task(
                 active_tools=list(
                     session_start_tool_surface.default_active_names
                 ),
+                resume_mode=(
+                    "transparent"
+                    if session_num == start_session_num and transparent_resume
+                    else "message"
+                    if (
+                        session_num > start_session_num
+                        or resume_from_artifacts
+                        or resume_path is not None
+                    )
+                    else "fresh"
+                ),
                 **repo_map.trace_fields(),
                 **prompt_metadata.trace_fields(),
                 stream_rule_files=[dict(record) for record in stream_rule_files],
@@ -746,7 +760,7 @@ def solve_task(
                 inject_resume_messages(
                     session,
                     resume_path,
-                    session_initial,
+                    None if transparent_resume else session_initial,
                     recovery=recovery_plan,
                 )
             # Emit resolved thresholds so trace replay across config changes

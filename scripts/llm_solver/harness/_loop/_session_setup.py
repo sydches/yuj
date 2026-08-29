@@ -99,7 +99,7 @@ def build_context_manager(
 def inject_resume_messages(
     session,
     resume_path: Path,
-    initial: str,
+    initial: str | None,
     *,
     recovery: "RecoveryPlan | None" = None,
 ) -> None:
@@ -107,17 +107,25 @@ def inject_resume_messages(
 
     Caller invokes only on session 1 when ``resume_path`` is set. The
     function parses the prior verbatim transcript and replaces the
-    freshly-built [system, initial_user] context with the full prior
-    conversation plus a synthesized tool-result for any unanswered
-    tool_calls plus the new user message (the caller passed the
-    resume message as ``initial``).
+    freshly-built [system, initial_user] context. ``initial=None`` restores a
+    balanced boundary without adding a user message. A string keeps the
+    explicit handoff path, including recovery text for an interrupted tool.
 
     Raises RuntimeError if the context manager does not support
     ``replace_all_messages``.
     """
     from .resume import parse_resume_transcript, build_resumed_messages
     prior_msgs, last_assistant = parse_resume_transcript(resume_path)
-    if recovery is not None and recovery.recovered:
+    if recovery is not None and recovery.recovered and initial is None:
+        if recovery.pending_tool_calls:
+            raise RuntimeError(
+                "transparent resume cannot cross an interrupted tool call; "
+                "use an explicit recovery message"
+            )
+        resumed_msgs = build_resumed_messages(
+            prior_msgs, last_assistant, None
+        )
+    elif recovery is not None and recovery.recovered:
         from .interrupted_turn import build_interrupted_resume_messages
 
         transcript_messages = list(prior_msgs)
@@ -139,7 +147,8 @@ def inject_resume_messages(
             f"replace_all_messages(). Use a different --context."
         )
     log.info(
-        "resume: loaded %d prior messages from %s, appended %s tool-result(s) + new user message",
+        "resume: loaded %d prior messages from %s, appended %s tool-result(s), mode=%s",
         len(prior_msgs), resume_path,
         len((last_assistant or {}).get("tool_calls") or []),
+        "transparent" if initial is None else "message",
     )

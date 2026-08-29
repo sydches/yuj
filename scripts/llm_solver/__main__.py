@@ -166,9 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--savings-dir", type=Path, default=None,
                         help="single-task mode: save context-change records here")
     parser.add_argument("--resume", type=Path, default=None,
-                        help="build the starting conversation from this transcript")
+                        help="resume this transcript without adding a message")
     parser.add_argument("--resume-message-file", type=Path, default=None,
-                        help="with --resume, send this file as the next user message")
+                        help="with --resume, add this explicit user message")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="write run metadata, print settings and tasks, then exit without a task run",
@@ -201,8 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--prompt-file/--prompt-text require --task")
     if args.resume is not None and args.task is None:
         parser.error("--resume requires --task (single-task mode)")
-    if args.resume is not None and args.resume_message_file is None:
-        parser.error("--resume requires --resume-message-file")
+    if args.resume_message_file is not None and args.resume is None:
+        parser.error("--resume-message-file requires --resume")
 
     # Logging — stderr + file in run_dir
     level = logging.DEBUG if args.verbose else logging.INFO
@@ -527,13 +527,17 @@ def main(argv: list[str] | None = None) -> int:
             initial_prompt = args.prompt_file.read_text()
         elif args.prompt_text is not None:
             initial_prompt = args.prompt_text
-        # Resume mode: --resume points at a prior saved transcript;
-        # --resume-message-file is the next user message to send.
-        # The resume message becomes initial_prompt; solve_task will
-        # detect resume_path and inject the prior conversation into the
-        # session's context before run() is called.
+        # Resume mode: --resume alone restores a balanced request boundary
+        # without adding a message. --resume-message-file selects the older
+        # explicit-handoff path and supplies its next user message.
         if args.resume is not None:
-            initial_prompt = args.resume_message_file.read_text()
+            if args.resume_message_file is not None:
+                initial_prompt = args.resume_message_file.read_text()
+                if not initial_prompt.strip():
+                    parser.error(
+                        "--resume-message-file is empty; omit it for "
+                        "transparent resume"
+                    )
         worktree_info = _prepare_task_worktree(
             cfg,
             run_dir=run_dir,
@@ -555,6 +559,9 @@ def main(argv: list[str] | None = None) -> int:
             transcript_dir=args.transcript_dir,
             savings_dir=args.savings_dir,
             resume_path=args.resume,
+            transparent_resume=(
+                args.resume is not None and args.resume_message_file is None
+            ),
             run_metadata=run_metadata,
             worktree_info=worktree_info,
         )

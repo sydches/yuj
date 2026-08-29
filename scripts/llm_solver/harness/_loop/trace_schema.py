@@ -54,7 +54,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instructions_truncated", "prompt_import_tree",
             "ignore_file_names", "stream_rule_files",
             "tool_lazy_loading_enabled", "tool_active_limit", "registered_tools",
-            "active_tools",
+            "active_tools", "resume_mode",
             "loaded_skills",
             "sandbox_selected", "sandbox_resolved", "sandbox_engaged",
             "sandbox_explicit_unsandboxed",

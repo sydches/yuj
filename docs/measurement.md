@@ -166,22 +166,25 @@ and `RUN_DIR/session.json`.
 
 | Option | What it does |
 | --- | --- |
-| `--resume PATH` | Build the starting conversation from this saved transcript. Add `--task`. |
-| `--resume-message-file PATH` | Send this file as the next user message. Add `--resume`. |
+| `--resume PATH` | Replay the last balanced request from this transcript without adding a message. Add `--task`. |
+| `--resume-message-file PATH` | Add this file as a deliberate next user message. Add `--resume`. |
 
-`--resume` requires both `--task` and `--resume-message-file`.
+`--resume` requires `--task`. By itself, it restores the exact saved message
+list and lets the model generate the next assistant turn. If the last
+assistant turn ended partway through generation, Yuj drops that incomplete
+turn and generates it again from the last saved request.
 
-The resume loader reads the messages from the last saved request. It then adds
-the last saved assistant reply when one exists. It adds placeholder tool
-results when that reply has unanswered tool calls. Finally, it adds the new
-user message.
+Use `--resume-message-file` when you want an explicit handoff or recovery
+message. In that mode, the loader adds the last saved assistant reply when one
+exists. It adds placeholder tool results for any unanswered tool calls. It
+then adds the message from the file. An empty message file is invalid.
 
 Resume does not restore task files, settings, trace rows, guard counters, or
 `.solver/state.json`. Prepare the task repository yourself before you resume.
 
-Do not combine `--resume` with `--prompt-file` or `--prompt-text`. The resume
-message replaces those prompt values. A lone `--resume-message-file` has no
-effect.
+Do not combine `--resume` with `--prompt-file` or `--prompt-text`. Transparent
+resume ignores those prompt values. An explicit resume message replaces them.
+`--resume-message-file` requires `--resume`.
 
 ## Replay options
 
