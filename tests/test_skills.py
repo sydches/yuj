@@ -587,7 +587,7 @@ def test_solve_task_catalog_and_session_start_trace_loaded_skills(
         ),
     ]
 
-    def assistant_message(content, tool_calls):
+    def assistant_message(content, tool_calls, *, replay=None):
         message = {"role": "assistant", "content": content}
         if tool_calls:
             message["tool_calls"] = [
