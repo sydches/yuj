@@ -18,6 +18,7 @@ from ._forbidden import ForbiddenRule, apply_forbidden, load_forbidden_rules
 from ._output import (
     OutputControl,
     OutputParser,
+    _find_command_span,
     _is_test_command,
     _normalize_verdict,
     _SUMMARY_TAIL_CHARS,
@@ -66,17 +67,15 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
     # Universal rewrites — always apply.
     if universal_rewrites:
         for rule in universal_rewrites:
-            if not rule.pattern.search(cmd):
+            span = _find_command_span(cmd, (rule.pattern,))
+            if span is None:
                 continue
-            if any(skip in cmd for skip in rule.skip_if):
+            start, end = span
+            fragment = cmd[start:end]
+            if any(skip in fragment for skip in rule.skip_if):
                 continue
-            # Append flag before trailing pipe chain.
             before = cmd
-            pipe_idx = cmd.find("|")
-            if pipe_idx > 0:
-                cmd = cmd[:pipe_idx].rstrip() + " " + rule.flag + " " + cmd[pipe_idx:]
-            else:
-                cmd = cmd.rstrip() + " " + rule.flag
+            cmd = cmd[:end] + " " + rule.flag + cmd[end:]
             if rule_log is not None:
                 rule_log.append({"kind": "universal", "flag": rule.flag})
             if transform_log is not None:
@@ -91,13 +90,15 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
 
     # Task-format rewrite — test runner flags.
     if oc and oc.failure_only_flag:
-        if _is_test_command(cmd, oc) and oc.failure_only_flag not in cmd:
+        span = _find_command_span(cmd, oc.verification_patterns)
+        if span is not None:
+            start, end = span
+            fragment = cmd[start:end]
+        else:
+            fragment = ""
+        if span is not None and oc.failure_only_flag not in fragment:
             before = cmd
-            pipe_idx = cmd.find("|")
-            if pipe_idx > 0:
-                cmd = cmd[:pipe_idx].rstrip() + " " + oc.failure_only_flag + " " + cmd[pipe_idx:]
-            else:
-                cmd = cmd.rstrip() + " " + oc.failure_only_flag
+            cmd = cmd[:end] + " " + oc.failure_only_flag + cmd[end:]
             if rule_log is not None:
                 rule_log.append({"kind": "test_flag",
                                  "flag": oc.failure_only_flag})

@@ -160,6 +160,130 @@ def _normalize_verdict(raw: str) -> str:
     return _VERDICT_NORMALIZE.get(key, key)
 
 
+_SHELL_OPERATORS = ("&&", "||", "|&", ";", "|", "&", "\n")
+
+
+def _shell_command_spans(command: str) -> tuple[tuple[int, int], ...]:
+    """Return non-empty top-level command-fragment spans.
+
+    Separators inside quotes, subshells, command substitutions, and braced
+    groups stay inside their surrounding fragment. Redirection forms such as
+    ``2>&1`` and ``&>file`` are not mistaken for background operators.
+    """
+    spans: list[tuple[int, int]] = []
+    quote = ""
+    escaped = False
+    paren_depth = 0
+    brace_depth = 0
+    start = 0
+    index = 0
+
+    def add_span(raw_start: int, raw_end: int) -> None:
+        while raw_start < raw_end and command[raw_start].isspace():
+            raw_start += 1
+        while raw_end > raw_start and command[raw_end - 1].isspace():
+            raw_end -= 1
+        if raw_start < raw_end:
+            spans.append((raw_start, raw_end))
+
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            paren_depth += 1
+            index += 1
+            continue
+        if char == ")" and paren_depth:
+            paren_depth -= 1
+            index += 1
+            continue
+        if char == "{":
+            brace_depth += 1
+            index += 1
+            continue
+        if char == "}" and brace_depth:
+            brace_depth -= 1
+            index += 1
+            continue
+        if paren_depth or brace_depth:
+            index += 1
+            continue
+
+        operator = ""
+        for candidate in _SHELL_OPERATORS:
+            if command.startswith(candidate, index):
+                operator = candidate
+                break
+        if operator == "&" and (
+            (index > 0 and command[index - 1] in "<>")
+            or command.startswith("&>", index)
+        ):
+            index += 1
+            continue
+        if not operator:
+            index += 1
+            continue
+        add_span(start, index)
+        index += len(operator)
+        start = index
+
+    add_span(start, len(command))
+    return tuple(spans)
+
+
+def _strip_leading_assignments(segment: str) -> str:
+    """Strip simple leading ``NAME=value`` words from a command fragment."""
+    value = segment.strip()
+    while True:
+        match = re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S+\s+", value)
+        if not match:
+            return value
+        value = value[match.end():]
+
+
+def _pattern_matches_command_head(segment: str, pattern: re.Pattern) -> bool:
+    """Return whether ``pattern`` identifies the fragment's executable."""
+    value = _strip_leading_assignments(segment)
+    match = pattern.search(value)
+    if match is None:
+        return False
+    if match.start() == 0:
+        return True
+
+    # A rule may match the final slash plus executable in an absolute or
+    # relative path. Whitespace before the match means it is in an argument.
+    prefix = value[:match.start()]
+    return not any(char.isspace() for char in prefix) and match.group(0).startswith("/")
+
+
+def _find_command_span(
+    command: str,
+    patterns: tuple[re.Pattern, ...],
+) -> tuple[int, int] | None:
+    """Find the first top-level fragment invoked by one of ``patterns``."""
+    for start, end in _shell_command_spans(command):
+        segment = command[start:end]
+        if any(_pattern_matches_command_head(segment, pattern) for pattern in patterns):
+            return start, end
+    return None
+
+
 def parse_structured(output: str, parser: OutputParser) -> dict:
     """Extract {summary: {passed, failed, errors, ...}, tests: {id: verdict}}.
 
@@ -242,21 +366,10 @@ def _segment_starts_with_test_pattern(segment: str, verification_patterns) -> bo
     the pattern matches deeper into the segment it's almost certainly
     an arg to grep/ls/find/etc.
     """
-    s = segment.strip()
-    if not s:
-        return False
-    # Skip leading env-assignments and `cd ... &&` chains.
-    while True:
-        m_env = re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S+\s+", s)
-        if m_env:
-            s = s[m_env.end():]
-            continue
-        break
-    for p in verification_patterns:
-        m = p.search(s)
-        if m and m.start() == 0:
-            return True
-    return False
+    return any(
+        _pattern_matches_command_head(segment, pattern)
+        for pattern in verification_patterns
+    )
 
 
 @functools.lru_cache(maxsize=256)
@@ -273,7 +386,7 @@ def _is_test_command(cmd: str, oc: OutputControl) -> bool:
     verification pattern. This avoids adding test flags to commands such
     as `grep pytest`.
     """
-    # Split on shell separators (|, ||, &&, ;) and check whether any
+    # Split on unquoted top-level shell separators and check whether any
     # *segment* starts with a verification pattern. Catches:
     #   pytest tests/                                 → YES
     #   python -m pytest tests/                       → YES
@@ -281,11 +394,7 @@ def _is_test_command(cmd: str, oc: OutputControl) -> bool:
     #   ls /opt/miniconda3/bin/ | grep pytest         → NO
     #   ls -la /opt/miniconda3/envs/ | grep pytest    → NO
     #   which pytest                                  → NO
-    segments = re.split(r"\|\||&&|\||;", cmd)
-    for seg in segments:
-        if _segment_starts_with_test_pattern(seg, oc.verification_patterns):
-            return True
-    return False
+    return _find_command_span(cmd, oc.verification_patterns) is not None
 
 
 def condense_output(output: str, cmd: str, oc: OutputControl | None) -> str:
