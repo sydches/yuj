@@ -59,6 +59,7 @@ class RunTestsQuirk:
     # Empty string means "fall back to error_<code>" (matches the pytest
     # legacy behavior for unmapped codes).
     status_default: str = ""
+    advice: dict[str, str] = field(default_factory=dict)
     extra_fields: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def to_legacy_dict(self) -> dict:
@@ -74,6 +75,7 @@ class RunTestsQuirk:
                 "arg_last_failed": self.arg_last_failed,
                 "status_map": dict(self.status_map),
                 "status_default": self.status_default,
+                "advice": dict(self.advice),
                 "_runner": self.runner,
             }
         )
@@ -153,9 +155,11 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
         raise ValueError(
             f"{_run_tests_path(runner)} [run_tests].status_default must be a string"
         )
+    advice = _advice_from_dict(runner, run_tests)
 
     known = set(string_defaults) | {
-        "detect_files", "detection_priority", "status_map", "status_default",
+        "advice", "detect_files", "detection_priority", "status_map",
+        "status_default",
     }
     extra_fields = {key: value for key, value in run_tests.items() if key not in known}
 
@@ -169,8 +173,27 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
         arg_last_failed=values["arg_last_failed"],
         status_map=status_map,
         status_default=status_default,
+        advice=advice,
         extra_fields=extra_fields,
     )
+
+
+def _advice_from_dict(runner: str, run_tests: dict) -> dict[str, str]:
+    """Parse optional model-visible recovery advice for one runner."""
+    raw = run_tests.get("advice", {})
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].advice must be a table"
+        )
+    advice: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ValueError(
+                f"{_run_tests_path(runner)} [run_tests].advice.{key} "
+                "must be a string"
+            )
+        advice[str(key)] = value
+    return advice
 
 
 def _status_map_from_dict(runner: str, run_tests: dict) -> dict[int, str]:
@@ -261,8 +284,8 @@ def detect_runner(cwd: str | Path) -> str:
 
     Inspects ``cwd`` for each descriptor's ``[run_tests].detect_files``
     in ``detection_priority`` order. First match wins. Falls back to
-    ``"pytest"`` when nothing matches — empirically the most common
-    SWE-bench-style benchmark layout.
+    ``"pytest"`` when nothing matches because it is the most common Python
+    test runner.
     """
     cwd_path = Path(cwd)
     for descriptor in list_run_test_runner_descriptors():
@@ -279,7 +302,11 @@ def detect_runner(cwd: str | Path) -> str:
 
 def load_run_tests_quirk_object(cwd: str | Path) -> RunTestsQuirk:
     """Return command metadata for the run_tests runner detected for ``cwd``."""
-    runner = detect_runner(cwd)
+    return load_run_tests_quirk_for_runner(detect_runner(cwd))
+
+
+def load_run_tests_quirk_for_runner(runner: str) -> RunTestsQuirk:
+    """Return command metadata for one named runner descriptor."""
     cfg = _load_runner_quirk_dict(runner)
     run_tests = cfg.get("run_tests", {})
     if not isinstance(run_tests, dict):
@@ -305,5 +332,6 @@ __all__ = [
     "detect_runner",
     "list_run_test_runner_descriptors",
     "load_run_tests_quirk",
+    "load_run_tests_quirk_for_runner",
     "load_run_tests_quirk_object",
 ]

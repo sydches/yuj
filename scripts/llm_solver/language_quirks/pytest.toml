@@ -55,10 +55,9 @@ regex = '''
 # any of the detect_files; consumed by harness/tools.py:run_tests.
 [run_tests]
 detection_priority = 0
-# The conda-activate prefix matches the SWE-bench grader-of-record. Some
-# images carry profile.d/conda.sh; others only carry bin/activate, which is
-# what eval.sh sources. The guards keep this a no-op outside those images.
-env_activate_prefix = "if [ -f /opt/miniconda3/etc/profile.d/conda.sh ]; then source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed 2>/dev/null; elif [ -f /opt/miniconda3/bin/activate ]; then source /opt/miniconda3/bin/activate && conda activate testbed 2>/dev/null; fi; "
+# Use the task's current environment. A benchmark or other caller that needs
+# an exact activation command owns that setup outside the core descriptor.
+env_activate_prefix = ""
 base_cmd = "python3 -m pytest --tb=short -q --no-header"
 detect_files = ["pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "conftest.py", "tox.ini"]
 arg_path_style = "positional"      # appended after flags
@@ -77,3 +76,10 @@ arg_last_failed = "--lf"
 3 = "internal_error"
 4 = "usage_error"
 5 = "no_tests_collected"
+
+[run_tests.advice]
+python_runner_missing = "\n[HARNESS: Python or pytest could not start in the current environment. Use the project's existing Python environment or runner if available, such as a virtual environment, Conda, uv, tox, or nox, then retry. Inspect the project before creating an environment or installing packages.]"
+pytest_path_missing = "\n[HARNESS: pytest reports the test path does not exist. Either fix the path, or write the test file before running tests again.]"
+pytest_lf_cache_empty = "\n[HARNESS: last_failed=true requires a prior run to populate the lastfailed cache; pytest collected no tests because the cache is empty (no previously-failing tests on record). Run run_tests once without last_failed to populate the cache, then re-issue with last_failed=true. If you intended to verify against the full suite, drop last_failed.]"
+python_env_missing = "\n[HARNESS: this Python interpreter cannot import a required module. Check the project's dependency files and use its existing Python environment or package tool if available, such as pip, uv, Conda, Poetry, or PDM, before installing into the current interpreter.]"
+python_install_failure = "\n[HARNESS: Python package installation failed. Check the reported cause and the project's dependency files. Use the project's existing environment or package tool if available, such as pip, uv, Conda, Poetry, or PDM. If network access is unavailable, prefer installed packages or a local cache instead of repeating the same network install.]"

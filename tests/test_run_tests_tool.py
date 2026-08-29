@@ -294,26 +294,20 @@ class TestStructuredOutput:
             run_tests(path="tests/", cwd=str(tmp_path), cfg=cfg)
         assert "python3 -m pytest" in captured["cmd"]
 
-    def test_prepends_conda_activate_for_fbeval_images(self, tmp_path):
-        # Match the SWE-bench grader-of-record's activation path. Some
-        # images carry profile.d/conda.sh; others only carry bin/activate.
-        # The guards keep this a no-op outside those images.
+    def test_pytest_uses_current_task_environment(self, tmp_path):
         cfg = make_config(tools_run_tests_enabled=True)
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text="1 passed"):
             run_tests(path="tests/", cwd=str(tmp_path), cfg=cfg)
-        assert "/opt/miniconda3/etc/profile.d/conda.sh" in captured["cmd"]
-        assert "/opt/miniconda3/bin/activate" in captured["cmd"]
-        assert "conda activate testbed" in captured["cmd"]
-        # Guards make the prefix a no-op when activation hooks are absent.
-        assert "[ -f /opt/miniconda3/etc/profile.d/conda.sh ]" in captured["cmd"]
-        assert "[ -f /opt/miniconda3/bin/activate ]" in captured["cmd"]
+        assert captured["cmd"] == (
+            "python3 -m pytest --tb=short -q --no-header tests"
+        )
 
     def test_detects_cargo_repo_and_uses_cargo_test(self, tmp_path):
         # Repo carries Cargo.toml → run_tests dispatches to cargo
         # rather than pytest. Verifies the language_quirks loader picks
         # the right runner from cwd contents and that no Python-specific
-        # bits leak through (no python -m pytest, no conda activate).
+        # command leaks through.
         (tmp_path / "Cargo.toml").write_text("[package]\nname = 'foo'\n")
         cfg = make_config(tools_run_tests_enabled=True)
         captured: dict = {}
@@ -321,7 +315,6 @@ class TestStructuredOutput:
             run_tests(cwd=str(tmp_path), cfg=cfg)
         assert "cargo test" in captured["cmd"]
         assert "python -m pytest" not in captured["cmd"]
-        assert "conda activate" not in captured["cmd"]
 
     def test_detects_go_repo_and_uses_go_test(self, tmp_path):
         # Repo carries go.mod → run_tests dispatches to go test.
@@ -371,9 +364,8 @@ class TestStructuredOutput:
         assert parsed["runner"] == "go"
 
     def test_pytest_binary_missing_hint_does_not_fire_for_cargo(self, cfg, tmp_path):
-        # The pytest-only recovery hints (conda activate / testbed python)
-        # must not fire against a cargo runner's output, even if the raw
-        # text happens to resemble the trigger strings.
+        # Python recovery advice must not fire against a cargo runner's
+        # output, even if the raw text resembles a missing-command trigger.
         (tmp_path / "Cargo.toml").write_text("[package]\nname = 'foo'\n")
         with _patch_sandbox({}, exit_code=127, text="bash: cargo: command not found"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
@@ -382,32 +374,29 @@ class TestStructuredOutput:
         # 127) to "failed" — never the pytest-only hint text below.
         assert parsed["status"] == "failed"
         assert "could not start" not in parsed["body"]
-        assert "conda activate testbed" not in parsed["body"]
+        assert "existing Python environment" not in parsed["body"]
 
     def test_binary_missing_hint_fires_on_command_not_found(self, cfg, tmp_path):
-        # Sandbox with no `python` on PATH: shell returns 127 +
-        # "command not found". Harness must surface a directed hint
-        # naming the testbed activation pattern first, otherwise the
-        # model wastes turns rediscovering it.
+        # Sandbox with no `python` on PATH: shell returns 127 plus
+        # "command not found". Surface generic Python recovery advice.
         with _patch_sandbox({}, exit_code=127,
                             text="bash: line 1: python: command not found"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert "could not start" in out
-        assert "/opt/miniconda3/bin/activate" in out
-        assert "conda activate testbed" in out
-        assert "/opt/miniconda3/envs/testbed/bin/python" in out
+        assert "could not start in the current environment" in out
+        assert "existing Python environment" in out
+        assert "Conda" in out
+        assert "uv" in out
 
     def test_binary_missing_hint_fires_on_no_module_pytest(self, cfg, tmp_path):
-        # python is on PATH but doesn't have pytest installed (wrong
-        # interpreter). Same recovery path: activate testbed first,
-        # then fall back to direct testbed python if activation is absent.
+        # python is on PATH but doesn't have pytest installed. The same
+        # environment-neutral recovery advice applies.
         with _patch_sandbox({}, exit_code=1,
                             text="/usr/bin/python: No module named pytest"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert "could not start" in out
-        assert "/opt/miniconda3/bin/activate" in out
-        assert "conda activate testbed" in out
-        assert "/opt/miniconda3/envs/testbed/bin/python" in out
+        assert "could not start in the current environment" in out
+        assert "existing Python environment" in out
+        assert "Conda" in out
+        assert "uv" in out
 
     def test_path_missing_hint_still_fires(self, cfg, tmp_path):
         # Regression: path-missing detector must keep working alongside
@@ -493,7 +482,7 @@ class TestStructuredOutput:
             "pip install numpy",
             1,
             "Could not find a version that satisfies the requirement numpy",
-            ["exit_code_annotation", "sealed_install_failure_hint"],
+            ["exit_code_annotation", "python_install_failure_hint"],
             ["exit_annotation", "advice_injection"],
         ),
         (
@@ -746,7 +735,7 @@ class TestBashStillWorks:
             )
         assert out == "ERROR: command timed out after 11s"
 
-    def test_bash_hints_missing_python_module_uses_testbed_env(self, tmp_path):
+    def test_bash_missing_python_module_uses_generic_advice(self, tmp_path):
         captured: dict = {}
         with _patch_sandbox(
             captured,
@@ -758,10 +747,12 @@ class TestBashStillWorks:
                 sandbox=False, bwrap_bin="/nonexistent",
             )
         assert "cannot import a required module" in out
-        assert "/opt/miniconda3/bin/activate" in out
-        assert "conda activate testbed" in out
+        assert "project's dependency files" in out
+        assert "pip" in out
+        assert "uv" in out
+        assert "Conda" in out
 
-    def test_bash_hints_sealed_network_install_failure(self, tmp_path):
+    def test_bash_python_install_failure_uses_generic_advice(self, tmp_path):
         captured: dict = {}
         with _patch_sandbox(
             captured,
@@ -774,7 +765,10 @@ class TestBashStillWorks:
             out = tools_mod.bash(
                 "pip install numpy", cwd=str(tmp_path), timeout=5,
                 sandbox=False, bwrap_bin="/nonexistent",
-        )
-        assert "package installation failed in the sealed environment" in out
-        assert "Do not spend more turns trying network installs" in out
-        assert "conda activate testbed" in out
+            )
+        assert "Python package installation failed" in out
+        assert "project's dependency files" in out
+        assert "pip" in out
+        assert "uv" in out
+        assert "Conda" in out
+        assert "local cache" in out

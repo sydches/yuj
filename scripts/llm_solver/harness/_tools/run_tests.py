@@ -8,9 +8,7 @@ from ...language_quirks import load_run_tests_quirk_object
 from ..savings import record_text_transform
 from ._common import _resolve, _xml_attr
 from ._pytest_hints import (
-    _PYTEST_BINARY_MISSING_HINT, _PYTEST_LF_CACHE_EMPTY_HINT,
-    _PYTEST_PATH_MISSING_HINT, _PYTEST_STATUS,
-    _pytest_binary_missing, _pytest_path_missing,
+    _PYTEST_STATUS, _pytest_binary_missing, _pytest_path_missing,
 )
 
 
@@ -50,7 +48,7 @@ def run_tests(
     Bypasses :func:`bash`'s string-only contract and goes straight to
     :func:`_run_in_sandbox` so the real exit code and timeout flag
     survive into the envelope. The invocation (base command, flags, env
-    activation) comes from the ``[run_tests]`` table of whichever
+    selection) comes from the ``[run_tests]`` table of whichever
     language_quirks TOML matches ``cwd`` (pytest / cargo / go / jest /
     ctest — see ``load_run_tests_quirk_object``); the model controls
     *what* to run via ``path``, ``k``, ``last_failed``, not *how* the
@@ -84,8 +82,7 @@ def run_tests(
     # Path-traversal guard: same `_resolve` containment as read/edit/
     # write/list_definitions. An absolute or `..`-bearing path is
     # silently re-rooted at cwd so it can't escape. We pass the
-    # already-relative form down to pytest, which then runs `python -m
-    # pytest <safe_path>` with the testbed env active.
+    # already-relative form down to the selected runner.
     if path:
         try:
             safe = _resolve(cwd, path)
@@ -158,7 +155,7 @@ def run_tests(
             if _pytest_binary_missing(out, exit_code):
                 out = _record_test_advice(
                     out,
-                    _PYTEST_BINARY_MISSING_HINT,
+                    quirk.advice["python_runner_missing"],
                     mechanism="pytest_binary_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -166,7 +163,7 @@ def run_tests(
             elif _pytest_path_missing(out, exit_code):
                 out = _record_test_advice(
                     out,
-                    _PYTEST_PATH_MISSING_HINT,
+                    quirk.advice["pytest_path_missing"],
                     mechanism="pytest_path_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -209,7 +206,7 @@ def run_tests(
             if _pytest_binary_missing(body, exit_code):
                 body = _record_test_advice(
                     body,
-                    _PYTEST_BINARY_MISSING_HINT,
+                    quirk.advice["python_runner_missing"],
                     mechanism="pytest_binary_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -217,7 +214,7 @@ def run_tests(
             elif _pytest_path_missing(body, exit_code):
                 body = _record_test_advice(
                     body,
-                    _PYTEST_PATH_MISSING_HINT,
+                    quirk.advice["pytest_path_missing"],
                     mechanism="pytest_path_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -230,7 +227,7 @@ def run_tests(
             if last_failed and status == "no_tests_collected":
                 body = _record_test_advice(
                     body,
-                    _PYTEST_LF_CACHE_EMPTY_HINT,
+                    quirk.advice["pytest_lf_cache_empty"],
                     mechanism="pytest_lf_cache_empty_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,

@@ -1,4 +1,4 @@
-"""pytest exit-code semantics + hint blocks shared by bash and run_tests."""
+"""pytest exit-code semantics and output detectors."""
 import re
 
 # Pytest exit-code semantics. Source: docs.pytest.org/en/stable/reference/exit-codes.html
@@ -22,31 +22,6 @@ _PYTEST_COMMAND_NOT_FOUND_RE = re.compile(
     r"(?:^|:\s)(?:python(?:\d+(?:\.\d+)*)?|pytest):\s+"
     r"(?:command\s+)?not found\b",
     re.IGNORECASE | re.MULTILINE,
-)
-
-
-_PYTEST_PATH_MISSING_HINT = (
-    "\n[HARNESS: pytest reports the test path does not exist. "
-    "Either fix the path, or write the test file before running tests again.]"
-)
-
-_PYTEST_BINARY_MISSING_HINT = (
-    "\n[HARNESS: python -m pytest could not start. The interpreter on "
-    "PATH may not be the one with pytest installed. Try the SWE-bench "
-    "testbed activation path first, e.g. "
-    "`source /opt/miniconda3/bin/activate && conda activate testbed && "
-    "pytest ...`; if that hook is absent, try the task env directly, e.g. "
-    "`/opt/miniconda3/envs/testbed/bin/python -m pytest ...`. Then "
-    "switch back to run_tests once pytest is reachable.]"
-)
-
-_PYTEST_LF_CACHE_EMPTY_HINT = (
-    "\n[HARNESS: last_failed=true requires a prior run to populate the "
-    "lastfailed cache; pytest collected no tests because the cache is "
-    "empty (no previously-failing tests on record). Run run_tests once "
-    "without last_failed to populate the cache, then re-issue with "
-    "last_failed=true. If you intended to verify against the full "
-    "suite, drop last_failed.]"
 )
 
 

@@ -46,10 +46,8 @@ from ._tools._common import _resolve, _xml_attr
 # function-local `from ..tools import _run_in_sandbox` so the patch
 # intercepts at call time.
 from ._tools._run_in_sandbox import _run_in_sandbox
-# pytest hint constants + helpers (test_leakage_closures.py imports them)
-from ._tools._pytest_hints import (
-    _PYTEST_PATH_MISSING_HINT, _pytest_path_missing,
-)
+# pytest output detector (test_leakage_closures.py imports it)
+from ._tools._pytest_hints import _pytest_path_missing
 # Filter helpers (test_harness_pipeline_tools.py imports them via this module)
 from ._tool_filters import (
     _collapse_duplicate_lines, _collapse_similar_lines,
