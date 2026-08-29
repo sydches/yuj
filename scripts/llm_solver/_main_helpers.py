@@ -28,6 +28,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import __version__ as harness_version
 from .config import dump_config, dump_transformations, PROJECT_ROOT
 from .server import LlamaClient
 
@@ -276,6 +277,7 @@ def _build_run_metadata(
 
     meta: dict = {
         "run_metadata_schema_version": 1,
+        "harness_version": harness_version,
         "session_id": hashlib.sha256(
             f"{run_dir.resolve()}\0{started_at}".encode("utf-8")
         ).hexdigest()[:32],

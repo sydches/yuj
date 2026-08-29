@@ -40,24 +40,44 @@ def _xml_attr(s: str) -> str:
     )
 
 
-def _hint_envelope(tool: str, pattern: str, scope: str, total: int, hint: str) -> str:
-    """Return an empty `<search_result>` envelope with a hint and zero paths."""
+def _hint_envelope(
+    tool: str,
+    pattern: str,
+    scope: str,
+    total: int,
+    hint: str,
+    *,
+    lines: list[str] | None = None,
+    page: int = 1,
+    per_page: int = 25,
+) -> str:
+    """Return a bounded `<search_result>` page with a scope hint."""
+    page = max(1, page)
+    if per_page <= 0:
+        per_page = total or 1
+    start = (page - 1) * per_page
+    end = start + per_page
+    shown_lines = (lines or [])[start:end]
+    next_page = page + 1 if end < total else 0
+    body = "\n".join(shown_lines)
     return (
         f'<search_result tool="{_xml_attr(tool)}" total="{total}" '
-        f'shown="0" page="1" next_page="0" '
+        f'shown="{len(shown_lines)}" page="{page}" '
+        f'next_page="{next_page}" '
         f'pattern="{_xml_attr(pattern)}" scope="{_xml_attr(scope)}" '
-        f'hint="{_xml_attr(hint)}">\n</search_result>'
+        f'hint="{_xml_attr(hint)}">\n{body}\n</search_result>'
     )
 
 
 def apply_glob_caps(
     pattern: str, scope: str, total: int, cfg: Any,
     *, data: dict | None = None, lines: list[str] | None = None,
+    page: int = 1,
 ) -> str | None:
-    """Decide whether to refuse the glob listing.
+    """Apply a bounded, hinted page to a broad glob listing.
 
-    Returns a refusal envelope when a cap fires, or None when the listing
-    is allowed through. Caller is responsible for emitting the normal
+    Returns a guarded envelope when a cap fires, or None when the listing is
+    allowed through. Caller is responsible for emitting the normal
     paginated envelope when None is returned.
     """
     if data is None:
@@ -65,11 +85,13 @@ def apply_glob_caps(
     hints = (data.get("refusal_hints") or {})
     refuse_unscoped = bool(getattr(cfg, "tools_glob_refuse_unscoped_recursive", True))
     max_listed = int(getattr(cfg, "tools_glob_max_listed_paths", 50) or 0)
+    per_page = int(getattr(cfg, "glob_max_matches_per_page", 25) or 0)
 
     if refuse_unscoped and pattern.startswith("**/") and scope in (".", "./", ""):
         envelope = _hint_envelope(
             tool="glob", pattern=pattern, scope=scope, total=total,
             hint=hints.get("unscoped_recursive", "unscoped recursive glob"),
+            lines=lines, page=page, per_page=per_page,
         )
         _record_refusal(
             mechanism="unscoped",
@@ -81,6 +103,7 @@ def apply_glob_caps(
         envelope = _hint_envelope(
             tool="glob", pattern=pattern, scope=scope, total=total,
             hint=hints.get("too_broad", "pattern too broad"),
+            lines=lines, page=page, per_page=per_page,
         )
         _record_refusal(
             mechanism="cap",

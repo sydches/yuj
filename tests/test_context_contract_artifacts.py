@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from _config_helpers import make_config
+from llm_solver import __version__ as harness_version
 from llm_solver._shared.telemetry_paths import trace_path
 from llm_solver.harness.context_contract import build_context_contract
 from llm_solver.harness.context_strategies import (
@@ -118,6 +119,7 @@ def test_solve_task_emits_context_contract_in_metrics_and_trace(tmp_path: Path):
         solve_task(tmp_path, cfg, client, context_class=CompoundContext)
 
     metrics = json.loads((tmp_path / "metrics.json").read_text())
+    assert metrics["provenance"]["harness_version"] == harness_version
     contract = metrics["provenance"]["context_contract"]
     assert contract["mode"] == "compound"
     assert contract["section_order"][:4] == ["task", "state", "gate_blocking", "trace"]

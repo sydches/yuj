@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+from ..llm_solver import __version__ as harness_version
 from ..llm_solver.config import (
     PROJECT_ROOT,
     get_server_base_url,
@@ -1147,6 +1148,7 @@ def _write_session_metadata(
             ).hexdigest()
     meta = {
         "session_id": record.session_id,
+        "harness_version": harness_version,
         "cwd": record.cwd,
         "model": record.model,
         "provider": record.provider,

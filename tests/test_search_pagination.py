@@ -29,11 +29,16 @@ def _parse_envelope(text: str) -> dict:
 class TestGlobPagination:
 
     def test_disabled_returns_raw_lines(self, tmp_path):
+        (tmp_path / "z.py").write_text("")
         (tmp_path / "a.py").write_text("")
-        cfg = make_config(search_pagination_enabled=False)
+        cfg = make_config(
+            transformations_explicit=True,
+            output_cleanup_and_normalization=False,
+            search_pagination_enabled=False,
+        )
         result = glob_files("*.py", cwd=str(tmp_path), cfg=cfg)
         assert "<search_result" not in result
-        assert "a.py" in result
+        assert result.splitlines() == ["a.py", "z.py"]
 
     def test_envelope_on_single_match(self, tmp_path):
         (tmp_path / "a.py").write_text("")
@@ -62,6 +67,29 @@ class TestGlobPagination:
         attrs3 = _parse_envelope(page3)
         assert attrs3["shown"] == "1"
         assert attrs3["next_page"] == "0"
+
+    def test_broad_glob_returns_a_sorted_bounded_page(self, tmp_path):
+        for name in ("z.py", "a.py", "m.py"):
+            (tmp_path / name).write_text("")
+        cfg = make_config(
+            search_pagination_enabled=True,
+            glob_max_matches_per_page=2,
+            tools_glob_refuse_unscoped_recursive=True,
+        )
+
+        page1 = glob_files("**/*.py", cwd=str(tmp_path), cfg=cfg)
+        attrs1 = _parse_envelope(page1)
+        assert attrs1["total"] == "3"
+        assert attrs1["shown"] == "2"
+        assert attrs1["next_page"] == "2"
+        assert page1.splitlines()[1:3] == ["a.py", "m.py"]
+        assert 'hint="' in page1
+
+        page2 = glob_files("**/*.py", cwd=str(tmp_path), cfg=cfg, page=2)
+        attrs2 = _parse_envelope(page2)
+        assert attrs2["shown"] == "1"
+        assert attrs2["next_page"] == "0"
+        assert page2.splitlines()[1] == "z.py"
 
     def test_empty_match_envelope(self, tmp_path):
         cfg = make_config(search_pagination_enabled=True)
@@ -111,6 +139,25 @@ class TestGrepPagination:
         attrs3 = _parse_envelope(page3)
         assert attrs3["shown"] == "2"
         assert attrs3["next_page"] == "0"
+
+    def test_order_and_paths_stay_stable_when_cleanup_factor_is_off(
+        self, tmp_path,
+    ):
+        (tmp_path / "z.py").write_text("needle\n")
+        (tmp_path / "a.py").write_text("needle\n")
+        cfg = make_config(
+            transformations_explicit=True,
+            output_cleanup_and_normalization=False,
+            search_pagination_enabled=False,
+        )
+
+        result = grep_files("needle", cwd=str(tmp_path), cfg=cfg)
+
+        assert str(tmp_path) not in result
+        assert result.splitlines() == [
+            "./a.py:1:needle",
+            "./z.py:1:needle",
+        ]
 
 
 class TestDispatchSurface:

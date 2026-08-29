@@ -1,18 +1,16 @@
-# tool_quirks/glob.toml — caps and refusals applied to glob_files() results.
+# tool_quirks/glob.toml — guards applied to broad glob_files() results.
 #
 # Two rules, both data-driven and independently toggleable via knobs:
 #
 # 1. unscoped_recursive_refuse — when pattern starts with "**/" AND path is
-#    "." (whole-repo recursive), refuse the listing and return a hint
-#    envelope demanding a path scope. This catches panic globs.
+#    "." (whole-repo recursive), return a bounded page plus a hint requesting
+#    a path scope. The legacy knob name remains stable.
 #
 # 2. max_listed_paths_cap — when the resolved match total exceeds the
-#    configured ceiling, refuse the listing (return total + hint) instead
-#    of paging through thousands of paths. Pagination already exists for
-#    legitimate broad searches; this cap stops the "fishing expedition"
-#    case.
+#    configured ceiling, return a bounded page plus a hint instead of an empty
+#    result. Pagination remains available for later pages.
 #
-# The hint string the model sees on a refusal:
+# The hint string the model sees on a guarded page:
 [refusal_hints]
-unscoped_recursive = "unscoped recursive glob; provide a path scope (e.g. src/) or narrow the pattern."
-too_broad          = "pattern too broad — narrow the scope or use page=2+ for the existing per-page slice."
+unscoped_recursive = "unscoped recursive glob; showing a bounded page; provide a path scope (e.g. src/) or narrow the pattern."
+too_broad          = "pattern too broad; showing a bounded page; narrow the scope or continue with page=2+."

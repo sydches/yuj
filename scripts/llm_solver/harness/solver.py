@@ -10,6 +10,7 @@ from typing import Sequence
 
 from .._shared.checkpoints import collect_pending as _collect_pending
 from .._shared.paths import expand_user_path
+from .. import __version__ as harness_version
 from ..config import Config, dump_config
 from .prompt_imports import DEFAULT_IMPORT_MAX_DEPTH, process_imports
 
@@ -190,6 +191,7 @@ def collect_provenance(
     """
     prov: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "harness_version": harness_version,
         "model": cfg.model,
         "config": dump_config(cfg),
         "pretest_enabled": True,

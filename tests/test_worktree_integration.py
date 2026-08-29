@@ -14,6 +14,7 @@ from scripts.llm_assist.__main__ import main as assist_main
 from scripts.llm_assist.runner import create_session, run_session
 from scripts.llm_assist.store import SessionStore
 from scripts.llm_solver.__main__ import _prepare_task_worktree
+from scripts.llm_solver import __version__ as harness_version
 from scripts.llm_solver._shared.telemetry_paths import trace_path
 from scripts.llm_solver.config import load_config
 from scripts.llm_solver.harness.loop import solve_task
@@ -259,6 +260,7 @@ def test_assistant_run_persists_and_strictly_reuses_worktree(tmp_path):
     assert store.get_active_session_id(repo) == record.session_id
     assert store.get_active_session_id(Path(saved.worktree_path)) is None
     metadata = json.loads((saved.artifact_path / "session.json").read_text())
+    assert metadata["harness_version"] == harness_version
     assert metadata["worktree_path"] == saved.worktree_path
     assert metadata["worktree_branch"] == saved.worktree_branch
     assert metadata["worktree_base_commit"] == saved.worktree_base_commit

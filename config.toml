@@ -391,9 +391,9 @@ exec_cell_timeout = 30  # seconds; bounds the whole cell and all inner calls
 search_pagination_enabled = true
 grep_max_matches_per_page = 25   # lines per grep page
 glob_max_matches_per_page = 25   # paths per glob page
-# tool_quirks/glob caps — refuse panic globs (`**/*` over the whole repo).
-glob_max_listed_paths = 50           # if total > N, refuse listing with hint envelope. 0 disables.
-glob_refuse_unscoped_recursive = true # if pattern starts with `**/` AND scope is `.`, refuse.
+# tool_quirks/glob guards — bound and warn on panic globs (`**/*` at root).
+glob_max_listed_paths = 50           # if total > N, return a bounded page with a hint. 0 disables.
+glob_refuse_unscoped_recursive = true # if pattern starts with `**/` at root, add a scope hint.
 # Sink-surface preview sizes. When a bash result exceeds
 # bash_transforms_sink_threshold_chars, the harness writes the full
 # output to .tool_output/... and shows the agent head+tail slices

@@ -558,8 +558,8 @@ class Config:
     search_pagination_enabled: bool = True
     grep_max_matches_per_page: int = 25
     glob_max_matches_per_page: int = 25
-    # tool_quirks/glob caps — refuse panic globs (whole-repo `**/*` fishing
-    # expeditions). 0 disables the listing cap (pagination still applies).
+    # tool_quirks/glob guards add a scope hint to broad searches while still
+    # returning a bounded page. 0 disables the total-match guard.
     tools_glob_max_listed_paths: int = 50
     tools_glob_refuse_unscoped_recursive: bool = True
     # bash_quirks/forbidden — knob-controlled toggle for the forbidden-

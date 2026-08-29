@@ -1,6 +1,5 @@
 """glob tool: find files matching a glob pattern, optionally paginated."""
 from ...config import Config
-from .._tool_filters import output_cleanup_enabled
 from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _paginated_envelope, _resolve
 
@@ -28,9 +27,10 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
             base, is_dir=base.is_dir()
         ):
             return "No files found."
-        cleanup_enabled = cfg is None or output_cleanup_enabled(cfg)
-        raw_matches = base.glob(pattern)
-        matches = sorted(raw_matches) if cleanup_enabled else list(raw_matches)
+        # Stable ordering is part of the harness contract, not an ablated
+        # cleanup transform. Filesystem enumeration order varies across
+        # byte-identical worktree copies.
+        matches = sorted(base.glob(pattern))
         rel = [
             str(m.relative_to(cwd))
             for m in matches
@@ -44,14 +44,15 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
             if not rel:
                 return "No files found."
             return "\n".join(rel)
-        # tool_quirks gate: refuse panic globs (unscoped recursive + over-broad)
-        # before rendering the paged envelope.
+        # Tool-quirks guards keep broad searches bounded and add a hint, while
+        # still returning the requested deterministic page.
         from ...tool_quirks.transforms import apply_glob_caps
-        refusal = apply_glob_caps(
+        guarded_page = apply_glob_caps(
             pattern=pattern, scope=path, total=len(rel), cfg=cfg, lines=rel,
+            page=page,
         )
-        if refusal is not None:
-            return refusal
+        if guarded_page is not None:
+            return guarded_page
         return _paginated_envelope(
             tool="glob", pattern=pattern, scope=path,
             lines=rel, page=page,

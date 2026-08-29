@@ -4,7 +4,6 @@ import shutil
 import subprocess
 
 from ...config import Config
-from .._tool_filters import output_cleanup_enabled
 from .._tool_filters import _strip_cwd_absolute
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
 from ._common import _paginated_envelope, _resolve
@@ -128,14 +127,14 @@ def grep_files(
             stderr = (result.stderr or "").strip().splitlines()
             first = stderr[0] if stderr else f"exit code {result.returncode}"
             return f"ERROR: grep failed: {first}"
-        cleanup_enabled = cfg is None or output_cleanup_enabled(cfg)
         raw = result.stdout
-        if raw and cleanup_enabled:
+        # Stable ordering and arm-neutral paths are harness invariants. They
+        # must not disappear when the cleanup factor is ablated.
+        if raw:
             raw = _strip_cwd_absolute(raw, cwd)
         if policy is not None:
             raw = _filter_ignored_matches(raw, policy)
-        if cleanup_enabled:
-            raw = _sorted_matches(raw)
+        raw = _sorted_matches(raw)
         if cfg is None or not cfg.search_pagination_enabled:
             return raw or "No matches found."
         lines = raw.splitlines() if raw else []
