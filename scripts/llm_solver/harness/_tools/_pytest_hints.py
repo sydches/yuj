@@ -1,4 +1,5 @@
 """pytest exit-code semantics + hint blocks shared by bash and run_tests."""
+import re
 
 # Pytest exit-code semantics. Source: docs.pytest.org/en/stable/reference/exit-codes.html
 #   0 = all collected tests passed
@@ -15,6 +16,13 @@ _PYTEST_STATUS = {
     4: "usage_error",
     5: "no_tests_collected",
 }
+
+
+_PYTEST_COMMAND_NOT_FOUND_RE = re.compile(
+    r"(?:^|:\s)(?:python(?:\d+(?:\.\d+)*)?|pytest):\s+"
+    r"(?:command\s+)?not found\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 _PYTEST_PATH_MISSING_HINT = (
@@ -62,14 +70,15 @@ def _pytest_binary_missing(out: str, exit_code: int | None) -> bool:
 
     Distinct from path-missing: this fires when the shell or python
     interpreter rejects the invocation itself. Two shapes:
-      * exit 127 + ``command not found`` → no `python` on PATH
+      * exit 127 naming missing ``python`` or ``pytest`` → no test
+        runner on PATH
       * any exit + ``No module named pytest`` → wrong python (no pytest
         installed in that interpreter)
     Both indicate the canonical fix is "use the task's own python".
     """
     if "No module named pytest" in out:
         return True
-    if exit_code == 127 and ("command not found" in out
-                             or "not found" in out.lower()):
-        return True
-    return False
+    return (
+        exit_code == 127
+        and _PYTEST_COMMAND_NOT_FOUND_RE.search(out) is not None
+    )

@@ -469,6 +469,20 @@ class TestStructuredOutput:
             ["exit_annotation", "advice_injection"],
         ),
         (
+            "go test ./...",
+            127,
+            "bash: line 1: go: command not found",
+            ["exit_code_annotation"],
+            ["exit_annotation"],
+        ),
+        (
+            "python -m pytest",
+            127,
+            "bash: line 1: python: command not found",
+            ["exit_code_annotation", "pytest_binary_missing_hint"],
+            ["exit_annotation", "advice_injection"],
+        ),
+        (
             "python -m pytest tests/missing.py",
             4,
             "ERROR: file or directory not found: tests/missing.py\nno tests ran",
@@ -619,6 +633,8 @@ def test_memory_address_normalization_does_not_change_read_content(tmp_path):
     ("structured", "exit_code", "text", "last_failed", "mechanism"),
     [
         (False, 1, "/usr/bin/python: No module named pytest", False,
+         "pytest_binary_missing_hint"),
+        (True, 127, "bash: line 1: python: command not found", False,
          "pytest_binary_missing_hint"),
         (False, 4,
          "ERROR: file or directory not found: tests/missing.py\nno tests ran",
