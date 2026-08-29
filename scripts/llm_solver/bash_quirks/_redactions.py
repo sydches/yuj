@@ -75,5 +75,6 @@ def apply_redactions(text: str, rules: list[RedactionRule] | None) -> str:
                 after=text,
                 surface="tool_output",
                 change_count=count,
+                retain_debug_content=False,
             )
     return text

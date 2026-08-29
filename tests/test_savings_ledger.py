@@ -4,11 +4,16 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from scripts.llm_solver.bash_quirks._redactions import (
+    RedactionRule,
+    apply_redactions,
+)
 from scripts.llm_solver.harness import savings
 from scripts.llm_solver.analysis.savings_summary import (
     _aggregate,
@@ -211,6 +216,32 @@ def test_debug_mode_saves_located_snippets_and_complete_values(tmp_path: Path):
     assert output_path.read_text() == after
     assert hashlib.sha256(input_path.read_bytes()).hexdigest() == record["input_sha256"]
     assert hashlib.sha256(output_path.read_bytes()).hexdigest() == record["output_sha256"]
+
+
+def test_redaction_suppresses_sensitive_debug_content(tmp_path: Path):
+    path = tmp_path / "sensitive.jsonl"
+    secret = "TOKEN=secret"
+    ledger = savings.open_ledger(path, transform_log_mode="debug")
+    try:
+        result = apply_redactions(
+            secret,
+            [RedactionRule(
+                name="token",
+                pattern=re.compile(r"secret"),
+                replace="[REDACTED]",
+            )],
+        )
+    finally:
+        savings.close_ledger()
+
+    assert result == "TOKEN=[REDACTED]"
+    record = _read_records(path)[0]
+    assert record["debug_content_suppressed"] is True
+    assert record["input_sha256"] == hashlib.sha256(secret.encode()).hexdigest()
+    assert "changes" not in record
+    assert "input_full_path" not in record
+    assert "output_full_path" not in record
+    assert not (tmp_path / "sensitive.transform_debug").exists()
 
 
 def test_invalid_transform_log_mode_is_rejected(tmp_path: Path):

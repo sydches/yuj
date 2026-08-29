@@ -14,6 +14,7 @@ import pytest
 from _config_helpers import make_config
 from scripts.llm_solver._shared.toml_compat import tomllib
 from scripts.llm_solver.config import load_config
+from scripts.llm_solver.bash_quirks._redactions import RedactionRule
 from scripts.llm_solver.harness._loop._driver_setup import (
     load_system_prompt_and_provenance,
 )
@@ -30,6 +31,7 @@ from scripts.llm_solver.harness.security_scan import (
 from scripts.llm_solver.harness.state_writer import project
 from scripts.llm_solver.harness.tools import (
     ToolRegistry,
+    admit_tool_output,
     build_tool_registry,
     dispatch,
 )
@@ -66,6 +68,26 @@ def _client_for(call: ToolCall) -> MagicMock:
         {"role": "assistant", "content": "done"},
     ]
     return client
+
+
+def test_native_tool_envelope_does_not_bypass_redaction() -> None:
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    rule = RedactionRule(
+        name="aws_access_key",
+        pattern=re.compile(r"AKIA[A-Z0-9]{16}"),
+        replace="[REDACTED:aws_key]",
+    )
+    result = admit_tool_output(
+        "list_definitions",
+        f"<list_definitions>{secret}</list_definitions>",
+        arguments={},
+        cfg=make_config(),
+        redactions=[rule],
+    )
+
+    assert result.startswith("<list_definitions>")
+    assert secret not in result
+    assert "[REDACTED:aws_key]" in result
 
 
 def test_shipped_pattern_table_positive_and_negative_fixtures() -> None:

@@ -191,7 +191,7 @@ class SavingsLedger:
         ctx: dict | None = None,
         tool_call_id: str = "",
         chain_id: str = "",
-        chain_step: int | None = None,
+        chain_step: int | None = None, retain_debug_content: bool = True,
     ) -> bool:
         """Record one exact text change and return whether text changed."""
         before = str(before)
@@ -202,9 +202,7 @@ class SavingsLedger:
             before_bytes = before.encode("utf-8")
             after_bytes = after.encode("utf-8")
         except UnicodeError as exc:
-            log.warning(
-                "Transformation accounting skipped invalid UTF-8 text: %s", exc
-            )
+            log.warning("Transformation accounting skipped invalid UTF-8 text: %s", exc)
             return False
 
         event_id, resolved_chain, resolved_step, resolved_call = (
@@ -244,8 +242,10 @@ class SavingsLedger:
             "output_sha256": hashlib.sha256(after_bytes).hexdigest(),
             "ctx": ctx or {},
         }
-        if self._transform_log_mode == "debug":
+        if self._transform_log_mode == "debug" and retain_debug_content:
             record.update(self._write_debug_values(event_id, before, after))
+        elif self._transform_log_mode == "debug":
+            record["debug_content_suppressed"] = True
         self._write_record(record)
         return True
 

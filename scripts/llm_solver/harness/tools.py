@@ -426,7 +426,7 @@ def admit_tool_output(
     # the content-based compatibility shortcut that trusted handlers use.
     owns_native_envelope = name != "exec_cell" and is_native_envelope(result)
 
-    if redactions and output_cleanup_enabled(cfg) and not owns_native_envelope:
+    if redactions and output_cleanup_enabled(cfg):
         from ..bash_quirks import apply_redactions
         result = apply_redactions(result, redactions)
 
