@@ -4,7 +4,7 @@ import shlex
 from pathlib import Path
 
 from ...config import Config
-from ...language_quirks import load_run_tests_quirk_object
+from ...language_quirks import load_language_advice, load_run_tests_quirk_object
 from ..savings import record_text_transform
 from ._common import _resolve, _xml_attr
 from ._pytest_hints import (
@@ -152,10 +152,12 @@ def run_tests(
         if exit_code != 0:
             out += f"\n[exit code: {exit_code}]"
         if quirk.runner == "pytest":
+            python_advice = load_language_advice("python")
+            pytest_advice = load_language_advice("pytest")
             if _pytest_binary_missing(out, exit_code):
                 out = _record_test_advice(
                     out,
-                    quirk.advice["python_runner_missing"],
+                    python_advice["python_runner_missing"],
                     mechanism="pytest_binary_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -163,7 +165,7 @@ def run_tests(
             elif _pytest_path_missing(out, exit_code):
                 out = _record_test_advice(
                     out,
-                    quirk.advice["pytest_path_missing"],
+                    pytest_advice["pytest_path_missing"],
                     mechanism="pytest_path_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -203,10 +205,12 @@ def run_tests(
         # jest output would misdirect the model toward a conda-activate
         # dance that doesn't apply.
         if quirk.runner == "pytest":
+            python_advice = load_language_advice("python")
+            pytest_advice = load_language_advice("pytest")
             if _pytest_binary_missing(body, exit_code):
                 body = _record_test_advice(
                     body,
-                    quirk.advice["python_runner_missing"],
+                    python_advice["python_runner_missing"],
                     mechanism="pytest_binary_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -214,7 +218,7 @@ def run_tests(
             elif _pytest_path_missing(body, exit_code):
                 body = _record_test_advice(
                     body,
-                    quirk.advice["pytest_path_missing"],
+                    pytest_advice["pytest_path_missing"],
                     mechanism="pytest_path_missing_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,
@@ -227,7 +231,7 @@ def run_tests(
             if last_failed and status == "no_tests_collected":
                 body = _record_test_advice(
                     body,
-                    quirk.advice["pytest_lf_cache_empty"],
+                    pytest_advice["pytest_lf_cache_empty"],
                     mechanism="pytest_lf_cache_empty_hint",
                     runner=quirk.runner,
                     exit_code=exit_code,

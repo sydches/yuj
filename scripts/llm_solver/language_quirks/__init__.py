@@ -329,6 +329,23 @@ def load_run_tests_quirk_for_runner(runner: str) -> RunTestsQuirk:
     return _run_tests_quirk_from_dict(runner, run_tests)
 
 
+@functools.lru_cache(maxsize=8)
+def load_language_advice(language: str) -> dict[str, str]:
+    """Return model-visible advice owned by one language descriptor."""
+    cfg = _load_runner_quirk_dict(language)
+    raw = cfg.get("advice", {})
+    if not isinstance(raw, dict):
+        raise ValueError(f"{_run_tests_path(language)} [advice] must be a table")
+    advice: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ValueError(
+                f"{_run_tests_path(language)} [advice].{key} must be a string"
+            )
+        advice[str(key)] = value
+    return advice
+
+
 def load_run_tests_quirk(cwd: str | Path) -> dict:
     """Return the legacy [run_tests] dict of the runner detected for ``cwd``.
 
@@ -346,6 +363,7 @@ __all__ = [
     "RunTestsQuirk",
     "detect_runner",
     "list_run_test_runner_descriptors",
+    "load_language_advice",
     "load_run_tests_quirk",
     "load_run_tests_quirk_for_runner",
     "load_run_tests_quirk_object",

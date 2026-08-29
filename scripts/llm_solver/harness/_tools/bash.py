@@ -2,7 +2,7 @@
 from pathlib import Path
 import shlex
 
-from ...language_quirks import load_run_tests_quirk_for_runner
+from ...language_quirks import load_language_advice
 from ..sandbox import _DEFAULT_BWRAP_BIN, container_mode
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
 from ..savings import record_text_transform
@@ -30,9 +30,9 @@ def _record_output_change(before: str, after: str, *, bucket: str,
     )
 
 
-def _python_advice(name: str) -> str:
-    """Load model-visible Python advice from its language descriptor."""
-    return load_run_tests_quirk_for_runner("pytest").advice[name]
+def _language_advice(language: str, name: str) -> str:
+    """Load model-visible advice from its language descriptor."""
+    return load_language_advice(language)[name]
 
 
 def _try_inproc_trivial_read(
@@ -471,28 +471,28 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
     if transform_output:
         if _pytest_binary_missing(out, exit_code):
             out = _record_output_change(
-                out, out + _python_advice("python_runner_missing"),
+                out, out + _language_advice("python", "python_runner_missing"),
                 bucket="advice_injection",
                 mechanism="pytest_binary_missing_hint",
                 exit_code=exit_code,
             )
         elif _pytest_path_missing(out, exit_code):
             out = _record_output_change(
-                out, out + _python_advice("pytest_path_missing"),
+                out, out + _language_advice("pytest", "pytest_path_missing"),
                 bucket="advice_injection",
                 mechanism="pytest_path_missing_hint",
                 exit_code=exit_code,
             )
         elif _python_install_failure(cmd, out, exit_code):
             out = _record_output_change(
-                out, out + _python_advice("python_install_failure"),
+                out, out + _language_advice("python", "python_install_failure"),
                 bucket="advice_injection",
                 mechanism="python_install_failure_hint",
                 exit_code=exit_code,
             )
         elif _python_env_missing(out, exit_code):
             out = _record_output_change(
-                out, out + _python_advice("python_env_missing"),
+                out, out + _language_advice("python", "python_env_missing"),
                 bucket="advice_injection",
                 mechanism="python_env_missing_hint",
                 exit_code=exit_code,

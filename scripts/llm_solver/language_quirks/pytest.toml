@@ -77,9 +77,6 @@ arg_last_failed = "--lf"
 4 = "usage_error"
 5 = "no_tests_collected"
 
-[run_tests.advice]
-python_runner_missing = "\n[HARNESS: Python or pytest could not start in the current environment. Use the project's existing Python environment or runner if available, such as a virtual environment, Conda, uv, tox, or nox, then retry. Inspect the project before creating an environment or installing packages.]"
+[advice]
 pytest_path_missing = "\n[HARNESS: pytest reports the test path does not exist. Either fix the path, or write the test file before running tests again.]"
 pytest_lf_cache_empty = "\n[HARNESS: last_failed=true requires a prior run to populate the lastfailed cache; pytest collected no tests because the cache is empty (no previously-failing tests on record). Run run_tests once without last_failed to populate the cache, then re-issue with last_failed=true. If you intended to verify against the full suite, drop last_failed.]"
-python_env_missing = "\n[HARNESS: this Python interpreter cannot import a required module. Check the project's dependency files and use its existing Python environment or package tool if available, such as pip, uv, Conda, Poetry, or PDM, before installing into the current interpreter.]"
-python_install_failure = "\n[HARNESS: Python package installation failed. Check the reported cause and the project's dependency files. Use the project's existing environment or package tool if available, such as pip, uv, Conda, Poetry, or PDM. If network access is unavailable, prefer installed packages or a local cache instead of repeating the same network install.]"
