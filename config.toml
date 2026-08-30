@@ -153,9 +153,10 @@ rumination_same_target_warn_count = 0
 rumination_same_target_arm_count = 0
 test_read_warn_after = 0
 # After this many post-mutation shell calls that do not invoke a registered
-# test runner, reject more custom shell checks until the model runs the
-# component's existing test file/package suite or makes another source edit.
-# 0 disables both this gate and its first-edit advice.
+# test runner, run the mechanically identified component test target once and
+# put its bounded result in the current tool output. Run it again only after a
+# later source edit.
+# 0 disables both this automatic run and its first-edit advice.
 post_mutation_verification_gate_after = 3
 context_inspect_repeat_threshold = 0
 contract_commit_warn_after = 0
@@ -672,7 +673,7 @@ test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading th
 # Delivered once in the next synthetic user turn after the first successful
 # source mutation. Empty text disables the advice.
 post_mutation_verification_nudge = "[HARNESS: If this change affects executable behavior, after focused checks pass, run the changed component's complete existing test file or package suite. Before declaring done, run the repository's full test suite when feasible. If that is unavailable or impractical, state the limitation. Target tests and custom reproducers are not sufficient regression coverage.]"
-post_mutation_verification_gate = "NOT EXECUTED. Post-mutation regression verification is required now. Run the changed component's complete existing test file or package suite with its registered test runner. Custom scripts and reproducers do not satisfy this gate. A source edit remains allowed."
+post_mutation_verification_gate = "[HARNESS: Automatic component verification could not identify one unambiguous existing target. Run the changed component's complete existing test file or package suite with its registered test runner.]"
 done_reject_no_formal_verification = "REJECTED: No passing registered test-runner command since the last source change. Run the changed component's complete existing test file or package suite. Custom scripts and reproducers do not satisfy this requirement."
 contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]"
 contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]"

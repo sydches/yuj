@@ -45,6 +45,9 @@ class RunTestsQuirk:
     arg_path_style: str = "ignored"
     arg_k_template: str = ""
     arg_last_failed: str = ""
+    component_test_names: tuple[str, ...] = ()
+    component_target_template: str = ""
+    component_fallback: str = "none"
     # Runner-owned exit-code -> status mapping.
     status_map: dict[int, str] = field(default_factory=dict)
     # Status name for exit codes not present in status_map, used only
@@ -65,6 +68,9 @@ class RunTestsQuirk:
                 "arg_path_style": self.arg_path_style,
                 "arg_k_template": self.arg_k_template,
                 "arg_last_failed": self.arg_last_failed,
+                "component_test_names": list(self.component_test_names),
+                "component_target_template": self.component_target_template,
+                "component_fallback": self.component_fallback,
                 "status_map": dict(self.status_map),
                 "status_default": self.status_default,
                 "advice": dict(self.advice),
@@ -136,6 +142,8 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
         "arg_path_style": "ignored",
         "arg_k_template": "",
         "arg_last_failed": "",
+        "component_target_template": "",
+        "component_fallback": "none",
     }
     values: dict[str, str] = {}
     for key, default in string_defaults.items():
@@ -155,6 +163,25 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
             f"{_run_tests_path(runner)} [run_tests].arg_path_style "
             "must be 'ignored' or 'positional'"
         )
+    if values["component_fallback"] not in {"none", "suite"}:
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].component_fallback "
+            "must be 'none' or 'suite'"
+        )
+    raw_component_names = run_tests.get("component_test_names", [])
+    if not isinstance(raw_component_names, list) or not all(
+        isinstance(name, str) and name.strip() for name in raw_component_names
+    ):
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].component_test_names "
+            "must be a list of non-empty strings"
+        )
+    component_test_names = tuple(raw_component_names)
+    if component_test_names and not values["component_target_template"].strip():
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].component_target_template "
+            "must be non-empty when component_test_names is set"
+        )
 
     status_map = _status_map_from_dict(runner, run_tests)
     if not status_map:
@@ -171,7 +198,7 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
 
     known = set(string_defaults) | {
         "advice", "detect_files", "detection_priority", "status_map",
-        "status_default",
+        "status_default", "component_test_names",
     }
     extra_fields = {key: value for key, value in run_tests.items() if key not in known}
 
@@ -183,6 +210,9 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
         arg_path_style=values["arg_path_style"],
         arg_k_template=values["arg_k_template"],
         arg_last_failed=values["arg_last_failed"],
+        component_test_names=component_test_names,
+        component_target_template=values["component_target_template"],
+        component_fallback=values["component_fallback"],
         status_map=status_map,
         status_default=status_default,
         advice=advice,

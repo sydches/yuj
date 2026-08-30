@@ -498,7 +498,14 @@ def solve_task(
             if (session_num == start_session_num
                     and output_parser is not None
                     and pretest_block
-                    and cfg.done_require_pretest_parity):
+                    and (
+                        cfg.done_require_pretest_parity
+                        or int(getattr(
+                            cfg,
+                            "post_mutation_verification_gate_after",
+                            0,
+                        ) or 0) > 0
+                    )):
                 try:
                     from ...bash_quirks import parse_structured
                     pre_parsed = parse_structured(pretest_block, output_parser)

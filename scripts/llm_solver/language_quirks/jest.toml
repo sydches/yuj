@@ -45,6 +45,13 @@ detect_files = ["package.json"]
 arg_path_style = "positional"
 arg_k_template = "-t {expr}"      # jest -t matches test-name patterns
 arg_last_failed = "--onlyFailures"
+component_test_names = [
+    "{stem}.test{suffix}",
+    "{stem}.spec{suffix}",
+    "test_{stem}{suffix}",
+]
+component_target_template = "{test_path}"
+component_fallback = "none"
 
 # jest/mocha/vitest all use 0=pass, 1=some-tests-failed (or a config/
 # runtime error) as their exit-code contract; none of them share

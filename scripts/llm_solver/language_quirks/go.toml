@@ -44,6 +44,9 @@ detect_files = ["go.mod", "go.sum"]
 arg_path_style = "positional"
 arg_k_template = "-run {expr}"
 arg_last_failed = ""              # no built-in equivalent
+component_test_names = ["{stem}_test.go"]
+component_target_template = "./{test_parent}"
+component_fallback = "none"
 
 # `go test`/`go vet`/`go build` don't have pytest's rich exit-code
 # vocabulary — it's just 0 (ok) vs nonzero (build failure, vet finding,

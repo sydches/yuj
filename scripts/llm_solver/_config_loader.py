@@ -898,7 +898,7 @@ def _extract_config_fields(d: dict) -> dict:
             "prompts", {}
         ).get(
             "post_mutation_verification_gate",
-            "NOT EXECUTED. Post-mutation regression verification is required now. Run the changed component's complete existing test file or package suite with its registered test runner. Custom scripts and reproducers do not satisfy this gate. A source edit remains allowed.",
+            "[HARNESS: Automatic component verification could not identify one unambiguous existing target. Run the changed component's complete existing test file or package suite with its registered test runner.]",
         ),
         "done_reject_no_formal_verification": d.get(
             "prompts", {}

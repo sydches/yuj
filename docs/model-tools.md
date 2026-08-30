@@ -468,11 +468,13 @@ no `exit_code`. The default timeout is 240 seconds.
 ## Finish rule
 
 After a source change, Yuj requires a passing registered test runner before
-explicit or implicit completion. After three custom shell checks, it also
-blocks more custom shell checks until the model runs that runner or changes
-the source again. `post_mutation_verification_gate_after` under `[loop]`
-controls the number of allowed checks; set it to `0` to disable this rule and
-its first-edit advice.
+explicit or implicit completion. After three custom shell checks, Yuj selects
+one unambiguous component target from the changed source path and the active
+runner descriptor. It runs that target once and puts the bounded result in the
+current tool output. Yuj runs it again only after another source change. If it
+cannot select one target, it gives fallback advice and does not guess.
+`post_mutation_verification_gate_after` under `[loop]` controls the number of
+allowed checks. Set it to `0` to disable this rule and its first-edit advice.
 
 This rule is separate from the older finish guard. The shipped treatment and
 plain bases set `done_guard_enabled = false` under `[loop]`.

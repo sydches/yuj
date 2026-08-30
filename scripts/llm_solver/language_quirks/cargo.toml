@@ -50,6 +50,9 @@ detect_files = ["Cargo.toml"]
 arg_path_style = "positional"
 arg_k_template = "{expr}"
 arg_last_failed = ""              # no built-in equivalent
+component_test_names = []
+component_target_template = ""
+component_fallback = "suite"
 
 # Cargo exit-code semantics differ sharply from pytest's. `cargo test`
 # exits 101 (a Rust panic code, from the libtest harness) when any test

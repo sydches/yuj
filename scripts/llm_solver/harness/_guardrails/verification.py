@@ -1,11 +1,235 @@
-"""Post-mutation verification guardrail and observer."""
+"""Post-mutation component verification selection and state."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+import os
+from pathlib import Path
 from typing import Any
 
-from ..._shared.classification import is_error_result
+from ..._shared.classification import classify_outcome, is_error_result
+from ...language_quirks import load_run_tests_quirk_object
 from .extractors import MUTATION_TOOLS, _is_bash_write_like, _is_test_command
 from .state import PASS, Decision, GuardrailState
+
+
+@dataclass(frozen=True)
+class ComponentVerificationTarget:
+    """One mechanically selected target for the registered test runner."""
+
+    path: str
+    display: str
+    runner: str
+    source_path: str
+
+
+def automatic_component_verification_due(
+    state: GuardrailState,
+    cfg: Any,
+) -> bool:
+    """Return whether this source revision needs its one automatic run."""
+    return bool(
+        int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
+        and state.has_mutated
+        and state.post_mutation_verification_gate_armed
+        and not state.post_mutation_automatic_verification_attempted
+        and not state.formal_verification_passed_since_mutation
+    )
+
+
+def resolve_component_verification_target(
+    state: GuardrailState,
+    cwd: str | Path,
+    *,
+    ignore_policy: Any = None,
+) -> ComponentVerificationTarget | None:
+    """Select a unique conventional component target without task knowledge."""
+    root = Path(cwd).resolve()
+    quirk = load_run_tests_quirk_object(root)
+    sources = _safe_source_paths(root, state.post_mutation_source_paths)
+    if not sources:
+        return None
+
+    for source in sources:
+        names = _component_test_names(quirk.component_test_names, source)
+        if not names:
+            continue
+        candidates = _pretest_candidates(root, state, names)
+        if not candidates:
+            candidates = _walk_named_files(
+                root, names, ignore_policy=ignore_policy
+            )
+        selected = _select_unique_candidate(source, candidates)
+        if selected is None:
+            continue
+        relative_test = selected.relative_to(root).as_posix()
+        relative_source = source.relative_to(root).as_posix()
+        parent = selected.parent.relative_to(root).as_posix() or "."
+        try:
+            target = quirk.component_target_template.format(
+                test_path=relative_test,
+                test_parent=parent,
+                source_path=relative_source,
+                source_parent=source.parent.relative_to(root).as_posix() or ".",
+                stem=source.stem,
+                suffix=source.suffix,
+            )
+        except (KeyError, ValueError):
+            return None
+        if target == "./.":
+            target = "."
+        if target.strip():
+            return ComponentVerificationTarget(
+                path=target,
+                display=target,
+                runner=quirk.runner,
+                source_path=relative_source,
+            )
+
+    if quirk.component_fallback == "suite":
+        return ComponentVerificationTarget(
+            path="",
+            display="<registered suite>",
+            runner=quirk.runner,
+            source_path=sources[0].relative_to(root).as_posix(),
+        )
+    return None
+
+
+def mark_automatic_component_verification_attempted(
+    state: GuardrailState,
+    target: ComponentVerificationTarget | None,
+) -> None:
+    """Prevent another automatic run until a later source mutation."""
+    state.post_mutation_automatic_verification_attempted = True
+    state.post_mutation_verification_gate_armed = False
+    state.post_mutation_automatic_verification_target = (
+        target.display if target is not None else ""
+    )
+
+
+def verification_result_passed(tc_name: str, result: str) -> bool:
+    """Read only harness-owned status markers for a verification verdict."""
+    if tc_name == "run_tests":
+        return '<test_results status="passed"' in result
+    return classify_outcome(result) == "OK"
+
+
+def _safe_source_paths(root: Path, raw_paths: tuple[str, ...]) -> list[Path]:
+    paths: list[Path] = []
+    for raw in raw_paths:
+        candidate = Path(raw)
+        if candidate.is_absolute():
+            resolved = candidate.resolve(strict=False)
+        else:
+            resolved = (root / candidate).resolve(strict=False)
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        if resolved.is_file() and resolved not in paths:
+            paths.append(resolved)
+    return paths
+
+
+def _component_test_names(templates: tuple[str, ...], source: Path) -> set[str]:
+    names: set[str] = set()
+    for template in templates:
+        try:
+            name = template.format(
+                name=source.name,
+                stem=source.stem,
+                suffix=source.suffix,
+            )
+        except (KeyError, ValueError):
+            continue
+        if name and "/" not in name and "\\" not in name:
+            names.add(name)
+    return names
+
+
+def _pretest_candidates(
+    root: Path,
+    state: GuardrailState,
+    names: set[str],
+) -> list[Path]:
+    candidates: list[Path] = []
+    for test_id in sorted(
+        state.pretest_failing_tests | state.pretest_passing_tests
+    ):
+        raw = test_id.split("::", 1)[0]
+        candidate = (root / raw).resolve(strict=False)
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        if (
+            candidate.name in names
+            and candidate.is_file()
+            and candidate not in candidates
+        ):
+            candidates.append(candidate)
+    return candidates
+
+
+def _walk_named_files(
+    root: Path,
+    names: set[str],
+    *,
+    ignore_policy: Any,
+) -> list[Path]:
+    candidates: list[Path] = []
+    for directory, dir_names, file_names in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        base = Path(directory)
+        kept_dirs: list[str] = []
+        for name in sorted(dir_names):
+            path = base / name
+            if name in {".git", ".solver", ".tool_output"} or path.is_symlink():
+                continue
+            if ignore_policy is not None:
+                try:
+                    if ignore_policy.is_model_hidden(path, is_dir=True):
+                        continue
+                except (OSError, ValueError):
+                    continue
+            kept_dirs.append(name)
+        dir_names[:] = kept_dirs
+        for name in sorted(file_names):
+            if name not in names:
+                continue
+            path = base / name
+            if ignore_policy is not None:
+                try:
+                    if ignore_policy.is_ignored(path, is_dir=False):
+                        continue
+                except (OSError, ValueError):
+                    continue
+            candidates.append(path.resolve(strict=False))
+            if len(candidates) > 64:
+                return []
+    return candidates
+
+
+def _select_unique_candidate(source: Path, candidates: list[Path]) -> Path | None:
+    if not candidates:
+        return None
+    source_parts = source.parent.parts
+
+    def score(candidate: Path) -> tuple[int, int, int]:
+        common = 0
+        for left, right in zip(source_parts, candidate.parent.parts):
+            if left != right:
+                break
+            common += 1
+        distance = len(source_parts) + len(candidate.parent.parts) - 2 * common
+        test_dir = int(any("test" in part.lower() for part in candidate.parent.parts))
+        return common, test_dir, -distance
+
+    ranked = sorted(candidates, key=lambda path: (score(path), str(path)), reverse=True)
+    best_score = score(ranked[0])
+    best = [path for path in ranked if score(path) == best_score]
+    return best[0] if len(best) == 1 else None
 
 
 def post_mutation_verification_gate(
@@ -15,34 +239,9 @@ def post_mutation_verification_gate(
     tc_name: str,
     tc_args: dict | None = None,
 ) -> Decision:
-    """Block more custom shell checks once formal verification is due.
-
-    Source mutation and registered test-runner commands always pass. Reads and
-    searches also pass so the model can locate the right existing test scope.
-    The gate only replaces the custom shell-check habit that triggered it.
-    """
-    threshold = int(
-        getattr(cfg, "post_mutation_verification_gate_after", 0) or 0
-    )
-    if (
-        threshold <= 0
-        or not state.has_mutated
-        or state.formal_verification_passed_since_mutation
-        or not state.post_mutation_verification_gate_armed
-    ):
-        return PASS
-    if (
-        tc_name in MUTATION_TOOLS
-        or _is_bash_write_like(tc_name, tc_args)
-        or _is_test_command(tc_name, tc_args)
-    ):
-        return PASS
-    if tc_name not in {"bash", "exec_cell"}:
-        return PASS
-    return Decision.block(
-        cfg.post_mutation_verification_gate,
-        reason="post_mutation_verification_gate",
-    )
+    """Keep the legacy registry slot non-blocking under mechanical H4."""
+    del state, cfg, tc_name, tc_args
+    return PASS
 
 
 def observe_post_mutation_verification(
@@ -53,9 +252,10 @@ def observe_post_mutation_verification(
     result: str,
     gate_blocked: bool,
     tc_args: dict | None = None,
+    source_write_paths: tuple[str, ...] = (),
     **_: Any,
 ) -> None:
-    """Arm a formal-test gate after repeated post-mutation shell checks."""
+    """Arm one automatic component run after repeated custom checks."""
     if gate_blocked:
         return
     if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
@@ -63,15 +263,20 @@ def observe_post_mutation_verification(
             state.post_mutation_non_test_bash_count = 0
             state.post_mutation_verification_gate_armed = False
             state.formal_verification_passed_since_mutation = False
+            state.post_mutation_automatic_verification_attempted = False
+            state.post_mutation_automatic_verification_target = ""
+            state.post_mutation_source_paths = tuple(source_write_paths)
         return
     if not state.has_mutated:
         return
     if _is_test_command(tc_name, tc_args):
         state.post_mutation_non_test_bash_count = 0
         state.post_mutation_verification_gate_armed = False
-        passed = not is_error_result(result)
+        passed = verification_result_passed(tc_name, result)
         state.formal_verification_passed_since_mutation = passed
         state.verified_since_mutation = passed
+        return
+    if state.post_mutation_automatic_verification_attempted:
         return
     if tc_name not in {"bash", "exec_cell"}:
         return

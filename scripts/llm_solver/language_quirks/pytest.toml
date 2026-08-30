@@ -63,6 +63,9 @@ detect_files = ["pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "confte
 arg_path_style = "positional"      # appended after flags
 arg_k_template = "-k {expr}"
 arg_last_failed = "--lf"
+component_test_names = ["test_{stem}{suffix}", "{stem}_test{suffix}"]
+component_target_template = "{test_path}"
+component_fallback = "none"
 
 # pytest exit-code semantics (docs.pytest.org/en/stable/reference/exit-codes.html).
 # Encoded explicitly here (rather than relying solely on run_tests.py's

@@ -27,6 +27,9 @@ detect_files = ["CTestTestfile.cmake", "CMakeLists.txt"]
 arg_path_style = "ignored"        # ctest filters by name regex, not path
 arg_k_template = "-R {expr}"
 arg_last_failed = "--rerun-failed"
+component_test_names = []
+component_target_template = ""
+component_fallback = "suite"
 
 # ctest's exit codes are 0=all-passed, nonzero=some-failed (no
 # pytest-style collection/usage/internal-error distinctions). Map

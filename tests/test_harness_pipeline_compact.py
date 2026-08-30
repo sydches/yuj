@@ -532,11 +532,18 @@ class TestPostMutationVerificationNudge:
         assert len(injections) == 1
         assert injections[0]["tool_call_id"] == "c1"
 
-    def test_custom_shell_streak_is_blocked_until_formal_runner(self, tmp_path):
+    def test_custom_shell_streak_runs_component_target_without_blocking(self, tmp_path):
         from llm_solver.harness.loop import Session
 
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "core.py").write_text("before\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_core.py").write_text(
+            "def test_core():\n    assert True\n"
+        )
         cfg = make_config(
-            max_turns=7,
+            max_turns=6,
             duplicate_abort=20,
             post_mutation_verification_gate_after=2,
         )
@@ -561,18 +568,6 @@ class TestPostMutationVerificationNudge:
                 name="bash",
                 arguments={"cmd": "python -c 'print(2)'"},
             ),
-            ToolCall(
-                id="custom-blocked",
-                name="bash",
-                arguments={"cmd": "python -c 'print(3)'"},
-            ),
-            ToolCall(
-                id="formal-1",
-                name="bash",
-                arguments={
-                    "cmd": "python -m pytest tests/test_component.py -q"
-                },
-            ),
             ToolCall(id="done-1", name="done", arguments={}),
         ]
         turn = [0]
@@ -590,14 +585,17 @@ class TestPostMutationVerificationNudge:
             "role": "assistant",
             "content": None,
         }
-        executed: list[str] = []
+        executed: list[tuple[str, dict]] = []
 
         def dispatch_fn(name, arguments, **kwargs):
-            executed.append(arguments.get("cmd", name))
+            executed.append((name, dict(arguments)))
             if name == "edit":
                 return "OK: edit applied"
-            if "pytest" in arguments.get("cmd", ""):
-                return "14 passed in 0.5s"
+            if name == "run_tests":
+                return (
+                    '<test_results status="passed" exit_code="0" '
+                    'runner="pytest">\n14 passed in 0.5s\n</test_results>'
+                )
             return "ok"
 
         with patch(
@@ -613,8 +611,13 @@ class TestPostMutationVerificationNudge:
             ).run()
 
         assert result.done is True
-        assert "python -c 'print(3)'" not in executed
-        assert any("pytest tests/test_component.py" in cmd for cmd in executed)
+        automatic = [args for name, args in executed if name == "run_tests"]
+        assert automatic == [{"path": "tests/test_core.py"}]
+        final_request = client.chat.call_args_list[-1].args[0]
+        assert any(
+            "<automatic_verification" in str(message.get("content") or "")
+            for message in final_request
+        )
 
     def test_implicit_done_waits_for_formal_runner(self, tmp_path):
         from llm_solver.harness.loop import Session
@@ -679,3 +682,108 @@ class TestPostMutationVerificationNudge:
         assert result.done is True
         assert client.chat.call_count == 4
         assert any("pytest tests/test_component.py" in cmd for cmd in executed)
+
+    def test_failed_automatic_run_waits_for_a_source_change(self, tmp_path):
+        from llm_solver.harness.loop import Session
+
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "core.py").write_text("before\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_core.py").write_text(
+            "def test_core():\n    assert True\n"
+        )
+        cfg = make_config(
+            max_turns=8,
+            duplicate_abort=20,
+            post_mutation_verification_gate_after=1,
+        )
+        calls = [
+            ToolCall(
+                id="edit-1",
+                name="edit",
+                arguments={
+                    "path": "src/core.py",
+                    "old_str": "before",
+                    "new_str": "after one",
+                },
+            ),
+            ToolCall(
+                id="custom-1",
+                name="bash",
+                arguments={"cmd": "python -c 'print(1)'"},
+            ),
+            ToolCall(
+                id="custom-2",
+                name="bash",
+                arguments={"cmd": "python -c 'print(2)'"},
+            ),
+            ToolCall(
+                id="edit-2",
+                name="edit",
+                arguments={
+                    "path": "src/core.py",
+                    "old_str": "after one",
+                    "new_str": "after two",
+                },
+            ),
+            ToolCall(
+                id="custom-3",
+                name="bash",
+                arguments={"cmd": "python -c 'print(3)'"},
+            ),
+            ToolCall(id="done-1", name="done", arguments={}),
+        ]
+        turn = [0]
+
+        def chat_fn(*args, **kwargs):
+            call = calls[turn[0]]
+            turn[0] += 1
+            return make_turn_result(tool_calls=[call], finish_reason="tool_calls")
+
+        client = MagicMock()
+        client.chat.side_effect = chat_fn
+        client.build_assistant_message.return_value = {
+            "role": "assistant",
+            "content": None,
+        }
+        automatic_results = [
+            (
+                '<test_results status="failed" exit_code="1" '
+                'runner="pytest">\n1 failed\n</test_results>'
+            ),
+            (
+                '<test_results status="passed" exit_code="0" '
+                'runner="pytest">\n14 passed\n</test_results>'
+            ),
+        ]
+        run_count = [0]
+
+        def dispatch_fn(name, arguments, **kwargs):
+            if name == "edit":
+                return "OK: edit applied"
+            if name == "run_tests":
+                result = automatic_results[run_count[0]]
+                run_count[0] += 1
+                return result
+            return "ok"
+
+        with patch(
+            "llm_solver.harness.loop.dispatch", side_effect=dispatch_fn
+        ):
+            result = Session(
+                cfg,
+                client,
+                "sys",
+                "prompt",
+                str(tmp_path),
+                session_number=1,
+            ).run()
+
+        assert result.done is True
+        assert run_count[0] == 2
+        request_after_failure = client.chat.call_args_list[2].args[0]
+        assert any(
+            "1 failed" in str(message.get("content") or "")
+            for message in request_after_failure
+        )

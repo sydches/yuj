@@ -18,7 +18,9 @@ function entry and hands them through.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import functools
+import html
 import time
 
 from ..action_metadata import action_metadata
@@ -118,6 +120,138 @@ def _record_generated_intervention(
         surface="tool_output",
         ctx=ctx,
     )
+
+
+def _run_automatic_component_verification(
+    tc,
+    state: "TurnState",
+    result: str,
+    metadata: dict,
+) -> tuple[str, float]:
+    """Run one mechanically selected component target for this revision."""
+    from .._guardrails.verification import (
+        automatic_component_verification_due,
+        mark_automatic_component_verification_attempted,
+        resolve_component_verification_target,
+        verification_result_passed,
+    )
+
+    session = state.session
+    cfg = state.cfg
+    guards = session._guards
+    if not automatic_component_verification_due(guards, cfg):
+        return result, 0.0
+
+    target = resolve_component_verification_target(
+        guards,
+        session.cwd,
+        ignore_policy=session._ignore_policy,
+    )
+    mark_automatic_component_verification_attempted(guards, target)
+    if target is None:
+        metadata["automatic_verification"] = "target_unavailable"
+        return (
+            _append_intervention(
+                result,
+                cfg.post_mutation_verification_gate,
+                mechanism="automatic_component_verification_unavailable",
+                session=session,
+                tool_call_id=tc.id,
+            ),
+            0.0,
+        )
+
+    auto_cfg = replace(cfg, tools_run_tests_enabled=True)
+    auto_execution_metadata: dict = {}
+    started = time.perf_counter()
+    auto_result = state.dispatch(
+        "run_tests",
+        {"path": target.path},
+        cwd=session.cwd,
+        cfg=auto_cfg,
+        output_control=(
+            session.output_control
+            if cfg.bash_transforms_task_format_enabled
+            else None
+        ),
+        universal_rewrites=(
+            session.universal_rewrites
+            if cfg.bash_transforms_universal_enabled
+            else None
+        ),
+        forbidden_rules=(
+            session.forbidden_rules
+            if cfg.bash_quirks_forbidden_enabled
+            else None
+        ),
+        redirect_rules=getattr(session, "redirect_rules", None),
+        redactions=session.redactions,
+        tool_registry=session._tool_registry,
+        active_tools=getattr(session, "active_tool_names", ()),
+        redirect_event_sink=getattr(session, "_redirect_event_sink", None),
+        security_event_sink=getattr(session, "_security_event_sink", None),
+        ignore_policy=session._ignore_policy,
+        effective_env=session._effective_env,
+        allow_login_shell=session._allow_login_shell,
+        execution_metadata=auto_execution_metadata,
+        tool_call_id=f"{tc.id}:automatic-verification",
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    session._queue_execution_user_turn_injections(
+        auto_execution_metadata,
+        tool_call_id=tc.id,
+    )
+    mark_verified = state.observers.get("mark_bash_verified")
+    observe_verification = state.observers.get(
+        "observe_post_mutation_verification"
+    )
+    mark_verified(
+        guards,
+        cfg,
+        tc_name="run_tests",
+        result=auto_result,
+        gate_blocked=False,
+    )
+    observe_verification(
+        guards,
+        cfg,
+        tc_name="run_tests",
+        result=auto_result,
+        gate_blocked=False,
+        tc_args={"path": target.path},
+    )
+    passed = verification_result_passed("run_tests", auto_result)
+    metadata.update({
+        "automatic_verification": "passed" if passed else "failed",
+        "automatic_verification_runner": target.runner,
+        "automatic_verification_target": target.display,
+        "automatic_verification_source": target.source_path,
+    })
+    before = result
+    combined = (
+        f'<automatic_verification runner="{html.escape(target.runner, quote=True)}" '
+        f'target="{html.escape(target.display, quote=True)}">\n'
+        f"{auto_result}\n"
+        "</automatic_verification>\n\n"
+        f"{result}"
+    )
+    from .._tool_filters import truncate_output
+    combined = truncate_output(combined, cfg)
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="guardrail_intervention",
+        layer="harness",
+        mechanism="automatic_component_verification",
+        before=before,
+        after=combined,
+        surface="tool_output",
+        ctx={
+            "runner": target.runner,
+            "target": target.display,
+            "passed": passed,
+        },
+    )
+    return combined, elapsed_ms
 
 
 def _tool_call_transform_scope(function):
@@ -1686,7 +1820,17 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             result=result,
             gate_blocked=gate_blocked_flag,
             tc_args=tc.arguments,
+            source_write_paths=tuple(metadata.get("source_write_paths") or ()),
         )
+        result, automatic_verification_ms = (
+            _run_automatic_component_verification(
+                tc,
+                state,
+                result,
+                metadata,
+            )
+        )
+        _tc_dispatch_ms += automatic_verification_ms
 
     # Queue the turn-level WARN from the duplicate ladder after the
     # per-call WARNs so its user-turn ordering remains last.
