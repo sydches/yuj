@@ -273,16 +273,20 @@ _DETECTION_ORDER = tuple(
 
 @functools.lru_cache(maxsize=1)
 def all_verification_patterns() -> tuple[str, ...]:
-    """Union of every runner's ``verification_patterns``.
+    """Union of registered runners' ``verification_patterns``.
 
     The single source of truth for "is this bash call a test/verification
     command?" across all languages. Any shared regex that previously
     hard-coded one language's runners (e.g. ``_shell_patterns.TEST_COMMAND_RE``)
     derives from this so it can never drift from the per-runner TOMLs.
+    Analysis-only descriptors such as ``generic.toml`` are intentionally
+    excluded because they do not define an executable ``[run_tests]`` runner.
     """
     pats: list[str] = []
     for toml_path in sorted(FORMATS_DIR.glob("*.toml")):
         d = _load_runner_quirk_dict(toml_path.stem)
+        if not isinstance(d.get("run_tests"), dict):
+            continue
         for p in d.get("verification_patterns", []) or []:
             if p not in pats:
                 pats.append(p)

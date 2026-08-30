@@ -28,6 +28,7 @@ from scripts.llm_solver.bash_quirks import (
     parse_structured,
     render_digest,
 )
+from scripts.llm_solver.harness._guardrails.extractors import _is_test_command
 from scripts.llm_solver.language_quirks import (
     _descriptor_from_dict,
     _run_tests_quirk_from_dict,
@@ -246,6 +247,13 @@ def test_trace_event_specs_drive_compatibility_views():
 
 
 # ─── Language-quirks file-drop ──────────────────────────────────────────
+
+def test_global_verification_patterns_only_classify_registered_runners():
+    """Analysis-only generic verbs must not become harness test gates."""
+    assert _is_test_command("bash", {"cmd": "make test"}) is True
+    for command in ("make clean", "lint README.md", "validate config.toml"):
+        assert _is_test_command("bash", {"cmd": command}) is False
+
 
 _SYNTHETIC_TOML = r'''
 name = "fixture"

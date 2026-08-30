@@ -1,10 +1,10 @@
 """Shared shell-surface regexes used by multiple harness modules.
 
 ``TEST_COMMAND_RE`` — "is this bash call a test/verification command?" —
-is derived from the union of every language quirk's
+is derived from the union of every registered runner's
 ``verification_patterns`` (see ``language_quirks.all_verification_patterns``),
-so it covers pytest / go / cargo / jest / ctest / generic identically and
-can never drift from the per-runner TOMLs. A small hard-coded fallback is
+so it covers pytest / go / cargo / jest / ctest without inheriting broad
+analysis-only patterns from ``generic.toml``. A small hard-coded fallback is
 kept only for the case where the quirk package can't be imported.
 """
 import re
