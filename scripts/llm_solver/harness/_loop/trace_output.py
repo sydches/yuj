@@ -29,8 +29,8 @@ _NEWLINE = "\n"
 _TOOL_RESULT_META_RE = re.compile(r"<tool_result_meta\b(?P<attrs>[^>]*)/>")
 _ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 _EXIT_CODE_ATTR_RE = re.compile(r'\bexit_code="(?P<code>-?\d+)"')
-# Keep in sync with _shared/classification.py — the marker may be
-# followed only by harness-appended `[HARNESS: ...]` hint blocks.
+# Keep in sync with _shared/classification.py. Legacy traces may place
+# harness-appended `[HARNESS: ...]` hint blocks after the marker.
 _EXIT_MARKER_TAIL_RE = re.compile(
     r"\n\[exit code:\s*(?P<code>\d+)(?:\s+—\s+[^\]]*)?\]"
     r"(?:\s*\n\[HARNESS:[^\]]*\])*\s*\Z"

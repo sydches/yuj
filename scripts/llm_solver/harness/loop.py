@@ -35,10 +35,12 @@ from .schemas import get_tool_schemas
 _READONLY_TOOLS = PARALLEL_READ_SAFE_TOOL_NAMES
 from .injections import (
     InjectionState,
+    UserTurnInjection,
     fire_candidates,
     fire_path_candidates,
     load_injections,
     record_fire,
+    record_user_turn_delivery,
 )
 from .stream_rules import (
     StreamRuleRuntime,
@@ -316,6 +318,8 @@ class Session:
         self._own_completion_tokens = 0
         self._last_assistant_content = ""
         self._final_text = ""
+        self._pending_user_turn_injections: list[UserTurnInjection] = []
+        self._pending_user_turn_texts: set[str] = set()
         if subagent_runtime is None and getattr(cfg, "tools_task_enabled", False):
             from .subagents import SubagentRuntime
 
@@ -1298,6 +1302,76 @@ class Session:
                         turn_number=turn_number,
                     )
 
+    def _queue_user_turn_injection(
+        self, injection: UserTurnInjection,
+    ) -> bool:
+        """Queue one next-request fragment, deduplicated within the turn."""
+        if injection.text in self._pending_user_turn_texts:
+            return False
+        self._pending_user_turn_texts.add(injection.text)
+        self._pending_user_turn_injections.append(injection)
+        return True
+
+    def _queue_execution_user_turn_injections(
+        self,
+        execution_metadata: Mapping[str, object],
+        *,
+        tool_call_id: str,
+    ) -> None:
+        """Collect advice emitted by a tool or nested ``exec_cell`` call."""
+        if execution_metadata.get("_user_turn_injections_queued"):
+            return
+        records = execution_metadata.get("user_turn_injections", ())
+        if isinstance(records, (list, tuple)):
+            for record in records:
+                if isinstance(record, UserTurnInjection):
+                    self._queue_user_turn_injection(
+                        record.for_tool_call(tool_call_id)
+                    )
+
+        cell = execution_metadata.get("exec_cell")
+        if isinstance(cell, Mapping):
+            inner_calls = cell.get("inner_calls", ())
+            if isinstance(inner_calls, (list, tuple)):
+                for raw_call in inner_calls:
+                    if not isinstance(raw_call, Mapping):
+                        continue
+                    inner = raw_call.get("execution_metadata")
+                    if not isinstance(inner, Mapping):
+                        continue
+                    index = int(raw_call.get("index") or 0)
+                    self._queue_execution_user_turn_injections(
+                        inner,
+                        tool_call_id=f"{tool_call_id}:cell:{index}",
+                    )
+        if isinstance(execution_metadata, dict):
+            execution_metadata["_user_turn_injections_queued"] = True
+
+    def _deliver_pending_user_turn_injections(self) -> int:
+        """Put queued advice into the next outbound synthetic user turn."""
+        pending = tuple(self._pending_user_turn_injections)
+        if not pending:
+            return 0
+        add_fragment = getattr(
+            self.context, "add_injected_fragment", self.context.add_user
+        )
+        for injection in pending:
+            add_fragment(injection.text)
+            record_user_turn_delivery(injection)
+            self._emit(
+                "user_turn_injection",
+                session_number=self._session_number,
+                turn_number=int(getattr(self, "_current_turn", 0)),
+                bucket=injection.bucket,
+                mechanism=injection.mechanism,
+                layer=injection.layer,
+                delivery="user_turn",
+                tool_call_id=injection.tool_call_id,
+            )
+        self._pending_user_turn_injections.clear()
+        self._pending_user_turn_texts.clear()
+        return len(pending)
+
     def _apply_path_injections(
         self,
         result: str,
@@ -1305,11 +1379,12 @@ class Session:
         tool_name: str,
         arguments: Mapping[str, object],
         turn_number: int,
+        tool_call_id: str,
         executed: bool,
         execution_metadata: Mapping[str, object] | None = None,
         bash_rewritten: bool = False,
     ) -> tuple[str, bool]:
-        """Append matching path fragments to one executed tool result."""
+        """Queue matching path fragments after one executed tool call."""
         if (
             not executed
             or not getattr(self.cfg, "injections_path_rules_enabled", False)
@@ -1336,15 +1411,18 @@ class Session:
             block = fire.injection.format_block(
                 trigger="path", path=fire.path,
             )
-            before_injection = result
-            result += ("\n\n" if result else "") + block
-            record_fire(
-                fire.injection.name,
-                before=before_injection,
-                after=result,
-                match_mode="path",
-                surface="tool_output",
-                ctx={"path": fire.path, "tool_name": tool_name},
+            self._queue_user_turn_injection(
+                UserTurnInjection(
+                    text=block,
+                    bucket="injection",
+                    mechanism=fire.injection.name,
+                    tool_call_id=tool_call_id,
+                    ctx={
+                        "match_mode": "path",
+                        "path": fire.path,
+                        "tool_name": tool_name,
+                    },
+                )
             )
             self._emit_injection_event(
                 rule=fire.injection.name,
@@ -1424,7 +1502,7 @@ class Session:
         inserted = "\n\n".join(
             format_interrupt_fragment(record) for record in records
         )
-        self.context.add_user(inserted)
+        self.context.add_injected_fragment(inserted)
         from .savings import get_ledger
         get_ledger().record_transform(
             bucket="stream_rule_intervention",
@@ -1495,7 +1573,7 @@ class Session:
         """Add a normalized hook annotation to the next model request."""
         block = effect.context_block()
         if block:
-            self.context.add_user(block)
+            self.context.add_injected_fragment(block)
             from .savings import get_ledger
             get_ledger().record_transform(
                 bucket="hook_intervention",

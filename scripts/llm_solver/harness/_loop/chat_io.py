@@ -279,7 +279,7 @@ def chat_with_retry(session: "Session", turn: int):
                 inserted = "\n\n".join(
                     format_interrupt_fragment(record) for record in records
                 )
-                session.context.add_user(inserted)
+                session.context.add_injected_fragment(inserted)
                 from ..savings import get_ledger
                 get_ledger().record_transform(
                     bucket="stream_rule_intervention",

@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from ..guardrails import Action, Decision, PASS
+from ..injections import UserTurnInjection
 from ..checkpoint_rewind import finalize_deferred_context_actions
 from ..action_metadata import action_metadata
 from ..approvals import approval_decision, approval_transport_available
@@ -653,18 +654,22 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Append it at the next turn boundary and keep the session context.
         _pending_user_turn = getattr(session, "_adaptive_user_turn_pending", None)
         if _pending_user_turn:
-            session.context.add_user(_pending_user_turn)
-            get_ledger().record_transform(
-                bucket="adaptive_intervention",
-                layer="harness",
-                mechanism="adaptive_user_turn",
-                before="",
-                after=_pending_user_turn,
-                surface="injected_message",
-                ctx={"delivery": "user_turn"},
+            session._queue_user_turn_injection(
+                UserTurnInjection(
+                    text=_pending_user_turn,
+                    bucket="adaptive_intervention",
+                    mechanism="adaptive_user_turn",
+                    ctx={"delivery": "user_turn"},
+                )
             )
             session._adaptive_user_turn_pending = None
-            log.info("adaptive_user_turn: injected fake-restart message at turn %d", turn)
+        delivered_user_turns = session._deliver_pending_user_turn_injections()
+        if delivered_user_turns:
+            log.info(
+                "user_turn_injection: delivered %d fragment(s) at turn %d",
+                delivered_user_turns,
+                turn,
+            )
         # Per-turn phase timing. Captured fields land on every tool_call
         # trace entry of this turn so post-hoc analysis can compute
         # median per-phase ms across a session.
@@ -1028,7 +1033,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     block = done_hook.context_block()
                     if block:
                         message += "\n\n" + block
-                    session.context.add_user(message)
+                    session.context.add_injected_fragment(message)
                     session._record_pressure_event(True)
                     _run_post_turn_hooks(session, turn)
                     continue

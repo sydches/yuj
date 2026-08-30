@@ -28,6 +28,7 @@ from _config_helpers import make_config
 from llm_solver.harness import savings
 from llm_solver.harness import tools as tools_mod
 from llm_solver.harness._tool_filters import _normalize_memory_addresses
+from llm_solver.harness.injections import record_user_turn_delivery
 from llm_solver.harness.loop import _filter_disabled_tools
 from llm_solver.harness.schemas import get_tool_schemas
 from llm_solver.harness.tools import run_tests
@@ -54,6 +55,13 @@ def _ledger_rows(path: Path) -> list[dict]:
         for line in path.read_text().splitlines()
         if line.strip()
     ]
+
+
+def _advice_text(output: str) -> str:
+    return "\n\n".join(
+        injection.text
+        for injection in getattr(output, "user_turn_injections", ())
+    )
 
 
 def test_run_tests_admission_uses_detected_runner_command(tmp_path):
@@ -247,8 +255,9 @@ class TestStructuredOutput:
             out = run_tests(last_failed=True, cwd=str(tmp_path), cfg=cfg)
         parsed = _parse_envelope(out)
         assert parsed["status"] == "no_tests_collected"
-        assert "lastfailed cache" in parsed["body"]
-        assert "Run run_tests once without last_failed" in parsed["body"]
+        assert "lastfailed cache" not in parsed["body"]
+        assert "lastfailed cache" in _advice_text(out)
+        assert "Run run_tests once without last_failed" in _advice_text(out)
 
     def test_lf_with_real_failures_does_not_attach_cache_hint(self, cfg, tmp_path):
         # --lf with an actual failure (exit 1) must not
@@ -402,10 +411,12 @@ class TestStructuredOutput:
         with _patch_sandbox({}, exit_code=127,
                             text="bash: line 1: python: command not found"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert "could not start in the current environment" in out
-        assert "existing Python environment" in out
-        assert "Conda" in out
-        assert "uv" in out
+        advice = _advice_text(out)
+        assert "could not start in the current environment" in advice
+        assert "existing Python environment" in advice
+        assert "Conda" in advice
+        assert "uv" in advice
+        assert "could not start" not in out
 
     def test_binary_missing_hint_fires_on_no_module_pytest(self, cfg, tmp_path):
         # python is on PATH but doesn't have pytest installed. The same
@@ -413,10 +424,12 @@ class TestStructuredOutput:
         with _patch_sandbox({}, exit_code=1,
                             text="/usr/bin/python: No module named pytest"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert "could not start in the current environment" in out
-        assert "existing Python environment" in out
-        assert "Conda" in out
-        assert "uv" in out
+        advice = _advice_text(out)
+        assert "could not start in the current environment" in advice
+        assert "existing Python environment" in advice
+        assert "Conda" in advice
+        assert "uv" in advice
+        assert "could not start" not in out
 
     def test_path_missing_hint_still_fires(self, cfg, tmp_path):
         # Regression: path-missing detector must keep working alongside
@@ -427,7 +440,8 @@ class TestStructuredOutput:
                             text=("ERROR: file or directory not found: "
                                   "tests/missing.py\nno tests ran in 0.00s")):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert "test path does not exist" in out
+        assert "test path does not exist" in _advice_text(out)
+        assert "test path does not exist" not in out
         assert "could not start" not in out
 
     def test_legacy_string_contract_when_structured_disabled(self, tmp_path):
@@ -534,6 +548,8 @@ def test_bash_output_injections_are_accounted(
                 bwrap_bin="/nonexistent",
                 transform_output=True,
             )
+        for injection in output.user_turn_injections:
+            record_user_turn_delivery(injection.for_tool_call("call-1"))
     finally:
         savings.close_ledger()
 
@@ -541,11 +557,17 @@ def test_bash_output_injections_are_accounted(
     assert [row["mechanism"] for row in rows] == mechanisms
     assert [row["bucket"] for row in rows] == buckets
     assert rows[0]["input_sha256"] == hashlib.sha256(text.encode()).hexdigest()
-    assert rows[-1]["output_sha256"] == hashlib.sha256(
+    output_rows = [row for row in rows if row["surface"] == "tool_output"]
+    assert output_rows[-1]["output_sha256"] == hashlib.sha256(
         str(output).encode()
     ).hexdigest()
-    for left, right in zip(rows, rows[1:]):
+    for left, right in zip(output_rows, output_rows[1:]):
         assert left["output_sha256"] == right["input_sha256"]
+    advice_rows = [
+        row for row in rows if row["surface"] == "injected_message"
+    ]
+    assert len(advice_rows) == len(output.user_turn_injections)
+    assert all(row["tool_call_id"] == "call-1" for row in advice_rows)
 
 
 def test_bash_disabled_output_cleanup_emits_no_injection_or_event(tmp_path):
@@ -571,6 +593,27 @@ def test_bash_disabled_output_cleanup_emits_no_injection_or_event(tmp_path):
     assert "[HARNESS:" not in output
     assert "[exit code:" not in output
     assert _ledger_rows(ledger_path) == []
+
+
+def test_dispatch_exports_advice_without_changing_tool_result(tmp_path):
+    cfg = make_config()
+    metadata: dict = {}
+    raw = "ModuleNotFoundError: No module named 'numpy'"
+    with _patch_sandbox({}, exit_code=1, text=raw):
+        output = tools_mod.dispatch(
+            "bash",
+            {"cmd": "python -c 'import numpy'"},
+            cwd=str(tmp_path),
+            cfg=cfg,
+            execution_metadata=metadata,
+            tool_call_id="bash-1",
+        )
+
+    assert "cannot import `numpy`" not in output
+    records = metadata["user_turn_injections"]
+    assert len(records) == 1
+    assert "cannot import `numpy`" in records[0].text
+    assert records[0].mechanism == "python_env_missing_hint"
 
 
 def test_memory_addresses_use_stable_per_output_identities(tmp_path):
@@ -678,6 +721,9 @@ def test_run_tests_advice_is_accounted(
                 cwd=str(tmp_path),
                 cfg=cfg,
             )
+        assert _ledger_rows(ledger_path) == []
+        for injection in output.user_turn_injections:
+            record_user_turn_delivery(injection.for_tool_call("call-1"))
     finally:
         savings.close_ledger()
 
@@ -685,9 +731,12 @@ def test_run_tests_advice_is_accounted(
     assert len(rows) == 1
     assert rows[0]["bucket"] == "advice_injection"
     assert rows[0]["mechanism"] == mechanism
+    assert rows[0]["surface"] == "injected_message"
+    assert rows[0]["tool_call_id"] == "call-1"
     assert rows[0]["ctx"]["tool_name"] == "run_tests"
     assert rows[0]["input_sha256"] != rows[0]["output_sha256"]
-    assert "[HARNESS:" in output
+    assert "[HARNESS:" not in output
+    assert "[HARNESS:" in _advice_text(output)
 
 
 # ── Schema filtering ─────────────────────────────────────────────────────
@@ -769,15 +818,17 @@ class TestBashStillWorks:
                 f"python -c 'import {module}'", cwd=str(tmp_path), timeout=5,
                 sandbox=False, bwrap_bin="/nonexistent",
             )
-        assert f"cannot import `{module}`" in out
-        assert f"-c 'import {module}'" in out
-        assert ".venv/bin/python" in out
-        assert "/opt/conda/envs/*/bin/python" in out
-        assert "/opt/miniconda3/envs/*/bin/python" in out
-        assert "Rerun the failed command with the printed interpreter" in out
-        assert "`uv run`" in out
-        assert "SWE-bench" not in out
-        assert "testbed" not in out
+        advice = _advice_text(out)
+        assert f"cannot import `{module}`" in advice
+        assert f"-c 'import {module}'" in advice
+        assert ".venv/bin/python" in advice
+        assert "/opt/conda/envs/*/bin/python" in advice
+        assert "/opt/miniconda3/envs/*/bin/python" in advice
+        assert "Rerun the failed command with the printed interpreter" in advice
+        assert "`uv run`" in advice
+        assert "SWE-bench" not in advice
+        assert "testbed" not in advice
+        assert "[HARNESS:" not in out
 
     def test_bash_python_install_failure_uses_generic_advice(self, tmp_path):
         captured: dict = {}
@@ -793,9 +844,11 @@ class TestBashStillWorks:
                 "pip install numpy", cwd=str(tmp_path), timeout=5,
                 sandbox=False, bwrap_bin="/nonexistent",
             )
-        assert "Python package installation failed" in out
-        assert "project's dependency files" in out
-        assert "pip" in out
-        assert "uv" in out
-        assert "Conda" in out
-        assert "local cache" in out
+        advice = _advice_text(out)
+        assert "Python package installation failed" in advice
+        assert "project's dependency files" in advice
+        assert "pip" in advice
+        assert "uv" in advice
+        assert "Conda" in advice
+        assert "local cache" in advice
+        assert "[HARNESS:" not in out

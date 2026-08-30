@@ -278,6 +278,7 @@ def test_pre_tool_block_never_enters_handler_and_is_model_visible(
     marker = tmp_path / "runtime-block.jsonl"
     cfg = make_config(
         max_turns=2,
+        min_turns_before_context=0,
         hooks_enabled=True,
         hooks={
             "pre_tool": [{
@@ -361,6 +362,7 @@ def test_pre_tool_rewrite_precedes_validation_and_post_tool_annotates(
     command = [sys.executable, str(script), "runtime", str(marker)]
     cfg = make_config(
         max_turns=2,
+        min_turns_before_context=0,
         hooks_enabled=True,
         hooks={
             "pre_tool": [{"matcher": "read", "command": command}],
@@ -422,8 +424,13 @@ def test_pre_tool_rewrite_precedes_validation_and_post_tool_annotates(
         "read",
         {"path": "rewritten.txt"},
     )
-    assert '<injected-fragment source="hook">' in captured[0]
-    assert "post-tool annotation" in captured[0]
+    assert captured[0] == "FILE"
+    next_request = "\n".join(
+        str(message.get("content") or "")
+        for message in client.chat.call_args_list[1].args[0]
+    )
+    assert '<injected-fragment source="hook">' in next_request
+    assert "post-tool annotation" in next_request
     trace_events = [json.loads(line) for line in trace.getvalue().splitlines()]
     hooks = [event for event in trace_events if event["event"] == "hook"]
     assert [event["hook_event"] for event in hooks] == ["pre_tool", "post_tool"]

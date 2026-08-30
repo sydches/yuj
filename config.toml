@@ -647,19 +647,19 @@ intent_gate_repeat = "[intent gate: state reasoning — {count} silent since tur
 # Injected at every session boundary (session 2+) as the base continuation instruction.
 resume_base = "Continue. Review prior actions, do the next step."
 
-# Appended to tool result after error_nudge_threshold consecutive tool errors.
-# {count} is replaced with the actual error count at runtime.
+# Delivered in the next synthetic user turn after error_nudge_threshold
+# consecutive tool errors. {count} is replaced with the actual error count.
 error_nudge = "[harness: {count} errors. Re-read the file.]"
 
-# Appended to tool result when rumination_nudge_threshold is crossed.
-# {count} is replaced with the non-mutation call count at runtime.
+# Delivered in the next synthetic user turn when rumination_nudge_threshold is
+# crossed. {count} is replaced with the non-mutation call count.
 rumination_nudge = "[HARNESS: {count} non-mutation calls. One more and all tools except file-mutation tools are blocked. Mutate a file now.]"
 
 # Returned when the rumination gate blocks a non-mutation call.
 rumination_gate = "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked until a file mutation succeeds. Each blocked call wastes a turn."
 
-# Appended to tool result when the same file / normalized command target has
-# been inspected repeatedly without a file mutation.
+# Delivered in the next synthetic user turn when the same file or normalized
+# command target has been inspected repeatedly without a file mutation.
 rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]"
 rumination_outside_cwd_nudge = "[HARNESS: repeated inspection is anchored outside the repo root ({target}). The working directory is already correct; search and read relative to it.]"
 test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]"
@@ -682,10 +682,10 @@ read_empty_reminder = "<system-reminder>File {path} exists but is empty (0 bytes
 # {offset}, {total}, {path}. Task-agnostic.
 read_offset_past_eof_reminder = "<system-reminder>Read offset {offset} is past EOF for {path} (file has {total} lines). No content returned — call read with a smaller offset to inspect the file.</system-reminder>"
 
-# Injected as a tool-result tail when loop_detect fires its WARN tier
-# (N consecutive identical tool-call signatures). Text should steer
-# the model to take stock and change approach rather than hard-abort.
-# Task-agnostic. Followed by loop_detect END on the next repeat.
+# Delivered in the next synthetic user turn when loop_detect fires its WARN
+# tier (N consecutive identical tool-call signatures). Text should steer the
+# model to take stock and change approach rather than hard-abort. Task-agnostic.
+# Followed by loop_detect END on the next repeat.
 loop_detect_recovery = "<system-reminder>Loop detected: the last {streak} tool calls all have identical name and arguments. Stop repeating. Re-read the task, read a file you have not inspected yet, or change approach. One more repeat ends the session.</system-reminder>"
 
 # Sink-surface pointer. Rendered at the tail of truncated bash output

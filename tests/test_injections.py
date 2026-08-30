@@ -16,12 +16,14 @@ sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 from llm_solver.harness.injections import (
     Injection,
     InjectionState,
+    UserTurnInjection,
     fire_candidates,
     fire_path_candidates,
     load_injections,
     match,
     parse_injection,
 )
+from llm_solver.harness import savings
 from llm_solver.harness.loop import Session
 from llm_solver.server.types import ToolCall, TurnResult, Usage
 from _config_helpers import make_config
@@ -567,6 +569,58 @@ class TestSessionWiring:
         s._apply_injections()
         assert len(ctx.added_user) == 1
 
+    def test_shared_queue_deduplicates_and_keeps_exec_cell_provenance(
+        self, tmp_path,
+    ):
+        session = Session(
+            make_config(), _client(), "system", "task", str(tmp_path)
+        )
+        direct = UserTurnInjection(
+            text="Use the project runner.",
+            bucket="advice_injection",
+            mechanism="runner_hint",
+        )
+        nested = UserTurnInjection(
+            text="Use the project environment.",
+            bucket="advice_injection",
+            mechanism="environment_hint",
+        )
+        metadata = {
+            "user_turn_injections": [direct],
+            "exec_cell": {
+                "inner_calls": [{
+                    "index": 1,
+                    "execution_metadata": {
+                        "user_turn_injections": [nested, nested],
+                    },
+                }],
+            },
+        }
+        session._queue_execution_user_turn_injections(
+            metadata, tool_call_id="outer-call"
+        )
+
+        ledger_path = tmp_path / "delivery.jsonl"
+        savings.open_ledger(ledger_path)
+        try:
+            assert session._deliver_pending_user_turn_injections() == 2
+        finally:
+            savings.close_ledger()
+
+        visible = "\n".join(
+            str(message.get("content") or "")
+            for message in session.context.get_messages()
+        )
+        assert visible.count("Use the project runner.") == 1
+        assert visible.count("Use the project environment.") == 1
+        rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+        assert [row["surface"] for row in rows] == [
+            "injected_message", "injected_message",
+        ]
+        assert [row["tool_call_id"] for row in rows] == [
+            "outer-call", "outer-call:cell:1",
+        ]
+
 
 # ── full Session dispatch + trace/state artifact wiring ─────────────────
 
@@ -587,6 +641,12 @@ def _client(*turns):
         "content": content,
     }
     return client
+
+
+def _request_text(client, index: int) -> str:
+    """Return all model-visible text in one recorded outbound request."""
+    messages = client.chat.call_args_list[index].args[0]
+    return "\n".join(str(message.get("content") or "") for message in messages)
 
 
 class TestConditionalRuntimeArtifacts:
@@ -697,7 +757,9 @@ class TestConditionalRuntimeArtifacts:
             session.run()
 
         assert len(captured) == 2
-        assert all('trigger="path"' in result for result in captured)
+        assert all('trigger="path"' not in result for result in captured)
+        assert 'trigger="path"' in _request_text(client, 1)
+        assert 'trigger="path"' in _request_text(client, 2)
         assert sum(
             event.get("event") == "injection"
             for event in session._trace_events
@@ -745,9 +807,11 @@ class TestConditionalRuntimeArtifacts:
             result = session.run()
 
         assert result.finish_reason == "stop"
-        assert 'rule="python-rule"' in tool_results[0]
-        assert 'trigger="path" path="src/main.py"' in tool_results[0]
-        assert tool_results[0].endswith("</injected-fragment>")
+        assert "<injected-fragment" not in tool_results[0]
+        next_request = _request_text(client, 1)
+        assert 'rule="python-rule"' in next_request
+        assert 'trigger="path" path="src/main.py"' in next_request
+        assert next_request.rstrip().endswith("</injected-fragment>")
 
         injection_events = [
             event for event in session._trace_events
@@ -760,15 +824,31 @@ class TestConditionalRuntimeArtifacts:
             "trigger": "path",
             "path": "src/main.py",
         }]
+        delivery_event = next(
+            event for event in session._trace_events
+            if event.get("event") == "user_turn_injection"
+        )
+        assert {
+            key: delivery_event[key]
+            for key in (
+                "bucket", "mechanism", "layer", "delivery", "tool_call_id",
+            )
+        } == {
+            "bucket": "injection",
+            "mechanism": "python-rule",
+            "layer": "harness",
+            "delivery": "user_turn",
+            "tool_call_id": "read-1",
+        }
         tool_event = next(
             event for event in session._trace_events
             if event.get("event") == "tool_call"
         )
-        assert "<injected-fragment" in tool_event["result_summary"]
+        assert "<injected-fragment" not in tool_event["result_summary"]
 
         projected = json.loads(state_path.read_text())
         assert "injection" not in projected
-        assert "<injected-fragment" in projected["trace"][0]["result"]
+        assert "<injected-fragment" not in projected["trace"][0]["result"]
 
     @pytest.mark.parametrize(
         ("tool_name", "arguments", "expected_path"),
@@ -842,8 +922,10 @@ class TestConditionalRuntimeArtifacts:
         ):
             session.run()
 
-        assert 'trigger="path"' in captured[0]
-        assert f'path="{expected_path}"' in captured[0]
+        assert 'trigger="path"' not in captured[0]
+        next_request = _request_text(client, 1)
+        assert 'trigger="path"' in next_request
+        assert f'path="{expected_path}"' in next_request
 
     def test_nonmatching_read_stays_byte_free_of_fragment(self, tmp_path):
         target = tmp_path / "docs" / "guide.md"
@@ -924,4 +1006,8 @@ class TestConditionalRuntimeArtifacts:
         )
         assert TRACE_EVENT_REQUIRED_FIELDS["injection"] == frozenset({
             "session_number", "turn_number", "rule", "trigger", "path",
+        })
+        assert TRACE_EVENT_REQUIRED_FIELDS["user_turn_injection"] == frozenset({
+            "session_number", "turn_number", "bucket", "mechanism",
+            "layer", "delivery", "tool_call_id",
         })

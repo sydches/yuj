@@ -756,6 +756,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     applied_operations = tuple(getattr(result, "applied_operations", ()))
     raw_exit_status = getattr(result, "exit_status", None)
     raw_timed_out = bool(getattr(result, "timed_out", False))
+    raw_user_turn_injections = tuple(
+        getattr(result, "user_turn_injections", ()) or ()
+    )
     canonical_todos = getattr(result, "todos", None)
     if execution_metadata is not None and canonical_todos is not None:
         execution_metadata["todos"] = [dict(item) for item in canonical_todos]
@@ -861,6 +864,10 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             execution_metadata["exit_status_known"] = True
             execution_metadata["exit_status"] = getattr(result, "exit_status")
             execution_metadata["timed_out"] = bool(getattr(result, "timed_out", False))
+        if raw_user_turn_injections and not result_scan.blocked:
+            execution_metadata["user_turn_injections"] = list(
+                raw_user_turn_injections
+            )
     if already_admitted:
         result = str(result)
         if security_findings:

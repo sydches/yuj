@@ -5,32 +5,9 @@ from pathlib import Path
 
 from ...config import Config
 from ...language_quirks import load_language_advice, load_run_tests_quirk_object
-from ..savings import record_text_transform
-from ._common import _resolve, _xml_attr
+from ..injections import UserTurnInjection
+from ._common import ToolExecutionText, _resolve, _tool_advice, _xml_attr
 from ._pytest_hints import _pytest_binary_missing, _pytest_path_missing
-
-
-def _record_test_advice(
-    before: str,
-    hint: str,
-    *,
-    mechanism: str,
-    runner: str,
-    exit_code: int,
-) -> str:
-    """Append and account for one model-visible test recovery hint."""
-    return record_text_transform(
-        before,
-        before + hint,
-        bucket="advice_injection",
-        mechanism=mechanism,
-        surface="tool_output",
-        ctx={
-            "tool_name": "run_tests",
-            "runner": runner,
-            "exit_code": exit_code,
-        },
-    )
 
 
 def run_tests(
@@ -139,36 +116,43 @@ def run_tests(
         normalize_output=output_cleanup_enabled(cfg),
         **sandbox_execution_kwargs(cfg),
     )
+    user_turn_injections: list[UserTurnInjection] = []
 
     if not getattr(cfg, "tools_run_tests_structured_output", True):
         # Legacy bash-string contract. Mirror bash() exactly so existing
         # callers see no change.
         if timed_out:
-            return f"ERROR: command timed out after {timeout}s"
+            return ToolExecutionText(
+                f"ERROR: command timed out after {timeout}s",
+                exit_status=None,
+                timed_out=True,
+            )
         if exit_code is None:
-            return out
+            return ToolExecutionText(out, exit_status=None)
         if exit_code != 0:
             out += f"\n[exit code: {exit_code}]"
         if quirk.runner == "pytest":
             python_advice = load_language_advice("python")
             pytest_advice = load_language_advice("pytest")
             if _pytest_binary_missing(out, exit_code):
-                out = _record_test_advice(
-                    out,
+                user_turn_injections.append(_tool_advice(
                     python_advice["python_runner_missing"],
                     mechanism="pytest_binary_missing_hint",
-                    runner=quirk.runner,
+                    tool_name="run_tests", runner=quirk.runner,
                     exit_code=exit_code,
-                )
+                ))
             elif _pytest_path_missing(out, exit_code):
-                out = _record_test_advice(
-                    out,
+                user_turn_injections.append(_tool_advice(
                     pytest_advice["pytest_path_missing"],
                     mechanism="pytest_path_missing_hint",
-                    runner=quirk.runner,
+                    tool_name="run_tests", runner=quirk.runner,
                     exit_code=exit_code,
-                )
-        return out
+                ))
+        return ToolExecutionText(
+            out,
+            exit_status=exit_code,
+            user_turn_injections=user_turn_injections,
+        )
 
     if timed_out:
         status = "timed_out"
@@ -195,34 +179,31 @@ def run_tests(
             python_advice = load_language_advice("python")
             pytest_advice = load_language_advice("pytest")
             if _pytest_binary_missing(body, exit_code):
-                body = _record_test_advice(
-                    body,
+                user_turn_injections.append(_tool_advice(
                     python_advice["python_runner_missing"],
                     mechanism="pytest_binary_missing_hint",
-                    runner=quirk.runner,
+                    tool_name="run_tests", runner=quirk.runner,
                     exit_code=exit_code,
-                )
+                ))
             elif _pytest_path_missing(body, exit_code):
-                body = _record_test_advice(
-                    body,
+                user_turn_injections.append(_tool_advice(
                     pytest_advice["pytest_path_missing"],
                     mechanism="pytest_path_missing_hint",
-                    runner=quirk.runner,
+                    tool_name="run_tests", runner=quirk.runner,
                     exit_code=exit_code,
-                )
+                ))
             # `--lf` with an empty lastfailed cache → exit 5
             # (no_tests_collected), indistinguishable from "no tests at
             # all" without the harness hint. Tied to the input arg so we
             # don't false-fire on legitimately-empty test directories
             # called without --lf.
             if last_failed and status == "no_tests_collected":
-                body = _record_test_advice(
-                    body,
+                user_turn_injections.append(_tool_advice(
                     pytest_advice["pytest_lf_cache_empty"],
                     mechanism="pytest_lf_cache_empty_hint",
-                    runner=quirk.runner,
+                    tool_name="run_tests", runner=quirk.runner,
                     exit_code=exit_code,
-                )
+                ))
         # Add source context around each failing assertion so the model
         # can see the surrounding code with the verdict. This runs for
         # `failed` and
@@ -242,9 +223,14 @@ def run_tests(
     # the trace can't tell which runner ran without re-detecting from
     # cwd contents, and a re-run on a repo that gained a Cargo.toml
     # silently flips the output shape.
-    return (
-        f'<test_results status="{status}"{ec_attr} '
-        f'runner="{quirk.runner}">\n{body}\n</test_results>'
+    return ToolExecutionText(
+        (
+            f'<test_results status="{status}"{ec_attr} '
+            f'runner="{quirk.runner}">\n{body}\n</test_results>'
+        ),
+        exit_status=exit_code,
+        timed_out=timed_out,
+        user_turn_injections=user_turn_injections,
     )
 
 

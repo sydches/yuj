@@ -323,12 +323,11 @@ def mark_bash_verified(state: GuardrailState, cfg: Any, *,
         return
     if tc_name != "bash":
         return
-    # Strip harness-injected text before the verification length test.
-    # The loop appends [HARNESS: …] lines (test_read_nudge,
-    # rumination_grace_prefix, error_ladder warns, contract warns)
-    # AFTER dispatch and BEFORE this observer runs. Without subtraction,
-    # a 0-byte real bash output can clear the 200-char threshold purely
-    # on harness-injected text, falsely flipping verified_since_mutation.
+    # Strip legacy in-band harness text before the verification length test.
+    # Current next-action advice is delivered separately as a synthetic user
+    # turn. Old traces and externally supplied results can still contain
+    # appended [HARNESS: …] lines; without subtraction, a 0-byte real bash
+    # output could clear the threshold on harness text alone.
     # Also strip the unified <tool_result …> envelope's opening/closing
     # tags because they are harness-emitted padding. The "real"
     # verification length is what

@@ -1976,7 +1976,8 @@ By default, the first path or keyword match consumes the rule. Set the rule's
 `repeat = true` to let either trigger repeat. `path_rule_repeat = true` changes
 only the default for path rules that omit `repeat`.
 
-A path fire appends this shape to the same model-visible tool result:
+A path fire sends this shape in the next synthetic user turn. The tool result
+continues to contain only the result of the operation that triggered the rule:
 
 ```xml
 <injected-fragment rule="python-tests" trigger="path" path="src/app.py" source="python-tests">
@@ -1986,9 +1987,8 @@ Follow this repository's Python and test conventions.
 
 Each fire writes `rule`, `trigger`, and `path` to an `injection` trace row.
 Keyword rows use an empty path. The metadata does not enter
-`.solver/state.json`; the visible fragment remains part of the ordinary tool
-result. Startup logs name armed rules and trigger types without copying their
-bodies.
+`.solver/state.json`. Startup logs name armed rules and trigger types without
+copying their bodies.
 
 ### Load project instruction files
 

@@ -383,6 +383,55 @@ class InjectionState:
 
 
 @dataclass(frozen=True, slots=True)
+class UserTurnInjection:
+    """One harness-authored fragment queued for the next model request."""
+
+    text: str
+    bucket: str
+    mechanism: str
+    layer: str = "harness"
+    tool_call_id: str = ""
+    ctx: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        text = str(self.text).strip()
+        if not text:
+            raise ValueError("user-turn injection text must be non-empty")
+        object.__setattr__(self, "text", text)
+
+    def for_tool_call(self, tool_call_id: str) -> "UserTurnInjection":
+        """Return this record with fallback tool provenance attached."""
+        if self.tool_call_id or not tool_call_id:
+            return self
+        return UserTurnInjection(
+            text=self.text,
+            bucket=self.bucket,
+            mechanism=self.mechanism,
+            layer=self.layer,
+            tool_call_id=str(tool_call_id),
+            ctx=self.ctx,
+        )
+
+
+def record_user_turn_delivery(injection: UserTurnInjection) -> None:
+    """Ledger one fragment when it enters the next outbound context."""
+    from .savings import get_ledger
+
+    details = dict(injection.ctx)
+    details.setdefault("delivery", "user_turn")
+    get_ledger().record_transform(
+        bucket=injection.bucket,
+        layer=injection.layer,
+        mechanism=injection.mechanism,
+        before="",
+        after=injection.text,
+        surface="injected_message",
+        tool_call_id=injection.tool_call_id,
+        ctx=details,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class PathInjectionFire:
     """One path-triggered rule fire and its safe canonical target path."""
 

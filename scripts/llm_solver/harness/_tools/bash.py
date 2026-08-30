@@ -3,6 +3,7 @@ from pathlib import Path
 import shlex
 
 from ...language_quirks import load_language_advice
+from ..injections import UserTurnInjection
 from ..sandbox import _DEFAULT_BWRAP_BIN, container_mode
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
 from ..savings import record_text_transform
@@ -10,6 +11,7 @@ from ._common import (
     ToolExecutionText,
     _require_external_readable,
     _resolve_read,
+    _tool_advice,
 )
 from ._env_hints import _missing_python_module, _python_install_failure
 from ._pytest_hints import (
@@ -28,11 +30,6 @@ def _record_output_change(before: str, after: str, *, bucket: str,
         before, after, bucket=bucket, mechanism=mechanism, surface="tool_output",
         ctx={"tool_name": "bash", "exit_code": exit_code},
     )
-
-
-def _language_advice(language: str, name: str) -> str:
-    """Load model-visible advice from its language descriptor."""
-    return load_language_advice(language)[name]
 
 
 def _try_inproc_trivial_read(
@@ -468,33 +465,36 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             mechanism="empty_output_substitution",
             exit_code=exit_code,
         )
+    user_turn_injections: list[UserTurnInjection] = []
     if transform_output:
         if _pytest_binary_missing(out, exit_code):
-            out = _record_output_change(
-                out, out + _language_advice("python", "python_runner_missing"),
-                bucket="advice_injection",
-                mechanism="pytest_binary_missing_hint",
+            user_turn_injections.append(_tool_advice(
+                load_language_advice("python")["python_runner_missing"],
+                mechanism="pytest_binary_missing_hint", tool_name="bash",
                 exit_code=exit_code,
-            )
+            ))
         elif _pytest_path_missing(out, exit_code):
-            out = _record_output_change(
-                out, out + _language_advice("pytest", "pytest_path_missing"),
-                bucket="advice_injection",
-                mechanism="pytest_path_missing_hint",
+            user_turn_injections.append(_tool_advice(
+                load_language_advice("pytest")["pytest_path_missing"],
+                mechanism="pytest_path_missing_hint", tool_name="bash",
                 exit_code=exit_code,
-            )
+            ))
         elif _python_install_failure(cmd, out, exit_code):
-            out = _record_output_change(
-                out, out + _language_advice("python", "python_install_failure"),
-                bucket="advice_injection",
-                mechanism="python_install_failure_hint",
+            user_turn_injections.append(_tool_advice(
+                load_language_advice("python")["python_install_failure"],
+                mechanism="python_install_failure_hint", tool_name="bash",
                 exit_code=exit_code,
-            )
+            ))
         elif missing_module := _missing_python_module(out, exit_code):
-            out = _record_output_change(
-                out, out + _language_advice("python", "python_env_missing").replace("{module}", missing_module),
-                bucket="advice_injection",
-                mechanism="python_env_missing_hint",
+            user_turn_injections.append(_tool_advice(
+                load_language_advice("python")["python_env_missing"].replace(
+                    "{module}", missing_module
+                ),
+                mechanism="python_env_missing_hint", tool_name="bash",
                 exit_code=exit_code,
-            )
-    return ToolExecutionText(out, exit_status=exit_code)
+            ))
+    return ToolExecutionText(
+        out,
+        exit_status=exit_code,
+        user_turn_injections=user_turn_injections,
+    )

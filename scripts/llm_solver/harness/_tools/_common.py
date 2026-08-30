@@ -1,14 +1,17 @@
 """Cross-tool helpers: cwd-rooted paths, execution text, and XML rendering."""
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Iterable
+
+if TYPE_CHECKING:
+    from ..injections import UserTurnInjection
 
 
 class ToolExecutionText(str):
     """String-compatible tool output carrying process facts out of the tool.
 
     The model-facing tool pipeline remains string based.  This subclass lets a
-    process-backed tool preserve its real exit status until ``dispatch`` has
-    copied it into private execution metadata, before later harness reminders
-    decorate the visible text.
+    process-backed tool preserve its real exit status and user-turn advice
+    records until ``dispatch`` has copied them into private execution metadata.
     """
 
     def __new__(
@@ -17,11 +20,27 @@ class ToolExecutionText(str):
         *,
         exit_status: int | None,
         timed_out: bool = False,
+        user_turn_injections: Iterable["UserTurnInjection"] = (),
     ) -> "ToolExecutionText":
         value = super().__new__(cls, text)
         value.exit_status = exit_status
         value.timed_out = bool(timed_out)
+        value.user_turn_injections = tuple(user_turn_injections)
         return value
+
+
+def _tool_advice(
+    text: str, *, mechanism: str, tool_name: str, **ctx: object,
+) -> "UserTurnInjection":
+    """Build one tool-produced recovery record for user-turn delivery."""
+    from ..injections import UserTurnInjection
+
+    return UserTurnInjection(
+        text=text,
+        bucket="advice_injection",
+        mechanism=mechanism,
+        ctx={"tool_name": tool_name, **ctx},
+    )
 
 
 def _resolve(cwd: str, path: str) -> Path:

@@ -457,8 +457,7 @@ def rumination_gate(state: GuardrailState, cfg: Any, *,
                     tc_name: str, tc_args: dict | None = None) -> Decision:
     """Hard gate armed by the rumination ladder: block non-writes.
 
-    GRACE (1 call): execute with a warning prefix (returned as WARN so
-      the caller knows to dispatch but append the prefix).
+    GRACE (1 call): execute and queue a warning for the next model request.
     BLOCK: reject non-writes; count toward gate_max_blocks.
     END: after ``cfg.rumination_gate_max_blocks`` blocks → end session.
 
@@ -474,7 +473,7 @@ def rumination_gate(state: GuardrailState, cfg: Any, *,
     if state.rumination_gate_grace > 0:
         state.rumination_gate_grace -= 1
         # Not a BLOCK — dispatch still runs — but carry a WARN so the
-        # caller appends the warning prefix to the real tool result.
+        # caller queues it for the next synthetic user turn.
         return Decision.warn(cfg.rumination_gate_grace_prefix, reason="rumination_gate.grace")
     state.gate_block_count += 1
     if (cfg.rumination_gate_max_blocks > 0

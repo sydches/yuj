@@ -11,6 +11,9 @@ import pytest
 from scripts.llm_solver.config import load_config
 from scripts.llm_solver.harness._loop._driver_setup import load_session_stream_rules
 from scripts.llm_solver.harness.context import FullTranscript
+from scripts.llm_solver.harness.context_strategies.compact_transcript import (
+    CompactTranscript,
+)
 from scripts.llm_solver.harness.injections import Injection
 from scripts.llm_solver.harness.loop import Session
 from scripts.llm_solver.harness.state_writer import project
@@ -78,6 +81,16 @@ def _trace_rows(trace: io.StringIO):
     return [json.loads(line) for line in trace.getvalue().splitlines() if line]
 
 
+def _compact_context() -> CompactTranscript:
+    return CompactTranscript(
+        "task",
+        recent_results_chars=20_000,
+        trace_reasoning_chars=200,
+        min_turns=0,
+        args_summary_chars=80,
+    )
+
+
 def test_fake_stream_is_closed_discard_omits_partial_and_replay_retries(
     tmp_path, monkeypatch
 ):
@@ -103,7 +116,7 @@ def test_fake_stream_is_closed_discard_omits_partial_and_replay_retries(
     transcript = tmp_path / "live.log"
     live_client.set_transcript(transcript)
     live_trace = io.StringIO()
-    live_context = FullTranscript()
+    live_context = _compact_context()
     live_session = Session(
         cfg,
         live_client,
@@ -232,7 +245,7 @@ class _SequenceClient:
 def test_nonstream_response_is_posthoc_and_noninterrupting(tmp_path):
     cfg = make_config(stream_rules_enabled=True)
     client = _StaticClient(TurnResult("forbidden", [], "stop", Usage(2, 1)))
-    context = FullTranscript()
+    context = _compact_context()
     trace = io.StringIO()
     session = Session(
         cfg,
@@ -306,7 +319,9 @@ def test_noninterrupt_tool_match_prepends_reminder_in_real_dispatch(tmp_path):
     assert injection["delivery"] == "tool_result"
 
 
-def test_stream_reminder_and_path_injection_share_the_exact_tool_result(tmp_path):
+def test_stream_reminder_keeps_tool_result_while_path_injection_uses_user_turn(
+    tmp_path,
+):
     target = tmp_path / "src" / "main.py"
     target.parent.mkdir()
     target.write_text("VALUE = 1\n")
@@ -362,10 +377,12 @@ def test_stream_reminder_and_path_injection_share_the_exact_tool_result(tmp_path
         if message["role"] == "tool"
     )
     assert tool_result.startswith('<system-reminder reason="rule_violation"')
-    assert '<injected-fragment rule="python-path" trigger="path"' in tool_result
-    assert tool_result.index("</system-reminder>") < tool_result.index(
-        '<injected-fragment rule="python-path"'
+    assert '<injected-fragment rule="python-path"' not in tool_result
+    next_request = "\n".join(
+        str(message.get("content") or "")
+        for message in client.requests[1]
     )
+    assert '<injected-fragment rule="python-path" trigger="path"' in next_request
     rows = _trace_rows(trace)
     assert any(
         row.get("event") == "stream_rule_injection"
@@ -375,6 +392,12 @@ def test_stream_reminder_and_path_injection_share_the_exact_tool_result(tmp_path
     assert any(
         row.get("event") == "injection"
         and row.get("trigger") == "path"
+        for row in rows
+    )
+    assert any(
+        row.get("event") == "user_turn_injection"
+        and row.get("mechanism") == "python-path"
+        and row.get("tool_call_id") == "read-1"
         for row in rows
     )
 
