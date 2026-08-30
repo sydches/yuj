@@ -90,6 +90,7 @@ PACKAGE_RUNTIME_FILES = (
     "language_quirks/go.toml",
     "language_quirks/jest.toml",
     "language_quirks/pytest.toml",
+    "language_quirks/python.toml",
     "tool_quirks/glob.toml",
 )
 

@@ -19,7 +19,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 
 def test_resource_manifest_is_exact_and_present():
     assert len(ROOT_RUNTIME_FILES) == 65
-    assert len(PACKAGE_RUNTIME_FILES) == 10
+    assert len(PACKAGE_RUNTIME_FILES) == 11
     assert tuple(sorted(ROOT_RUNTIME_FILES)) == ROOT_RUNTIME_FILES
     assert tuple(sorted(PACKAGE_RUNTIME_FILES)) == PACKAGE_RUNTIME_FILES
     assert all((REPOSITORY / path).is_file() for path in ROOT_RUNTIME_FILES)
