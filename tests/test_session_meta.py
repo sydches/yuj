@@ -24,7 +24,10 @@ def test_session_meta_writes_on_dry_run(tmp_path):
     overlay_dir = tmp_path / "configs" / "regimes"
     overlay_dir.mkdir(parents=True)
     overlay = overlay_dir / "test_overlay.toml"
-    overlay.write_text("[model]\nname = \"test-model\"\n")
+    overlay.write_text(
+        "[model]\nname = \"test-model\"\n"
+        "[sandbox]\nbackend = \"none\"\n"
+    )
 
     # Run llm_solver in dry-run mode (no llama-server needed).
     cmd = [
