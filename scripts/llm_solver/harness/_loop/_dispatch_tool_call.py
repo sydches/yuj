@@ -1674,6 +1674,22 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         not gate_blocked_flag
         and bool(execution_metadata.get("executed", True))
     )
+    if (
+        not plan_artifact
+        and path_call_executed
+        and metadata.get("source_write_like")
+        and not is_error_result(result)
+        and not session._guards.post_mutation_verification_nudge_emitted
+        and cfg.post_mutation_verification_nudge
+    ):
+        result = _append_intervention(
+            result,
+            cfg.post_mutation_verification_nudge,
+            mechanism="post_mutation_verification_nudge",
+            session=session,
+            tool_call_id=tc.id,
+        )
+        session._guards.post_mutation_verification_nudge_emitted = True
     if not plan_artifact:
         result, path_injection_fired = session._apply_path_injections(
             result,

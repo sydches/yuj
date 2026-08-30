@@ -663,6 +663,10 @@ rumination_gate = "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked 
 rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]"
 rumination_outside_cwd_nudge = "[HARNESS: repeated inspection is anchored outside the repo root ({target}). The working directory is already correct; search and read relative to it.]"
 test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]"
+
+# Delivered once in the next synthetic user turn after the first successful
+# source mutation. Empty text disables the advice.
+post_mutation_verification_nudge = "[HARNESS: If this change affects executable behavior, after focused checks pass, run the changed component's complete existing test file or package suite. Before declaring done, run the repository's full test suite when feasible. If that is unavailable or impractical, state the limitation. Target tests and custom reproducers are not sufficient regression coverage.]"
 contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]"
 contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]"
 contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, mutate a file, or run verification.]"

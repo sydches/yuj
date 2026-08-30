@@ -190,6 +190,7 @@ class GuardrailState:
     test_runs_without_test_read: int = 0
     last_test_target: str = ""
     test_read_nudge_target: str = ""
+    post_mutation_verification_nudge_emitted: bool = False
 
     # Regression observability (independent of pretest-parity mode).
     # Holds the prior test run's parsed verdicts and the mutation count

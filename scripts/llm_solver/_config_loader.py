@@ -880,6 +880,12 @@ def _extract_config_fields(d: dict) -> dict:
             "test_read_nudge",
             "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]",
         ),
+        "post_mutation_verification_nudge": d.get(
+            "prompts", {}
+        ).get(
+            "post_mutation_verification_nudge",
+            "[HARNESS: If this change affects executable behavior, after focused checks pass, run the changed component's complete existing test file or package suite. Before declaring done, run the repository's full test suite when feasible. If that is unavailable or impractical, state the limitation. Target tests and custom reproducers are not sufficient regression coverage.]",
+        ),
         "contract_commit_warn": d.get(
             "prompts", {}
         ).get(

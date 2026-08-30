@@ -230,6 +230,14 @@ class Config:
     resume_length: str
     resume_last_n_actions: int
     tool_desc: str = "minimal"
+    post_mutation_verification_nudge: str = (
+        "[HARNESS: If this change affects executable behavior, after focused "
+        "checks pass, run the changed component's complete existing test file "
+        "or package suite. Before declaring done, run the repository's full "
+        "test suite when feasible. If that is unavailable or impractical, "
+        "state the limitation. Target tests and custom reproducers are not "
+        "sufficient regression coverage.]"
+    )
     # Operator/guardrail rewind of the canonical model-facing conversation
     # together with its shadow-Git workspace checkpoint. Off by default.
     rewind_enabled: bool = False

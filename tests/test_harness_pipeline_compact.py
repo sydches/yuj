@@ -450,3 +450,80 @@ class TestErrorDetection:
         # At least one INFO log about tool error
         info_calls = [str(c) for c in mock_log.info.call_args_list]
         assert any("error" in c.lower() or "ERROR" in c for c in info_calls)
+
+
+class TestPostMutationVerificationNudge:
+
+    def test_nudge_is_one_shot_user_turn_after_source_mutation(self, tmp_path):
+        from llm_solver.harness.loop import Session
+
+        cfg = make_config(max_turns=4, duplicate_abort=20)
+        client = MagicMock()
+        call_count = [0]
+
+        def chat_fn(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] > 2:
+                return make_turn_result(content="done", finish_reason="stop")
+            tc = [ToolCall(
+                id=f"c{call_count[0]}",
+                name="edit",
+                arguments={
+                    "path": f"src/core_{call_count[0]}.py",
+                    "old_str": "before",
+                    "new_str": "after",
+                },
+            )]
+            return make_turn_result(tool_calls=tc, finish_reason="tool_calls")
+
+        client.chat.side_effect = chat_fn
+        client.build_assistant_message.return_value = {
+            "role": "assistant", "content": None,
+        }
+
+        tool_results = []
+        trace_path = tmp_path / ".trace.jsonl"
+        with trace_path.open("a") as trace_file, patch(
+            "llm_solver.harness.loop.dispatch", return_value="OK: edit applied"
+        ):
+            session = Session(
+                cfg,
+                client,
+                "sys",
+                "prompt",
+                str(tmp_path),
+                trace_file=trace_file,
+                trace_path=trace_path,
+                session_number=1,
+            )
+            original_add = session.context.add_tool_result
+
+            def capture(tool_call_id, result, **kwargs):
+                tool_results.append(result)
+                return original_add(tool_call_id, result, **kwargs)
+
+            session.context.add_tool_result = capture
+            session.run()
+
+        advice = cfg.post_mutation_verification_nudge
+        second_request = client.chat.call_args_list[1].args[0]
+        assert any(
+            message.get("role") == "user"
+            and advice in str(message.get("content") or "")
+            for message in second_request
+        )
+        assert all(advice not in result for result in tool_results)
+
+        events = [
+            json.loads(line)
+            for line in trace_path.read_text().splitlines()
+            if line.strip()
+        ]
+        injections = [
+            event
+            for event in events
+            if event.get("event") == "user_turn_injection"
+            and event.get("mechanism") == "post_mutation_verification_nudge"
+        ]
+        assert len(injections) == 1
+        assert injections[0]["tool_call_id"] == "c1"
