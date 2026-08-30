@@ -310,6 +310,7 @@ def test_language_quirks_drop_in_output_parser(tmp_path: Path):
         ({"base_cmd": ""}, "base_cmd must be non-empty"),
         ({"detect_files": []}, "detect_files must contain"),
         ({"arg_path_style": "flag"}, "arg_path_style"),
+        ({"status_map": {}}, "status_map must contain"),
     ],
 )
 def test_run_tests_descriptor_rejects_unusable_metadata(override, message):
@@ -317,6 +318,7 @@ def test_run_tests_descriptor_rejects_unusable_metadata(override, message):
         "base_cmd": "fixture-runner test",
         "detect_files": ["fixture.toml"],
         "arg_path_style": "positional",
+        "status_map": {0: "passed"},
     }
     run_tests.update(override)
 

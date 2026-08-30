@@ -392,6 +392,7 @@ def admit_tool_output(
     redactions=None,
     filter_shell_output: bool = True,
     security_findings=(),
+    cwd: str | Path | None = None,
 ) -> str:
     """Apply the single model-facing output-admission pipeline.
 
@@ -407,19 +408,14 @@ def admit_tool_output(
         if output_control is not None and name == "bash":
             from ..bash_quirks import condense_output
             result = condense_output(result, cmd, output_control)
-    elif name == "run_tests":
-        argv: list[str] = ["pytest"]
-        if arguments.get("last_failed"):
-            argv.append("--lf")
-        if arguments.get("k"):
-            argv.extend(["-k", str(arguments["k"])])
-        if arguments.get("path"):
-            argv.append(str(arguments["path"]))
-        synthesized_cmd = " ".join(argv)
-        result = _filter_bash_output(result, synthesized_cmd, cfg)
+    elif name == "run_tests" and filter_shell_output and cwd is not None:
+        from ..language_quirks import load_run_tests_quirk_object
+        quirk = load_run_tests_quirk_object(cwd)
+        runner_cmd = quirk.env_activate_prefix + quirk.base_cmd
+        result = _filter_bash_output(result, runner_cmd, cfg)
         if output_control is not None:
             from ..bash_quirks import condense_output
-            result = condense_output(result, synthesized_cmd, output_control)
+            result = condense_output(result, runner_cmd, output_control)
 
     # Cell stdout is model-authored and may deliberately begin with a native
     # envelope prefix.  It never owns the harness envelope, so it must not use
@@ -878,6 +874,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 cfg=cfg,
                 filter_shell_output=False,
                 security_findings=security_findings,
+                cwd=cwd,
             )
     else:
         result = admit_tool_output(
@@ -891,6 +888,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             security_findings=(
                 () if result_scan.blocked else security_findings
             ),
+            cwd=cwd,
         )
     if execution_metadata is not None:
         execution_metadata["output_sha256"] = hashlib.sha256(

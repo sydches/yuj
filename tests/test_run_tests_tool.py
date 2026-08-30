@@ -56,6 +56,26 @@ def _ledger_rows(path: Path) -> list[dict]:
     ]
 
 
+def test_run_tests_admission_uses_detected_runner_command(tmp_path):
+    (tmp_path / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
+    result = '<test_results status="passed" runner="cargo">ok</test_results>'
+    cfg = make_config()
+
+    with patch.object(
+        tools_mod, "_filter_bash_output", return_value=result,
+    ) as output_filter:
+        admitted = tools_mod.admit_tool_output(
+            "run_tests",
+            result,
+            arguments={},
+            cfg=cfg,
+            cwd=tmp_path,
+        )
+
+    assert admitted == result
+    assert output_filter.call_args.args[1] == "cargo test --no-fail-fast --quiet"
+
+
 # ── Handler: gating ──────────────────────────────────────────────────────
 
 class TestRunTestsGating:

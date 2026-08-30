@@ -1,23 +1,6 @@
 """pytest exit-code semantics and output detectors."""
 import re
 
-# Pytest exit-code semantics. Source: docs.pytest.org/en/stable/reference/exit-codes.html
-#   0 = all collected tests passed
-#   1 = some tests failed
-#   2 = test execution interrupted by user / collection error
-#   3 = internal error happened while executing tests
-#   4 = pytest invocation error (e.g. bad command line)
-#   5 = no tests were collected
-_PYTEST_STATUS = {
-    0: "passed",
-    1: "failed",
-    2: "collection_error",
-    3: "internal_error",
-    4: "usage_error",
-    5: "no_tests_collected",
-}
-
-
 _PYTEST_COMMAND_NOT_FOUND_RE = re.compile(
     r"(?:^|:\s)(?:python(?:\d+(?:\.\d+)*)?|pytest):\s+"
     r"(?:command\s+)?not found\b",

@@ -7,9 +7,7 @@ from ...config import Config
 from ...language_quirks import load_language_advice, load_run_tests_quirk_object
 from ..savings import record_text_transform
 from ._common import _resolve, _xml_attr
-from ._pytest_hints import (
-    _PYTEST_STATUS, _pytest_binary_missing, _pytest_path_missing,
-)
+from ._pytest_hints import _pytest_binary_missing, _pytest_path_missing
 
 
 def _record_test_advice(
@@ -183,21 +181,10 @@ def run_tests(
         body = out
         ec_attr = ""
     else:
-        # Each language_quirks TOML can declare its own multilingual
-        # exit-code-to-status mapping in [run_tests.status_map]
-        # (+ optional status_default for unmapped nonzero codes) so a
-        # runner's real exit-code semantics (e.g. cargo panic=101, go/
-        # jest/ctest nonzero=failed) aren't forced through pytest's
-        # vocabulary. Only when a runner declares NO status_map at all do
-        # we fall back to the hardcoded pytest table — this preserves
-        # pytest behavior byte-identically regardless of whether
-        # pytest.toml happens to carry an explicit table.
-        if quirk.status_map:
-            status = quirk.status_map.get(
-                exit_code, quirk.status_default or f"error_{exit_code}"
-            )
-        else:
-            status = _PYTEST_STATUS.get(exit_code, f"error_{exit_code}")
+        # Every runner descriptor owns its exit-code vocabulary.
+        status = quirk.status_map.get(
+            exit_code, quirk.status_default or f"error_{exit_code}"
+        )
         body = out if out else "(no output)"
         ec_attr = f' exit_code="{exit_code}"'
         # pytest-specific recovery hints: only meaningful when pytest is

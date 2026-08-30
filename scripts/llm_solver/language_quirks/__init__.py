@@ -45,19 +45,11 @@ class RunTestsQuirk:
     arg_path_style: str = "ignored"
     arg_k_template: str = ""
     arg_last_failed: str = ""
-    # Multilingual exit-code -> status mapping. Empty by default; when empty,
-    # run_tests.py
-    # falls back to the hardcoded pytest _PYTEST_STATUS map so pytest's
-    # behavior is unaffected whether or not pytest.toml carries an explicit
-    # table. Non-pytest runners (cargo/go/jest/ctest) declare their own
-    # table via [run_tests.status_map] in their TOML so a runner-specific
-    # exit code (e.g. cargo's 101) doesn't get labelled with pytest
-    # vocabulary (e.g. "usage_error").
+    # Runner-owned exit-code -> status mapping.
     status_map: dict[int, str] = field(default_factory=dict)
     # Status name for exit codes not present in status_map, used only
     # when status_map is non-empty (i.e. only for runners that opted in).
-    # Empty string means "fall back to error_<code>" (matches the pytest
-    # legacy behavior for unmapped codes).
+    # Empty string means "fall back to error_<code>".
     status_default: str = ""
     advice: dict[str, str] = field(default_factory=dict)
     extra_fields: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
@@ -165,6 +157,11 @@ def _run_tests_quirk_from_dict(runner: str, run_tests: dict) -> RunTestsQuirk:
         )
 
     status_map = _status_map_from_dict(runner, run_tests)
+    if not status_map:
+        raise ValueError(
+            f"{_run_tests_path(runner)} [run_tests].status_map "
+            "must contain at least one exit-code mapping"
+        )
     status_default = run_tests.get("status_default", "")
     if not isinstance(status_default, str):
         raise ValueError(
@@ -217,9 +214,7 @@ def _status_map_from_dict(runner: str, run_tests: dict) -> dict[int, str]:
     TOML keys are always strings (bare-integer keys like ``101 = "failed"``
     parse as the string ``"101"``), so this converts each key to an int
     exit code and validates the value is a status-name string. Absent
-    entirely -> empty dict, which signals run_tests.py to fall back to
-    the hardcoded pytest ``_PYTEST_STATUS`` map (byte-identical legacy
-    behavior for runners that don't declare their own table).
+    entirely -> empty dict, which descriptor validation rejects.
     """
     raw = run_tests.get("status_map", {})
     if not isinstance(raw, dict):
