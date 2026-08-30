@@ -75,7 +75,7 @@ def _events(path: Path) -> list[dict]:
 def test_length_continue_config_default_overlay_and_rejection(
     tmp_path: Path,
 ) -> None:
-    assert load_config().length_continue_max == 0
+    assert load_config().length_continue_max == 1
     overlay = tmp_path / "length.toml"
     overlay.write_text("[loop]\nlength_continue_max = 3\n")
     assert load_config(user_config=overlay).length_continue_max == 3
@@ -210,6 +210,49 @@ def test_off_or_unsupported_keeps_one_call_and_length_fallback(
     assert not any(
         event["event"] == "length_continue" for event in _events(trace)
     )
+
+
+def test_default_continues_length_response_before_session_end(
+    tmp_path: Path,
+) -> None:
+    cfg = make_config(max_turns=2, sandbox_bash=False)
+    assert cfg.length_continue_max == 1
+    client = _client(
+        cfg, supports_prefill=True, normalize=lambda value: value
+    )
+    client._call_api = MagicMock(side_effect=[
+        _response(
+            "partial ", "length", prompt_tokens=10, completion_tokens=4
+        ),
+        _response(
+            "complete", "stop", prompt_tokens=14, completion_tokens=2
+        ),
+    ])
+    trace = tmp_path / ".trace.jsonl"
+    with open(trace, "a") as trace_file, patch.object(
+        Session, "_get_server_ctx", return_value=cfg.context_size
+    ):
+        session = Session(
+            cfg,
+            client,
+            "system",
+            "task",
+            str(tmp_path),
+            trace_file=trace_file,
+            trace_path=trace,
+            session_number=1,
+        )
+        result = session.run()
+
+    assert result.finish_reason == "stop"
+    assert result.done is True
+    assert client._call_api.call_count == 2
+    assert session._length_continuation_count == 1
+    continuation = next(
+        event for event in _events(trace)
+        if event["event"] == "length_continue"
+    )
+    assert continuation["attempt"] == 1
 
 
 def test_split_thinking_tool_call_joins_once_in_the_real_session(

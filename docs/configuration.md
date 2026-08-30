@@ -1899,10 +1899,10 @@ in place, so normal trace loading may reject the trace or stop at that suffix.
 
 ### Continue a length-limited response
 
-The default, `[loop].length_continue_max = 0`, makes one request per model
-turn. Set a positive limit to continue the same turn when the server returns
-`finish_reason = "length"`. The active profile must also set
-`[model].supports_prefill = true`.
+The default, `[loop].length_continue_max = 1`, allows one same-turn follow-up
+when the server returns `finish_reason = "length"`. The active profile must
+also set `[model].supports_prefill = true`. Set the limit to `0` to disable
+follow-ups.
 
 Each follow-up starts from the original prepared request and adds the full
 partial assistant response. Yuj removes only an exact overlap between pieces.

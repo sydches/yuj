@@ -794,7 +794,7 @@ def _extract_config_fields(d: dict) -> dict:
             "interrupted_turn_mode", "mechanical"
         ),
         "length_continue_max": d.get("loop", {}).get(
-            "length_continue_max", 0
+            "length_continue_max", 1
         ),
         "project_docs_enabled": d.get("prompts", {}).get(
             "project_docs_enabled", False

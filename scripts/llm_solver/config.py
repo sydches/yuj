@@ -235,7 +235,7 @@ class Config:
     rewind_enabled: bool = False
     rewind_max_per_session: int = 1
     interrupted_turn_mode: str = "mechanical"
-    length_continue_max: int = 0
+    length_continue_max: int = 1
     project_docs_enabled: bool = False
     project_doc_names: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md")
     project_doc_max_bytes: int = 32768

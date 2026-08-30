@@ -62,6 +62,7 @@ def _can_continue_raw(client) -> bool:
     profile = getattr(client, "profile", None)
     return bool(
         profile is not None
+        and getattr(profile, "supports_prefill", False) is True
         and callable(getattr(profile, "normalize", None))
         and callable(getattr(client, "_prepare_profile_chat_request", None))
         and callable(getattr(client, "_call_raw_profile_request", None))

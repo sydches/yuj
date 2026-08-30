@@ -108,7 +108,7 @@ plan_mode_max_turns = 15     # model turns allowed for inspection before only th
 rewind_enabled = false
 rewind_max_per_session = 1
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
-length_continue_max = 0     # same-turn follow-ups after finish_reason=length; 0 disables
+length_continue_max = 1     # same-turn follow-ups after finish_reason=length; 0 disables
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
 # Mid-stream rules load once at task startup from the task repository. With
 # YUJ_STREAMING=1, an interrupt-worthy match closes the SSE response, injects
