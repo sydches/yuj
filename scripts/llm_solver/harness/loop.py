@@ -996,9 +996,9 @@ class Session:
         # call from chat_result.usage.prompt_tokens. 0 before the first
         # turn returns; callers fall back to chars_div_4 estimate.
         self._last_actual_prompt_tokens: int = 0
-        # Local tokenizer for exact pre-flight token counts in
-        # _maybe_compact_messages. None when cfg.tokenizer_id is unset
-        # — caller falls back to chars_div_4 estimate.
+        # Local tokenizer for exact request token counts. None when
+        # cfg.tokenizer_id is unset — callers fall back to the profile or
+        # chars_div_4 estimator.
         from .local_tokenizer import load as _load_tokenizer
         tokenizer_was_preloaded = local_tokenizer is not None
         self._tokenizer = (
@@ -1011,6 +1011,16 @@ class Session:
                 getattr(cfg, "base_url", "") or "")
             log.info("local tokenizer loaded: %s (server template %s)",
                      self._tokenizer.id, "synced" if synced else "NOT synced — counts approximate")
+        if self._tokenizer is not None:
+            def _estimate_request_tokens(messages: list[dict]) -> int:
+                return int(self._tokenizer.count(
+                    messages, tools=self.model_tool_schemas,
+                ))
+
+            # Context strategies make pressure decisions before pre-flight.
+            # Give them the same rendered-request count used by the gate,
+            # including the active tool catalog.
+            self.context.set_token_estimator(_estimate_request_tokens)
         # Server n_ctx fetched from /props on first need. Once known,
         # cfg.context_size is rewritten to match so the fill_ratio math
         # uses the live server window instead of a stale config knob.

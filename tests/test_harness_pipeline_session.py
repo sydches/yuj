@@ -233,6 +233,62 @@ class TestSessionRun:
         assert session.context._token_estimator is estimate
         assert session.context.estimate_tokens() == 42
 
+    def test_local_tokenizer_drives_halflife_activation_with_tool_catalog(self):
+        from llm_solver.harness.context_strategies import HalfLifeContext
+        from llm_solver.harness.loop import Session
+
+        def estimate(_messages):
+            return 1
+
+        class ExactTokenizer:
+            def __init__(self):
+                self.tool_counts = 0
+
+            def count(self, messages, tools=None):
+                if tools:
+                    self.tool_counts += 1
+                content_tokens = sum(
+                    len(str(message.get("content", ""))) // 4
+                    for message in messages
+                )
+                return content_tokens + (600 if tools else 0)
+
+        profile = type("Profile", (), {})()
+        profile.estimate_tokens = estimate
+        client = MagicMock()
+        client.__dict__["profile"] = profile
+        tokenizer = ExactTokenizer()
+        context = HalfLifeContext(
+            context_size=1000,
+            activation_ratio=0.50,
+            verbatim_tool_results=1,
+            cap_7_chars=40,
+            token_estimator=estimate,
+        )
+
+        session = Session(
+            make_config(context_size=1000),
+            client,
+            "sys",
+            "prompt",
+            "/tmp",
+            context_manager=context,
+            local_tokenizer=tokenizer,
+        )
+        session.context.add_assistant({"role": "assistant", "content": "one"})
+        session.context.add_tool_result("call-1", "A" * 200)
+        session.context.add_assistant({"role": "assistant", "content": "two"})
+        session.context.add_tool_result("call-2", "B" * 200)
+
+        tool_contents = [
+            message["content"]
+            for message in session.context.get_messages()
+            if message.get("role") == "tool"
+        ]
+        assert tokenizer.tool_counts == 1
+        assert "[halflife: omitted" in tool_contents[0]
+        assert tool_contents[1] == "B" * 200
+
     def test_session_error_on_none_chat(self):
         from llm_solver.harness.loop import Session
         cfg = make_config(max_turns=10)
