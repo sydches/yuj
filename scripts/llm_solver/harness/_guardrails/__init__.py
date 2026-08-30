@@ -57,3 +57,7 @@ from .checks_post import (
     test_read_ladder,
     _update_same_target_streak,
 )
+from .verification import (
+    observe_post_mutation_verification,
+    post_mutation_verification_gate,
+)

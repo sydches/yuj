@@ -467,8 +467,15 @@ no `exit_code`. The default timeout is 240 seconds.
 
 ## Finish rule
 
-The shipped treatment and plain bases accept `done` without requiring a file
-change or test. Both bases set `done_guard_enabled = false` under `[loop]`.
+After a source change, Yuj requires a passing registered test runner before
+explicit or implicit completion. After three custom shell checks, it also
+blocks more custom shell checks until the model runs that runner or changes
+the source again. `post_mutation_verification_gate_after` under `[loop]`
+controls the number of allowed checks; set it to `0` to disable this rule and
+its first-edit advice.
+
+This rule is separate from the older finish guard. The shipped treatment and
+plain bases set `done_guard_enabled = false` under `[loop]`.
 
 Set `done_guard_enabled = true` under `[loop]` to turn on the guard. Set
 `done_require_mutation` under `[loop]` to require a file change. Set

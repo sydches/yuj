@@ -91,6 +91,7 @@ GUARDRAIL_SPECS: tuple[GuardrailSpec, ...] = (
     GuardrailSpec("mutation_repeat_guard", "tool_pre_dispatch"),
     GuardrailSpec("contract_gate", "tool_pre_dispatch"),
     GuardrailSpec("pre_mutation_gate", "tool_pre_dispatch"),
+    GuardrailSpec("post_mutation_verification_gate", "tool_pre_dispatch"),
     GuardrailSpec("rumination_gate", "tool_pre_dispatch"),
     GuardrailSpec("error_ladder", "tool_post_dispatch"),
     GuardrailSpec("test_read_ladder", "tool_post_dispatch"),
@@ -98,6 +99,7 @@ GUARDRAIL_SPECS: tuple[GuardrailSpec, ...] = (
     GuardrailSpec("mark_bash_verified", "observers"),
     GuardrailSpec("observe_test_file_read", "observers"),
     GuardrailSpec("observe_contract_state", "observers"),
+    GuardrailSpec("observe_post_mutation_verification", "observers"),
 )
 
 
@@ -191,6 +193,9 @@ class GuardrailState:
     last_test_target: str = ""
     test_read_nudge_target: str = ""
     post_mutation_verification_nudge_emitted: bool = False
+    post_mutation_non_test_bash_count: int = 0
+    post_mutation_verification_gate_armed: bool = False
+    formal_verification_passed_since_mutation: bool = False
 
     # Regression observability (independent of pretest-parity mode).
     # Holds the prior test run's parsed verdicts and the mutation count

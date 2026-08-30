@@ -1,12 +1,14 @@
 """Guardrail framework — facade over the _guardrails/ package.
 
 Pre-tool decisions: intent_gate, loop_detect, duplicate_guard, pre_mutation_gate,
-done_guard, mutation_repeat_guard, contract_gate, rumination_gate.
+done_guard, mutation_repeat_guard, contract_gate,
+post_mutation_verification_gate, rumination_gate.
 Post-tool ladders: error_ladder, test_read_ladder, rumination_ladder.
-Observers: mark_bash_verified, observe_test_file_read, observe_contract_state.
+Observers: mark_bash_verified, observe_test_file_read, observe_contract_state,
+observe_post_mutation_verification.
 
 Implementation lives in _guardrails/{state, extractors, checks_pre,
-checks_post}. Test imports of the form ``from scripts.llm_solver.harness
+checks_post, verification}. Test imports of the form ``from scripts.llm_solver.harness
 .guardrails import GuardrailState, mark_bash_verified, …`` work unchanged.
 """
 from __future__ import annotations
@@ -35,7 +37,9 @@ from ._guardrails import (  # noqa: F401
     mark_bash_verified,
     mutation_repeat_guard,
     observe_contract_state,
+    observe_post_mutation_verification,
     observe_test_file_read,
+    post_mutation_verification_gate,
     pre_mutation_gate,
     rumination_gate,
     rumination_ladder,
@@ -74,6 +78,7 @@ _GUARDRAIL_CALLABLES: dict[str, Callable[..., Any]] = {
     "mutation_repeat_guard": mutation_repeat_guard,
     "contract_gate": contract_gate,
     "pre_mutation_gate": pre_mutation_gate,
+    "post_mutation_verification_gate": post_mutation_verification_gate,
     "rumination_gate": rumination_gate,
     "error_ladder": error_ladder,
     "test_read_ladder": test_read_ladder,
@@ -81,6 +86,7 @@ _GUARDRAIL_CALLABLES: dict[str, Callable[..., Any]] = {
     "mark_bash_verified": mark_bash_verified,
     "observe_test_file_read": observe_test_file_read,
     "observe_contract_state": observe_contract_state,
+    "observe_post_mutation_verification": observe_post_mutation_verification,
 }
 
 

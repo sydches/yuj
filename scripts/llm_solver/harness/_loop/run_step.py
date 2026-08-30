@@ -1020,6 +1020,46 @@ def run_session_loop(session: "Session") -> "SessionResult":
             # silently fell off the conversation".
             allow_implicit = bool(getattr(cfg, "allow_implicit_done", True))
             if allow_implicit:
+                formal_gate_active = (
+                    int(
+                        getattr(
+                            cfg,
+                            "post_mutation_verification_gate_after",
+                            0,
+                        )
+                        or 0
+                    )
+                    > 0
+                    and session._guards.has_mutated
+                    and not session._guards.formal_verification_passed_since_mutation
+                )
+                if formal_gate_active:
+                    implicit_done_decision = tool_pre["done_guard"](
+                        session._guards,
+                        cfg,
+                        tc_name="done",
+                        cwd=session.cwd,
+                    )
+                    if implicit_done_decision.action == Action.BLOCK:
+                        session.context.add_injected_fragment(
+                            implicit_done_decision.text
+                        )
+                        session._record_pressure_event(True)
+                        log.info(
+                            "post-mutation verification gate rejected implicit "
+                            "done at turn %d",
+                            turn,
+                        )
+                        _run_post_turn_hooks(session, turn)
+                        continue
+                    if implicit_done_decision.action == Action.END:
+                        return SessionResult(
+                            turn,
+                            implicit_done_decision.reason or "done_loop",
+                            done=False,
+                            total_prompt_tokens=total_prompt,
+                            total_completion_tokens=total_completion,
+                        )
                 done_hook = session._run_hook(
                     "done",
                     implicit=True,

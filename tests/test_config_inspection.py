@@ -606,6 +606,7 @@ def test_transformations_file_is_the_complete_true_control_vector() -> None:
     assert cfg.adaptive_control_enabled is False
     assert cfg.llm_hurdle_detector_enabled is False
     assert cfg.detector_activated_guardrails is False
+    assert cfg.post_mutation_verification_gate_after == 0
 
     from scripts.llm_solver.harness._loop.session_io import (
         _load_bash_transforms,
@@ -638,6 +639,7 @@ def test_all_true_transformations_override_plain_arm_gates(tmp_path: Path) -> No
     assert cfg.adaptive_control_enabled is True
     assert cfg.llm_hurdle_detector_enabled is True
     assert cfg.detector_activated_guardrails is True
+    assert cfg.post_mutation_verification_gate_after > 0
 
 
 @pytest.mark.parametrize("enabled", sorted(TRANSFORMATION_KEYS))
@@ -678,6 +680,9 @@ def test_each_transformation_switch_can_be_selected_alone(
     assert cfg.llm_hurdle_detector_enabled is values[
         "detector_and_interventions"
     ]
+    assert (
+        cfg.post_mutation_verification_gate_after > 0
+    ) is values["detector_activated_guardrails"]
 
 
 def test_current_paper_arm_transformation_vectors_match_the_file_comments() -> None:

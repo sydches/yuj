@@ -1114,6 +1114,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
       6d. mutation_repeat      — END / BLOCK / WARN
       6d. contract_gate        — END / BLOCK / WARN
       6d.5 pre_mutation_gate   — BLOCK only (continue to next tc)
+      6d.6 post-mutation verification gate — BLOCK custom shell checks
       6e. rumination_gate      — END / BLOCK / WARN-grace dispatch
       6e. dispatch (when no gate intercepted)
       6f. error_ladder         — WARN / END
@@ -1278,6 +1279,26 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             return TCOutcome(end=False)
         if pre_mut_decision.action == Action.REWIND:
             return _handle_pre_rewind(tc, pre_mut_decision, state)
+
+        verification_decision = (
+            PASS
+            if plan_policy_call
+            else tool_pre["post_mutation_verification_gate"](
+                session._guards,
+                cfg,
+                tc_name=tc.name,
+                tc_args=tc.arguments,
+            )
+        )
+        if verification_decision.action == Action.BLOCK:
+            state.turn_had_pressure = True
+            log.info(
+                "post-mutation verification gate blocked %s at turn %d",
+                tc.name,
+                turn,
+            )
+            _emit_gate_block(tc, verification_decision, state, args_summary)
+            return TCOutcome(end=False)
 
         # 6d. rumination_gate — grace (WARN+dispatch) / BLOCK / END.
         gate_decision = PASS if plan_policy_call else tool_pre["rumination_gate"](
@@ -1658,6 +1679,14 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             focus_key=focus_key,
             focus_display=focus_display,
         )
+        observers["observe_post_mutation_verification"](
+            session._guards,
+            cfg,
+            tc_name=tc.name,
+            result=result,
+            gate_blocked=gate_blocked_flag,
+            tc_args=tc.arguments,
+        )
 
     # Queue the turn-level WARN from the duplicate ladder after the
     # per-call WARNs so its user-turn ordering remains last.
@@ -1680,6 +1709,9 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         and metadata.get("source_write_like")
         and not is_error_result(result)
         and not session._guards.post_mutation_verification_nudge_emitted
+        and int(
+            getattr(cfg, "post_mutation_verification_gate_after", 0) or 0
+        ) > 0
         and cfg.post_mutation_verification_nudge
     ):
         result = _append_intervention(

@@ -233,6 +233,16 @@ def done_guard(
     """
     if tc_name != "done":
         return PASS
+    if (
+        int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
+        and state.has_mutated
+        and not state.formal_verification_passed_since_mutation
+    ):
+        return _done_block_or_abort(
+            state,
+            cfg,
+            cfg.done_reject_no_formal_verification,
+        )
     if not cfg.done_guard_enabled:
         return PASS
 
@@ -314,8 +324,6 @@ def _done_block_or_abort(state: GuardrailState, cfg: Any, text: str) -> Decision
             pass
         return Decision(Action.END, text=end_text, reason="done_loop")
     return Decision.block(text, reason="done_guard")
-
-
 
 
 def mutation_repeat_guard(

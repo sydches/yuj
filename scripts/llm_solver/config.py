@@ -238,6 +238,18 @@ class Config:
         "state the limitation. Target tests and custom reproducers are not "
         "sufficient regression coverage.]"
     )
+    post_mutation_verification_gate: str = (
+        "NOT EXECUTED. Post-mutation regression verification is required "
+        "now. Run the changed component's complete existing test file or "
+        "package suite with its registered test runner. Custom scripts and "
+        "reproducers do not satisfy this gate. A source edit remains allowed."
+    )
+    done_reject_no_formal_verification: str = (
+        "REJECTED: No passing registered test-runner command since the last "
+        "source change. Run the changed component's complete existing test "
+        "file or package suite. Custom scripts and reproducers do not satisfy "
+        "this requirement."
+    )
     # Operator/guardrail rewind of the canonical model-facing conversation
     # together with its shadow-Git workspace checkpoint. Off by default.
     rewind_enabled: bool = False
@@ -350,6 +362,7 @@ class Config:
     rumination_same_target_warn_count: int = 0  # Repeated same-target non-write calls before same-target nudge (0 = disabled).
     rumination_same_target_arm_count: int = 0  # Repeated same-target non-write calls before arming the rumination gate (0 = disabled).
     test_read_warn_after: int = 0  # Verification runs without reading the target test file before nudging (0 = disabled).
+    post_mutation_verification_gate_after: int = 0  # Non-test shell calls allowed after mutation before formal runner verification becomes mandatory (0 = disabled).
     context_inspect_repeat_threshold: int = 0  # Repeated inspect actions before concise/yconcise switch to an exit-inspect obligation (0 = disabled).
     contract_commit_warn_after: int = 0  # After a source-file read, warn on non-commit actions after N violations (0 = disabled).
     contract_commit_block_after: int = 0  # After a source-file read, block non-commit actions after N violations (0 = disabled).
@@ -1097,6 +1110,7 @@ def _apply_transformation_switches(
             ("loop", "loop_detect_enabled"),
             ("loop", "duplicate_guard_enabled"),
             ("loop", "require_intent"),
+            ("loop", "post_mutation_verification_gate_after"),
             ("tools", "unified_envelope", "enabled"),
         ):
             apply("detector_activated_guardrails", path, False)

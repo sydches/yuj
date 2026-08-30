@@ -268,6 +268,14 @@ def _extract_config_fields(d: dict) -> dict:
         "rumination_same_target_warn_count": d.get("loop", {}).get("rumination_same_target_warn_count", 0),
         "rumination_same_target_arm_count": d.get("loop", {}).get("rumination_same_target_arm_count", 0),
         "test_read_warn_after": d.get("loop", {}).get("test_read_warn_after", 0),
+        "post_mutation_verification_gate_after": (
+            0
+            if transformations is not None
+            and not transformations["detector_activated_guardrails"]
+            else d.get("loop", {}).get(
+                "post_mutation_verification_gate_after", 0
+            )
+        ),
         "context_inspect_repeat_threshold": d.get("loop", {}).get("context_inspect_repeat_threshold", 0),
         "tools_output_dedup_enabled": (
             False
@@ -885,6 +893,18 @@ def _extract_config_fields(d: dict) -> dict:
         ).get(
             "post_mutation_verification_nudge",
             "[HARNESS: If this change affects executable behavior, after focused checks pass, run the changed component's complete existing test file or package suite. Before declaring done, run the repository's full test suite when feasible. If that is unavailable or impractical, state the limitation. Target tests and custom reproducers are not sufficient regression coverage.]",
+        ),
+        "post_mutation_verification_gate": d.get(
+            "prompts", {}
+        ).get(
+            "post_mutation_verification_gate",
+            "NOT EXECUTED. Post-mutation regression verification is required now. Run the changed component's complete existing test file or package suite with its registered test runner. Custom scripts and reproducers do not satisfy this gate. A source edit remains allowed.",
+        ),
+        "done_reject_no_formal_verification": d.get(
+            "prompts", {}
+        ).get(
+            "done_reject_no_formal_verification",
+            "REJECTED: No passing registered test-runner command since the last source change. Run the changed component's complete existing test file or package suite. Custom scripts and reproducers do not satisfy this requirement.",
         ),
         "contract_commit_warn": d.get(
             "prompts", {}

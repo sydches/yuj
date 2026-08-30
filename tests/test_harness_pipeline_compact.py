@@ -457,7 +457,11 @@ class TestPostMutationVerificationNudge:
     def test_nudge_is_one_shot_user_turn_after_source_mutation(self, tmp_path):
         from llm_solver.harness.loop import Session
 
-        cfg = make_config(max_turns=4, duplicate_abort=20)
+        cfg = make_config(
+            max_turns=4,
+            duplicate_abort=20,
+            post_mutation_verification_gate_after=3,
+        )
         client = MagicMock()
         call_count = [0]
 
@@ -527,3 +531,151 @@ class TestPostMutationVerificationNudge:
         ]
         assert len(injections) == 1
         assert injections[0]["tool_call_id"] == "c1"
+
+    def test_custom_shell_streak_is_blocked_until_formal_runner(self, tmp_path):
+        from llm_solver.harness.loop import Session
+
+        cfg = make_config(
+            max_turns=7,
+            duplicate_abort=20,
+            post_mutation_verification_gate_after=2,
+        )
+        client = MagicMock()
+        calls = [
+            ToolCall(
+                id="edit-1",
+                name="edit",
+                arguments={
+                    "path": "src/core.py",
+                    "old_str": "before",
+                    "new_str": "after",
+                },
+            ),
+            ToolCall(
+                id="custom-1",
+                name="bash",
+                arguments={"cmd": "python -c 'print(1)'"},
+            ),
+            ToolCall(
+                id="custom-2",
+                name="bash",
+                arguments={"cmd": "python -c 'print(2)'"},
+            ),
+            ToolCall(
+                id="custom-blocked",
+                name="bash",
+                arguments={"cmd": "python -c 'print(3)'"},
+            ),
+            ToolCall(
+                id="formal-1",
+                name="bash",
+                arguments={
+                    "cmd": "python -m pytest tests/test_component.py -q"
+                },
+            ),
+            ToolCall(id="done-1", name="done", arguments={}),
+        ]
+        turn = [0]
+
+        def chat_fn(*args, **kwargs):
+            index = turn[0]
+            turn[0] += 1
+            return make_turn_result(
+                tool_calls=[calls[index]],
+                finish_reason="tool_calls",
+            )
+
+        client.chat.side_effect = chat_fn
+        client.build_assistant_message.return_value = {
+            "role": "assistant",
+            "content": None,
+        }
+        executed: list[str] = []
+
+        def dispatch_fn(name, arguments, **kwargs):
+            executed.append(arguments.get("cmd", name))
+            if name == "edit":
+                return "OK: edit applied"
+            if "pytest" in arguments.get("cmd", ""):
+                return "14 passed in 0.5s"
+            return "ok"
+
+        with patch(
+            "llm_solver.harness.loop.dispatch", side_effect=dispatch_fn
+        ):
+            result = Session(
+                cfg,
+                client,
+                "sys",
+                "prompt",
+                str(tmp_path),
+                session_number=1,
+            ).run()
+
+        assert result.done is True
+        assert "python -c 'print(3)'" not in executed
+        assert any("pytest tests/test_component.py" in cmd for cmd in executed)
+
+    def test_implicit_done_waits_for_formal_runner(self, tmp_path):
+        from llm_solver.harness.loop import Session
+
+        cfg = make_config(
+            max_turns=4,
+            duplicate_abort=20,
+            post_mutation_verification_gate_after=2,
+        )
+        client = MagicMock()
+        responses = [
+            make_turn_result(
+                tool_calls=[ToolCall(
+                    id="edit-1",
+                    name="edit",
+                    arguments={
+                        "path": "src/core.py",
+                        "old_str": "before",
+                        "new_str": "after",
+                    },
+                )],
+                finish_reason="tool_calls",
+            ),
+            make_turn_result(content="done", finish_reason="stop"),
+            make_turn_result(
+                tool_calls=[ToolCall(
+                    id="formal-1",
+                    name="bash",
+                    arguments={
+                        "cmd": "python -m pytest tests/test_component.py -q"
+                    },
+                )],
+                finish_reason="tool_calls",
+            ),
+            make_turn_result(content="done", finish_reason="stop"),
+        ]
+        client.chat.side_effect = responses
+        client.build_assistant_message.return_value = {
+            "role": "assistant",
+            "content": None,
+        }
+        executed: list[str] = []
+
+        def dispatch_fn(name, arguments, **kwargs):
+            executed.append(arguments.get("cmd", name))
+            if name == "edit":
+                return "OK: edit applied"
+            return "14 passed in 0.5s"
+
+        with patch(
+            "llm_solver.harness.loop.dispatch", side_effect=dispatch_fn
+        ):
+            result = Session(
+                cfg,
+                client,
+                "sys",
+                "prompt",
+                str(tmp_path),
+                session_number=1,
+            ).run()
+
+        assert result.done is True
+        assert client.chat.call_count == 4
+        assert any("pytest tests/test_component.py" in cmd for cmd in executed)
