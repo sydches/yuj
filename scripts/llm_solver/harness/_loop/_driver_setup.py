@@ -628,27 +628,12 @@ def compute_runtime_envelope_fields(cfg: Config, repo_dir: Path) -> dict[str, An
     try:
         import hashlib as _hashlib
 
+        from ..._resource_contract import PACKAGE_RUNTIME_FILES
         from ..._shared.paths import package_data_path
 
         solver_package = __package__.split(".harness", 1)[0]
-        for label, path in (
-            (
-                "bash_quirks/forbidden.toml",
-                package_data_path(f"{solver_package}.bash_quirks", "forbidden.toml"),
-            ),
-            (
-                "bash_quirks/redactions.toml",
-                package_data_path(f"{solver_package}.bash_quirks", "redactions.toml"),
-            ),
-            (
-                "bash_quirks/rewrites.toml",
-                package_data_path(f"{solver_package}.bash_quirks", "rewrites.toml"),
-            ),
-            (
-                "tool_quirks/glob.toml",
-                package_data_path(f"{solver_package}.tool_quirks", "glob.toml"),
-            ),
-        ):
+        for label in PACKAGE_RUNTIME_FILES:
+            path = package_data_path(solver_package, *label.split("/"))
             if path.is_file():
                 _quirk_hashes[label] = _hashlib.sha256(path.read_bytes()).hexdigest()[:12]
     except Exception:

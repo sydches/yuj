@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from _config_helpers import make_config
+from scripts.llm_solver._resource_contract import PACKAGE_RUNTIME_FILES
 from scripts.llm_solver.config import load_config
 from scripts.llm_solver.harness._loop._driver_setup import (
     compute_runtime_envelope_fields,
@@ -278,6 +279,8 @@ def test_container_runtime_envelope_inspects_local_image_once(
     assert fields["container_preflight_error"] is None
     assert fields["bwrap_preflight_passed"] is None
     assert fields["sandbox_policy_version"] == 3
+    assert tuple(fields["quirk_hashes"]) == PACKAGE_RUNTIME_FILES
+    assert all(len(value) == 12 for value in fields["quirk_hashes"].values())
 
 
 def test_required_missing_runtime_stops_before_the_model(
