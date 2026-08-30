@@ -1,16 +1,13 @@
-"""tool_quirks — non-bash tool result transforms.
+"""Non-bash tool-result quirks.
 
-Parallel absorber to bash_quirks/. Bash quirks owns transforms over bash
-output (rewrites, sink-and-surface, structured output). Tool quirks owns
-transforms over OTHER tool results — glob, grep, future tools — where the
-SAME architectural pattern applies (model produces wasteful action → harness
-rewrites the result before it reaches the model) but the dispatcher is
-not bash.
+This is the L2 sibling of ``bash_quirks``. Bash quirks owns transforms over
+bash output. Tool quirks owns supported transforms over other tool results.
 
-``bash_quirks`` remains bash-only by name. This directory is its sibling
-for the rest of the tool surface.
+The current data surface is ``glob.toml``, which owns the two model-facing
+glob hints. Numeric limits remain in ``Config``. ``transforms.py`` owns the
+cap decision, guarded envelope, and savings record. The glob handler owns
+filesystem enumeration, normal pagination, and explicit transform wiring.
 
-Each tool gets its own TOML data file (`glob.toml`, future `grep.toml`)
-and a function in `transforms.py` that consumes the data + cfg and
-returns the modified result.
+This package is not a general tool plugin loader. Adding another result
+transform requires Python here and an explicit call from its tool handler.
 """
