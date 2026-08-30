@@ -755,22 +755,29 @@ class TestBashStillWorks:
             )
         assert out == "ERROR: command timed out after 11s"
 
-    def test_bash_missing_python_module_uses_generic_advice(self, tmp_path):
+    @pytest.mark.parametrize("module", ["numpy", "zope.interface"])
+    def test_bash_missing_python_module_uses_actionable_generic_advice(
+        self, tmp_path, module,
+    ):
         captured: dict = {}
         with _patch_sandbox(
             captured,
             exit_code=1,
-            text="ModuleNotFoundError: No module named 'numpy'",
+            text=f"ModuleNotFoundError: No module named '{module}'",
         ):
             out = tools_mod.bash(
-                "python -c 'import numpy'", cwd=str(tmp_path), timeout=5,
+                f"python -c 'import {module}'", cwd=str(tmp_path), timeout=5,
                 sandbox=False, bwrap_bin="/nonexistent",
             )
-        assert "cannot import a required module" in out
-        assert "project's dependency files" in out
-        assert "pip" in out
-        assert "uv" in out
-        assert "Conda" in out
+        assert f"cannot import `{module}`" in out
+        assert f"-c 'import {module}'" in out
+        assert ".venv/bin/python" in out
+        assert "/opt/conda/envs/*/bin/python" in out
+        assert "/opt/miniconda3/envs/*/bin/python" in out
+        assert "Rerun the failed command with the printed interpreter" in out
+        assert "`uv run`" in out
+        assert "SWE-bench" not in out
+        assert "testbed" not in out
 
     def test_bash_python_install_failure_uses_generic_advice(self, tmp_path):
         captured: dict = {}

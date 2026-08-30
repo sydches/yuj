@@ -4,12 +4,17 @@ from __future__ import annotations
 import re
 
 
-_MISSING_MODULE_RE = re.compile(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]")
+_MISSING_MODULE_RE = re.compile(
+    r"ModuleNotFoundError: No module named "
+    r"['\"]([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)['\"]"
+)
 
-def _python_env_missing(out: str, exit_code: int | None) -> bool:
+
+def _missing_python_module(out: str, exit_code: int | None) -> str | None:
     if exit_code == 0:
-        return False
-    return _MISSING_MODULE_RE.search(out) is not None
+        return None
+    match = _MISSING_MODULE_RE.search(out)
+    return match.group(1) if match is not None else None
 
 
 def _python_install_failure(cmd: str, out: str, exit_code: int | None) -> bool:

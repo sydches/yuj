@@ -11,7 +11,7 @@ from ._common import (
     _require_external_readable,
     _resolve_read,
 )
-from ._env_hints import _python_env_missing, _python_install_failure
+from ._env_hints import _missing_python_module, _python_install_failure
 from ._pytest_hints import (
     _pytest_binary_missing, _pytest_path_missing,
 )
@@ -490,9 +490,9 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
                 mechanism="python_install_failure_hint",
                 exit_code=exit_code,
             )
-        elif _python_env_missing(out, exit_code):
+        elif missing_module := _missing_python_module(out, exit_code):
             out = _record_output_change(
-                out, out + _language_advice("python", "python_env_missing"),
+                out, out + _language_advice("python", "python_env_missing").replace("{module}", missing_module),
                 bucket="advice_injection",
                 mechanism="python_env_missing_hint",
                 exit_code=exit_code,
