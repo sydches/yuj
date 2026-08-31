@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
@@ -13,15 +14,12 @@ sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 from _config_helpers import make_config
 from llm_solver.harness.guardrails import (
     Action,
-    Decision,
     GuardrailState,
     init_guardrail_state,
     loop_detect,
 )
-from llm_solver.harness._loop.run_step import (
-    _defer_guard_end_during_active_watch,
-    _run_post_turn_hooks,
-)
+from llm_solver.harness._loop.run_step import _run_post_turn_hooks
+from llm_solver.server.types import ToolCall, TurnResult, Usage
 
 
 def _state() -> GuardrailState:
@@ -106,65 +104,39 @@ class TestLoopDetect:
         validate_guardrail_registry(reg)
 
 
-def test_terminal_guard_is_deferred_during_adaptive_watch():
-    events = []
+def test_active_adaptive_watch_cannot_suppress_terminal_loop_guard(tmp_path):
+    from llm_solver.harness.loop import Session
 
-    class Session:
-        _session_number = 1
-        _llm_detector_pending_watch = {
-            "intervention_id": "toml_overlay.apply::loop.loop_detect_on_default",
-            "episode_id": "attempt#ep1",
-            "watch_window_end": 16,
-        }
-
-        def _emit(self, event, **fields):
-            events.append((event, fields))
-
-    deferred = _defer_guard_end_during_active_watch(
-        Session(),
-        Decision.end("loop_detected"),
-        guard_name="loop_detect",
-        turn=13,
+    cfg = make_config(
+        max_turns=6,
+        duplicate_abort=20,
+        loop_detect_enabled=True,
+        loop_detect_threshold=2,
+        adaptive_control_enabled=False,
     )
+    client = MagicMock()
+    client.chat.return_value = TurnResult(
+        content=None,
+        tool_calls=[ToolCall(
+            id="repeat",
+            name="read",
+            arguments={"path": "same.py"},
+        )],
+        finish_reason="tool_calls",
+        usage=Usage(prompt_tokens=10, completion_tokens=5),
+    )
+    client.build_assistant_message.return_value = {
+        "role": "assistant", "content": None,
+    }
+    session = Session(cfg, client, "sys", "prompt", str(tmp_path))
+    session._llm_detector_pending_watch = {"watch_window_end": 99}
 
-    assert deferred is True
-    assert events == [(
-        "adaptive_control_guard_end_deferred",
-        {
-            "session_number": 1,
-            "turn_number": 13,
-            "guard_name": "loop_detect",
-            "guard_reason": "loop_detected",
-            "intervention_id": "toml_overlay.apply::loop.loop_detect_on_default",
-            "hurdle_episode_id": "attempt#ep1",
-            "watch_window_end": 16,
-        },
-    )]
+    with patch("llm_solver.harness.loop.dispatch", return_value="ok"):
+        result = session.run()
 
-
-def test_terminal_guard_is_not_deferred_without_adaptive_watch():
-    class Session:
-        _session_number = 1
-
-    assert _defer_guard_end_during_active_watch(
-        Session(),
-        Decision.end("loop_detected"),
-        guard_name="loop_detect",
-        turn=13,
-    ) is False
-
-
-def test_terminal_guard_is_not_deferred_after_watch_end():
-    class Session:
-        _session_number = 1
-        _llm_detector_pending_watch = {"watch_window_end": 12}
-
-    assert _defer_guard_end_during_active_watch(
-        Session(),
-        Decision.end("loop_detected"),
-        guard_name="loop_detect",
-        turn=13,
-    ) is False
+    assert result.finish_reason == "loop_detected"
+    assert result.done is False
+    assert client.chat.call_count == 4
 
 
 def test_blocked_turn_runs_all_post_turn_hooks():

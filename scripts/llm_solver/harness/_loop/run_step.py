@@ -23,7 +23,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-from ..guardrails import Action, Decision, PASS
+from ..guardrails import Action, PASS
 from ..injections import UserTurnInjection
 from ..checkpoint_rewind import finalize_deferred_context_actions
 from ..action_metadata import action_metadata
@@ -392,44 +392,6 @@ def _consume_replay_correction(session: "Session", *, turn: int) -> None:
         **common,
     )
     _correction_trace_barrier(session)
-
-
-def _defer_guard_end_during_active_watch(
-    session: "Session",
-    decision: Decision,
-    *,
-    guard_name: str,
-    turn: int,
-) -> bool:
-    """Let the adaptive watch, not a temporary action, end the run."""
-    if decision.action != Action.END:
-        return False
-    pending = getattr(session, "_llm_detector_pending_watch", None)
-    if not isinstance(pending, dict):
-        return False
-    try:
-        watch_end = int(pending.get("watch_window_end", -1))
-    except (TypeError, ValueError):
-        return False
-    if watch_end < int(turn):
-        return False
-    log.info(
-        "Deferring %s termination at turn %d until adaptive watch end=%s",
-        decision.reason or guard_name,
-        turn,
-        watch_end,
-    )
-    session._emit(
-        "adaptive_control_guard_end_deferred",
-        session_number=session._session_number,
-        turn_number=turn,
-        guard_name=guard_name,
-        guard_reason=decision.reason,
-        intervention_id=pending.get("intervention_id", ""),
-        hurdle_episode_id=pending.get("episode_id", ""),
-        watch_window_end=watch_end,
-    )
-    return True
 
 
 def _run_post_turn_hooks(
@@ -968,17 +930,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 _run_post_turn_hooks(session, turn)
                 continue
             if intent_decision.action == Action.END:
-                if not _defer_guard_end_during_active_watch(
-                    session,
-                    intent_decision,
-                    guard_name="intent_gate",
-                    turn=turn,
-                ):
-                    log.warning("Intent abort: %d consecutive silent rejections",
-                                session._guards.consecutive_intent_rejections)
-                    return SessionResult(turn, intent_decision.reason, done=False,
-                                         total_prompt_tokens=total_prompt,
-                                         total_completion_tokens=total_completion)
+                log.warning("Intent abort: %d consecutive silent rejections",
+                            session._guards.consecutive_intent_rejections)
+                return SessionResult(turn, intent_decision.reason, done=False,
+                                     total_prompt_tokens=total_prompt,
+                                     total_completion_tokens=total_completion)
             _run_post_turn_hooks(session, turn)
             continue
 
@@ -1109,17 +1065,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
             _run_post_turn_hooks(session, turn)
             continue
         if dup_decision.action == Action.END:
-            if not _defer_guard_end_during_active_watch(
-                session,
-                dup_decision,
-                guard_name="duplicate_guard",
-                turn=turn,
-            ):
-                session._record_pressure_event(True)
-                log.warning("Duplicate tool calls detected, aborting at turn %d", turn)
-                return SessionResult(turn, dup_decision.reason, done=False,
-                                     total_prompt_tokens=total_prompt,
-                                     total_completion_tokens=total_completion)
+            session._record_pressure_event(True)
+            log.warning("Duplicate tool calls detected, aborting at turn %d", turn)
+            return SessionResult(turn, dup_decision.reason, done=False,
+                                 total_prompt_tokens=total_prompt,
+                                 total_completion_tokens=total_completion)
         turn_warn_text = dup_decision.text if dup_decision.action == Action.WARN else ""
         turn_had_pressure = bool(turn_warn_text)
 
@@ -1148,17 +1098,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
             _run_post_turn_hooks(session, turn)
             continue
         if loop_decision.action == Action.END:
-            if not _defer_guard_end_during_active_watch(
-                session,
-                loop_decision,
-                guard_name="loop_detect",
-                turn=turn,
-            ):
-                session._record_pressure_event(True)
-                log.warning("Loop detected, aborting at turn %d", turn)
-                return SessionResult(turn, loop_decision.reason, done=False,
-                                     total_prompt_tokens=total_prompt,
-                                     total_completion_tokens=total_completion)
+            session._record_pressure_event(True)
+            log.warning("Loop detected, aborting at turn %d", turn)
+            return SessionResult(turn, loop_decision.reason, done=False,
+                                 total_prompt_tokens=total_prompt,
+                                 total_completion_tokens=total_completion)
         if loop_decision.action == Action.WARN:
             # Compose with any duplicate-guard warn already queued.
             turn_warn_text = (
