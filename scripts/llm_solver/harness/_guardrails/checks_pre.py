@@ -237,6 +237,7 @@ def done_guard(
         int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
         and state.has_mutated
         and not state.formal_verification_passed_since_mutation
+        and not state.post_mutation_automatic_verification_unavailable
     ):
         return _done_block_or_abort(
             state,

@@ -4,10 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
+import shlex
 from typing import Any
 
 from ..._shared.classification import classify_outcome, is_error_result
-from ...language_quirks import load_run_tests_quirk_object
+from ...language_quirks import (
+    load_run_tests_quirk_for_runner,
+    load_run_tests_quirk_object,
+)
+from ..command_redirect import split_shell_fragments, strip_leading_assignments
 from .extractors import MUTATION_TOOLS, _is_bash_write_like, _is_test_command
 from .state import PASS, Decision, GuardrailState
 
@@ -112,6 +118,74 @@ def verification_result_passed(tc_name: str, result: str) -> bool:
     if tc_name == "run_tests":
         return '<test_results status="passed"' in result
     return classify_outcome(result) == "OK"
+
+
+def verification_runner_unavailable(result: str) -> bool:
+    """Return whether a registered runner could not start."""
+    return '<test_results status="runner_unavailable"' in result
+
+
+_RUNTIME_FAMILIES = {
+    "cargo", "ctest", "go", "make", "npm", "npx", "pnpm", "yarn",
+}
+_UNAVAILABLE_EXIT_RE = re.compile(
+    r'(?:\[exit code:\s*12[67]\]|\bexit_code="12[67]")'
+)
+
+
+def _runtime_family(executable: str) -> str:
+    leaf = executable.rsplit("/", 1)[-1]
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", leaf):
+        return "python"
+    return leaf if leaf in _RUNTIME_FAMILIES else ""
+
+
+def _observe_runtime_executable(
+    tc_name: str,
+    tc_args: dict | None,
+    result: str,
+) -> tuple[str, str] | None:
+    """Find one runtime executable that just ran in a shell check."""
+    if tc_name != "bash" or not isinstance(tc_args, dict):
+        return None
+    if _UNAVAILABLE_EXIT_RE.search(result):
+        return None
+    command = tc_args.get("cmd")
+    if not isinstance(command, str):
+        return None
+    for fragment in split_shell_fragments(command):
+        try:
+            argv = shlex.split(
+                strip_leading_assignments(fragment.text), posix=True
+            )
+        except ValueError:
+            continue
+        if not argv:
+            continue
+        family = _runtime_family(argv[0])
+        if family:
+            return family, argv[0]
+    return None
+
+
+def observed_component_runner_base_cmd(
+    state: GuardrailState,
+    runner: str,
+) -> str:
+    """Reuse a runtime executable already demonstrated in this revision."""
+    executable = state.post_mutation_observed_runtime_executable
+    family = state.post_mutation_observed_runtime_family
+    if not executable or not family:
+        return ""
+    quirk = load_run_tests_quirk_for_runner(runner)
+    try:
+        base = shlex.split(quirk.base_cmd, posix=True)
+    except ValueError:
+        return ""
+    if not base or _runtime_family(base[0]) != family:
+        return ""
+    base[0] = executable
+    return shlex.join(base)
 
 
 def _safe_source_paths(root: Path, raw_paths: tuple[str, ...]) -> list[Path]:
@@ -266,6 +340,9 @@ def observe_post_mutation_verification(
             state.post_mutation_automatic_verification_attempted = False
             state.post_mutation_automatic_verification_target = ""
             state.post_mutation_source_paths = tuple(source_write_paths)
+            state.post_mutation_observed_runtime_family = ""
+            state.post_mutation_observed_runtime_executable = ""
+            state.post_mutation_automatic_verification_unavailable = False
         return
     if not state.has_mutated:
         return
@@ -275,11 +352,19 @@ def observe_post_mutation_verification(
         passed = verification_result_passed(tc_name, result)
         state.formal_verification_passed_since_mutation = passed
         state.verified_since_mutation = passed
+        if not verification_runner_unavailable(result):
+            state.post_mutation_automatic_verification_unavailable = False
         return
     if state.post_mutation_automatic_verification_attempted:
         return
     if tc_name not in {"bash", "exec_cell"}:
         return
+    observed_runtime = _observe_runtime_executable(tc_name, tc_args, result)
+    if observed_runtime is not None:
+        (
+            state.post_mutation_observed_runtime_family,
+            state.post_mutation_observed_runtime_executable,
+        ) = observed_runtime
     state.post_mutation_non_test_bash_count += 1
     threshold = int(
         getattr(cfg, "post_mutation_verification_gate_after", 0) or 0

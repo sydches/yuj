@@ -132,7 +132,9 @@ def _run_automatic_component_verification(
     from .._guardrails.verification import (
         automatic_component_verification_due,
         mark_automatic_component_verification_attempted,
+        observed_component_runner_base_cmd,
         resolve_component_verification_target,
+        verification_runner_unavailable,
         verification_result_passed,
     )
 
@@ -162,11 +164,17 @@ def _run_automatic_component_verification(
         )
 
     auto_cfg = replace(cfg, tools_run_tests_enabled=True)
+    auto_arguments = {"path": target.path}
+    base_cmd_override = observed_component_runner_base_cmd(
+        guards, target.runner
+    )
+    if base_cmd_override:
+        auto_arguments["_base_cmd_override"] = base_cmd_override
     auto_execution_metadata: dict = {}
     started = time.perf_counter()
     auto_result = state.dispatch(
         "run_tests",
-        {"path": target.path},
+        auto_arguments,
         cwd=session.cwd,
         cfg=auto_cfg,
         output_control=(
@@ -197,10 +205,13 @@ def _run_automatic_component_verification(
         tool_call_id=f"{tc.id}:automatic-verification",
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
-    session._queue_execution_user_turn_injections(
-        auto_execution_metadata,
-        tool_call_id=tc.id,
-    )
+    runner_unavailable = verification_runner_unavailable(auto_result)
+    guards.post_mutation_automatic_verification_unavailable = runner_unavailable
+    if not runner_unavailable:
+        session._queue_execution_user_turn_injections(
+            auto_execution_metadata,
+            tool_call_id=tc.id,
+        )
     mark_verified = state.observers.get("mark_bash_verified")
     observe_verification = state.observers.get(
         "observe_post_mutation_verification"
@@ -221,11 +232,29 @@ def _run_automatic_component_verification(
         tc_args={"path": target.path},
     )
     passed = verification_result_passed("run_tests", auto_result)
+    if (
+        not runner_unavailable
+        and not guards.post_mutation_verification_nudge_emitted
+        and cfg.post_mutation_verification_nudge
+    ):
+        _append_intervention(
+            result,
+            cfg.post_mutation_verification_nudge,
+            mechanism="post_mutation_verification_nudge",
+            session=session,
+            tool_call_id=tc.id,
+        )
+        guards.post_mutation_verification_nudge_emitted = True
     metadata.update({
-        "automatic_verification": "passed" if passed else "failed",
+        "automatic_verification": (
+            "runner_unavailable"
+            if runner_unavailable
+            else "passed" if passed else "failed"
+        ),
         "automatic_verification_runner": target.runner,
         "automatic_verification_target": target.display,
         "automatic_verification_source": target.source_path,
+        "automatic_verification_base_cmd_reused": bool(base_cmd_override),
     })
     before = result
     combined = (
@@ -249,6 +278,8 @@ def _run_automatic_component_verification(
             "runner": target.runner,
             "target": target.display,
             "passed": passed,
+            "runner_unavailable": runner_unavailable,
+            "base_cmd_reused": bool(base_cmd_override),
         },
     )
     return combined, elapsed_ms
@@ -1847,25 +1878,6 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         not gate_blocked_flag
         and bool(execution_metadata.get("executed", True))
     )
-    if (
-        not plan_artifact
-        and path_call_executed
-        and metadata.get("source_write_like")
-        and not is_error_result(result)
-        and not session._guards.post_mutation_verification_nudge_emitted
-        and int(
-            getattr(cfg, "post_mutation_verification_gate_after", 0) or 0
-        ) > 0
-        and cfg.post_mutation_verification_nudge
-    ):
-        result = _append_intervention(
-            result,
-            cfg.post_mutation_verification_nudge,
-            mechanism="post_mutation_verification_nudge",
-            session=session,
-            tool_call_id=tc.id,
-        )
-        session._guards.post_mutation_verification_nudge_emitted = True
     if not plan_artifact:
         result, path_injection_fired = session._apply_path_injections(
             result,

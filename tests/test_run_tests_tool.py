@@ -106,6 +106,25 @@ class TestRunTestsGating:
         assert "--no-header" in captured["cmd"]
         assert "tests/foo.py" in captured["cmd"]
 
+    def test_internal_base_command_override_reuses_resolved_interpreter(
+        self, tmp_path,
+    ):
+        cfg = make_config(tools_run_tests_enabled=True)
+        captured: dict = {}
+        with _patch_sandbox(captured, exit_code=0, text="1 passed"):
+            run_tests(
+                path="tests/foo.py",
+                base_cmd_override=(
+                    "/opt/conda/envs/project/bin/python -m pytest "
+                    "--tb=short -q --no-header"
+                ),
+                cwd=str(tmp_path),
+                cfg=cfg,
+            )
+        assert captured["cmd"].startswith(
+            "/opt/conda/envs/project/bin/python -m pytest "
+        )
+
     def test_enabled_with_k_expression(self, tmp_path):
         cfg = make_config(tools_run_tests_enabled=True)
         captured: dict = {}
@@ -399,9 +418,7 @@ class TestStructuredOutput:
         with _patch_sandbox({}, exit_code=127, text="bash: cargo: command not found"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
         parsed = _parse_envelope(out)
-        # cargo's status_default folds any unmapped nonzero (including
-        # 127) to "failed" — never the pytest-only hint text below.
-        assert parsed["status"] == "failed"
+        assert parsed["status"] == "runner_unavailable"
         assert "could not start" not in parsed["body"]
         assert "existing Python environment" not in parsed["body"]
 
@@ -411,6 +428,7 @@ class TestStructuredOutput:
         with _patch_sandbox({}, exit_code=127,
                             text="bash: line 1: python: command not found"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
+        assert _parse_envelope(out)["status"] == "runner_unavailable"
         advice = _advice_text(out)
         assert "could not start in the current environment" in advice
         assert "existing Python environment" in advice
@@ -424,6 +442,7 @@ class TestStructuredOutput:
         with _patch_sandbox({}, exit_code=1,
                             text="/usr/bin/python: No module named pytest"):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
+        assert _parse_envelope(out)["status"] == "runner_unavailable"
         advice = _advice_text(out)
         assert "could not start in the current environment" in advice
         assert "existing Python environment" in advice

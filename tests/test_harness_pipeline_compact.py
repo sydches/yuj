@@ -454,31 +454,45 @@ class TestErrorDetection:
 
 class TestPostMutationVerificationNudge:
 
-    def test_nudge_is_one_shot_user_turn_after_source_mutation(self, tmp_path):
+    def test_nudge_waits_for_available_automatic_component_run(self, tmp_path):
         from llm_solver.harness.loop import Session
 
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "core.py").write_text("before\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_core.py").write_text(
+            "def test_core():\n    assert True\n"
+        )
         cfg = make_config(
             max_turns=4,
             duplicate_abort=20,
-            post_mutation_verification_gate_after=3,
+            post_mutation_verification_gate_after=1,
         )
         client = MagicMock()
         call_count = [0]
 
         def chat_fn(*args, **kwargs):
             call_count[0] += 1
-            if call_count[0] > 2:
-                return make_turn_result(content="done", finish_reason="stop")
-            tc = [ToolCall(
-                id=f"c{call_count[0]}",
-                name="edit",
-                arguments={
-                    "path": f"src/core_{call_count[0]}.py",
-                    "old_str": "before",
-                    "new_str": "after",
-                },
-            )]
-            return make_turn_result(tool_calls=tc, finish_reason="tool_calls")
+            if call_count[0] == 1:
+                tc = ToolCall(
+                    id="edit-1",
+                    name="edit",
+                    arguments={
+                        "path": "src/core.py",
+                        "old_str": "before",
+                        "new_str": "after",
+                    },
+                )
+            elif call_count[0] == 2:
+                tc = ToolCall(
+                    id="custom-1",
+                    name="bash",
+                    arguments={"cmd": "python -c 'print(1)'"},
+                )
+            else:
+                tc = ToolCall(id="done-1", name="done", arguments={})
+            return make_turn_result(tool_calls=[tc], finish_reason="tool_calls")
 
         client.chat.side_effect = chat_fn
         client.build_assistant_message.return_value = {
@@ -487,8 +501,18 @@ class TestPostMutationVerificationNudge:
 
         tool_results = []
         trace_path = tmp_path / ".trace.jsonl"
+        def dispatch_fn(name, arguments, **kwargs):
+            if name == "edit":
+                return "OK: edit applied"
+            if name == "run_tests":
+                return (
+                    '<test_results status="passed" exit_code="0" '
+                    'runner="pytest">\n1 passed\n</test_results>'
+                )
+            return "ok"
+
         with trace_path.open("a") as trace_file, patch(
-            "llm_solver.harness.loop.dispatch", return_value="OK: edit applied"
+            "llm_solver.harness.loop.dispatch", side_effect=dispatch_fn
         ):
             session = Session(
                 cfg,
@@ -511,10 +535,15 @@ class TestPostMutationVerificationNudge:
 
         advice = cfg.post_mutation_verification_nudge
         second_request = client.chat.call_args_list[1].args[0]
+        assert all(
+            advice not in str(message.get("content") or "")
+            for message in second_request
+        )
+        third_request = client.chat.call_args_list[2].args[0]
         assert any(
             message.get("role") == "user"
             and advice in str(message.get("content") or "")
-            for message in second_request
+            for message in third_request
         )
         assert all(advice not in result for result in tool_results)
 
@@ -530,7 +559,81 @@ class TestPostMutationVerificationNudge:
             and event.get("mechanism") == "post_mutation_verification_nudge"
         ]
         assert len(injections) == 1
-        assert injections[0]["tool_call_id"] == "c1"
+        assert injections[0]["tool_call_id"] == "custom-1"
+
+    def test_unavailable_automatic_runner_suppresses_suite_demand(self, tmp_path):
+        from llm_solver.harness.loop import Session
+
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "core.py").write_text("before\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_core.py").write_text(
+            "def test_core():\n    assert True\n"
+        )
+        cfg = make_config(
+            max_turns=4,
+            duplicate_abort=20,
+            done_guard_enabled=False,
+            post_mutation_verification_gate_after=1,
+        )
+        calls = [
+            ToolCall(
+                id="edit-1",
+                name="edit",
+                arguments={
+                    "path": "src/core.py",
+                    "old_str": "before",
+                    "new_str": "after",
+                },
+            ),
+            ToolCall(
+                id="custom-1",
+                name="bash",
+                arguments={"cmd": "python -c 'print(1)'"},
+            ),
+            ToolCall(id="done-1", name="done", arguments={}),
+        ]
+        turn = [0]
+        client = MagicMock()
+
+        def chat_fn(*args, **kwargs):
+            call = calls[turn[0]]
+            turn[0] += 1
+            return make_turn_result(tool_calls=[call], finish_reason="tool_calls")
+
+        client.chat.side_effect = chat_fn
+        client.build_assistant_message.return_value = {
+            "role": "assistant", "content": None,
+        }
+
+        def dispatch_fn(name, arguments, **kwargs):
+            if name == "edit":
+                return "OK: edit applied"
+            if name == "run_tests":
+                return (
+                    '<test_results status="runner_unavailable" exit_code="1" '
+                    'runner="pytest">\nNo module named pytest\n</test_results>'
+                )
+            return "ok"
+
+        with patch("llm_solver.harness.loop.dispatch", side_effect=dispatch_fn):
+            result = Session(
+                cfg,
+                client,
+                "sys",
+                "prompt",
+                str(tmp_path),
+                session_number=1,
+            ).run()
+
+        assert result.done is True
+        request_after_probe = client.chat.call_args_list[2].args[0]
+        rendered = "\n".join(
+            str(message.get("content") or "") for message in request_after_probe
+        )
+        assert "runner_unavailable" in rendered
+        assert cfg.post_mutation_verification_nudge not in rendered
 
     def test_custom_shell_streak_runs_component_target_without_blocking(self, tmp_path):
         from llm_solver.harness.loop import Session
@@ -561,12 +664,16 @@ class TestPostMutationVerificationNudge:
             ToolCall(
                 id="custom-1",
                 name="bash",
-                arguments={"cmd": "python -c 'print(1)'"},
+                arguments={
+                    "cmd": "/opt/conda/envs/project/bin/python -c 'print(1)'"
+                },
             ),
             ToolCall(
                 id="custom-2",
                 name="bash",
-                arguments={"cmd": "python -c 'print(2)'"},
+                arguments={
+                    "cmd": "/opt/conda/envs/project/bin/python -c 'print(2)'"
+                },
             ),
             ToolCall(id="done-1", name="done", arguments={}),
         ]
@@ -612,7 +719,13 @@ class TestPostMutationVerificationNudge:
 
         assert result.done is True
         automatic = [args for name, args in executed if name == "run_tests"]
-        assert automatic == [{"path": "tests/test_core.py"}]
+        assert automatic == [{
+            "path": "tests/test_core.py",
+            "_base_cmd_override": (
+                "/opt/conda/envs/project/bin/python -m pytest "
+                "--tb=short -q --no-header"
+            ),
+        }]
         final_request = client.chat.call_args_list[-1].args[0]
         assert any(
             "<automatic_verification" in str(message.get("content") or "")

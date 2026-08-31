@@ -14,6 +14,7 @@ def run_tests(
     path: str = "",
     k: str = "",
     last_failed: bool = False,
+    base_cmd_override: str = "",
     *,
     cwd: str,
     cfg: Config,
@@ -34,7 +35,8 @@ def run_tests(
     ``<test_results status="..." exit_code="N" runner="...">…</test_results>``
     where ``status`` is one of {passed, failed, collection_error,
     internal_error, usage_error, no_tests_collected, timed_out, error}
-    for pytest, or the runner's own ``status_map`` vocabulary otherwise
+    for pytest, plus runner_unavailable when the registered runner cannot
+    start, or the runner's own ``status_map`` vocabulary otherwise
     (e.g. cargo/go/jest/ctest all reduce to {passed, failed, timed_out,
     error} — see each TOML's ``[run_tests.status_map]``).
     The status field discriminates exit codes that are often
@@ -81,7 +83,7 @@ def run_tests(
     # descriptor detection_priority; add a TOML descriptor to support a
     # new language without touching this tool.
     quirk = load_run_tests_quirk_object(cwd)
-    parts: list[str] = [quirk.base_cmd]
+    parts: list[str] = [base_cmd_override or quirk.base_cmd]
     if last_failed and quirk.arg_last_failed:
         parts.append(quirk.arg_last_failed)
     if k and quirk.arg_k_template:
@@ -166,8 +168,16 @@ def run_tests(
         ec_attr = ""
     else:
         # Every runner descriptor owns its exit-code vocabulary.
-        status = quirk.status_map.get(
-            exit_code, quirk.status_default or f"error_{exit_code}"
+        runner_unavailable = exit_code in {126, 127} or (
+            quirk.runner == "pytest"
+            and _pytest_binary_missing(out, exit_code)
+        )
+        status = (
+            "runner_unavailable"
+            if runner_unavailable
+            else quirk.status_map.get(
+                exit_code, quirk.status_default or f"error_{exit_code}"
+            )
         )
         body = out if out else "(no output)"
         ec_attr = f' exit_code="{exit_code}"'

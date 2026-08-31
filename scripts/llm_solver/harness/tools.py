@@ -316,6 +316,7 @@ _DISPATCH = {
         path=args.get("path", ""),
         k=args.get("k", ""),
         last_failed=bool(args.get("last_failed", False)),
+        base_cmd_override=args.get("_base_cmd_override", ""),
         cwd=cwd, cfg=cfg,
     ),
     "list_definitions": lambda args, cwd, cfg: list_definitions(

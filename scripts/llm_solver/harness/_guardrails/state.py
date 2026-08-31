@@ -199,6 +199,9 @@ class GuardrailState:
     post_mutation_source_paths: tuple[str, ...] = ()
     post_mutation_automatic_verification_attempted: bool = False
     post_mutation_automatic_verification_target: str = ""
+    post_mutation_observed_runtime_family: str = ""
+    post_mutation_observed_runtime_executable: str = ""
+    post_mutation_automatic_verification_unavailable: bool = False
 
     # Regression observability (independent of pretest-parity mode).
     # Holds the prior test run's parsed verdicts and the mutation count
