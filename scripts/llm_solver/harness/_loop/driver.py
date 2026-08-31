@@ -796,7 +796,14 @@ def solve_task(
             session._add_hook_context(start_hook)
             if start_hook.blocked:
                 session._lifecycle_hook_block_reason = start_hook.reason
-            result = session.run()
+            try:
+                result = session.run()
+            except (SystemExit, KeyboardInterrupt):
+                # ExitDiagnostics turns SIGTERM/SIGINT into normal Python
+                # unwind after durably recording the signal. Checkpoint here,
+                # outside the signal handler, before preserving the exit.
+                _auto_commit(work_dir, session_num, "signal")
+                raise
             end_hook = session._run_hook(
                 "session_end",
                 finish_reason=result.finish_reason,

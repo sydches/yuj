@@ -544,3 +544,20 @@ class TestSessionRun:
 # ──────────────────────────────────────────────
 # 8. solve_task end-to-end (mock client)
 # ──────────────────────────────────────────────
+
+
+def test_solve_task_commits_before_propagating_signal_exit(tmp_path):
+    """SIGTERM's SystemExit preserves the current workspace first."""
+    from llm_solver.harness.loop import Session, solve_task
+
+    (tmp_path / "prompt.txt").write_text("fix bug")
+    client = MagicMock()
+    cfg = make_config(max_turns=5, max_sessions=1)
+
+    with patch.object(Session, "run", side_effect=SystemExit(143)):
+        with patch("llm_solver.harness.loop._auto_commit") as mock_commit:
+            with pytest.raises(SystemExit) as raised:
+                solve_task(tmp_path, cfg, client)
+
+    assert raised.value.code == 143
+    mock_commit.assert_called_once_with(tmp_path, 1, "signal")
