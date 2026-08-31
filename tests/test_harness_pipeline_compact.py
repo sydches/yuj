@@ -635,6 +635,66 @@ class TestPostMutationVerificationNudge:
         assert "runner_unavailable" in rendered
         assert cfg.post_mutation_verification_nudge not in rendered
 
+    def test_unavailable_component_target_suppresses_suite_demand(self, tmp_path):
+        from llm_solver.harness.loop import Session
+
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "core.py").write_text("before\n")
+        cfg = make_config(
+            max_turns=4,
+            duplicate_abort=20,
+            done_guard_enabled=False,
+            post_mutation_verification_gate_after=1,
+        )
+        calls = [
+            ToolCall(
+                id="edit-1",
+                name="edit",
+                arguments={
+                    "path": "src/core.py",
+                    "old_str": "before",
+                    "new_str": "after",
+                },
+            ),
+            ToolCall(
+                id="custom-1",
+                name="bash",
+                arguments={"cmd": "python -c 'print(1)'"},
+            ),
+            ToolCall(id="done-1", name="done", arguments={}),
+        ]
+        turn = [0]
+        client = MagicMock()
+
+        def chat_fn(*args, **kwargs):
+            call = calls[turn[0]]
+            turn[0] += 1
+            return make_turn_result(tool_calls=[call], finish_reason="tool_calls")
+
+        client.chat.side_effect = chat_fn
+        client.build_assistant_message.return_value = {
+            "role": "assistant", "content": None,
+        }
+        executed: list[str] = []
+
+        def dispatch_fn(name, arguments, **kwargs):
+            executed.append(name)
+            return "OK: edit applied" if name == "edit" else "ok"
+
+        with patch("llm_solver.harness.loop.dispatch", side_effect=dispatch_fn):
+            result = Session(
+                cfg,
+                client,
+                "sys",
+                "prompt",
+                str(tmp_path),
+                session_number=1,
+            ).run()
+
+        assert result.done is True
+        assert "run_tests" not in executed
+
     def test_custom_shell_streak_runs_component_target_without_blocking(self, tmp_path):
         from llm_solver.harness.loop import Session
 

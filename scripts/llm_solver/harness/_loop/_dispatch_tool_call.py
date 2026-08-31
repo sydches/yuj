@@ -151,6 +151,7 @@ def _run_automatic_component_verification(
     )
     mark_automatic_component_verification_attempted(guards, target)
     if target is None:
+        guards.post_mutation_automatic_verification_unavailable = True
         metadata["automatic_verification"] = "target_unavailable"
         return (
             _append_intervention(
