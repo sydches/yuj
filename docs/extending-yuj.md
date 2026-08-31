@@ -334,7 +334,7 @@ Use these profile fields for these active jobs:
 | `[model].supports_system_role` | Keep or fold the system message. |
 | `[model].supports_prefill` | Authorize assistant-prefill length continuation for this exact profile and chat template. This does not claim that every provider accepts llama-server continuation extras. |
 | `[capacity].preamble` | Add text before the system prompt. |
-| `[capacity].max_tools` | Limit the fixed tool set, or the active count when deferred loading is enabled. |
+| `[capacity].max_tools` | Limit the fixed tool set, or the active count when you enable deferred loading. |
 | `[capacity].simplify_schemas` | Remove descriptions from tool schemas. |
 | `[normalize].rules` | Apply supported rules to a model reply. |
 | `[denormalize].rules` | Choose how Yuj sends the system message. |

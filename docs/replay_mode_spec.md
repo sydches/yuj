@@ -519,7 +519,7 @@ The current CLI cannot start from a direct transcript path. It loads
 ## Why replay does not use saved snapshots
 
 Replay does not need a saved snapshot or branch bundle to restore the task.
-When branch-bundle capture is enabled, replay can still write a bundle at the
+When you enable branch-bundle capture, replay can still write a bundle at the
 stop turn. Replay does not read that bundle to restore its work.
 
 | Saved snapshots | Replay |

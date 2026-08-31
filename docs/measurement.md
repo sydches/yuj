@@ -235,7 +235,7 @@ the active settings.
 
 `YUJ_MODEL_PARAMS_JSON` can hold a JSON object with model-server values that
 the command should save as declared metadata. The command also saves these
-individual values when they are set:
+individual values when you set them:
 
 ```text
 YUJ_MODEL_FILE

@@ -1,13 +1,13 @@
 # Experimental contract
 
 This document defines the control and treatment conditions used by the paper.
-It describes the experiment that was run. It is not a component ablation or a
+It describes the completed experiment. It is not a component ablation or a
 guide to the internal study machinery.
 
 ## Paired comparison
 
-Each task in the released result table was run once under control and once
-under treatment. Within a pair, both runs used the same:
+Each task in the released result table has one control run and one treatment
+run. Within a pair, both runs used the same:
 
 - task and prepared starting checkout;
 - model weights and model-facing compatibility settings;
@@ -73,17 +73,17 @@ The complete task-level projection is available as
 [`task_outcomes.tsv`](results/task_outcomes.tsv) and an identical
 [`task_outcomes.md`](results/task_outcomes.md) table.
 
-Resolution differences were tested with an exact two-sided McNemar test over
-the discordant pairs. F2PF differences were tested with an exact two-sided
-sign test after setting tied task pairs aside. The paper also reports
+The analysis tested resolution differences with an exact two-sided McNemar
+test over the discordant pairs. It tested F2PF differences with an exact
+two-sided sign test after setting tied task pairs aside. The paper also reports
 repository-cluster sensitivity analyses for the primary pressure comparisons.
 
 ## Cross-model comparisons
 
-The same frozen treatment settings were applied to Qwen3.6-35B-A3B, Devstral
-Small 2 24B, Nemotron-Cascade 2 30B-A3B, and Qwen3.8-27B. Each model had one
-compatibility setup shared by its control and treatment runs; no treatment
-rule was retuned for a model.
+The comparisons applied the same frozen treatment settings to Qwen3.6-35B-A3B,
+Devstral Small 2 24B, Nemotron-Cascade 2 30B-A3B, and Qwen3.8-27B. Each model
+had one compatibility setup shared by its control and treatment runs. The
+experiment did not retune any treatment rule for a model.
 
 The Devstral, Nemotron, and Qwen3.8 comparisons used the same 169 SWE-bench
 Verified tasks, a 20,480-token context window, and a 480-second total attempt
@@ -94,9 +94,9 @@ Nemotron used Q4_K_M weights; Qwen3.8 used UD-Q4_K_XL weights.
 ## Isolation
 
 The two arms began from separate copies of the same prepared task checkout.
-Model commands ran in per-task containers with outbound network access
-disabled. Benchmark task tables, gold patches, hidden tests, and scorer-only
-inputs were kept outside the model-visible environment.
+Model commands ran in per-task containers without outbound network access.
+The setup kept benchmark task tables, gold patches, hidden tests, and
+scorer-only inputs outside the model-visible environment.
 
 The reusable public harness retains this task-agnostic execution boundary.
 Benchmark preparation, task manifests, launchers, and evaluators remain in the

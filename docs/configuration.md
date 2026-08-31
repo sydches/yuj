@@ -13,8 +13,8 @@ This page explains settings files and their order. Read
 [Extend Yuj with TOML files](extending-yuj.html) when you want to add a model
 runtime, model profile, test runner, or tool rule.
 
-Activate the environment where Yuj is installed before you run a command on
-this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
+Activate the environment that contains Yuj before you run a command on this
+page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Save model settings
 
@@ -103,9 +103,9 @@ without copying the full main file.
 
 Yuj chooses its main runtime root in this order:
 
-1. If `YUJ_CONFIG` is set, use that exact main file and its parent directory.
-   Keep every relative profile, agent, base, and runtime file that it names
-   under that directory.
+1. If you set `YUJ_CONFIG`, Yuj uses that exact main file and its parent
+   directory. Keep every relative profile, agent, base, and runtime file that
+   it names under that directory.
 2. Otherwise, use an editable source checkout when one is active.
 3. Otherwise, use the installed package's immutable runtime bundle.
 
@@ -511,8 +511,8 @@ migrates to `bwrap`. The matching `false`/`false` pair migrates to `none`.
 Mixed legacy booleans are invalid. A copied legacy full configuration may keep
 a consistent backend and boolean pair in one layer. Contradictory pairs fail.
 The legacy shared-container spelling migrates to its exact Docker or Podman
-runtime. New settings files should use only `sandbox.backend`. A legacy
-`YUJ_CONTAINER` mode cannot be combined with another selected backend.
+runtime. New settings files should use only `sandbox.backend`. Do not combine
+a legacy `YUJ_CONTAINER` mode with another selected backend.
 
 `container_flags` accepts resource limits and metadata that does not change
 execution. It rejects
@@ -528,7 +528,7 @@ handling, and artifact ownership still apply.
 
 ### Control the command environment
 
-The command environment is explicit and is resolved once before the first
+The command environment is explicit. Yuj resolves it once before the first
 session:
 
 ```toml
@@ -803,8 +803,8 @@ structural_max_file_bytes = 4194304
 ```
 
 This adds `structural_search` and `structural_edit` to the model tool set. Both
-are off by default. Yuj gives both tools priority inside a model profile's
-tool-count limit when they are enabled.
+are off by default. When you enable them, Yuj gives both tools priority inside
+a model profile's tool-count limit.
 
 `structural_search` takes `path`, `language`, and `query`. The path may name one
 file or a directory. A directory search may use `glob` and `page`. The language
@@ -976,14 +976,14 @@ profile shaping and cannot finish with `input_required`.
 `constrained_decoding` asks llama-server to constrain the tool-call span with
 JSON Schema or a generated GBNF grammar. The selected model profile must also
 set `[model].supports_constrained_tools = true`. Shipped profiles leave this
-off until their exact server, template, reasoning mode, and tool wrapper have
-been tested. Unsupported profiles send no constraint, but runtime schema
+off until maintainers test their exact server, template, reasoning mode, and
+tool wrapper. Unsupported profiles send no constraint, but runtime schema
 validation can still reject bad calls.
 
 ### Maintain a model todo list
 
-The model-callable todo list is disabled by default. Enable it with a small
-overlay:
+The shipped settings disable the model-callable todo list. Enable it with a
+small overlay:
 
 ```toml
 [tools]
@@ -1045,7 +1045,7 @@ yuj smoke --trust-workspace
 `--no-trust-workspace` refuses repository behavior for that invocation. Yuj
 does not require either option when it finds no enabled repository behavior.
 
-Trust is scoped to the resolved workspace path and persists until revocation.
+Yuj scopes trust to the resolved workspace path and keeps it until revocation.
 Once trusted, normal changes to that repository do not cause repeated prompts.
 Use these commands to inspect the approval-time category and path snapshot or
 to remove the decision:
@@ -1279,8 +1279,8 @@ paths. The related tool-call row carries the model-visible marker or error.
 ### Run trusted lifecycle hooks
 
 Lifecycle hooks let an operator run an existing external program at a harness
-event. They are disabled by default. Configure them in a small file passed
-with `--config`:
+event. The shipped settings disable them. Configure them in a small file
+passed with `--config`:
 
 ```toml
 [hooks]
@@ -1314,7 +1314,7 @@ Handlers may return these effects:
 | Exit `2` | Block the event. JSON `reason`, `stopReason`, or `error`, or otherwise stdout text, becomes the explanation. |
 | JSON `continue = false`, `decision = "deny"`/`"block"`, or nested `hookSpecificOutput.permissionDecision = "deny"`/`"ask"` | Block the event. |
 | JSON `updated_input` or `updatedInput` from `pre_tool` | Replace the complete tool argument object. Yuj then applies schema validation, permissions, approval, and guardrails to the replacement. |
-| JSON `additional_context` or `additionalContext` | Append the text in an `<injected-fragment source="hook">` envelope. `systemMessage` is accepted as the same annotation. |
+| JSON `additional_context` or `additionalContext` | Append the text in an `<injected-fragment source="hook">` envelope. Yuj accepts `systemMessage` as the same annotation. |
 | Timeout | Record `timeout`, warn, and fail open. Yuj kills the handler's process group. |
 | Any other nonzero exit | Record `error`, warn, and fail open. |
 
@@ -2088,9 +2088,9 @@ Yuj discovers skills in two layers:
 
 1. Read `skill_paths` in order. An entry may name `SKILL.md` or its directory.
    A missing exact path stops startup.
-2. Search `skills_dirs` in order. A missing collection is ignored. A relative
-   collection is searched from the task directory up to the nearest project
-   root. An absolute or expanded path names one collection directly.
+2. Search `skills_dirs` in order. Yuj ignores a missing collection. For a
+   relative collection, Yuj searches from the task directory up to the nearest
+   project root. An absolute or expanded path names one collection directly.
 
 Collection search is deterministic and stops after six directory levels or
 2,000 directories. A skill must live in a subdirectory that contains a file

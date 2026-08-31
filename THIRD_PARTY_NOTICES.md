@@ -1,8 +1,8 @@
 # Third-party notices
 
-Except where otherwise noted, Yuj's original work is licensed under the MIT
-License in [`LICENSE`](LICENSE). The components below retain their upstream
-Apache License 2.0 terms. The full text is provided in
+Except where otherwise noted, the MIT License in [`LICENSE`](LICENSE) covers
+Yuj's original work. The components below retain their upstream Apache
+License 2.0 terms. This repository provides the full text in
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
 
 ## Unsloth chat-template modifications

@@ -15,8 +15,8 @@ The shipped settings select `bwrap`. If the host cannot run it, Yuj stops
 before model work. Select another backend during `yuj setup` or in a local
 configuration file. Linux does not need Docker when `bwrap` works.
 
-Activate the environment where Yuj is installed before you run a command on
-this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
+Activate the environment that contains Yuj before you run a command on this
+page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Choose a mode
 
@@ -58,8 +58,8 @@ preflight. If none passes, Yuj stops. It never selects `none`.
 
 `yuj config` reports the supported, available, unavailable, selected, and
 capability-resolved backends without starting a sandbox. Available means that
-a supported backend executable was found. Unavailable includes named backends
-that are unsupported on this platform or whose executable was not found.
+Yuj found a supported backend executable. Unavailable includes named backends
+that this platform does not support or whose executable Yuj did not find.
 `yuj doctor` and `yuj --dry-run` perform the operational check. Normal
 startup records both the selected value and exact resolved backend before tool
 execution.
@@ -80,7 +80,7 @@ With the normal strict settings:
 The Docker socket can give a model command access to the Docker service. Do
 not expose the socket when the task must not use Docker.
 
-When Agent Skills are enabled, Yuj adds validated external skill directories
+When you enable Agent Skills, Yuj adds validated external skill directories
 to the read-only set. `read` can open their `SKILL.md` files and resources, and
 `bwrap` mounts those directories read-only. File mutation tools still reject
 every external skill path.
@@ -139,8 +139,8 @@ every sandbox mode and on an explicitly unsandboxed command path. It does not
 apply to trusted lifecycle hooks.
 
 The default `inherit = "core"` inherits only `PATH`, `HOME`, `LANG`, and
-`TERM` when present. Inherited names containing `KEY`, `SECRET`, or `TOKEN`
-are removed by default. Fixed `set` values override inherited values, and
+`TERM` when present. Yuj removes inherited names that contain `KEY`, `SECRET`,
+or `TOKEN` by default. Fixed `set` values override inherited values, and
 case-insensitive wildcard filters can exclude names or form a final include
 allowlist. See [Configuration](configuration.html#control-the-command-environment)
 for the exact order and settings.
@@ -174,9 +174,9 @@ For repository-owned model-view rules, use `.yujignore` instead of repeating
 paths in host configuration. Yuj loads it once from the task root, applies its
 Gitignore-style rules uniformly to file/search tools, and adds currently
 matched paths to the unreadable masks used by bwrap and container commands.
-Simple captured `ls`, `cat`, and `head` calls are filtered before execution so
-an individually masked file is not exposed merely as a directory entry. See
-[Configuration](configuration.html#hide-repository-paths-from-the-model-view)
+Yuj filters simple captured `ls`, `cat`, and `head` calls before execution so
+they cannot expose an individually masked file merely as a directory entry.
+See [Configuration](configuration.html#hide-repository-paths-from-the-model-view)
 for syntax, precedence, and trace provenance.
 
 ## Keep lifecycle hooks outside the task
@@ -254,7 +254,7 @@ Some Yuj-owned processes use different boundaries:
 | Process or record | Boundary |
 | --- | --- |
 | Compaction hook | Runs inside the main Yuj process with host permissions. Enable only reviewed code. |
-| File checkpoint store | Lives outside the task directory and is masked from model file and shell tools. Restore is not model-callable. |
+| File checkpoint store | Yuj keeps it outside the task directory and masks it from model file and shell tools. The model cannot call restore. |
 | Language server | Runs under the selected command sandbox, file masks, and no-network rule. Yuj starts it only when needed and never downloads it. |
 | Background command | Uses the same sandbox as `bash`. Yuj exposes output only through traced polls and stops the process group at session end. |
 

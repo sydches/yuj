@@ -37,9 +37,9 @@ the benchmark accepts the task as solved. F2PF is the fraction of required
 fail-to-pass tests that the patch passes. The released scoring rule gives F2PF
 zero when the denominator is zero.
 
-These are the finalized primary task outcomes used by the paper. Internal run
-delivery labels are intentionally omitted because they are not experimental
-conditions.
+These are the finalized primary task outcomes used by the paper. The table
+intentionally omits internal run delivery labels because they are not
+experimental conditions.
 
 ## Check the public files
 

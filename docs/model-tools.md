@@ -16,7 +16,7 @@ person types into a terminal.
 
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
-| `bash` | `cmd` | `background` | Run one shell command and return its output. When background work is enabled, return a process ID instead of waiting. |
+| `bash` | `cmd` | `background` | Run one shell command and return its output. When you enable background work, Yuj returns a process ID instead of waiting. |
 | `bash_poll` | `proc_id` | `timeout_s` | Return new output from one background command and, when known, its exit status. |
 | `bash_kill` | `proc_id` | None | Stop one background process group. |
 | `terminal_start` | `cmd` | None | Start the session's one bounded interactive terminal process and return its terminal ID. |
@@ -44,7 +44,7 @@ person types into a terminal.
 | `list_functions` | None | None | In code mode, list the function names injected into `exec_cell`. |
 | `get_function_details` | `names` | None | In code mode, return selected injected-function schemas on demand. |
 | `exec_cell` | `source` | None | In code mode, run Python inside the shell sandbox and return printed text. |
-| `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Present only when deferred loading is enabled. |
+| `load_tools` | `names` | None | Add hidden registered tools to the active set for later model requests. Yuj presents this tool only when you enable deferred loading. |
 | `exit_plan_mode` | None | None | Validate `.solver/plan.md` and unlock implementation tools during a required planning phase. |
 | `ask_user` | `question` | None | In the top-level assistant session, save one exact clarification question and pause for one operator answer. Never requests or grants permission. |
 | `done` | None | `message` | Ask Yuj to end the task. |
@@ -116,10 +116,10 @@ list clears it. The tool changes harness state, not source files.
 A model profile may limit the number of visible tools. `done` always remains.
 The top-level assistant session also keeps `ask_user`. Deferred loading keeps
 `load_tools`. Required plan mode keeps `exit_plan_mode` and the exact plan-file
-write so the model can leave the phase. When interactive terminals are enabled,
+write so the model can leave the phase. When you enable interactive terminals,
 Yuj keeps both terminal controls inside the limit. The shipped eight-tool
 profiles still keep `bash`, `read`, `write`, and the selected edit tool. When
-structural tools are enabled, Yuj gives `structural_search` and
+you enable structural tools, Yuj gives `structural_search` and
 `structural_edit` priority inside the profile limit.
 
 ## Choose a tool set
@@ -148,7 +148,7 @@ removes a tool. Yuj rejects the whole call if the result would exceed the
 profile's `max_tools` limit.
 
 A direct call to a hidden tool returns `tool_not_active` and names
-`load_tools`. A disabled tool cannot be loaded.
+`load_tools`. The `load_tools` tool cannot activate a disabled tool.
 See [Configuration](configuration.html#defer-tools-until-the-model-needs-them)
 for knobs, trace/state behavior, replay fidelity, and token metrics.
 
@@ -173,7 +173,7 @@ In a top-level assistant session, the model can call:
 {"question":"Which database should the migration target?"}
 ```
 
-`question` must be a nonempty string. No other field is accepted. Yuj checks
+`question` must be a nonempty string. Yuj accepts no other field. Yuj checks
 this schema even when general tool schema validation is off.
 
 A valid call saves the exact question and ends the run segment with
@@ -199,8 +199,8 @@ The cell provides `read`, `grep`, `glob`,
 dispatcher. The Python program must print the text that should become the
 cell result.
 
-Code mode and deferred tool loading are alternative compact surfaces. A
-configuration that enables both is rejected.
+Code mode and deferred tool loading are alternative compact surfaces. Yuj
+rejects a configuration that enables both.
 
 Cells run model-written Python under the resolved command policy. An explicit
 `none` choice runs the cell as the Yuj account; every requested sandbox fails
@@ -473,14 +473,23 @@ output truncation. Side-effecting and compound pipelines remain unchanged.
 
 ## Finish rule
 
-After a source change, Yuj requires a passing registered test runner before
-explicit or implicit completion. After three custom shell checks, Yuj selects
-one unambiguous component target from the changed source path and the active
-runner descriptor. It runs that target once and puts the bounded result in the
-current tool output. Yuj runs it again only after another source change. If it
-cannot select one target, it gives fallback advice and does not guess.
+When Yuj can identify and start a registered test runner, it requires a passing
+result after the latest source change before it accepts explicit or implicit
+completion. After three eligible executable checks that do not invoke a
+registered runner, Yuj selects one unambiguous component target from the
+changed source path and the active runner descriptor. Inspection commands do
+not advance this count.
+
+Yuj runs the selected target once and puts the bounded result in the current
+tool output. When an earlier eligible check used an executable from the same
+runtime family, Yuj reuses that executable. Yuj runs the target again only
+after another source change. If Yuj cannot identify one target or cannot start
+the registered runner, it reports the limit and leaves completion available.
+It does not guess a target or count an unavailable runner as a failed test.
+
 `post_mutation_verification_gate_after` under `[loop]` controls the number of
-allowed checks. Set it to `0` to disable this rule and its first-edit advice.
+eligible checks. Set it to `0` to disable the automatic run and its
+regression-coverage advice.
 
 This rule is separate from the older finish guard. The shipped treatment and
 plain bases set `done_guard_enabled = false` under `[loop]`.

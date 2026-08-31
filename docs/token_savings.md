@@ -17,7 +17,7 @@ nothing.
 
 Set `loop.transform_log_mode` to one of these values:
 
-| Mode | What is saved |
+| Mode | Saved data |
 | --- | --- |
 | `counts` | The transform name and location; run, task, session, turn, and tool-call ID; chain order; exact input, output, and delta bytes; character counts; change count; and SHA-256 hashes. This is the default. |
 | `debug` | Everything in `counts`, plus located before/after excerpts in the JSONL record and complete before/after text files. |
@@ -26,7 +26,7 @@ Set `loop.transform_log_mode` to one of these values:
 contain text that a later redaction removes, so protect it like a raw
 transcript.
 
-The ledger is written to one of these locations:
+Yuj writes the ledger to one of these locations:
 
 - `<run_dir>/savings/<task>.jsonl`
 - `<project_root>/.llm_assist/sessions/<session_id>/savings.jsonl`
@@ -42,9 +42,10 @@ For a normal run, debug files are beside the task ledger:
 Assistant-mode debug files use `savings.transform_debug/` beside
 `savings.jsonl`.
 
-Logging is best effort. If the ledger cannot be opened or written, Yuj warns,
-disables accounting for that task, and continues the run. A debug-sidecar
-failure is recorded as `debug_write_error` when the JSONL write still succeeds.
+Logging is best effort. If Yuj cannot open or write the ledger, it warns,
+disables accounting for that task, and continues the run. Yuj records a
+debug-sidecar failure as `debug_write_error` when the JSONL write still
+succeeds.
 
 ## Record fields
 
@@ -115,7 +116,7 @@ after the mechanism prefix in the ledger.
 | Tool-result envelopes | `tool_result_envelope`: security-marker insertion and unified envelope | Output before and after envelope work | `harness/tools.py` |
 | Repeated output | `output_dedup / <tool>`; `dedup / <tier>` | Repeated output to its back-reference or stored-context stub | `harness/_loop/_dispatch_tool_call.py`, `context_strategies/solver_state_context.py` |
 | Half-life | `context_projection / halflife_decay` | Each older tool result before and after its age-band cap | `context_strategies/halflife_context.py` |
-| Thought retention | `context_projection / think_retention_window` | Complete message-list JSON before and after expired `think` pairs are removed | `harness/context.py` |
+| Thought retention | `context_projection / think_retention_window` | Complete message-list JSON before and after retention removes expired `think` pairs | `harness/context.py` |
 | Other context modes | `context_projection / <mode>` | Complete message-list JSON before and after the mode's projection | `context_strategies/` |
 | Digest or checkpoint compaction | `context_compaction / <method>` | Complete message-list JSON before and after compaction, including its overflow guard | `harness/_loop/compaction.py` |
 | Pre-flight re-clip | `preflight_reclip / oversized_message_head_tail` | The oversized message before and after the re-clip | `harness/_loop/compaction.py` |
@@ -142,9 +143,9 @@ IDs, and content together in debug evidence.
   different quantities.
 - Sequential transforms are additive only when their chain is continuous.
   The summary command reports chain breaks.
-- Half-life is recorded every time a request render shortens an older tool
-  result. This measures repeated prompt reduction, not unique stored bytes
-  deleted.
+- The ledger records half-life every time a request render shortens an older
+  tool result. This measures repeated prompt reduction, not unique stored
+  bytes deleted.
 - A command rewrite records only the original and executed commands. It does
   not invent the output that the unmodified command might have produced.
 - A redirect or forbidden-command record measures suppression/replacement and
@@ -156,7 +157,7 @@ IDs, and content together in debug evidence.
   those exceptions visible instead of assuming the control was verbatim.
 - For an old run, exact reconstruction is possible only when retained
   artifacts contain both values or exact counts. A transcript cannot recover
-  text removed before the request was written.
+  text that Yuj removed before writing the request.
 
 ## Summary command
 
@@ -190,7 +191,7 @@ before/after text mutation:
 
 These records use `input_chars`, `output_chars`, `delta_chars`,
 `delta_tokens_est`, and `measure_type`. Exact and estimated legacy rows stay
-separate. They must not be folded into transformation-byte totals.
+separate. Do not fold them into transformation-byte totals.
 
 ## Adding a transformation
 
@@ -212,5 +213,5 @@ get_ledger().record_transform(
 ```
 
 Do not write a record for a no-op. Do not put before/after content in `ctx`;
-normal `counts` mode must remain content-free. Add a new inventory row when a
-new bucket or model-visible surface is introduced.
+normal `counts` mode must remain content-free. Add a new inventory row when
+you introduce a bucket or model-visible surface.

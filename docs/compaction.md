@@ -117,7 +117,7 @@ Each completed compaction, including a hook-canceled attempt, writes one raw
 
 | Field | Values |
 | --- | --- |
-| `hook` | Normalized `module:function`, or the empty string when no hook is configured. |
+| `hook` | Normalized `module:function`, or the empty string when you have not configured a hook. |
 | `hook_outcome` | `not_configured`, `default`, `cancel`, `replace`, or `fallback_digest`. |
 
 `method` is `hook` for cancel, replacement, and hook-failure fallback rows.

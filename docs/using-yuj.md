@@ -23,8 +23,8 @@ Run `yuj --version` to print the installed version.
 Run `yuj COMMAND --help` for the options of one secondary command. Every
 command accepts `-h` and `--help`.
 
-Activate the environment where Yuj is installed before you run a command on
-this page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
+Activate the environment that contains Yuj before you run a command on this
+page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
 ## Command list
 
@@ -80,9 +80,9 @@ yuj config --json
 ```
 
 Human output shows each effective value and its winning source layer. JSON
-output uses the stable `yuj.config-inspection` schema version 1. Secret and
-environment-derived values are redacted in both modes. The command performs
-no model request and writes no session artifacts.
+output uses the stable `yuj.config-inspection` schema version 1. Yuj redacts
+secret and environment-derived values in both modes. The command performs no
+model request and writes no session artifacts.
 
 To change one persistent value, select its layer and preview the edit:
 
@@ -279,8 +279,8 @@ For a non-interactive start, make the choice on the command line:
 yuj --trust-workspace "Fix the failing tests."
 ```
 
-`--no-trust-workspace` refuses repository behavior for that invocation. If no
-repository behavior is enabled, Yuj starts without a trust decision.
+`--no-trust-workspace` refuses repository behavior for that invocation. When
+Yuj finds no enabled repository behavior, it starts without a trust decision.
 
 The decision belongs to the selected workspace and remains in effect until
 you revoke it. Editing an instruction or adding another enabled behavior does
@@ -736,8 +736,8 @@ yuj doctor
 - the configured sandbox choice and exact operational resolution
 
 An unavailable selected sandbox is an error. `auto` tries installed supported
-backends in platform order and never selects unsandboxed execution. An
-explicit `none` is reported as not engaged. `doctor` checks only whether the
+backends in platform order and never selects unsandboxed execution. `doctor`
+reports an explicit `none` choice as not engaged. It checks only whether the
 current directory itself contains `.git`; a missing root is a warning. It
 does not check whether a parent directory is a Git repository.
 
@@ -955,7 +955,7 @@ The trace is Yuj's time-ordered record of all run segments in a coding session.
 | `yuj status [SESSION]` | Session identity, run and archive state, model and sandbox, saved input summaries, pending operator action, and the next command. |
 | `yuj show [SESSION]` | The status details plus saved paths, context and task sources, recent turns, and recent trace events. Use `--full` to show the complete saved turn view. |
 | `yuj export [SESSION]` | A redacted Markdown report with the task, operator follow-ups, final assistant responses, tool summaries, usage, status, and evidence hashes. |
-| `yuj diff [SESSION]` | A pipeable unified diff for a verified retained worktree, or an explicit reason that ownership cannot be established. |
+| `yuj diff [SESSION]` | A pipeable unified diff for a verified retained worktree, or an explicit reason that Yuj cannot establish ownership. |
 | `yuj usage [SESSION]` | Run-segment count, input, output, and cached token totals, cache ratio, cost, and quota from persisted evidence |
 | `yuj sessions` | A compact list of short ID, status, label, flags, and working directory for up to 20 recent unarchived sessions. |
 | `yuj sessions --full` | Complete identity, status, model, path, and time fields for each matching session. |
@@ -988,7 +988,7 @@ yuj show --no-tools --trace SESSION
 | `yuj show` | `--results`, `--no-results` | Include or omit tool results while keeping tool calls. |
 | `yuj show` | `--trace`, `--no-trace` | Include or omit trace events. |
 | `yuj show` | `--pager`, `--no-pager` | Force or disable the pager. Long terminal output uses a pager by default. |
-| `yuj export` | `SESSION` | Select a session. The default is `latest`. Archived sessions are allowed. |
+| `yuj export` | `SESSION` | Select a session. The default is `latest`. This command also accepts archived sessions. |
 | `yuj export` | `--pager`, `--no-pager` | Force or disable the pager. Long terminal output uses a pager by default. |
 | `yuj usage` | `SESSION` | Select a session. The default is `latest`. |
 | `yuj sessions` | `--limit N` | List at most this many sessions. The default is 20. |
@@ -1002,7 +1002,7 @@ yuj show --no-tools --trace SESSION
 | `yuj label` | `SESSION` | Select the saved session to change. |
 | `yuj label` | `LABEL` | Set or replace the exact manual label. |
 | `yuj label` | `--clear` | Clear the label instead of setting one. |
-| `yuj fork` | `SESSION` | Select the stopped source session. This argument is required. |
+| `yuj fork` | `SESSION` | Select the stopped source session. Provide this argument. |
 | `yuj archive` | `SESSION` | Select the stopped session to archive. |
 | `yuj unarchive` | `SESSION` | Select the archived session to restore. |
 | `yuj purge` | `FULL_SESSION_ID --preview` | List the owned artifact entries and their logical byte total without changing them. |
@@ -1081,8 +1081,8 @@ model role or child agent. Yuj adds each segment fact once. It does not add a
 turn row or child summary again after it reads that segment fact.
 
 The cache ratio is the total cached-token count divided by the total input-token
-count. Yuj prints it only when both counts are known and input tokens are
-greater than zero.
+count. Yuj prints it only when it knows both counts and the input-token count
+is greater than zero.
 
 Cost needs an exact decimal amount and currency in every run-segment fact.
 Quota needs a remaining amount, limit, unit, and scope in every fact. Yuj does
@@ -1117,7 +1117,7 @@ The remaining characters may be ASCII letters, digits, `.`, `_`, or `-`.
 Yuj stores the label exactly as entered. Labels are case-sensitive, so
 `Release.One` and `release.one` are different labels.
 
-The values `latest` and `last`, in any letter case, are reserved selectors.
+Yuj reserves the values `latest` and `last` as selectors in any letter case.
 A label also cannot look like a full session ID or an eight-character
 hexadecimal short ID. Yuj rejects a duplicate label or a label that can
 already select a session by ID prefix. It leaves the old label unchanged after
@@ -1161,9 +1161,9 @@ do not change the other side. The parent ID remains historical metadata.
 Forking rejects symbolic links, malformed saved paths, and evidence that does
 not belong to the source session directory. It verifies the source files and
 source index row again before publishing the child index row. A handled
-failure removes staged child files and any child worktree. Because the index
-row is published last, an interruption cannot leave a half-created child that
-session commands can resolve.
+failure removes staged child files and any child worktree. Because Yuj
+publishes the index row last, an interruption cannot leave a half-created child
+that session commands can resolve.
 
 If the source owns a managed worktree, the child receives a distinct retained
 worktree and branch at the source endpoint. Yuj copies the source worktree's
@@ -1308,11 +1308,10 @@ yuj sessions --all --label release-check
 ```
 
 Use `--status` more than once to include several exact statuses. `--archived`
-shows only archived sessions, while `--all` includes both archive states.
-Filters run before `--limit` is applied.
+shows only archived sessions, while `--all` includes both archive states. Yuj
+applies filters before `--limit`.
 
-Ask for a numbered choice when both input and output are attached to a
-terminal:
+Ask for a numbered choice when you attach both input and output to a terminal:
 
 ```bash
 yuj sessions --status paused --select
@@ -1368,7 +1367,7 @@ last run status and print archive state on another line.
 | `running` | The trace has a start event and no later end event. Check the separate `lock` line to see whether a process currently owns the session. |
 | `approval_pending` | A tool action waits for your choice. |
 | `input_required` | The model asked one clarification question. Record the answer before resume. |
-| `input_ready` | One clarification answer is recorded and waiting for one resume delivery. |
+| `input_ready` | Yuj recorded one clarification answer and will deliver it once on resume. |
 | `paused` | The last run segment stopped without success. The coding session can continue. |
 | `completed` | The model finished successfully or declared the task done. |
 | `error` | Yuj recorded an error as the final status. |
@@ -1552,7 +1551,7 @@ next resume adds it after restoring the saved conversation.
 
 ## Remove an isolated session worktree
 
-When `[runtime].worktree` is enabled, Yuj keeps the session's worktree and
+When you enable `[runtime].worktree`, Yuj keeps the session's worktree and
 branch after every exit so `resume` sees exactly the same files. Remove it by
 full ID, exact label, short ID, or unique ID start only when you no longer
 need that workspace:
@@ -1606,8 +1605,8 @@ Generating or viewing it does not change the workspace.
 
 Yuj stores at most the first 120 lines and 16,000 escaped characters. A
 truncation marker gives the displayed and original character counts. It also
-escapes terminal control characters. If the source, proposal, or path cannot
-be represented safely, `show` says that the preview is unavailable instead
+escapes terminal control characters. If Yuj cannot represent the source,
+proposal, or path safely, `show` says that the preview is unavailable instead
 of displaying an invented diff. Shell commands receive this result because
 their file effects can depend on runtime behavior.
 

@@ -160,9 +160,9 @@ add one of these forms to the provider command:
 --sandbox none
 ```
 
-The image is required with an explicit Docker or Podman choice and whenever
-automatic selection resolves to Docker or Podman on the setup host. `none` is
-the only setting that permits unsandboxed model commands.
+Use an image with an explicit Docker or Podman choice. Automatic selection
+also needs an image when it resolves to Docker or Podman on the setup host.
+`none` is the only setting that permits unsandboxed model commands.
 
 Use `--api-key-env` when you can. Yuj then saves only
 `$ENV:VARIABLE_NAME` in `config.local.toml`.
