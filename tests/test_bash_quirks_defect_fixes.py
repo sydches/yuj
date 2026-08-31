@@ -1,7 +1,15 @@
 """Regression tests for refusals and safe command rewrites."""
 import re
 import subprocess
+import sys
+from pathlib import Path
+from unittest import mock
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+
+from _config_helpers import make_config
+from scripts.llm_solver.bash_quirks import load_output_control
 from scripts.llm_solver.bash_quirks._forbidden import load_forbidden_rules
 from scripts.llm_solver.bash_quirks._rewrites import load_universal_rewrites
 from scripts.llm_solver.bash_quirks.transforms import (
@@ -9,6 +17,8 @@ from scripts.llm_solver.bash_quirks.transforms import (
     condense_output,
     rewrite_command,
 )
+from scripts.llm_solver.harness import tools as tools_mod
+from scripts.llm_solver.harness._tools._run_in_sandbox import _run_in_sandbox
 
 UR = load_universal_rewrites()
 FR = load_forbidden_rules()
@@ -99,6 +109,99 @@ def test_task_flag_targets_test_fragment_only():
     )
     command = 'echo "pytest tests && echo done"'
     assert rewrite_command(command, oc) == command
+
+
+def test_task_format_removes_display_only_test_pipeline():
+    oc = OutputControl(
+        failure_only_flag="--tb=short -q",
+        passed_marker="PASSED",
+        failed_marker="FAILED",
+        verification_patterns=(re.compile(r"^pytest\b"),),
+    )
+    rules: list[dict] = []
+    transformed = rewrite_command(
+        'pytest tests -v 2>&1 | grep -i "doctest" | head -20',
+        oc,
+        rule_log=rules,
+    )
+
+    assert transformed == "pytest tests -v 2>&1 --tb=short -q"
+    assert rules[-1] == {"kind": "test_output_filter_removed"}
+
+
+def test_task_format_preserves_side_effecting_or_compound_test_pipeline():
+    oc = OutputControl(
+        failure_only_flag="--tb=short -q",
+        passed_marker="PASSED",
+        failed_marker="FAILED",
+        verification_patterns=(re.compile(r"^pytest\b"),),
+    )
+
+    assert rewrite_command("pytest tests | tee test.log", oc) == (
+        "pytest tests --tb=short -q | tee test.log"
+    )
+    assert rewrite_command("pytest tests | tail -20; echo done", oc) == (
+        "pytest tests --tb=short -q | tail -20; echo done"
+    )
+    assert rewrite_command("pytest tests | grep fail > failures.txt", oc) == (
+        "pytest tests --tb=short -q | grep fail > failures.txt"
+    )
+
+
+def test_host_runner_preserves_pipeline_failure_status(tmp_path):
+    _output, exit_code, timed_out = _run_in_sandbox(
+        "false | true",
+        cwd=str(tmp_path),
+        timeout=10,
+        sandbox=False,
+        bwrap_bin="/usr/bin/bwrap",
+    )
+
+    assert timed_out is False
+    assert exit_code != 0
+
+
+def test_removed_test_filter_surfaces_complete_failure_summary(tmp_path):
+    output_control = load_output_control(
+        PROJECT_ROOT / "scripts/llm_solver/language_quirks/pytest.toml"
+    )
+    cfg = make_config(
+        max_output_chars=1000,
+        truncate_head_ratio=0.5,
+        collapse_similar_lines=False,
+    )
+    raw = (
+        "FAILED tests/test_x.py::test_bad - "
+        "AttributeError: missing compile\n"
+        + "\n".join(f"trace detail {index}" for index in range(200))
+        + "\n1 failed, 1 passed in 0.10s"
+    )
+    captured: dict = {}
+
+    def fake_run(cmd, **_kwargs):
+        captured["cmd"] = cmd
+        return raw, 1, False
+
+    with mock.patch.object(tools_mod, "_run_in_sandbox", side_effect=fake_run):
+        result = tools_mod.dispatch(
+            "bash",
+            {
+                "cmd": (
+                    "python -m pytest tests -v 2>&1 "
+                    "| grep -i doctest | head -20"
+                )
+            },
+            cwd=str(tmp_path),
+            cfg=cfg,
+            output_control=output_control,
+        )
+
+    assert "| grep" not in captured["cmd"]
+    assert "| head" not in captured["cmd"]
+    assert "[test evidence] 1 passed, 1 failed" in result
+    assert "first failure: FAILED tests/test_x.py::test_bad" in result
+    assert "AttributeError: missing compile" in result
+    assert "chars omitted" in result
 
 
 def test_condensation_does_not_claim_the_suite_passed():

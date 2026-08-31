@@ -7,12 +7,55 @@ from __future__ import annotations
 
 import logging
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from .._shared.paths import package_data_path
+from ._output import (
+    _find_command_span,
+    _shell_command_spans,
+    _strip_leading_assignments,
+)
 
 log = logging.getLogger(__name__)
+
+
+_DISPLAY_ONLY_PIPE_COMMANDS = frozenset({
+    "awk", "cut", "egrep", "fgrep", "grep", "head", "rg", "sed",
+    "sort", "tail", "uniq", "wc",
+})
+
+
+def strip_display_only_test_pipeline(
+    command: str,
+    patterns: tuple[re.Pattern, ...],
+) -> str:
+    """Remove a trailing display-only pipeline from a test invocation."""
+    runner_span = _find_command_span(command, patterns)
+    if runner_span is None:
+        return command
+    spans = _shell_command_spans(command)
+    try:
+        runner_index = spans.index(runner_span)
+    except ValueError:
+        return command
+    if runner_index >= len(spans) - 1:
+        return command
+    for index in range(runner_index, len(spans) - 1):
+        separator = command[spans[index][1] : spans[index + 1][0]].strip()
+        if separator not in {"|", "|&"}:
+            return command
+    for start, end in spans[runner_index + 1 :]:
+        try:
+            words = shlex.split(_strip_leading_assignments(command[start:end]))
+        except ValueError:
+            return command
+        if not words or Path(words[0]).name not in _DISPLAY_ONLY_PIPE_COMMANDS:
+            return command
+        if any("<" in word or ">" in word for word in words[1:]):
+            return command
+    return command[: runner_span[1]].rstrip()
 
 
 @dataclass(frozen=True)

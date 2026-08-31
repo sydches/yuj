@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import functools
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -14,6 +14,12 @@ class OutputControl:
     passed_marker: str
     failed_marker: str
     verification_patterns: tuple[re.Pattern, ...]
+    output_parser: "OutputParser | None" = field(
+        default=None,
+        compare=False,
+        hash=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,7 @@ def load_output_control(task_format_path) -> OutputControl | None:
         passed_marker=oc.get("passed_marker", ""),
         failed_marker=oc.get("failed_marker", ""),
         verification_patterns=patterns,
+        output_parser=load_output_parser(path),
     )
 
 
@@ -123,6 +130,7 @@ def load_output_parser(task_format_path) -> OutputParser | None:
 # (rare — happens when the whole output is short enough that tail ==
 # output, or when the runner emits the summary mid-stream).
 _SUMMARY_TAIL_CHARS = 4000
+_FAILURE_DETAIL_CHARS = 500
 
 
 # Canonical verdict map — normalizes runner-specific PASS/FAIL tokens
@@ -318,14 +326,31 @@ def parse_structured(output: str, parser: OutputParser) -> dict:
             continue
 
     tests: dict[str, str] = {}
+    failure_details: list[str] = []
     if parser.per_test_regex:
         for m in parser.per_test_regex.finditer(output):
             tid = m.groupdict().get("test_id")
             verdict = m.groupdict().get("verdict")
             if tid and verdict:
-                tests[tid] = _normalize_verdict(verdict)
+                normalized = _normalize_verdict(verdict)
+                tests[tid] = normalized
+                if normalized in {"FAILED", "ERROR"} and len(failure_details) < 3:
+                    line_end = output.find("\n", m.end())
+                    if line_end < 0:
+                        line_end = len(output)
+                    detail = output[m.start() : line_end].strip()
+                    if detail:
+                        failure_details.append(
+                            detail
+                            if len(detail) <= _FAILURE_DETAIL_CHARS
+                            else detail[: _FAILURE_DETAIL_CHARS - 3] + "..."
+                        )
 
-    return {"summary": summary or None, "tests": tests}
+    return {
+        "summary": summary or None,
+        "tests": tests,
+        "failure_details": failure_details,
+    }
 
 
 def render_digest(parsed: dict, *, max_failures_shown: int = 10) -> str:
@@ -352,6 +377,9 @@ def render_digest(parsed: dict, *, max_failures_shown: int = 10) -> str:
         lines.append(f"[digest] failing ({len(failing)}): " + ", ".join(shown))
         if len(failing) > max_failures_shown:
             lines.append(f"[digest] ... {len(failing) - max_failures_shown} more failing tests")
+    failure_details = parsed.get("failure_details") or []
+    if failure_details:
+        lines.append(f"[digest] first failure: {failure_details[0]}")
     if not lines:
         return ""
     return "\n".join(lines)

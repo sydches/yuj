@@ -389,6 +389,7 @@ def admit_tool_output(
     arguments: dict,
     cfg: Config,
     output_control=None,
+    mechanical_test_summary: bool = False,
     redactions=None,
     filter_shell_output: bool = True,
     security_findings=(),
@@ -402,6 +403,22 @@ def admit_tool_output(
     """
     result = str(result)
     security_findings = tuple(security_findings)
+    test_summary = ""
+    if (
+        mechanical_test_summary
+        and output_control is not None
+        and name == "bash"
+    ):
+        from ..bash_quirks import parse_structured, render_digest
+        parser = getattr(output_control, "output_parser", None)
+        if parser is not None:
+            digest = render_digest(parse_structured(result, parser))
+            if digest:
+                parts = (
+                    line.removeprefix("[digest] ")
+                    for line in digest.splitlines()
+                )
+                test_summary = "[test evidence] " + "; ".join(parts)
     if name in {"bash", "bash_poll", "terminal_io"} and filter_shell_output:
         cmd = str(arguments.get("cmd", ""))
         result = _filter_bash_output(result, cmd, cfg)
@@ -416,6 +433,21 @@ def admit_tool_output(
         if output_control is not None:
             from ..bash_quirks import condense_output
             result = condense_output(result, runner_cmd, output_control)
+
+    if test_summary:
+        before = result
+        result = test_summary + "\n" + result
+        from .savings import get_ledger
+        get_ledger().record_transform(
+            bucket="bash_output_condense",
+            layer="L2_bash_quirks",
+            mechanism="complete_test_evidence_summary",
+            before=before,
+            after=result,
+            surface="tool_output",
+            change_count=1,
+            ctx={"tool_name": name},
+        )
 
     # Cell stdout is model-authored and may deliberately begin with a native
     # envelope prefix.  It never owns the harness envelope, so it must not use
@@ -614,6 +646,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     # and the rule kind so later code can classify the rewrite.
     original_bash_cmd = str(arguments.get("cmd", "")) if name == "bash" else ""
     bash_was_rewritten = False
+    display_filter_removed = False
     if (
         name == "bash"
         and not redirected
@@ -631,6 +664,10 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         )
         if rewritten_cmd != original_cmd:
             bash_was_rewritten = True
+            display_filter_removed = any(
+                rule.get("kind") == "test_output_filter_removed"
+                for rule in _rules_fired
+            )
             arguments = {**arguments, "cmd": rewritten_cmd}
             from .savings import get_ledger
             if not _transform_steps:
@@ -890,6 +927,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             arguments=arguments,
             cfg=cfg,
             output_control=output_control,
+            mechanical_test_summary=display_filter_removed,
             redactions=redactions,
             filter_shell_output=not redirected,
             security_findings=(

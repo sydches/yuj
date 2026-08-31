@@ -134,17 +134,7 @@ def _run_in_sandbox(
     )
 
     def _run_host(prefix: tuple[str, ...] = ()):
-        """Run outside bwrap while preserving legacy direct-call behavior."""
-        if effective_env is None and not allow_login_shell:
-            if prefix:
-                return subprocess.run(
-                    [*prefix, "/bin/sh", "-c", cmd], cwd=cwd,
-                    capture_output=True, text=True, timeout=timeout,
-                )
-            return subprocess.run(
-                cmd, shell=True, cwd=cwd,
-                capture_output=True, text=True, timeout=timeout,
-            )
+        """Run outside bwrap with the same pipefail contract as other backends."""
         return subprocess.run(
             [*prefix, *build_bash_argv(
                 cmd, allow_login_shell=allow_login_shell,

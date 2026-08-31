@@ -289,6 +289,7 @@ def test_language_quirks_drop_in_output_control(tmp_path: Path):
     assert oc.passed_marker == "ok:"
     assert oc.failed_marker == "fail:"
     assert len(oc.verification_patterns) == 1
+    assert isinstance(oc.output_parser, OutputParser)
 
 
 def test_language_quirks_drop_in_output_parser(tmp_path: Path):
@@ -358,6 +359,22 @@ def test_language_quirks_render_digest_on_synthetic_output(tmp_path: Path):
     assert "3 passed" in digest
     assert "1 failed" in digest
     assert "tests/z::t" in digest
+
+
+def test_language_quirks_digest_keeps_first_failure_detail(tmp_path: Path):
+    fixture = tmp_path / "fixture.toml"
+    fixture.write_text(_SYNTHETIC_TOML)
+    parser = load_output_parser(fixture)
+    parsed = parse_structured(
+        "1 ok, 10 fail in 0.1s\n"
+        "FAIL tests/z::t - AttributeError: missing compile",
+        parser,
+    )
+
+    assert render_digest(parsed).endswith(
+        "[digest] first failure: "
+        "FAIL tests/z::t - AttributeError: missing compile"
+    )
 
 
 def test_language_quirks_missing_parser_block_returns_none(tmp_path: Path):

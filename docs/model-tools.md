@@ -465,6 +465,12 @@ Yuj returns the runner name and result status in a `<test_results>` block. It
 also returns `exit_code` when the test runner exits. A timeout or tool error has
 no `exit_code`. The default timeout is 240 seconds.
 
+With task-format output handling enabled, Yuj removes a trailing runner
+pipeline made only of display filters such as `grep`, `head`, or `tail`. It
+runs the complete registered test command, preserves the runner failure
+status, and places a bounded count-and-first-failure summary before ordinary
+output truncation. Side-effecting and compound pipelines remain unchanged.
+
 ## Finish rule
 
 After a source change, Yuj requires a passing registered test runner before

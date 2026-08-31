@@ -30,7 +30,11 @@ from ._output import (
     render_digest,
 )
 from ._redactions import RedactionRule, apply_redactions, load_redactions
-from ._rewrites import RewriteRule, load_universal_rewrites
+from ._rewrites import (
+    RewriteRule,
+    load_universal_rewrites,
+    strip_display_only_test_pipeline,
+)
 
 
 def rewrite_command(cmd: str, oc: OutputControl | None,
@@ -106,6 +110,22 @@ def rewrite_command(cmd: str, oc: OutputControl | None,
                 transform_log.append({
                     "kind": "test_flag",
                     "flag": oc.failure_only_flag,
+                    "before": before,
+                    "after": cmd,
+                })
+
+    if oc:
+        before = cmd
+        cmd = strip_display_only_test_pipeline(
+            cmd,
+            oc.verification_patterns,
+        )
+        if cmd != before:
+            if rule_log is not None:
+                rule_log.append({"kind": "test_output_filter_removed"})
+            if transform_log is not None:
+                transform_log.append({
+                    "kind": "test_output_filter_removed",
                     "before": before,
                     "after": cmd,
                 })
