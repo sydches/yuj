@@ -126,7 +126,13 @@ def verification_runner_unavailable(result: str) -> bool:
 
 
 _RUNTIME_FAMILIES = {
-    "cargo", "ctest", "go", "make", "npm", "npx", "pnpm", "yarn",
+    "bun", "cargo", "ctest", "deno", "dotnet", "go", "java", "make",
+    "node", "npm", "npx", "php", "pnpm", "ruby", "yarn",
+}
+_NON_CHECK_EXECUTABLES = {
+    "cat", "cp", "diff", "echo", "file", "find", "git", "grep", "head",
+    "ls", "mkdir", "mv", "pwd", "rg", "sed", "stat", "tail", "tee",
+    "touch", "wc", "which",
 }
 _UNAVAILABLE_EXIT_RE = re.compile(
     r'(?:\[exit code:\s*12[67]\]|\bexit_code="12[67]")'
@@ -166,6 +172,38 @@ def _observe_runtime_executable(
         if family:
             return family, argv[0]
     return None
+
+
+def _runs_direct_executable(
+    tc_name: str,
+    tc_args: dict | None,
+    result: str,
+) -> bool:
+    """Return whether a shell check ran an explicit executable path."""
+    if tc_name != "bash" or not isinstance(tc_args, dict):
+        return False
+    if _UNAVAILABLE_EXIT_RE.search(result):
+        return False
+    command = tc_args.get("cmd")
+    if not isinstance(command, str):
+        return False
+    for fragment in split_shell_fragments(command):
+        try:
+            argv = shlex.split(
+                strip_leading_assignments(fragment.text), posix=True
+            )
+        except ValueError:
+            continue
+        if not argv:
+            continue
+        executable = argv[0]
+        leaf = executable.rsplit("/", 1)[-1]
+        if (
+            executable.startswith(("/", "./", "../"))
+            and leaf not in _NON_CHECK_EXECUTABLES
+        ):
+            return True
+    return False
 
 
 def observed_component_runner_base_cmd(
@@ -360,6 +398,10 @@ def observe_post_mutation_verification(
     if tc_name not in {"bash", "exec_cell"}:
         return
     observed_runtime = _observe_runtime_executable(tc_name, tc_args, result)
+    if observed_runtime is None and not _runs_direct_executable(
+        tc_name, tc_args, result
+    ):
+        return
     if observed_runtime is not None:
         (
             state.post_mutation_observed_runtime_family,

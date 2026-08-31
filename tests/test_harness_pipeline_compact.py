@@ -646,7 +646,7 @@ class TestPostMutationVerificationNudge:
             "def test_core():\n    assert True\n"
         )
         cfg = make_config(
-            max_turns=6,
+            max_turns=7,
             duplicate_abort=20,
             post_mutation_verification_gate_after=2,
         )
@@ -660,6 +660,11 @@ class TestPostMutationVerificationNudge:
                     "old_str": "before",
                     "new_str": "after",
                 },
+            ),
+            ToolCall(
+                id="git-log",
+                name="bash",
+                arguments={"cmd": "git log --oneline -5"},
             ),
             ToolCall(
                 id="custom-1",
@@ -726,6 +731,14 @@ class TestPostMutationVerificationNudge:
                 "--tb=short -q --no-header"
             ),
         }]
+        for request_index in (2, 3):
+            request = client.chat.call_args_list[request_index].args[0]
+            assert all(
+                "<automatic_verification" not in str(
+                    message.get("content") or ""
+                )
+                for message in request
+            )
         final_request = client.chat.call_args_list[-1].args[0]
         assert any(
             "<automatic_verification" in str(message.get("content") or "")
