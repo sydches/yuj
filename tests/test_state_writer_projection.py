@@ -320,6 +320,38 @@ class TestProjectImperativeProcess:
         assert out["process"]["last_mutation_step"] == 1
         assert out["process"]["last_failed_mutation_step"] is None
 
+    def test_external_scratch_write_does_not_count_as_workspace_mutation(self):
+        events = [
+            {"event": "tool_call", "session_number": 1, "turn_number": 0,
+             "tool_name": "bash",
+             "args_summary": "cmd='cat > /tmp/new_methods.py'",
+             "result_summary": "",
+             "write_like": True,
+             "source_write_like": False,
+             "source_write_paths": []},
+        ]
+        out = project(events, max_result_chars=_CAP, imperative_projection=True)
+
+        assert out["process"]["phase"] == "pre_mutation_discovery"
+        assert out["process"]["last_mutation_step"] is None
+        assert out["process"]["target_paths"] == []
+
+    def test_legacy_external_source_metadata_is_filtered_during_replay(self):
+        events = [
+            {"event": "tool_call", "session_number": 1, "turn_number": 0,
+             "tool_name": "bash",
+             "args_summary": "cmd='cat > /tmp/new_methods.py'",
+             "result_summary": "",
+             "write_like": True,
+             "source_write_like": True,
+             "source_write_paths": ["/tmp/new_methods.py"]},
+        ]
+        out = project(events, max_result_chars=_CAP, imperative_projection=True)
+
+        assert out["process"]["phase"] == "pre_mutation_discovery"
+        assert out["process"]["last_mutation_step"] is None
+        assert out["process"]["target_paths"] == []
+
     def test_trace_source_write_metadata_counts_as_mutation(self):
         events = [
             {"event": "tool_call", "session_number": 1, "turn_number": 0,

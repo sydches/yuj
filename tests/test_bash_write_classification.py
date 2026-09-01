@@ -4,8 +4,10 @@ from __future__ import annotations
 from scripts.llm_solver.harness.bash_write_classification import (
     classify_bash_write,
     extract_source_write_paths,
+    extract_workspace_write_paths,
     is_bash_action_write_like,
     is_bash_legacy_mutation_like,
+    is_bash_workspace_mutation_like,
 )
 
 
@@ -21,6 +23,8 @@ def test_python_read_heredoc_is_not_action_write_like():
 
     assert classification.action_write_like is False
     assert classification.legacy_mutation_like is False
+    assert classification.workspace_write_like is False
+    assert classification.workspace_write_paths == ()
     assert classification.source_write_like is False
     assert classification.source_write_paths == ()
 
@@ -40,6 +44,8 @@ def test_python_temp_replace_extracts_source_write_path():
     classification = classify_bash_write(cmd)
 
     assert classification.action_write_like is True
+    assert classification.workspace_write_like is True
+    assert classification.workspace_write_paths == ("src/app.py",)
     assert classification.source_write_like is True
     assert classification.source_write_paths == ("src/app.py",)
 
@@ -48,6 +54,9 @@ def test_test_paths_are_not_source_write_paths():
     assert extract_source_write_paths(
         "sed -i 's/a/b/' tests/test_app.py"
     ) == ()
+    assert extract_workspace_write_paths(
+        "sed -i 's/a/b/' tests/test_app.py"
+    ) == ("tests/test_app.py",)
 
 
 def test_non_python_source_extensions_are_source_write_paths():
@@ -84,6 +93,63 @@ def test_project_config_paths_are_not_source_write_paths():
     assert extract_source_write_paths(
         "sed -i 's/a/b/' Cargo.toml package.json go.mod CMakeLists.txt"
     ) == ()
+
+
+def test_external_scratch_write_is_not_workspace_mutation():
+    cmd = "cat > /tmp/new_methods.py"
+
+    classification = classify_bash_write(cmd)
+
+    assert classification.action_write_like is True
+    assert classification.legacy_mutation_like is True
+    assert classification.workspace_write_like is False
+    assert classification.workspace_write_paths == ()
+    assert classification.source_write_like is False
+    assert classification.source_write_paths == ()
+    assert is_bash_workspace_mutation_like(cmd) is False
+
+
+def test_relative_write_is_workspace_and_source_mutation():
+    cmd = "cat > new_methods.py"
+
+    classification = classify_bash_write(cmd)
+
+    assert classification.workspace_write_like is True
+    assert classification.workspace_write_paths == ("new_methods.py",)
+    assert classification.source_write_like is True
+    assert classification.source_write_paths == ("new_methods.py",)
+    assert is_bash_workspace_mutation_like(cmd) is True
+
+
+def test_plain_tee_write_is_workspace_and_source_mutation():
+    classification = classify_bash_write(
+        "printf x | tee src/generated.py"
+    )
+
+    assert classification.workspace_write_like is True
+    assert classification.workspace_write_paths == ("src/generated.py",)
+    assert classification.source_write_like is True
+
+
+def test_test_write_is_workspace_but_not_source_mutation():
+    classification = classify_bash_write(
+        "sed -i 's/a/b/' tests/test_app.py"
+    )
+
+    assert classification.workspace_write_like is True
+    assert classification.workspace_write_paths == ("tests/test_app.py",)
+    assert classification.source_write_like is False
+    assert classification.source_write_paths == ()
+
+
+def test_testbed_path_is_normalized_to_workspace_relative():
+    classification = classify_bash_write(
+        "sed -i 's/a/b/' /testbed/src/app.py"
+    )
+
+    assert classification.workspace_write_like is True
+    assert classification.workspace_write_paths == ("src/app.py",)
+    assert classification.source_write_paths == ("src/app.py",)
 
 
 def test_legacy_mutation_policy_keeps_python_dash_heredoc_gate_shape():

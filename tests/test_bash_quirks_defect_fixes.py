@@ -36,9 +36,11 @@ with open('/tmp/x.py', 'r') as f:
 print(content)
 EOF"""
 
+FORBIDDEN_CD = "cd /home/other && pwd"
 
-def test_refusal_surfaces_reason_to_model():
-    out = rewrite_command(HEREDOC_WRITE, None, universal_rewrites=UR,
+
+def test_containment_refusal_surfaces_reason_to_model():
+    out = rewrite_command(FORBIDDEN_CD, None, universal_rewrites=UR,
                           forbidden_rules=FR)
     assert out.startswith('echo "[HARNESS refused')
     # and the refusal actually prints the reason and exits nonzero
@@ -48,11 +50,17 @@ def test_refusal_surfaces_reason_to_model():
 
 
 def test_refusal_shell_safe_despite_quotes_in_reason():
-    out = rewrite_command(HEREDOC_WRITE, None, universal_rewrites=UR,
+    out = rewrite_command(FORBIDDEN_CD, None, universal_rewrites=UR,
                           forbidden_rules=FR)
     r = subprocess.run(out, shell=True, capture_output=True, text=True)
     # no shell parse error text
     assert "unexpected" not in r.stderr.lower()
+
+
+def test_external_heredoc_write_passes_through():
+    out = rewrite_command(HEREDOC_WRITE, None, universal_rewrites=UR,
+                          forbidden_rules=FR)
+    assert out == HEREDOC_WRITE
 
 
 def test_multiline_commands_never_get_flag_appends():
@@ -220,7 +228,7 @@ def test_condensation_does_not_claim_the_suite_passed():
 
 def test_rule_log_records_kind():
     log = []
-    rewrite_command(HEREDOC_WRITE, None, universal_rewrites=UR,
+    rewrite_command(FORBIDDEN_CD, None, universal_rewrites=UR,
                     forbidden_rules=FR, rule_log=log)
     assert log == [{"kind": "forbidden"}]
     log = []

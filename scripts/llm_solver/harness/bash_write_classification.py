@@ -1,19 +1,22 @@
 """Shared bash write/mutation classifiers.
 
-The harness has two related but distinct bash classifications:
+The harness has three related but distinct bash classifications:
 
 - action metadata records writes that are visible from the command body
   itself, and extracts source-looking paths for state projection.
-- guardrails and historical state replay keep a legacy-permissive
-  mutation heuristic so older traces and gate behavior remain stable.
+- live guardrails and state replay count only writes aimed at the sandboxed
+  task workspace; external scratch paths do not satisfy mutation gates.
+- the legacy-permissive heuristic remains available for historical analysis
+  and compatibility tests, but no longer owns live mutation accounting.
 
-Keeping both policies here prevents regex drift while making the distinction
+Keeping the policies here prevents regex drift while making the distinction
 explicit at call sites.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 
 SOURCE_FILE_EXTENSIONS = (
@@ -36,7 +39,7 @@ _SOURCE_EXT_RE = "|".join(re.escape(ext) for ext in SOURCE_FILE_EXTENSIONS)
 BASH_ACTION_SHELL_WRITE_RE = re.compile(
     r"(?:^|[;&|\n]\s*)(?:"
     r"apply_patch\b|patch\s+-p\d*\b|sed\s+-i\b|perl\s+-0?pi\b|"
-    r"cat\s+>|tee\s+-a?\b"
+    r"cat\s+>|tee(?:\s+(?:-a|--append))?(?:\s|$)"
     r")",
     re.DOTALL,
 )
@@ -55,7 +58,7 @@ BASH_ACTION_PYTHON_WRITE_RE = re.compile(
 BASH_LEGACY_MUTATION_RE = re.compile(
     r"(?:^|[;&|\n]\s*)(?:"
     r"apply_patch\b|patch\s+-p\d*\b|sed\s+-i\b|perl\s+-pi\b|"
-    r"python3?\s+-\s*<<|cat\s+>|tee\s+-a?\b"
+    r"python3?\s+-\s*<<|cat\s+>|tee(?:\s+(?:-a|--append))?(?:\s|$)"
     r")"
 )
 BASH_LEGACY_PYTHON_WRITE_RE = re.compile(
@@ -92,7 +95,12 @@ class BashWriteClassification:
 
     action_write_like: bool
     legacy_mutation_like: bool
+    workspace_write_paths: tuple[str, ...]
     source_write_paths: tuple[str, ...]
+
+    @property
+    def workspace_write_like(self) -> bool:
+        return self.action_write_like and bool(self.workspace_write_paths)
 
     @property
     def source_write_like(self) -> bool:
@@ -109,6 +117,20 @@ def normalize_trace_path(path: str) -> str:
     return path
 
 
+def is_workspace_path(path: str) -> bool:
+    """Return True when a trace path is contained by the task workspace."""
+    path = path.strip().strip("'\"")
+    if not path or "://" in path:
+        return False
+    if path.startswith("/testbed/"):
+        path = path[len("/testbed/"):]
+    elif path.startswith("/"):
+        return False
+    if path.startswith("./"):
+        path = path[2:]
+    return bool(path) and ".." not in PurePosixPath(path).parts
+
+
 def is_source_path(path: str) -> bool:
     """Return True for source-looking paths, excluding test/config hints."""
     if not path:
@@ -118,21 +140,31 @@ def is_source_path(path: str) -> bool:
     return NON_SOURCE_HINT_RE.search(path) is None
 
 
-def extract_source_write_paths(text: str) -> tuple[str, ...]:
-    """Extract ordered source-looking paths from action text."""
+def extract_workspace_write_paths(text: str) -> tuple[str, ...]:
+    """Extract ordered task-workspace paths from write-like action text."""
     paths: list[str] = []
     seen: set[str] = set()
     for match in FILE_TOKEN_RE.finditer(text or ""):
-        path = normalize_trace_path(match.group(0))
-        if is_source_path(path) and path not in seen:
+        raw_path = match.group(0)
+        path = normalize_trace_path(raw_path)
+        if is_workspace_path(raw_path) and path not in seen:
             seen.add(path)
             paths.append(path)
     for match in PY_PATH_RE.finditer(text or ""):
-        path = normalize_trace_path(match.group(1))
-        if is_source_path(path) and path not in seen:
+        raw_path = match.group(1)
+        path = normalize_trace_path(raw_path)
+        if is_workspace_path(raw_path) and path not in seen:
             seen.add(path)
             paths.append(path)
     return tuple(paths)
+
+
+def extract_source_write_paths(text: str) -> tuple[str, ...]:
+    """Extract ordered source-looking task-workspace paths from action text."""
+    return tuple(
+        path for path in extract_workspace_write_paths(text)
+        if is_source_path(path)
+    )
 
 
 def is_bash_action_write_like(cmd: str) -> bool:
@@ -158,14 +190,23 @@ def is_bash_legacy_mutation_like(cmd: str) -> bool:
     )
 
 
+def is_bash_workspace_mutation_like(cmd: str) -> bool:
+    """True when a bash command visibly writes inside the task workspace."""
+    return classify_bash_write(cmd).workspace_write_like
+
+
 def classify_bash_write(cmd: str) -> BashWriteClassification:
     """Return both bash write policies plus source path metadata."""
     action_write_like = is_bash_action_write_like(cmd)
+    workspace_write_paths = (
+        extract_workspace_write_paths(cmd) if action_write_like else ()
+    )
     return BashWriteClassification(
         action_write_like=action_write_like,
         legacy_mutation_like=is_bash_legacy_mutation_like(cmd),
-        source_write_paths=(
-            extract_source_write_paths(cmd) if action_write_like else ()
+        workspace_write_paths=workspace_write_paths,
+        source_write_paths=tuple(
+            path for path in workspace_write_paths if is_source_path(path)
         ),
     )
 
@@ -181,8 +222,11 @@ __all__ = [
     "STATE_WRITER_MUTATION_PREFIXES",
     "classify_bash_write",
     "extract_source_write_paths",
+    "extract_workspace_write_paths",
     "is_bash_action_write_like",
     "is_bash_legacy_mutation_like",
+    "is_bash_workspace_mutation_like",
     "is_source_path",
+    "is_workspace_path",
     "normalize_trace_path",
 ]

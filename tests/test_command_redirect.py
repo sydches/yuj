@@ -285,17 +285,12 @@ def test_canonical_redirect_rules_cover_public_default_families():
     rules = load_redirect_rules()
 
     assert [(item.name, item.tool) for item in rules] == [
-        ("shell_write", "write"),
-        ("in_place_edit", "edit"),
         ("read_file", "read"),
         ("search_text", "grep"),
         ("find_paths", "glob"),
     ]
-    active = {"read", "write", "edit", "grep", "glob"}
+    active = {"read", "grep", "glob"}
     cases = {
-        "echo value > out.txt": "write",
-        "cat <<EOF > out.txt\nvalue\nEOF": "write",
-        "sed -i 's/a/b/' src.py": "edit",
         "cat src.py": "read",
         "rg needle src": "grep",
         "find src -name '*.py'": "glob",
@@ -308,6 +303,26 @@ def test_canonical_redirect_rules_cover_public_default_families():
         assert decision.tool == target
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo value > out.txt",
+        "cat source.txt > out.txt",
+        "cat source.txt >> out.txt",
+        "cat <<EOF > out.txt\nvalue\nEOF",
+        "sed -i 's/a/b/' src.py",
+        "echo value | tee out.txt",
+    ],
+)
+def test_canonical_redirect_rules_do_not_block_sandboxed_writes(command):
+    assert find_redirect(
+        command,
+        load_redirect_rules(),
+        active_tools={"read", "write", "edit", "grep", "glob"},
+        read_side_enabled=True,
+    ) is None
+
+
 def test_session_transform_loader_includes_canonical_redirect_rules():
     from scripts.llm_solver.harness._loop.session_io import _load_bash_transforms
 
@@ -315,8 +330,7 @@ def test_session_transform_loader_includes_canonical_redirect_rules():
 
     assert len(loaded) == 6
     assert [item.name for item in loaded[3]] == [
-        "shell_write", "in_place_edit", "read_file", "search_text",
-        "find_paths",
+        "read_file", "search_text", "find_paths",
     ]
 
 
@@ -331,11 +345,11 @@ def test_dispatch_redirect_prevents_handler_and_emits_event(tmp_path):
 
     result = dispatch(
         "bash",
-        {"cmd": "echo value > out.txt"},
+        {"cmd": "cat src.py"},
         cwd=str(tmp_path),
-        cfg=make_config(),
+        cfg=make_config(tools_bash_redirect_read_side=True),
         redirect_rules=load_redirect_rules(),
-        active_tools={"bash", "write"},
+        active_tools={"bash", "read"},
         redirect_event_sink=events.append,
         execution_metadata=metadata,
         tool_registry=ToolRegistry(handlers={"bash": handler}),
@@ -345,11 +359,11 @@ def test_dispatch_redirect_prevents_handler_and_emits_event(tmp_path):
     assert metadata["executed"] is False
     assert result.count("<tool_result") == 1
     assert 'status="error" error_kind="redirect_rule"' in result
-    assert "Blocked: use the write tool" in result
+    assert "Blocked: use the read tool" in result
     assert events == [{
         "event": "redirect_rule",
-        "rule": "shell_write",
-        "tool": "write",
+        "rule": "read_file",
+        "tool": "read",
         "fragment_index": None,
     }]
 

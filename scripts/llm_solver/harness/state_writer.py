@@ -102,7 +102,8 @@ from .._shared.classification import classify_outcome, is_gate_blocked
 from .bash_write_classification import (
     STATE_WRITER_MUTATION_PREFIXES,
     _SOURCE_EXT_RE,
-    is_bash_legacy_mutation_like,
+    is_bash_workspace_mutation_like,
+    is_workspace_path,
 )
 from .thoughts import thought_is_expired
 
@@ -341,12 +342,16 @@ def _is_mutation_item(item: dict) -> bool:
     if item.get("plan_artifact") is True:
         return False
     if item.get("source_write_like") is True:
-        return True
+        raw_paths = item.get("source_write_paths") or []
+        if not raw_paths or any(
+            is_workspace_path(str(path)) for path in raw_paths
+        ):
+            return True
     action = str(item.get("action") or "")
     if action.startswith(STATE_WRITER_MUTATION_PREFIXES):
         return True
     cmd = _action_cmd(item)
-    return is_bash_legacy_mutation_like(cmd)
+    return is_bash_workspace_mutation_like(cmd)
 
 
 def _mutation_failed(item: dict) -> bool:
@@ -412,6 +417,8 @@ def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
     scan_end = (pending_idx + 1) if pending_idx is not None else len(trace)
     for item in trace[scan_start:scan_end]:
         for raw_path in item.get("source_write_paths") or []:
+            if not is_workspace_path(str(raw_path)):
+                continue
             path = _normalize_path(str(raw_path))
             if path and path not in paths:
                 paths.append(path)
@@ -419,7 +426,10 @@ def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
         cmd = _action_cmd(item)
         for source in (action, cmd):
             for match in _FILE_TOKEN_RE.finditer(source):
-                path = _normalize_path(match.group(0))
+                raw_path = match.group(0)
+                if not is_workspace_path(raw_path):
+                    continue
+                path = _normalize_path(raw_path)
                 if path and path not in paths:
                     paths.append(path)
     return paths[:8]

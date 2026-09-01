@@ -246,6 +246,29 @@ def _argv(fragment: str) -> list[str]:
         return []
 
 
+def _has_output_redirect(fragment: str) -> bool:
+    """Return True for an unquoted shell output-redirection operator."""
+    quote = ""
+    escaped = False
+    for char in fragment:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            continue
+        if char in "'\"`":
+            quote = char
+            continue
+        if char == ">":
+            return True
+    return False
+
+
 def _is_aggregate(fragment: str) -> bool:
     argv = _argv(fragment)
     if not argv:
@@ -318,7 +341,9 @@ def find_redirect(
 
     normalized_full = strip_leading_assignments(command)
     for rule in usable:
-        if rule.read_side and any_aggregate:
+        if rule.read_side and (
+            any_aggregate or _has_output_redirect(normalized_full)
+        ):
             continue
         if rule.pattern.search(normalized_full):
             return RedirectDecision(
@@ -338,6 +363,7 @@ def find_redirect(
                 fragment.stdin_from_pipe
                 or fragment.index in aggregate_exempt
                 or _is_aggregate(fragment.text)
+                or _has_output_redirect(normalized)
             ):
                 continue
             if rule.pattern.search(normalized):

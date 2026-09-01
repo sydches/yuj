@@ -13,23 +13,10 @@
 # Toggle: knob `bash_quirks.forbidden_enabled` (default true). Set false
 # to disable the entire forbidden layer.
 #
-# Redirect rules are checked before rewrites and forbidden rules. A redirect
-# applies only when its target tool is in the effective model-facing tool set.
-# Read-side rules additionally require `[tools].bash_redirect_read_side = true`.
-
-[[redirect]]
-name = "shell_write"
-pattern = '''^(?:(?:echo|printf)\b[^\n]*(?:>>?|&>>?)|cat\s+<<[^\n]*(?:>>?|&>>?))'''
-tool = "write"
-message = "use the write tool so file creation and replacement stay tracked"
-fragment_aware = true
-
-[[redirect]]
-name = "in_place_edit"
-pattern = '''^(?:(?:sed|perl)\s+-i(?:\S*)?(?:\s|$)|awk\s+-i\s+inplace(?:\s|$))'''
-tool = "edit"
-message = "use the edit tool so the mutation is checked and tracked"
-fragment_aware = true
+# Redirect rules are checked before rewrites and forbidden rules. The
+# canonical redirects are read-side only and require
+# `[tools].bash_redirect_read_side = true`. Sandboxed writes execute normally;
+# the harness accounts for workspace mutations from their command metadata.
 
 [[redirect]]
 name = "read_file"
@@ -61,35 +48,3 @@ reason = "cd / not permitted; sandbox cwd is the only writable target"
 name = "cd_home_other"
 pattern = '''^\s*cd\s+/(?:home|root|opt|usr|etc)/'''
 reason = "cd outside cwd not permitted; sandbox cwd is the only writable target"
-
-# ─── O8: bash file-write as covert mutation channel ─────────────────────
-# Model writes substantive code via bash heredocs / redirects instead of
-# the selected file-edit tool. The harness mutation counter doesn't see
-# these, so pre_mutation_gate / rumination_gate / ledger metrics misreport.
-# Reroute by refusing the bash-channel write patterns; force the typed
-# tools.
-
-[[forbidden]]
-name = "shell_cat_redirect"
-pattern = '''^\s*cat\s+>'''
-reason = "use the selected file-edit tool — bash redirect bypasses mutation tracking"
-
-[[forbidden]]
-name = "shell_tee_to_file"
-pattern = '''\btee\s+\./'''
-reason = "use the selected file-edit tool — tee bypasses mutation tracking"
-
-[[forbidden]]
-name = "shell_sed_inplace"
-pattern = '''\bsed\s+-i\b'''
-reason = "use the selected file-edit tool — sed -i bypasses mutation tracking"
-
-[[forbidden]]
-name = "shell_redirect_to_codefile"
-pattern = '''>>?\s*(?:\./)?[\w./-]+\.(py|toml|json|ya?ml|md|txt|cfg|ini|sh|rs|c|cpp|h|hpp|go|js|ts|tsx|jsx)\b'''
-reason = "use the selected file-edit tool — shell redirect bypasses mutation tracking"
-
-[[forbidden]]
-name = "python_heredoc_open_for_write"
-pattern = '''python3?\s*<<.*?\bopen\([^)]*,\s*["'][aw]'''
-reason = "use the selected file-edit tool — python heredoc with file-open(mode='w'/'a') bypasses mutation tracking"

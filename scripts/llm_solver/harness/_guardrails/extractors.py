@@ -7,7 +7,7 @@ import re
 import shlex
 from typing import Any
 
-from ..bash_write_classification import is_bash_legacy_mutation_like
+from ..bash_write_classification import is_bash_workspace_mutation_like
 from .._shell_patterns import TEST_COMMAND_RE as _TEST_COMMAND_RE
 from ..tool_specs import GUARDRAIL_MUTATION_TOOL_NAMES
 from .state import GuardrailState
@@ -53,9 +53,9 @@ def _extract_bash_cmd(tc_name: str, tc_args: dict | None = None) -> str:
 
 
 def _is_bash_write_like(tc_name: str, tc_args: dict | None = None) -> bool:
-    """True for bash commands that structurally look like source mutation."""
+    """True for bash commands that visibly mutate the task workspace."""
     cmd = _extract_bash_cmd(tc_name, tc_args)
-    return is_bash_legacy_mutation_like(cmd)
+    return is_bash_workspace_mutation_like(cmd)
 
 
 def _is_test_command(tc_name: str, tc_args: dict | None = None) -> bool:

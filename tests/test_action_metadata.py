@@ -50,3 +50,13 @@ def test_test_file_write_is_not_source_write_like():
     assert meta["write_like"] is True
     assert meta["source_write_like"] is False
     assert meta["source_write_paths"] == []
+
+
+def test_external_scratch_write_is_not_source_write_like():
+    meta = action_metadata("bash", {
+        "cmd": "cat > /tmp/new_methods.py"
+    })
+
+    assert meta["write_like"] is True
+    assert meta["source_write_like"] is False
+    assert meta["source_write_paths"] == []

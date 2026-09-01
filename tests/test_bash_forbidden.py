@@ -46,10 +46,8 @@ def test_apply_forbidden_empty_rules_passthrough():
 
 def test_load_forbidden_rules_from_real_file():
     rules = load_forbidden_rules()
-    assert len(rules) >= 3
     names = {r.name for r in rules}
-    assert "cd_root" in names
-    assert "cd_home_other" in names
+    assert names == {"cd_root", "cd_home_other"}
 
 
 def test_real_rules_catch_known_leak_patterns():
@@ -78,48 +76,26 @@ def test_rewrite_command_passes_through_when_no_forbidden_match():
     assert out == "ls -la"
 
 
-# ─── O8: bash file-write as covert mutation channel ─────────────────────
-
-def test_real_rules_refuse_cat_redirect():
-    rules = load_forbidden_rules()
-    out = apply_forbidden("cat > ./mlflow/x.py", rules)
-    assert _is_refusal(out)
-    assert "mutation tracking" in out
-
-
-def test_real_rules_refuse_sed_inplace():
-    rules = load_forbidden_rules()
-    out = apply_forbidden("sed -i 's/foo/bar/g' ./mlflow/x.py", rules)
-    assert _is_refusal(out)
-
-
-def test_real_rules_refuse_tee_to_relative_path():
-    rules = load_forbidden_rules()
-    out = apply_forbidden("echo content | tee ./mlflow/y.py", rules)
-    assert _is_refusal(out)
-
-
-def test_real_rules_refuse_shell_redirect_to_codefile():
-    rules = load_forbidden_rules()
-    for redirect in (
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cat > ./mlflow/x.py",
+        "sed -i 's/foo/bar/g' ./mlflow/x.py",
+        "echo content | tee ./mlflow/y.py",
         "echo 'x = 1' > ./mlflow/z.py",
         "cat foo >> ./pyproject.toml",
         "printf 'a' > setup.cfg",
-    ):
-        out = apply_forbidden(redirect, rules)
-        assert _is_refusal(out), f"failed to refuse: {redirect}"
-
-
-def test_real_rules_refuse_python_heredoc_writing_to_file():
+        (
+            "python3 << EOF\n"
+            "with open('./mlflow/x.py', 'w') as f:\n"
+            "    f.write('def foo(): pass')\n"
+            "EOF"
+        ),
+    ],
+)
+def test_real_rules_allow_sandboxed_file_writes(cmd):
     rules = load_forbidden_rules()
-    cmd = (
-        "python3 << EOF\n"
-        "with open('./mlflow/x.py', 'w') as f:\n"
-        "    f.write('def foo(): pass')\n"
-        "EOF"
-    )
-    out = apply_forbidden(cmd, rules)
-    assert _is_refusal(out), f"failed to refuse python heredoc: {out[:80]}"
+    assert apply_forbidden(cmd, rules) == cmd
 
 
 def test_real_rules_pass_through_python_heredoc_without_file_write():
