@@ -22,6 +22,7 @@ from llm_solver.harness.loop import solve_task
 from llm_solver.harness.state_writer import project
 from llm_solver.server._streaming import assemble_stream
 from llm_solver.server.client import LlamaClient
+from llm_solver.server.profile_loader import load_profile
 from llm_solver.server.request_controls import (
     derive_cache_slot,
     extract_cache_observation,
@@ -85,6 +86,64 @@ def test_llama_client_applies_affinity_retention_and_usage_from_fake_transport()
         cached_tokens=750,
         cache_hit_ratio=0.75,
     )
+
+
+def test_provider_tool_call_extra_content_round_trips_unchanged() -> None:
+    cfg = make_config()
+    client = LlamaClient(
+        cfg, profile=load_profile("_base", PROJECT_ROOT / "profiles"),
+    )
+    extra_content = {
+        "google": {"thought_signature": "opaque-provider-signature"},
+    }
+    provider_call = SimpleNamespace(
+        id="provider-call",
+        function=SimpleNamespace(name="read", arguments='{"path":"x.py"}'),
+        model_extra={"extra_content": extra_content},
+    )
+    responses = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(
+                    content=None, tool_calls=[provider_call],
+                ),
+                finish_reason="tool_calls",
+            )],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+            model_dump_json=lambda: "{}",
+        ),
+        _response(prompt=20, cached=0),
+    ]
+    captured: list[dict] = []
+    client.client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **payload: captured.append(payload)
+                or responses.pop(0)
+            )
+        )
+    )
+
+    result = client.chat([{"role": "user", "content": "inspect"}], [], turn=0)
+    assert result.tool_calls[0].extra_content == extra_content
+    assistant = client.build_assistant_message(
+        result.content, result.tool_calls,
+    )
+    client.chat([
+        {"role": "user", "content": "inspect"},
+        assistant,
+        {
+            "role": "tool",
+            "tool_call_id": result.tool_calls[0].id,
+            "content": "file contents",
+        },
+    ], [], turn=1)
+
+    replayed_call = captured[1]["messages"][1]["tool_calls"][0]
+    assert replayed_call["extra_content"] == extra_content
+    assert "extra_content" not in client.build_assistant_message(
+        None, [ToolCall("plain", "read", {"path": "x.py"})],
+    )["tool_calls"][0]
 
 
 def test_side_request_forces_cache_false_and_removes_slot() -> None:

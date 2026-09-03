@@ -1,6 +1,6 @@
 """Canonical output types for the server layer."""
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,9 @@ class ToolCall(NamedTuple):
     id: str
     name: str
     arguments: dict
+    # Provider-owned fields that must accompany this call when it is replayed.
+    # The harness stores and returns the mapping without interpreting it.
+    extra_content: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

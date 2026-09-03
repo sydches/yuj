@@ -18,6 +18,7 @@ assembler's contract directly:
 """
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -50,12 +51,21 @@ def _chunk(content=None, tool_calls=None, finish_reason=None, usage=None):
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
-def _tc_chunk(index, *, id=None, name=None, arguments=None, type=None):
+def _tc_chunk(
+    index, *, id=None, name=None, arguments=None, type=None,
+    extra_content=None,
+):
     """Build a ChoiceDeltaToolCall fragment."""
     func = None
     if name is not None or arguments is not None:
         func = SimpleNamespace(name=name, arguments=arguments)
-    return SimpleNamespace(index=index, id=id, type=type, function=func)
+    return SimpleNamespace(
+        index=index,
+        id=id,
+        type=type,
+        function=func,
+        extra_content=extra_content,
+    )
 
 
 def _usage(prompt_tokens, completion_tokens):
@@ -112,6 +122,30 @@ def test_single_tool_call_assembled_across_chunks():
     assert tcs[0].function.name == "bash"
     assert tcs[0].function.arguments == '{"cmd":"ls -la"}'
     assert resp.choices[0].finish_reason == "tool_calls"
+
+
+def test_tool_call_extra_content_survives_stream_assembly():
+    extra_content = {
+        "google": {"thought_signature": "opaque-provider-signature"},
+    }
+    chunks = [
+        _chunk(tool_calls=[_tc_chunk(
+            0,
+            id="call_abc",
+            type="function",
+            name="read",
+            arguments='{"path":"x.py"}',
+            extra_content=extra_content,
+        )]),
+        _chunk(finish_reason="tool_calls", usage=_usage(100, 10)),
+    ]
+    response = assemble_stream(chunks)
+    tool_call = response.choices[0].message.tool_calls[0]
+    assert tool_call.extra_content == extra_content
+    dumped = json.loads(response.model_dump_json())
+    assert dumped["choices"][0]["message"]["tool_calls"][0][
+        "extra_content"
+    ] == extra_content
 
 
 def test_multiple_tool_calls_preserve_index_order():

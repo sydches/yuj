@@ -72,10 +72,22 @@ def _make_turn_result(content="ok", finish_reason="stop"):
 
 def test_reclip_clips_recent_result_to_prompt_deficit_with_notice():
     huge = "line of output\n" * 2000  # ~30k chars ≈ 7.5k est tokens
+    extra_content = {
+        "google": {"thought_signature": "opaque-provider-signature"},
+    }
     sess = _stub_session(1000, [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "task prompt"},
-        {"role": "assistant", "content": "", "tool_calls": []},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "c9",
+                "type": "function",
+                "function": {"name": "read", "arguments": "{}"},
+                "extra_content": extra_content,
+            }],
+        },
         {"role": "tool", "tool_call_id": "c9", "content": huge},
     ])
     before = sess.context.estimate_tokens()
@@ -104,6 +116,7 @@ def test_reclip_clips_recent_result_to_prompt_deficit_with_notice():
     assert msgs[0]["content"] == "sys"
     assert msgs[1]["content"] == "task prompt"
     assert msgs[2]["role"] == "assistant"
+    assert msgs[2]["tool_calls"][0]["extra_content"] == extra_content
 
 
 def test_reclip_never_touches_initial_user_or_assistant():

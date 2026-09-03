@@ -576,7 +576,12 @@ class ReplayClient:
                 args = {"_raw": fn.get("arguments") or ""}
             tool_calls.append(ToolCall(
                 id=str(tc.get("id") or ""), name=str(fn.get("name") or ""),
-                arguments=args))
+                arguments=args,
+                extra_content=(
+                    copy.deepcopy(dict(tc["extra_content"]))
+                    if isinstance(tc.get("extra_content"), dict)
+                    else None
+                )))
         usage = resp.get("usage") or {}
         return TurnResult(
             content=msg.get("content"),
@@ -909,12 +914,22 @@ class ReplayClient:
         """History-safe assistant message dict (same shape as the live client)."""
         msg: dict = {"role": "assistant", "content": content}
         if tool_calls:
-            msg["tool_calls"] = [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.name,
-                              "arguments": json.dumps(tc.arguments)}}
-                for tc in tool_calls
-            ]
+            wire_tool_calls = []
+            for tc in tool_calls:
+                wire_tool_call = {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments),
+                    },
+                }
+                if tc.extra_content is not None:
+                    wire_tool_call["extra_content"] = copy.deepcopy(
+                        tc.extra_content
+                    )
+                wire_tool_calls.append(wire_tool_call)
+            msg["tool_calls"] = wire_tool_calls
         return msg
 
     def query_server_context(self):

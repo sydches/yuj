@@ -136,6 +136,16 @@ def test_compaction_fires_above_threshold_with_mutation(tmp_path):
     # Default threshold is the 0.95 prompt wall. chars_div_4 includes message
     # framing, and this payload is well above the wall.
     msgs = _heavy_messages(100, payload_chars=5500)
+    extra_content = {
+        "google": {"thought_signature": "opaque-provider-signature"},
+    }
+    msgs[-2]["tool_calls"] = [{
+        "id": "latest-call",
+        "type": "function",
+        "function": {"name": "read", "arguments": "{}"},
+        "extra_content": extra_content,
+    }]
+    msgs[-1]["tool_call_id"] = "latest-call"
     out = sess._maybe_compact_messages(msgs)
     assert out is not msgs
     assert sess._compacted is True
@@ -151,6 +161,7 @@ def test_compaction_fires_above_threshold_with_mutation(tmp_path):
     # The latest assistant + tool messages from the input survive verbatim.
     assert out[3] is msgs[-2]
     assert out[4] is msgs[-1]
+    assert out[3]["tool_calls"][0]["extra_content"] == extra_content
     assert sess.context._all_messages == out
     assert sess.context._msg_cache is None
     assert sess.context._tok_cache is None

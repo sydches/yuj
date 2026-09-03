@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import logging
 import os
@@ -60,6 +61,18 @@ def _member(value, name: str, default=None):
     if isinstance(value, Mapping):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+def _tool_call_extra_content(tool_call) -> dict | None:
+    """Copy an opaque provider mapping attached to one tool call."""
+    extra_content = _member(tool_call, "extra_content")
+    if extra_content is None:
+        model_extra = _member(tool_call, "model_extra", {}) or {}
+        if isinstance(model_extra, Mapping):
+            extra_content = model_extra.get("extra_content")
+    if not isinstance(extra_content, Mapping):
+        return None
+    return copy.deepcopy(dict(extra_content))
 
 
 class LlamaClient:
@@ -570,14 +583,18 @@ class LlamaClient:
         raw_tool_calls = []
         for tc in (_member(msg, "tool_calls", ()) or ()):
             function = _member(tc, "function", {}) or {}
-            raw_tool_calls.append({
+            raw_tool_call = {
                 "id": _member(tc, "id", "") or "",
                 "type": "function",
                 "function": {
                     "name": _member(function, "name", "") or "",
                     "arguments": _member(function, "arguments", "{}"),
                 },
-            })
+            }
+            extra_content = _tool_call_extra_content(tc)
+            if extra_content is not None:
+                raw_tool_call["extra_content"] = extra_content
+            raw_tool_calls.append(raw_tool_call)
 
         raw_response = {
             "content": _member(msg, "content"),
@@ -624,7 +641,12 @@ class LlamaClient:
                     name = _member(func, "name", "") or ""
                     arguments = parse_args(_member(func, "arguments", "{}"))
                     tool_calls.append(
-                        ToolCall(id=tc_id, name=name, arguments=arguments)
+                        ToolCall(
+                            id=tc_id,
+                            name=name,
+                            arguments=arguments,
+                            extra_content=_tool_call_extra_content(tc),
+                        )
                     )
 
         log.debug(
@@ -676,7 +698,12 @@ class LlamaClient:
                 tc_id = f"call_{turn}_{i}"  # deterministic; server IDs are random
                 name = tc.function.name
                 arguments = parse_args(tc.function.arguments)
-                tool_calls.append(ToolCall(id=tc_id, name=name, arguments=arguments))
+                tool_calls.append(ToolCall(
+                    id=tc_id,
+                    name=name,
+                    arguments=arguments,
+                    extra_content=_tool_call_extra_content(tc),
+                ))
 
         return TurnResult(
             content=content,
@@ -691,8 +718,9 @@ class LlamaClient:
         """Build a history-safe assistant message dict."""
         msg: dict = {"role": "assistant", "content": content}
         if tool_calls:
-            msg["tool_calls"] = [
-                {
+            wire_tool_calls = []
+            for tc in tool_calls:
+                wire_tool_call = {
                     "id": tc.id,
                     "type": "function",
                     "function": {
@@ -700,6 +728,10 @@ class LlamaClient:
                         "arguments": json.dumps(tc.arguments),
                     },
                 }
-                for tc in tool_calls
-            ]
+                if tc.extra_content is not None:
+                    wire_tool_call["extra_content"] = copy.deepcopy(
+                        tc.extra_content
+                    )
+                wire_tool_calls.append(wire_tool_call)
+            msg["tool_calls"] = wire_tool_calls
         return msg

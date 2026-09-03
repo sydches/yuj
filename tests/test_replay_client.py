@@ -21,12 +21,15 @@ from llm_solver.server.replay_client import (  # noqa: E402
 )
 
 
-def _resp(content=None, tool=None, finish="tool_calls"):
+def _resp(content=None, tool=None, finish="tool_calls", extra_content=None):
     msg = {"role": "assistant", "content": content}
     if tool:
-        msg["tool_calls"] = [{"id": "t1", "type": "function",
-                              "function": {"name": "bash",
-                                           "arguments": json.dumps({"cmd": tool})}}]
+        tool_call = {"id": "t1", "type": "function",
+                     "function": {"name": "bash",
+                                  "arguments": json.dumps({"cmd": tool})}}
+        if extra_content is not None:
+            tool_call["extra_content"] = extra_content
+        msg["tool_calls"] = [tool_call]
     return {"choices": [{"message": msg, "finish_reason": finish}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
 
@@ -133,6 +136,20 @@ def test_build_assistant_message_shape(tmp_path):
     m = c.build_assistant_message(r.content, r.tool_calls)
     assert m["role"] == "assistant"
     assert json.loads(m["tool_calls"][0]["function"]["arguments"]) == {"cmd": "ls"}
+
+
+def test_replay_preserves_tool_call_extra_content(tmp_path):
+    extra_content = {
+        "google": {"thought_signature": "opaque-provider-signature"},
+    }
+    p = _transcript(tmp_path, [
+        (SYS, _resp(tool="ls", extra_content=extra_content)),
+    ])
+    client = ReplayClient(p)
+    result = client.chat(SYS, [], 0)
+    assert result.tool_calls[0].extra_content == extra_content
+    message = client.build_assistant_message(result.content, result.tool_calls)
+    assert message["tool_calls"][0]["extra_content"] == extra_content
 
 
 def test_resolve_replay_source_reads_mode(tmp_path):

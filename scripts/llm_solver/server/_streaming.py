@@ -62,6 +62,7 @@ class _StreamedToolCall:
     id: str
     type: str
     function: _StreamedFunction
+    extra_content: dict | None = None
 
 
 @dataclass
@@ -124,6 +125,10 @@ class _StreamedResponse:
                             "name": tc.function.name,
                             "arguments": tc.function.arguments,
                         },
+                        **(
+                            {"extra_content": tc.extra_content}
+                            if tc.extra_content is not None else {}
+                        ),
                     }
                     for tc in c.message.tool_calls
                 ]
@@ -238,6 +243,11 @@ class StreamRuleInterrupt(RuntimeError):
                         name=str(function.get("name") or ""),
                         arguments=str(function.get("arguments") or ""),
                     ),
+                    extra_content=(
+                        dict(raw_tool["extra_content"])
+                        if isinstance(raw_tool.get("extra_content"), Mapping)
+                        else None
+                    ),
                 ))
         usage = body.get("usage")
         usage = usage if isinstance(usage, Mapping) else {}
@@ -314,6 +324,7 @@ def _build_response(
                     name=slot["function"]["name"],
                     arguments=slot["function"]["arguments"],
                 ),
+                extra_content=slot.get("extra_content"),
             ))
     content = "".join(content_parts) if content_parts else None
     return _StreamedResponse(
@@ -456,6 +467,7 @@ def assemble_stream(
                 "id": "",
                 "type": "function",
                 "function": {"name": "", "arguments": ""},
+                "extra_content": None,
             })
             tc_id = getattr(tc_chunk, "id", None)
             if tc_id:
@@ -463,6 +475,9 @@ def assemble_stream(
             tc_type = getattr(tc_chunk, "type", None)
             if tc_type:
                 slot["type"] = tc_type
+            tc_extra_content = _field(tc_chunk, "extra_content")
+            if isinstance(tc_extra_content, Mapping):
+                slot["extra_content"] = dict(tc_extra_content)
             tc_func = getattr(tc_chunk, "function", None)
             if tc_func is not None:
                 fn_name = getattr(tc_func, "name", None)
