@@ -45,6 +45,22 @@ def _no_sandbox_overlay(tmp_path: Path) -> Path:
     return overlay
 
 
+def test_long_context_runtime_sets_its_own_read_timeout() -> None:
+    runtime = (
+        PROJECT_ROOT
+        / "configs/runtime"
+        / "llama-qwen36-35b-a3b-q4kxl-5090-no-offload-mtp.toml"
+    )
+
+    with (PROJECT_ROOT / "config.toml").open("rb") as handle:
+        defaults = tomllib.load(handle)
+    with runtime.open("rb") as handle:
+        overlay = tomllib.load(handle)
+
+    assert defaults["server"]["timeout_read"] == 145
+    assert overlay["server"] == {"timeout_read": 240}
+
+
 def _flatten_paths(value: object, prefix: tuple[str, ...] = ()):
     if isinstance(value, dict) and value:
         for key in sorted(value):

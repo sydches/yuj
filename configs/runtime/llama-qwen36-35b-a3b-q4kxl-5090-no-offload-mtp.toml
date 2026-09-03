@@ -1,0 +1,52 @@
+# Serve Qwen3.6-35B-A3B at 262k context with all layers on one GPU and MTP.
+# Change model_path for your GGUF. Lower context_size and max_model_len
+# together if the model and KV cache do not fit. MTP requires one sequence.
+
+schema_version = 1 # Serving-overlay schema; keep 1 for this Yuj release.
+
+[server]
+timeout_read = 240 # Seconds per response; raise this for slower long generations.
+
+[model]
+name = "qwen3.6-35b-a3b" # Model name sent in each API request; match served_name.
+profile_name = "qwen3.6-35b-a3b" # Yuj profile that owns prompts and model quirks.
+context_size = 262144 # Token budget; lower with max_model_len when VRAM is tighter.
+tokenizer_id = "Qwen/Qwen3.6-35B-A3B" # Tokenizer used for exact context accounting.
+
+[launch]
+runtime = "llama_server" # Serving backend; this file uses llama-server options.
+model_path = "~/models/gguf/mtp/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf" # Change to your MTP GGUF.
+served_name = "qwen3.6-35b-a3b" # API model alias; keep it equal to model.name.
+host = "127.0.0.1" # Listen locally; expose another address only on a trusted network.
+port = 8080 # API port; change it if another service already uses 8080.
+max_model_len = 262144 # Server context limit; keep it equal to model.context_size.
+max_num_seqs = 1 # Concurrent sequences; MTP requires exactly one.
+chat_template_path = "profiles/qwen3.6-35b-a3b/chat_template_meanderix.jinja" # Repository-relative chat template.
+
+[launch.sampling]
+temperature = 0 # Greedy sampling for reproducible runs.
+top_k = 1 # Keep only the highest-probability token.
+top_p = 1 # Do not add nucleus filtering beyond top_k.
+min_p = 0 # Disable minimum-probability filtering.
+presence_penalty = 0 # Do not penalize tokens merely because they appeared before.
+repetition_penalty = 1.05 # Mild repeat control; use 1.0 to disable it.
+seed = 42 # Fixed seed for repeatable requests.
+
+[launch.llama_server]
+spec_type = "draft-mtp" # Use the MTP head embedded in the model file.
+spec_draft_n_max = 2 # Maximum draft tokens per step; 2 is the measured setting.
+n_cpu_moe = 0 # Expert layers on the CPU; raise this only when GPU memory is short.
+cpu_mask = "0x00FF" # CPU affinity mask; adapt it to the available host cores.
+cpu_strict = true # Keep worker threads inside cpu_mask.
+threads = 8 # CPU worker threads; tune this for the host CPU.
+prio = 2 # Priority passed to llama-server; change it only for host scheduling needs.
+n_gpu_layers = 99 # Put every model layer on the GPU; lower it to offload layers.
+flash_attn = true # Use flash attention when the GPU and build support it.
+cache_type_k = "q8_0" # Key-cache precision; lower precision saves VRAM.
+cache_type_v = "q8_0" # Value-cache precision; lower precision saves VRAM.
+jinja = true # Enable the Jinja chat template named above.
+no_context_shift = true # Let Yuj manage context instead of shifting it in the server.
+batch = 2048 # Prompt-processing batch; lower it if prefill exhausts VRAM.
+ubatch = 1024 # Physical microbatch; lower it before lowering batch.
+mmap = true # Memory-map the GGUF instead of reading the whole file eagerly.
+n_predict = 16384 # Maximum tokens in one reply; the total context remains 262144.
