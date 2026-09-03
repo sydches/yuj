@@ -130,6 +130,49 @@ def test_side_request_forces_cache_false_and_removes_slot() -> None:
     }
 
 
+def test_openai_dialect_removes_llama_fields_from_main_and_side_requests() -> None:
+    cfg = make_config(
+        request_dialect="openai",
+        cache_affinity=4,
+        cache_retention="session",
+        server_request_extra={
+            "reasoning_effort": "low",
+            "cache_prompt": True,
+            "id_slot": 3,
+            "chat_template_kwargs": {"enable_thinking": True},
+        },
+    )
+    client = LlamaClient(cfg, profile=None)
+    client.set_session_id("stable-session")
+    captured: list[dict] = []
+    client.client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **payload: captured.append(payload)
+                or _response(prompt=100, cached=0)
+            )
+        )
+    )
+
+    client.chat([{"role": "user", "content": "solve"}], [])
+    client.complete_side_request(
+        {
+            "model": cfg.model,
+            "messages": [{"role": "user", "content": "summarize"}],
+            "max_tokens": 100,
+            "extra_body": {
+                "cache_prompt": True,
+                "id_slot": 2,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        }
+    )
+
+    assert len(captured) == 2
+    for request in captured:
+        assert request["extra_body"] == {"reasoning_effort": "low"}
+
+
 def test_stream_assembly_preserves_cache_usage_and_llama_timings() -> None:
     chunk = SimpleNamespace(
         choices=[
@@ -264,6 +307,7 @@ def test_turn_cache_event_does_not_change_model_facing_state_projection() -> Non
 def test_config_defaults_and_invalid_cache_controls(tmp_path: Path) -> None:
     cfg = load_config()
     assert cfg.server_request_extra == {}
+    assert cfg.request_dialect == "llama"
     assert cfg.cache_affinity is False
     assert cfg.cache_retention == "session"
     assert cfg.cache_miss_warn_ratio == 0.0
@@ -271,6 +315,13 @@ def test_config_defaults_and_invalid_cache_controls(tmp_path: Path) -> None:
     overlay = tmp_path / "bad-cache.toml"
     overlay.write_text("[server]\ncache_miss_warn_ratio = 1.1\n")
     with pytest.raises(ValueError, match="cache_miss_warn_ratio"):
+        load_config(overlay)
+
+    overlay.write_text('[server]\nrequest_dialect = "openai"\n')
+    assert load_config(overlay).request_dialect == "openai"
+
+    overlay.write_text('[server]\nrequest_dialect = "google"\n')
+    with pytest.raises(ValueError, match="request_dialect"):
         load_config(overlay)
 
 
@@ -284,6 +335,8 @@ def test_cache_retention_code_fallbacks_match_session_policy() -> None:
         config_data = tomllib.load(stream)
     config_data["server"].pop("cache_retention")
     assert _extract_config_fields(config_data)["cache_retention"] == "session"
+    config_data["server"].pop("request_dialect", None)
+    assert _extract_config_fields(config_data)["request_dialect"] == "llama"
 
     client_without_field = object.__new__(LlamaClient)
     client_without_field.cfg = SimpleNamespace()

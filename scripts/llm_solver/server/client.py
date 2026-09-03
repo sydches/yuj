@@ -182,7 +182,7 @@ class LlamaClient:
         side_request: bool,
         policy_extra: dict | None = None,
     ) -> dict:
-        """Apply configured extras and final llama cache policy."""
+        """Apply configured extras and the selected request-body policy."""
         if side_request:
             policy_extra = {"chat_template_kwargs": {"enable_thinking": False}}
         elif policy_extra is None:
@@ -197,6 +197,7 @@ class LlamaClient:
             cache_retention=getattr(self.cfg, "cache_retention", "session"),
             side_request=side_request,
             policy_extra=policy_extra,
+            request_dialect=getattr(self.cfg, "request_dialect", "llama"),
         )
 
     def set_transcript(self, path: Path | None, append: bool = False) -> None:

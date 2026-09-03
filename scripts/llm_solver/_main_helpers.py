@@ -267,6 +267,7 @@ def _build_run_metadata(
         "tokenizer_id": cfg.tokenizer_id,
         "timeout_connect": cfg.timeout_connect,
         "timeout_read": cfg.timeout_read,
+        "request_dialect": cfg.request_dialect,
     }
     declared = _declared_model_params_from_env()
     if declared:

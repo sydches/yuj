@@ -619,6 +619,7 @@ class Config:
     # OpenAI-compatible llama-server request controls. Custom fields are
     # transported under SDK extra_body; cache policy is merged last.
     server_request_extra: dict[str, object] = field(default_factory=dict)
+    request_dialect: str = "llama"
     cache_affinity: bool | int = False
     cache_retention: str = "session"
     cache_miss_warn_ratio: float = 0.0

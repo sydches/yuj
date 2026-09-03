@@ -1691,16 +1691,20 @@ changed models.
 
 ## Tune model requests
 
-### Configure llama-server prompt caching
+### Configure request bodies and llama-server prompt caching
 
-The `[server]` cache settings apply to the OpenAI-compatible llama-server
-client. They do not describe provider TTLs.
+`request_dialect` selects the extension fields that Yuj may send through an
+OpenAI-compatible API. The default, `llama`, preserves the llama-server request
+body. Set it to `openai` for endpoints that reject llama-server extensions.
 
-Use the cache settings only with the OpenAI-compatible llama-server client:
+The remaining cache settings apply only to the `llama` dialect. They do not
+describe provider TTLs.
 
 | Setting | What it controls |
 | --- | --- |
-| `request_extra` | Extra JSON body fields sent through the OpenAI SDK's `extra_body`. |
+| `request_extra` | Endpoint-specific JSON body fields sent through the OpenAI SDK's `extra_body`. |
+| `request_dialect = "llama"` | Send llama-server cache and chat-template fields. |
+| `request_dialect = "openai"` | Omit `cache_prompt`, `id_slot`, and `chat_template_kwargs` on every request. |
 | `cache_affinity = false` | Do not select a slot. |
 | `cache_affinity = true` | Select slot 0. |
 | `cache_affinity = N` | Hash the stable product session ID across `N` slots. |
@@ -1710,7 +1714,9 @@ Use the cache settings only with the OpenAI-compatible llama-server client:
 
 Do not configure more affinity slots than the server exposes. Cache policy
 owns `cache_prompt` and `id_slot`, so it overrides those fields in
-`request_extra`.
+`request_extra` under the `llama` dialect. With the `openai` dialect, Yuj
+removes all three llama-specific fields even if an earlier layer supplied
+them. Other fields, such as `reasoning_effort`, remain intact.
 
 Compaction, handoff, and other Yuj-owned side requests always disable prompt
 retention and omit the slot. Missing server telemetry remains unknown and does

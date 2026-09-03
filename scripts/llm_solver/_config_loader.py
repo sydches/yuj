@@ -211,6 +211,7 @@ def _extract_config_fields(d: dict) -> dict:
             d.get("server", {}).get("request_extra", {}),
             path="server.request_extra",
         ),
+        "request_dialect": d.get("server", {}).get("request_dialect", "llama"),
         "cache_affinity": d.get("server", {}).get("cache_affinity", False),
         "cache_retention": d.get("server", {}).get("cache_retention", "session"),
         "cache_miss_warn_ratio": d.get("server", {}).get("cache_miss_warn_ratio", 0.0),
@@ -1070,6 +1071,7 @@ def _validate_coupling(
     from .server.request_controls import (
         normalize_cache_affinity,
         normalize_cache_retention,
+        normalize_request_dialect,
         normalize_thinking_level,
         validate_cache_miss_warn_ratio,
         validate_request_extra,
@@ -1078,6 +1080,7 @@ def _validate_coupling(
     validate_request_extra(
         cfg.server_request_extra, path="server.request_extra"
     )
+    normalize_request_dialect(cfg.request_dialect)
     normalize_cache_affinity(cfg.cache_affinity)
     normalize_cache_retention(cfg.cache_retention)
     validate_cache_miss_warn_ratio(cfg.cache_miss_warn_ratio)

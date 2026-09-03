@@ -49,7 +49,7 @@ def test_session_meta_writes_on_dry_run(tmp_path):
     )
     meta = json.loads(session_path.read_text())
     assert "started_at" in meta
-    assert meta["harness_version"] == "8.0.25"
+    assert meta["harness_version"] == "8.0.26"
     assert "run_dir" in meta
     assert "model" in meta
     assert "context_mode" in meta
@@ -68,6 +68,7 @@ def test_session_meta_writes_on_dry_run(tmp_path):
     assert meta["regime"]["name"] == "test_overlay"
     assert meta["regime"]["overlay_sha256"] == overlay_sha
     assert meta["model_runtime"]["wire_model"] == "test-model"
+    assert meta["model_runtime"]["request_dialect"] == "llama"
     assert len(meta["model_runtime_sha256"]) == 64
     assert "system_prompt_path" in meta
     assert meta["system_prompt_path"] is None  # we didn't pass --system-prompt

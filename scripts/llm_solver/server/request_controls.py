@@ -43,6 +43,15 @@ DEFAULT_REASONING_LEVELS: dict[str, dict[str, object]] = {
 CACHE_RETENTION_LEVELS: tuple[str, ...] = ("off", "session")
 """llama-server cache-retention modes supported by the request layer."""
 
+REQUEST_DIALECTS: tuple[str, ...] = ("llama", "openai")
+"""Supported OpenAI-compatible request-body dialects."""
+
+_LLAMA_REQUEST_FIELDS: tuple[str, ...] = (
+    "cache_prompt",
+    "id_slot",
+    "chat_template_kwargs",
+)
+
 # Request extras are merged into the SDK's ``extra_body``.  They must not be
 # able to replace the transport-owned request envelope.
 _RESERVED_REQUEST_FIELDS: frozenset[str] = frozenset(
@@ -369,6 +378,18 @@ def normalize_cache_retention(value: str) -> str:
     return normalized
 
 
+def normalize_request_dialect(value: str) -> str:
+    """Validate the OpenAI-compatible request-body dialect."""
+    if not isinstance(value, str) or not value.strip():
+        raise RequestControlError("server.request_dialect must be a non-empty string")
+    normalized = value.strip().lower()
+    if normalized not in REQUEST_DIALECTS:
+        raise RequestControlError(
+            "server.request_dialect must be one of: " + ", ".join(REQUEST_DIALECTS)
+        )
+    return normalized
+
+
 def derive_cache_slot(session_id: str, cache_affinity: object) -> int | None:
     """Map a stable session identifier to a valid llama-server slot ID."""
     slot_count = normalize_cache_affinity(cache_affinity)
@@ -423,30 +444,47 @@ def apply_request_controls(
     cache_retention: str,
     side_request: bool,
     policy_extra: Mapping[str, object] | None = None,
+    request_dialect: str = "llama",
 ) -> dict[str, Any]:
-    """Merge configured/per-request extras with cache policy last."""
-    cache = resolve_cache_request(
-        session_id=session_id,
-        cache_affinity=cache_affinity,
-        cache_retention=cache_retention,
-        side_request=side_request,
-    )
+    """Merge configured/per-request extras for the selected wire dialect."""
+    dialect = normalize_request_dialect(request_dialect)
     request = copy.deepcopy(dict(payload))
     existing = dict(request.get("extra_body") or {})
     configured = dict(server_request_extra or {})
-    # Cache fields are policy-owned. Removing earlier copies also guarantees
-    # that a side request cannot retain an id_slot merely because the final
-    # side policy intentionally omits it.
-    for field in ("cache_prompt", "id_slot"):
-        existing.pop(field, None)
-        configured.pop(field, None)
-    if existing or "extra_body" in request:
-        request["extra_body"] = existing
-    merged = merge_request_extra(
-        configured,
-        policy_extra,
-        cache.request_extra,
-    )
+    per_request = dict(policy_extra or {})
+
+    if dialect == "llama":
+        cache = resolve_cache_request(
+            session_id=session_id,
+            cache_affinity=cache_affinity,
+            cache_retention=cache_retention,
+            side_request=side_request,
+        )
+        # Cache fields are policy-owned. Removing earlier copies also guarantees
+        # that a side request cannot retain an id_slot merely because the final
+        # side policy intentionally omits it.
+        for field in ("cache_prompt", "id_slot"):
+            existing.pop(field, None)
+            configured.pop(field, None)
+        if existing or "extra_body" in request:
+            request["extra_body"] = existing
+        merged = merge_request_extra(
+            configured,
+            per_request,
+            cache.request_extra,
+        )
+    else:
+        # Standard OpenAI-compatible endpoints may reject llama-server's
+        # extension fields. Strip them at the final request-policy boundary,
+        # regardless of which earlier layer supplied them.
+        for source in (existing, configured, per_request):
+            for field in _LLAMA_REQUEST_FIELDS:
+                source.pop(field, None)
+        if existing:
+            request["extra_body"] = existing
+        else:
+            request.pop("extra_body", None)
+        merged = merge_request_extra(configured, per_request)
     return attach_request_extra(request, merged)
 
 

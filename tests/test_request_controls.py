@@ -7,12 +7,15 @@ import pytest
 
 from scripts.llm_solver.server.request_controls import (
     CACHE_RETENTION_LEVELS,
+    REQUEST_DIALECTS,
     CacheUsageAccumulator,
     THINKING_LEVELS,
     RequestControlError,
+    apply_request_controls,
     attach_request_extra,
     derive_cache_slot,
     extract_cache_observation,
+    normalize_request_dialect,
     resolve_cache_request,
     resolve_thinking_level,
     validate_cache_miss_warn_ratio,
@@ -202,6 +205,60 @@ def test_fake_openai_client_receives_llama_cache_fields_in_request_body():
     }
 
 
+def test_openai_dialect_strips_llama_fields_from_every_extra_layer():
+    payload = {
+        "model": "served",
+        "messages": [],
+        "extra_body": {
+            "cache_prompt": True,
+            "id_slot": 1,
+            "chat_template_kwargs": {"enable_thinking": True},
+            "payload_field": "kept",
+        },
+    }
+
+    request = apply_request_controls(
+        payload,
+        session_id="session-wire",
+        server_request_extra={
+            "cache_prompt": True,
+            "id_slot": 2,
+            "chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_effort": "low",
+        },
+        cache_affinity=4,
+        cache_retention="session",
+        side_request=False,
+        policy_extra={
+            "chat_template_kwargs": {"enable_thinking": False},
+            "policy_field": "kept",
+        },
+        request_dialect="openai",
+    )
+
+    assert request["extra_body"] == {
+        "payload_field": "kept",
+        "reasoning_effort": "low",
+        "policy_field": "kept",
+    }
+    assert payload["extra_body"]["cache_prompt"] is True
+
+
+def test_openai_dialect_omits_empty_extra_body():
+    request = apply_request_controls(
+        {"model": "served", "messages": [], "extra_body": {}},
+        session_id="",
+        server_request_extra={},
+        cache_affinity=False,
+        cache_retention="session",
+        side_request=True,
+        policy_extra={"chat_template_kwargs": {"enable_thinking": False}},
+        request_dialect="openai",
+    )
+
+    assert "extra_body" not in request
+
+
 def test_extract_cache_observation_from_openai_usage_details():
     response = SimpleNamespace(
         usage=SimpleNamespace(
@@ -326,6 +383,13 @@ def test_invalid_cache_warning_ratios_fail_closed(value):
 
 def test_cache_retention_modes_are_explicit_and_llama_scoped():
     assert CACHE_RETENTION_LEVELS == ("off", "session")
+
+
+def test_request_dialects_are_explicit_and_invalid_values_fail_closed():
+    assert REQUEST_DIALECTS == ("llama", "openai")
+    assert normalize_request_dialect(" OPENAI ") == "openai"
+    with pytest.raises(RequestControlError, match="request_dialect"):
+        normalize_request_dialect("google")
 
 
 def test_default_halflife_model_prefix_is_byte_identical_across_turns():
