@@ -202,6 +202,37 @@ class TestSessionRun:
         assert result.finish_reason == "max_turns"
         assert result.turns == 2
 
+    def test_session_ends_when_sandbox_disappears_without_tool_result(self):
+        from llm_solver.harness.loop import Session
+        from llm_solver.harness._tools._run_in_sandbox import (
+            SandboxUnavailableError,
+        )
+
+        cfg = make_config(max_turns=10)
+        client = MagicMock()
+        tc = [ToolCall(id="c1", name="bash", arguments={"cmd": "echo test"})]
+        client.chat.return_value = make_turn_result(
+            tool_calls=tc, finish_reason="tool_calls"
+        )
+        client.build_assistant_message.return_value = {
+            "role": "assistant", "content": None, "tool_calls": [],
+        }
+
+        with patch(
+            "llm_solver.harness.loop.dispatch",
+            side_effect=SandboxUnavailableError("sandbox gone"),
+        ):
+            session = Session(cfg, client, "sys", "prompt", "/tmp")
+            result = session.run()
+
+        assert result.finish_reason == "sandbox_unavailable"
+        assert result.done is False
+        assert client.chat.call_count == 1
+        assert not any(
+            message.get("role") == "tool"
+            for message in session.context.get_messages()
+        )
+
     def test_session_length_response(self):
         from llm_solver.harness.loop import Session
         cfg = make_config(max_turns=10)
@@ -561,3 +592,23 @@ def test_solve_task_commits_before_propagating_signal_exit(tmp_path):
 
     assert raised.value.code == 143
     mock_commit.assert_called_once_with(tmp_path, 1, "signal")
+
+
+def test_solve_task_does_not_retry_a_missing_sandbox_as_a_new_session(tmp_path):
+    """Infrastructure loss is terminal for the task, not a model handoff."""
+    from llm_solver.harness.loop import Session, SessionResult, solve_task
+
+    (tmp_path / "prompt.txt").write_text("fix bug")
+    client = MagicMock()
+    cfg = make_config(max_turns=5, max_sessions=3)
+    unavailable = SessionResult(
+        turns=1, finish_reason="sandbox_unavailable", done=False
+    )
+
+    with patch.object(Session, "run", return_value=unavailable) as mock_run:
+        with patch("llm_solver.harness.loop._auto_commit") as mock_commit:
+            ok = solve_task(tmp_path, cfg, client)
+
+    assert ok is False
+    assert mock_run.call_count == 1
+    mock_commit.assert_called_once_with(tmp_path, 1, "sandbox_unavailable")

@@ -886,11 +886,9 @@ def solve_task(
                 success = True
                 break
 
-            if result.finish_reason == "error":
-                # Commit mutations performed before a fatal API error too.
-                # Previously only the non-error path called _auto_commit, so the post-
-                # mortem digest lost the mutation list for any task that
-                # ended in an upstream API failure.
+            if result.finish_reason in {"error", "sandbox_unavailable"}:
+                # Preserve mutations before a fatal API or sandbox failure.
+                # Neither condition may roll into another model session.
                 if auto_commit:
                     _auto_commit(work_dir, session_num, result.finish_reason)
                 write_checkpoint(artifact_dir, cfg.model, "error")

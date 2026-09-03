@@ -37,6 +37,24 @@ _AMBIENT_UNSHARE_PROBED = False
 _AMBIENT_UNSHARE_AVAILABLE = False
 
 
+class SandboxUnavailableError(RuntimeError):
+    """The selected sandbox disappeared while a tool call was running."""
+
+
+def _legacy_container_running(container_id: str) -> bool:
+    """Check a failed ``docker exec`` target without trusting its stderr."""
+    try:
+        probe = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", container_id],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0 and probe.stdout.strip().lower() == "true"
+
+
 def _probe_ambient_unshare_net() -> bool:
     """One-shot probe: does `unshare -n /bin/true` succeed in this env?
 
@@ -260,6 +278,14 @@ def _run_in_sandbox(
                     "explicitly if host execution is intended."
                 )
             result = _run_host()
+        if (
+            mode not in {None, AMBIENT_CONTAINER}
+            and result.returncode != 0
+            and not _legacy_container_running(mode)
+        ):
+            raise SandboxUnavailableError(
+                "the selected container sandbox is unavailable"
+            )
         out = result.stdout + result.stderr
         if normalize_output:
             out = _strip_ls_timestamps(out)
@@ -269,5 +295,7 @@ def _run_in_sandbox(
         return out, int(result.returncode), False
     except subprocess.TimeoutExpired:
         return "", None, True
+    except SandboxUnavailableError:
+        raise
     except Exception as e:
         return _normalize_memory_addresses(f"ERROR: {e}"), None, False

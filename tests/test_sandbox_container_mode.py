@@ -15,9 +15,11 @@ re-introduce the bug.
 """
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,7 +28,10 @@ from scripts.llm_solver.harness.sandbox import (
     _build_bwrap_argv,
     container_mode,
 )
-from scripts.llm_solver.harness._tools._run_in_sandbox import _run_in_sandbox
+from scripts.llm_solver.harness._tools._run_in_sandbox import (
+    SandboxUnavailableError,
+    _run_in_sandbox,
+)
 
 
 # ----- container_mode() resolver -----
@@ -110,6 +115,63 @@ def test_build_bwrap_argv_legacy_bwrap(monkeypatch, tmp_path):
 # subprocess.run.
 
 NONEXISTENT_BWRAP = "/this/path/does/not/exist/bwrap"
+
+
+def test_missing_legacy_container_raises_typed_unavailable(monkeypatch, tmp_path):
+    """A vanished docker-exec target is infrastructure, not tool output."""
+    runner_module = importlib.import_module(
+        "scripts.llm_solver.harness._tools._run_in_sandbox"
+    )
+    calls = []
+    responses = iter([
+        SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="Error response from daemon: No such container: gone\n",
+        ),
+        SimpleNamespace(returncode=1, stdout="", stderr="not found\n"),
+    ])
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return next(responses)
+
+    monkeypatch.setenv("YUJ_CONTAINER", "gone")
+    monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
+
+    with pytest.raises(SandboxUnavailableError, match="sandbox is unavailable"):
+        _run_in_sandbox(
+            "echo test", cwd=str(tmp_path), timeout=10,
+            sandbox=True, bwrap_bin=NONEXISTENT_BWRAP,
+            sandbox_required=True,
+        )
+
+    assert calls[0][0][:2] == ["docker", "exec"]
+    assert calls[1][0] == [
+        "docker", "inspect", "--format", "{{.State.Running}}", "gone",
+    ]
+
+
+def test_live_legacy_container_preserves_normal_nonzero(monkeypatch, tmp_path):
+    """A command failure inside a live sandbox still belongs to the model."""
+    runner_module = importlib.import_module(
+        "scripts.llm_solver.harness._tools._run_in_sandbox"
+    )
+    responses = iter([
+        SimpleNamespace(returncode=7, stdout="command failed\n", stderr=""),
+        SimpleNamespace(returncode=0, stdout="true\n", stderr=""),
+    ])
+
+    monkeypatch.setenv("YUJ_CONTAINER", "still-running")
+    monkeypatch.setattr(
+        runner_module.subprocess, "run", lambda *_args, **_kwargs: next(responses)
+    )
+
+    assert _run_in_sandbox(
+        "false", cwd=str(tmp_path), timeout=10,
+        sandbox=True, bwrap_bin=NONEXISTENT_BWRAP,
+        sandbox_required=True,
+    ) == ("command failed\n", 7, False)
 
 
 def test_ambient_mode_bypasses_missing_bwrap(monkeypatch, tmp_path):

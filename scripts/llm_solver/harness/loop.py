@@ -167,6 +167,7 @@ _KNOWN_FINISH_REASONS: frozenset[str] = frozenset({
     "gate_escalation",
     "length",
     "error",
+    "sandbox_unavailable",
     "task_wall_clock",
     "approval_required",
     "input_required",
@@ -1684,6 +1685,10 @@ class Session:
                 if result.finish_reason in {"length", "context_full"}:
                     diagnostics.record_exit(
                         reason=result.finish_reason, kind="truncated"
+                    )
+                elif result.finish_reason == "sandbox_unavailable":
+                    diagnostics.record_exit(
+                        reason=result.finish_reason, kind="fatal"
                     )
                 else:
                     diagnostics.record_exit(

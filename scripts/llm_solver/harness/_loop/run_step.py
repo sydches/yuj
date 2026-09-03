@@ -549,6 +549,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
     # _run_in_sandbox. The ``log`` rebind matters for tests that patch
     # ``loop.log`` to assert which messages the loop emits.
     from .. import loop as _loop_mod
+    from .._tools._run_in_sandbox import SandboxUnavailableError
     dispatch = _loop_mod.dispatch
     SessionResult = _loop_mod.SessionResult
     _READONLY_TOOLS = _loop_mod._READONLY_TOOLS
@@ -1275,6 +1276,15 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 for tc_id, fut in futures.items():
                     try:
                         preexecuted[tc_id] = fut.result()
+                    except SandboxUnavailableError as exc:
+                        log.error("Sandbox unavailable at turn %d: %s", turn, exc)
+                        return SessionResult(
+                            turn,
+                            "sandbox_unavailable",
+                            done=False,
+                            total_prompt_tokens=total_prompt,
+                            total_completion_tokens=total_completion,
+                        )
                     except Exception as e:
                         preexecuted[tc_id] = f"ERROR: {e}"
         for tc in tool_calls:
@@ -1346,7 +1356,17 @@ def run_session_loop(session: "Session") -> "SessionResult":
                             total_prompt_tokens=total_prompt,
                             total_completion_tokens=total_completion,
                         )
-            outcome = dispatch_one_tool_call(tc, state)
+            try:
+                outcome = dispatch_one_tool_call(tc, state)
+            except SandboxUnavailableError as exc:
+                log.error("Sandbox unavailable at turn %d: %s", turn, exc)
+                return SessionResult(
+                    turn,
+                    "sandbox_unavailable",
+                    done=False,
+                    total_prompt_tokens=total_prompt,
+                    total_completion_tokens=total_completion,
+                )
             if outcome.rewind:
                 break
             if outcome.end:
