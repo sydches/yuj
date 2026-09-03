@@ -212,7 +212,7 @@ def _extract_config_fields(d: dict) -> dict:
             path="server.request_extra",
         ),
         "cache_affinity": d.get("server", {}).get("cache_affinity", False),
-        "cache_retention": d.get("server", {}).get("cache_retention", "off"),
+        "cache_retention": d.get("server", {}).get("cache_retention", "session"),
         "cache_miss_warn_ratio": d.get("server", {}).get("cache_miss_warn_ratio", 0.0),
         "model": _require(d, "model", "name"),
         "profile_name": d.get("model", {}).get("profile_name", ""),

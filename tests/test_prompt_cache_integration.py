@@ -14,9 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from _config_helpers import make_config
-from scripts.llm_assist.__main__ import _print_run_compact_summary
-from scripts.llm_assist.runner import run_session, session_compact_summary
-from scripts.llm_assist.store import SessionStore
+from llm_solver._config_loader import _extract_config_fields
+from llm_solver._shared.toml_compat import tomllib
 from llm_solver._shared.telemetry_paths import trace_path
 from llm_solver.config import load_config
 from llm_solver.harness.loop import solve_task
@@ -28,6 +27,9 @@ from llm_solver.server.request_controls import (
     extract_cache_observation,
 )
 from llm_solver.server.types import SideRequestResult, ToolCall, TurnResult, Usage
+from scripts.llm_assist.__main__ import _print_run_compact_summary
+from scripts.llm_assist.runner import run_session, session_compact_summary
+from scripts.llm_assist.store import SessionStore
 from scripts.llm_solver._main_helpers import _build_run_metadata
 
 
@@ -263,13 +265,33 @@ def test_config_defaults_and_invalid_cache_controls(tmp_path: Path) -> None:
     cfg = load_config()
     assert cfg.server_request_extra == {}
     assert cfg.cache_affinity is False
-    assert cfg.cache_retention == "off"
+    assert cfg.cache_retention == "session"
     assert cfg.cache_miss_warn_ratio == 0.0
 
     overlay = tmp_path / "bad-cache.toml"
     overlay.write_text("[server]\ncache_miss_warn_ratio = 1.1\n")
     with pytest.raises(ValueError, match="cache_miss_warn_ratio"):
         load_config(overlay)
+
+
+def test_cache_retention_code_fallbacks_match_session_policy() -> None:
+    """Direct, missing-key, and legacy-client paths keep the same default."""
+
+    direct_cfg = make_config()
+    assert direct_cfg.cache_retention == "session"
+
+    with (PROJECT_ROOT / "config.toml").open("rb") as stream:
+        config_data = tomllib.load(stream)
+    config_data["server"].pop("cache_retention")
+    assert _extract_config_fields(config_data)["cache_retention"] == "session"
+
+    client_without_field = object.__new__(LlamaClient)
+    client_without_field.cfg = SimpleNamespace()
+    client_without_field._session_id = ""
+    payload = client_without_field._attach_request_controls(
+        {}, side_request=False, policy_extra={}
+    )
+    assert payload["extra_body"]["cache_prompt"] is True
 
 
 def test_installed_runner_binds_client_to_session_record_id(tmp_path: Path) -> None:

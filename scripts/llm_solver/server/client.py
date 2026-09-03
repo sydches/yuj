@@ -194,7 +194,7 @@ class LlamaClient:
                 self.cfg, "server_request_extra", {}
             ) or {},
             cache_affinity=getattr(self.cfg, "cache_affinity", False),
-            cache_retention=getattr(self.cfg, "cache_retention", "off"),
+            cache_retention=getattr(self.cfg, "cache_retention", "session"),
             side_request=side_request,
             policy_extra=policy_extra,
         )

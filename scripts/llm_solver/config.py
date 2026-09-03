@@ -620,7 +620,7 @@ class Config:
     # transported under SDK extra_body; cache policy is merged last.
     server_request_extra: dict[str, object] = field(default_factory=dict)
     cache_affinity: bool | int = False
-    cache_retention: str = "off"
+    cache_retention: str = "session"
     cache_miss_warn_ratio: float = 0.0
     thinking_level: str = "off"
     model_roles: dict[str, object] = field(default_factory=dict)

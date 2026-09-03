@@ -72,7 +72,7 @@ def test_profile_mapped_thinking_is_applied_per_request_and_side_stays_off(
     assert "thinking level high is unsupported" in caplog.text
     assert captured[0]["extra_body"] == {
         "chat_template_kwargs": {"enable_thinking": True},
-        "cache_prompt": False,
+        "cache_prompt": True,
     }
     assert captured[1]["extra_body"] == {
         "chat_template_kwargs": {"enable_thinking": False},

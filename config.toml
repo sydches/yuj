@@ -86,7 +86,7 @@ launch_timeout = 120                   # seconds to wait for server to become he
 stop_settle = 2                        # seconds to wait after killing server processes
 request_extra = {}                     # llama-server JSON body fields passed through OpenAI SDK extra_body
 cache_affinity = false                 # false/0 disables; true pins to slot 0; positive integer hashes sessions across that many slots
-cache_retention = "off"                # "off" | "session"; session enables cache_prompt on normal turns
+cache_retention = "session"            # "off" | "session"; session reuses the KV prefix on normal turns
 cache_miss_warn_ratio = 0.0            # warn after the first turn below this hit ratio; 0 disables warnings
 
 [model]
