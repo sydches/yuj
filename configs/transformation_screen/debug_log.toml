@@ -1,0 +1,4 @@
+# Diagnostic overlay for transformation-screen runs.
+# Remove this final layer if detailed transformation events are not needed.
+[loop]
+transform_log_mode = "debug" # Record detailed transformation decisions.

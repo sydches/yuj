@@ -101,6 +101,29 @@ A later value replaces an earlier value for the same field.
 This order keeps local keys out of Git. It also lets you change one setting
 without copying the full main file.
 
+### Bundle an ordered stack in one recipe
+
+Use a composition recipe when several existing layers must always stay in one
+order:
+
+```toml
+[composition]
+schema_version = 1 # Keep 1 for this Yuj release.
+layers = [
+  "../regimes/treatment.toml", # Apply this layer first.
+  "../runtime/my-model.toml", # Apply this layer second.
+]
+```
+
+Pass the recipe as one `--config` file. Yuj expands its entries at that point
+in the normal setting order. Paths are relative to the recipe file, and the
+resolved-settings report names each referenced layer.
+
+A recipe may contain only the `[composition]` table. Its `layers` array must
+be non-empty and use relative paths. Edit the referenced owner files when you
+want to tune settings. Yuj rejects nested recipes so that the effective order
+stays visible in one place.
+
 Yuj chooses its main runtime root in this order:
 
 1. If you set `YUJ_CONFIG`, Yuj uses that exact main file and its parent

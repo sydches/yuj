@@ -112,6 +112,86 @@ def _read_toml(path: Path, *, label: str) -> dict[str, object]:
         raise ConfigResolutionError(f"{label}: cannot read file ({detail})") from exc
 
 
+def _composition_references(
+    document: Mapping[str, object],
+    *,
+    label: str,
+) -> tuple[str, ...] | None:
+    """Return one validated ordered composition, or ``None`` for a layer."""
+    if "composition" not in document:
+        return None
+    if set(document) != {"composition"}:
+        raise ConfigResolutionError(
+            f"{label}: a composition file cannot also define settings"
+        )
+    composition = document["composition"]
+    if not isinstance(composition, Mapping):
+        raise ConfigResolutionError(f"{label}: [composition] must be a table")
+    unknown = set(composition) - {"schema_version", "layers"}
+    if unknown:
+        rendered = ", ".join(sorted(str(key) for key in unknown))
+        raise ConfigResolutionError(
+            f"{label}: unknown [composition] key(s): {rendered}"
+        )
+    version = composition.get("schema_version")
+    if type(version) is not int or version != 1:
+        raise ConfigResolutionError(
+            f"{label}: [composition].schema_version must be 1"
+        )
+    layers = composition.get("layers")
+    if not isinstance(layers, list) or not layers:
+        raise ConfigResolutionError(
+            f"{label}: [composition].layers must be a non-empty array"
+        )
+    references: list[str] = []
+    for index, raw_reference in enumerate(layers, 1):
+        if not isinstance(raw_reference, str) or not raw_reference.strip():
+            raise ConfigResolutionError(
+                f"{label}: composition.layers[{index}] must be a non-empty path"
+            )
+        reference = raw_reference.strip()
+        if Path(reference).is_absolute():
+            raise ConfigResolutionError(
+                f"{label}: composition.layers[{index}] must be relative"
+            )
+        references.append(reference)
+    return tuple(references)
+
+
+def expand_config_compositions(
+    user_layers: Iterable[ConfigLayerSpec],
+) -> tuple[ConfigLayerSpec, ...]:
+    """Replace each one-level composition with its ordered referenced layers."""
+    expanded: list[ConfigLayerSpec] = []
+    for spec in user_layers:
+        document = _read_toml(Path(spec.path), label=spec.label)
+        references = _composition_references(document, label=spec.label)
+        if references is None:
+            expanded.append(spec)
+            continue
+        parent = Path(spec.path).parent
+        for index, reference in enumerate(references, 1):
+            label = (
+                f"{spec.label} -> composition.layers[{index}] "
+                f"({reference})"
+            )
+            path = parent / reference
+            referenced = _read_toml(path, label=label)
+            if "composition" in referenced:
+                raise ConfigResolutionError(
+                    f"{label}: nested composition files are not supported"
+                )
+            expanded.append(
+                ConfigLayerSpec(
+                    path=path,
+                    layer_id=f"{spec.layer_id}.composition-{index}",
+                    kind="composition-layer",
+                    label=label,
+                )
+            )
+    return tuple(expanded)
+
+
 def _clear_provenance(
     provenance: dict[SettingPath, ConfigSource],
     prefix: SettingPath,
@@ -217,8 +297,12 @@ def resolve_toml_layers(
     user_layers: Iterable[ConfigLayerSpec],
 ) -> LayeredConfigData:
     """Load and merge defaults, optional local settings, and user layers."""
-    specs = tuple(user_layers)
-    ids = ["checked-in-defaults", "machine-local", *(spec.layer_id for spec in specs)]
+    requested_specs = tuple(user_layers)
+    ids = [
+        "checked-in-defaults",
+        "machine-local",
+        *(spec.layer_id for spec in requested_specs),
+    ]
     if len(ids) != len(set(ids)):
         raise ValueError("configuration layer IDs must be unique")
 
@@ -256,6 +340,11 @@ def resolve_toml_layers(
             provenance=provenance,
         )
     layers.append(local_source)
+
+    specs = expand_config_compositions(requested_specs)
+    expanded_ids = [spec.layer_id for spec in specs]
+    if len(expanded_ids) != len(set(expanded_ids)):
+        raise ValueError("expanded configuration layer IDs must be unique")
 
     for offset, spec in enumerate(specs, 2):
         source = ConfigSource(
@@ -336,6 +425,7 @@ __all__ = [
     "LayeredConfigData",
     "SettingPath",
     "apply_resolved_value",
+    "expand_config_compositions",
     "expand_environment_references",
     "format_setting_path",
     "iter_setting_leaves",

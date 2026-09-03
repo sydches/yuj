@@ -1,0 +1,15 @@
+# Practitioner-grid solver recipe: IQ4_XS, 43,008-token context, arm a00.
+# The array order is part of the experiment. Edit a referenced owner file to
+# tune one concern; do not flatten the layers into this recipe.
+
+[composition]
+schema_version = 1 # Keep 1 for this released recipe format.
+layers = [
+  "../../regimes/treatment.toml", # Establish the complete treatment structure first.
+  "../../regimes/baselines/plain_long_solve.toml", # Reset model-facing behavior to the plain denominator.
+  # Select model, quantization, context, and serving assumptions.
+  "../../runtime/llama-qwen36-35b-a3b-iq4xs-5090-no-offload-mtp-ctx43008.toml",
+  "../thresholds/verified_43008.toml", # Apply the released 43,008-token detector thresholds.
+  "../../transformation_screen/arms/a00.toml", # Keep all eight model-visible transformations disabled.
+  "../../transformation_screen/debug_log.toml", # Record detailed transformation decisions for audit.
+]

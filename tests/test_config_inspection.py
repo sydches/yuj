@@ -17,6 +17,7 @@ from scripts.llm_assist.__main__ import main
 from scripts.llm_solver import config as config_module
 from scripts.llm_solver.config import (
     ConfigLayerSpec,
+    ConfigResolutionError,
     dump_transformations,
     load_config,
     resolve_config,
@@ -161,6 +162,140 @@ def test_resolution_tracks_every_real_layer_and_cli_wins_last(
         "overlay",
         "command-line",
     ]
+
+
+def test_composition_matches_explicit_layers_and_keeps_source_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _without_machine_local(monkeypatch, tmp_path)
+    layers = tmp_path / "layers"
+    recipes = tmp_path / "recipes"
+    layers.mkdir()
+    recipes.mkdir()
+    first = layers / "first.toml"
+    second = layers / "second.toml"
+    first.write_text("[loop]\nmax_turns = 220\n")
+    second.write_text(
+        "[loop]\nmax_turns = 240\n"
+        "[model]\nname = 'composed'\n"
+        "[sandbox]\nbackend = 'none'\n"
+    )
+    recipe = recipes / "recipe.toml"
+    recipe.write_text(
+        "[composition]\n"
+        "schema_version = 1\n"
+        "layers = ['../layers/first.toml', '../layers/second.toml']\n"
+    )
+
+    explicit = resolve_config(user_config=[first, second])
+    composed = resolve_config(
+        user_config=recipe,
+        layer_specs=[
+            ConfigLayerSpec(recipe, "recipe", "overlay", "--config[1]")
+        ],
+    )
+
+    assert composed.config == explicit.config
+    assert composed.data == explicit.data
+    assert composed.config.max_turns == 240
+    assert composed.provenance[("loop", "max_turns")].label.endswith(
+        "(../layers/second.toml)"
+    )
+    assert [layer.kind for layer in composed.layers[2:-1]] == [
+        "composition-layer",
+        "composition-layer",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            "[composition]\nschema_version = 2\nlayers = ['layer.toml']\n",
+            "schema_version must be 1",
+        ),
+        (
+            "[composition]\nschema_version = 1\nlayers = []\n",
+            "must be a non-empty array",
+        ),
+        (
+            "[composition]\nschema_version = 1\nlayers = ['layer.toml']\n"
+            "[loop]\nmax_turns = 2\n",
+            "cannot also define settings",
+        ),
+    ],
+)
+def test_composition_rejects_ambiguous_documents(
+    tmp_path: Path,
+    body: str,
+    message: str,
+) -> None:
+    recipe = tmp_path / "recipe.toml"
+    recipe.write_text(body)
+
+    with pytest.raises(ConfigResolutionError, match=message):
+        resolve_config(user_config=recipe)
+
+
+def test_composition_rejects_nested_recipes(tmp_path: Path) -> None:
+    nested = tmp_path / "nested.toml"
+    nested.write_text(
+        "[composition]\nschema_version = 1\nlayers = ['layer.toml']\n"
+    )
+    recipe = tmp_path / "recipe.toml"
+    recipe.write_text(
+        "[composition]\nschema_version = 1\nlayers = ['nested.toml']\n"
+    )
+
+    with pytest.raises(ConfigResolutionError, match="nested composition"):
+        resolve_config(user_config=recipe)
+
+
+@pytest.mark.parametrize(
+    ("quantization", "arm"),
+    [
+        ("q2_k_xl", "a00"),
+        ("q2_k_xl", "a09"),
+        ("iq4_xs", "a00"),
+        ("iq4_xs", "a09"),
+        ("q4_k_xl", "a00"),
+        ("q4_k_xl", "a09"),
+    ],
+)
+def test_practitioner_recipe_matches_its_six_explicit_layers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    quantization: str,
+    arm: str,
+) -> None:
+    _without_machine_local(monkeypatch, tmp_path)
+    runtime_names = {
+        "q2_k_xl": "llama-qwen36-35b-a3b-q2kxl-5090-no-offload-mtp-ctx43008.toml",
+        "iq4_xs": "llama-qwen36-35b-a3b-iq4xs-5090-no-offload-mtp-ctx43008.toml",
+        "q4_k_xl": "llama-qwen36-35b-a3b-q4kxl-5090-no-offload-mtp-ctx43008.toml",
+    }
+    stack = [
+        PROJECT_ROOT / "configs/regimes/treatment.toml",
+        PROJECT_ROOT / "configs/regimes/baselines/plain_long_solve.toml",
+        PROJECT_ROOT / "configs/runtime" / runtime_names[quantization],
+        PROJECT_ROOT / "configs/paper/thresholds/verified_43008.toml",
+        PROJECT_ROOT / f"configs/transformation_screen/arms/{arm}.toml",
+        PROJECT_ROOT / "configs/transformation_screen/debug_log.toml",
+    ]
+    recipe = (
+        PROJECT_ROOT
+        / "configs/paper/practitioner_grid"
+        / f"{quantization}-43008-{arm}.toml"
+    )
+
+    no_sandbox = _no_sandbox_overlay(tmp_path)
+    explicit = resolve_config(user_config=[*stack, no_sandbox])
+    composed = resolve_config(user_config=[recipe, no_sandbox])
+
+    assert composed.config == explicit.config
+    assert composed.data == explicit.data
+    assert len(composed.layers) == len(explicit.layers)
 
 
 def test_inspection_redacts_literal_nested_environment_and_future_secrets(
@@ -542,6 +677,8 @@ def _documented_toml_paths(document: str) -> set[tuple[str, ...]]:
         try:
             parsed = tomllib.loads(body)
         except tomllib.TOMLDecodeError:
+            continue
+        if set(parsed) == {"composition"}:
             continue
         paths.update(_flatten_paths(parsed))
     return paths

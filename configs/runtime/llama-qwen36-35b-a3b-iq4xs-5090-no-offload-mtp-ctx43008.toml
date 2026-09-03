@@ -1,0 +1,51 @@
+# Generic llama-server overlay for the IQ4_XS quantization of
+# Qwen3.6-35B-A3B at a 43,008-token context window. It uses one sequence,
+# full GPU offload, and MTP self-speculation. Change the model path and
+# hardware-tuning values to match the local machine.
+
+schema_version = 1 # Keep 1 for this released runtime format.
+
+[model]
+name = "qwen3.6-35b-a3b" # Model ID sent by the harness.
+profile_name = "qwen3.6-35b-a3b" # Reuse this model family's chat and tool profile.
+context_size = 43008 # Total prompt-plus-reply context available to the harness.
+tokenizer_id = "Qwen/Qwen3.6-35B-A3B" # Tokenizer used for context accounting.
+
+[launch]
+runtime = "llama_server" # Select the llama-server launcher.
+# Point this at the local IQ4_XS MTP GGUF.
+model_path = "~/models/gguf/mtp/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf"
+served_name = "qwen3.6-35b-a3b" # Expected API model ID; keep it aligned with model.name.
+host = "127.0.0.1" # Listen locally; change only when remote access is intended.
+port = 8080 # API port; keep it aligned with the harness base URL.
+max_model_len = 43008 # Server context window; keep it equal to model.context_size.
+max_num_seqs = 1 # MTP requires a single parallel sequence.
+chat_template_path = "profiles/qwen3.6-35b-a3b/chat_template_meanderix.jinja" # Released chat template for this profile.
+
+[launch.sampling]
+temperature = 0 # Use deterministic greedy sampling.
+top_k = 1 # Keep only the highest-probability token.
+top_p = 1 # Do not add nucleus filtering beyond top_k.
+min_p = 0 # Disable minimum-probability filtering.
+presence_penalty = 0 # Do not penalize tokens merely for appearing before.
+repetition_penalty = 1.05 # Apply the measured mild repetition penalty.
+seed = 42 # Fix the server seed for repeatable runs.
+
+[launch.llama_server]
+spec_type = "draft-mtp" # Enable the model's integrated MTP draft head.
+spec_draft_n_max = 2 # Draft at most two tokens per MTP step.
+n_cpu_moe = 0 # Keep all mixture-of-experts layers off the CPU.
+cpu_mask = "0x00FF" # Restrict CPU helper threads; adjust for the host topology.
+cpu_strict = true # Enforce the selected CPU mask.
+threads = 8 # CPU helper-thread count; tune for the host CPU.
+prio = 2 # Ask llama-server for high process priority.
+n_gpu_layers = 99 # Offload all model layers; lower this if GPU memory is limited.
+flash_attn = true # Use flash attention on supported GPUs.
+cache_type_k = "q8_0" # Quantize the key-value cache keys to q8_0.
+cache_type_v = "q8_0" # Quantize the key-value cache values to q8_0.
+jinja = true # Enable Jinja chat-template rendering.
+no_context_shift = true # End at the fixed window instead of shifting old tokens.
+batch = 2048 # Logical prompt-processing batch size; lower if memory is tight.
+ubatch = 1024 # Physical microbatch size; lower if memory is tight.
+mmap = true # Memory-map the GGUF instead of eagerly copying it.
+n_predict = 10752 # Per-reply ceiling; one quarter of the 43,008-token context.
