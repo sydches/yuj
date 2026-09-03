@@ -1590,9 +1590,18 @@ class Session:
         from ._loop.compaction import get_server_ctx
         return get_server_ctx(self)
 
-    def _maybe_compact_messages(self, messages: list[dict]) -> list[dict]:
+    def _maybe_compact_messages(
+        self,
+        messages: list[dict],
+        *,
+        projected_tokens: int | None = None,
+    ) -> list[dict]:
         from ._loop.compaction import maybe_compact_messages
-        return maybe_compact_messages(self, messages)
+        return maybe_compact_messages(
+            self,
+            messages,
+            projected_tokens=projected_tokens,
+        )
 
     def _chat_with_retry(self, turn: int):
         from ._loop.chat_io import chat_with_retry

@@ -45,7 +45,11 @@ from ._dispatch_tool_call import (
     dispatch_one_tool_call,
     record_tool_start,
 )
-from .compaction import preflight_reclip_oversized
+from .compaction import (
+    CompactionOverflowError,
+    maybe_compact_messages,
+    preflight_reclip_oversized,
+)
 from .trace_output import build_tool_call_trace_fields
 
 if TYPE_CHECKING:
@@ -728,45 +732,105 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     command_shape=_shape, quirk_hit=_quirk, action="none",
                 )
             if pre_fill > cfg.context_fill_ratio:
-                # ── Invariant backstop: one re-clip attempt before the
-                # session ends. The overflow is usually one oversized
-                # tool result; clip it in token space (head+tail with a
-                # visible notice, targeting ctx/2 tokens for that single
-                # message), re-project once, and only end context_full
-                # if the projection STILL exceeds the window.
+                # Last-resort fit gate, after the configured context strategy
+                # (including halflife) has rendered the request. First try one
+                # local, deficit-sized re-clip. If that cannot make the prompt
+                # fit, try one digest. There is no retry loop over the same
+                # material: the request proceeds or this session ends.
+                prompt_budget = int(cfg.context_fill_ratio * cfg.context_size)
+                original_projection = preflight_pt
                 clip = None
                 if bool(getattr(cfg, "preflight_reclip_enabled", True)):
-                    clip = preflight_reclip_oversized(session)
+                    clip = preflight_reclip_oversized(
+                        session,
+                        projected_tokens=preflight_pt,
+                        budget_tokens=prompt_budget,
+                    )
                 if clip is not None:
                     _tok_t0 = time.perf_counter()
                     estimated_pt = _preflight_estimate(session)
                     _phase_token_ms += (time.perf_counter() - _tok_t0) * 1000
-                    preflight_pt = max(live_pt, estimated_pt)
+                    # The old server count names a different message list after
+                    # re-clipping. Carry its conservative projection forward by
+                    # subtracting only the measured local reduction.
+                    reduction = max(0, clip["orig_pt"] - clip["new_pt"])
+                    preflight_pt = max(
+                        estimated_pt,
+                        original_projection - reduction,
+                    )
                     pre_fill = preflight_pt / cfg.context_size
+
+                compacted = False
+                compaction_failed = False
+                if pre_fill > cfg.context_fill_ratio:
+                    count_before = int(getattr(session, "_compaction_count", 0))
+                    try:
+                        maybe_compact_messages(
+                            session,
+                            list(session.context.get_messages()),
+                            projected_tokens=preflight_pt,
+                        )
+                    except CompactionOverflowError as exc:
+                        compaction_failed = True
+                        log.error(
+                            "Last-resort compaction overflow on turn %d: %s",
+                            turn,
+                            exc,
+                        )
+                    compacted = int(
+                        getattr(session, "_compaction_count", 0)
+                    ) > count_before
+                    if compacted:
+                        _tok_t0 = time.perf_counter()
+                        estimated_pt = _preflight_estimate(session)
+                        _phase_token_ms += (
+                            time.perf_counter() - _tok_t0
+                        ) * 1000
+                        # Digest replaced the old history, so the prior live
+                        # count and density projection no longer describe this
+                        # request. Re-count the replacement itself.
+                        preflight_pt = estimated_pt
+                        pre_fill = preflight_pt / cfg.context_size
                 _shape, _quirk = provenance_for(
                     session, (clip or {}).get("tool_call_id", ""))
                 still_over = pre_fill > cfg.context_fill_ratio
+                if still_over:
+                    recovery_action = "session_end"
+                elif compacted and clip is not None:
+                    recovery_action = "reclipped_then_compacted"
+                elif compacted:
+                    recovery_action = "compacted"
+                else:
+                    recovery_action = "reclipped"
                 get_system_log().event(
                     "preflight_overflow", turn=turn, live_pt=live_pt,
                     estimate_pt=estimated_pt, preflight_pt=preflight_pt,
                     density=density, ctx=cfg.context_size,
                     command_shape=_shape, quirk_hit=_quirk,
-                    action="session_end" if still_over else "reclipped",
+                    action=recovery_action,
                 )
                 if still_over:
                     log.info(
                         "Context %.0f%% full pre-flight at turn %d, ending session "
-                        "(live_pt=%d estimate_pt=%d preflight_pt=%d density=%.2f)",
+                        "(live_pt=%d estimate_pt=%d preflight_pt=%d density=%.2f, "
+                        "compaction_failed=%s)",
                         pre_fill * 100, turn, live_pt, estimated_pt,
-                        preflight_pt, density,
+                        preflight_pt, density, compaction_failed,
                     )
                     return SessionResult(turn, "context_full", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
-                log.info(
-                    "Context pre-flight overflow at turn %d recovered by re-clip "
-                    "(msg %d: %d -> %d tokens; estimate_pt=%d)",
-                    turn, clip["index"], clip["orig_pt"], clip["new_pt"],
-                    estimated_pt,
-                )
+                if compacted:
+                    log.info(
+                        "Context pre-flight overflow at turn %d recovered by "
+                        "last-resort compaction (after_reclip=%s, estimate_pt=%d)",
+                        turn, clip is not None, estimated_pt,
+                    )
+                else:
+                    log.info(
+                        "Context pre-flight overflow at turn %d recovered by re-clip "
+                        "(msg %d: %d -> %d tokens; estimate_pt=%d)",
+                        turn, clip["index"], clip["orig_pt"], clip["new_pt"],
+                        estimated_pt,
+                    )
         # Mark the exact operator answer consumed before transport. An
         # ambiguous transport failure must not deliver it a second time.
         _consume_pending_clarification(session, turn=turn)

@@ -1,4 +1,4 @@
-"""Server context size lookup + validated compaction at the OOM-safe threshold."""
+"""Server context lookup and last-resort prompt recovery."""
 from __future__ import annotations
 
 import copy
@@ -236,22 +236,20 @@ def _ensure_protected_correction_tail(
     return [*messages, {"role": "user", "content": text}]
 
 
-def preflight_reclip_oversized(session) -> dict | None:
-    """Invariant backstop: re-clip the single largest oversized message
-    in token space so a pre-flight overflow gets one chance to recover
-    before the session ends context_full.
+def preflight_reclip_oversized(
+    session,
+    *,
+    projected_tokens: int | None = None,
+    budget_tokens: int | None = None,
+) -> dict | None:
+    """Re-clip one recent result just enough to recover an overflowing prompt.
 
-    The pre-flight gate fires when the projected prompt exceeds
-    cfg.context_fill_ratio × context_size — in practice almost always
-    because one tool result appended at the tail of the previous turn
-    is enormous (single-turn-overflow death). Instead of ending the
-    session outright, find the largest clippable message, and — if it
-    alone exceeds half the context window — head+tail clip it to fit
-    within (context_size / 2) tokens, with a visible notice inserted
-    where content was removed (original token size, what is shown,
-    advice to re-run a narrower command). The caller re-projects once
-    and only ends the session if the projection STILL exceeds the
-    window.
+    This is the first, local step of the last-resort fit gate. It runs only
+    after the rendered context (including halflife) exceeds
+    ``context_fill_ratio * context_size``. The newest batch of tool results is
+    preferred; otherwise the newest non-initial user message is eligible. The
+    selected message is clipped head+tail against the prompt's actual token
+    deficit, rather than against a fixed fraction of the whole context.
 
     Clippable messages: tool results and user messages AFTER the first
     (the initial task prompt is never clipped). System and assistant
@@ -264,8 +262,8 @@ def preflight_reclip_oversized(session) -> dict | None:
     so strategy caches invalidate; strategies that cannot replace opt
     out and the caller falls through to the legacy session end.
 
-    Returns an info dict {index, role, tool_call_id, orig_pt, new_pt}
-    on success, None when nothing qualifies.
+    Returns an info dict on success, or ``None`` when no single eligible
+    message can shrink the prompt enough to be useful.
     """
     cfg = session.cfg
     ctx_size = int(getattr(cfg, "context_size", 0) or 0)
@@ -286,10 +284,22 @@ def preflight_reclip_oversized(session) -> dict | None:
                 pass
         return len(str(m)) // 4
 
-    budget_pt = ctx_size // 2
+    prompt_budget = int(
+        budget_tokens
+        if budget_tokens is not None
+        else ctx_size * float(getattr(cfg, "context_fill_ratio", 0.95))
+    )
+    projected_pt = int(
+        projected_tokens
+        if projected_tokens is not None
+        else _recount_tokens(msgs, tokenizer)
+    )
+    if prompt_budget <= 0 or projected_pt <= prompt_budget:
+        return None
+
     protected_correction = _protected_correction_text(session)
     first_user_seen = False
-    best_i, best_pt = -1, 0
+    candidates: list[tuple[int, int]] = []
     for i, m in enumerate(msgs):
         role = m.get("role")
         if role == "user" and not first_user_seen:
@@ -308,34 +318,60 @@ def preflight_reclip_oversized(session) -> dict | None:
         if not isinstance(content, str) or not content:
             continue
         pt = _count(m)
-        if pt > best_pt:
-            best_i, best_pt = i, pt
-    if best_i < 0 or best_pt <= budget_pt:
-        return None  # no single offending oversized message
+        candidates.append((i, pt))
+    if not candidates:
+        return None
+
+    # Parallel tool calls can append several results after one assistant
+    # message. Prefer the largest result in that newest batch. If there is no
+    # trailing tool batch, use the newest eligible user message.
+    last_assistant = max(
+        (i for i, message in enumerate(msgs) if message.get("role") == "assistant"),
+        default=-1,
+    )
+    trailing_tools = [
+        (i, pt)
+        for i, pt in candidates
+        if i > last_assistant and msgs[i].get("role") == "tool"
+    ]
+    best_i, best_pt = (
+        max(trailing_tools, key=lambda item: item[1])
+        if trailing_tools
+        else candidates[-1]
+    )
+    required_reduction = projected_pt - prompt_budget
+    target_pt = best_pt - required_reduction
+    if target_pt <= 0:
+        return None
+
     target = msgs[best_i]
     content = target["content"]
     notice = (
         f"[HARNESS re-clip: this message was ~{best_pt} tokens "
-        f"({len(content)} chars) — too large for the {ctx_size}-token "
-        f"context window. Only the head and tail are shown "
-        f"(~{budget_pt}-token budget); the middle was removed and is not "
+        f"({len(content)} chars) and the request exceeded its "
+        f"{prompt_budget}-token prompt budget. Only the head and tail are "
+        f"shown (~{target_pt}-token target for this result); the middle was "
+        "removed and is not "
         "recoverable from context. Re-run a narrower command (file "
         "subset, grep filter, --max-count, head/tail) to see the "
         "removed part.]"
     )
-    # Convert the token budget to chars via this message's own observed
-    # chars-per-token ratio; reserve the notice and a 10% safety margin
-    # so the clipped message lands under budget_pt after re-count.
+    # Convert the calculated target through this message's observed token
+    # density. The small one-shot margin absorbs notice/framing variance; the
+    # caller re-counts once and escalates to digest if the request still does
+    # not fit.
     chars_per_token = max(1.0, len(content) / best_pt)
-    char_budget = max(0, int(budget_pt * chars_per_token * 0.9) - len(notice) - 2)
+    char_budget = max(0, int(target_pt * chars_per_token * 0.95))
     clipped = _head_tail_truncate(content, char_budget, marker=notice)
     new_target = dict(target)
     new_target["content"] = clipped
+    new_pt = _count(new_target)
+    if new_pt >= best_pt:
+        return None
     new_msgs = list(msgs)
     new_msgs[best_i] = new_target
     if not ctx.replace_all_messages(new_msgs):
         return None  # strategy cannot persist a replacement
-    new_pt = _count(new_target)
     from ..savings import get_ledger
     get_ledger().record_transform(
         bucket="preflight_reclip",
@@ -351,14 +387,17 @@ def preflight_reclip_oversized(session) -> dict | None:
             "role": target.get("role", ""),
             "orig_pt": best_pt,
             "new_pt": new_pt,
-            "budget_pt": budget_pt,
+            "projected_pt": projected_pt,
+            "budget_pt": prompt_budget,
+            "required_reduction_pt": required_reduction,
             "context_size": ctx_size,
         },
     )
     log.warning(
         "preflight re-clip: message %d (role=%s) %d -> %d tokens "
-        "(budget=%d, ctx=%d)",
-        best_i, target.get("role"), best_pt, new_pt, budget_pt, ctx_size,
+        "(projected=%d, prompt_budget=%d, ctx=%d)",
+        best_i, target.get("role"), best_pt, new_pt,
+        projected_pt, prompt_budget, ctx_size,
     )
     return {
         "index": best_i,
@@ -366,6 +405,8 @@ def preflight_reclip_oversized(session) -> dict | None:
         "tool_call_id": target.get("tool_call_id", ""),
         "orig_pt": best_pt,
         "new_pt": new_pt,
+        "projected_pt": projected_pt,
+        "budget_pt": prompt_budget,
     }
 
 
@@ -440,17 +481,22 @@ def get_server_ctx(session: "Session") -> int:
     return 0
 
 
-def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dict]:
-    """Digest or validated-checkpoint compaction at the OOM-safe threshold.
+def maybe_compact_messages(
+    session: "Session",
+    messages: list[dict],
+    *,
+    projected_tokens: int | None = None,
+) -> list[dict]:
+    """Digest or checkpoint only when the rendered prompt reaches its wall.
 
-    Threshold = (1 - max_tokens_fraction) - digest_compaction_safety_margin.
-    This guarantees that any turn that does NOT fire compaction
-    leaves room for the server to allocate max_tokens generation
-    slots without exceeding ctx. Fires every time the threshold
-    is crossed.
+    Threshold = context_fill_ratio - digest_compaction_safety_margin. The
+    default margin is zero, so normal context rendering and halflife get the
+    whole configured prompt budget before this lossy recovery runs. A positive
+    margin remains an explicit earlier-compaction override; the historical
+    negative disable value continues to put the threshold above the window.
 
-    Triggers when the exact pre-flight token count (local
-    tokenizer) crosses threshold × server_ctx AND the session
+    Triggers when the best available pre-flight token count crosses threshold
+    × server_ctx AND the session
     has produced at least cfg.digest_compaction_gate_min_mutations
     mutations. Replaces every assistant + tool message with one
     synthetic user-role digest block rendered from .trace.jsonl.
@@ -494,9 +540,9 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     ctx_size = session._get_server_ctx() or int(getattr(cfg, "context_size", 0) or 0)
     if ctx_size <= 0:
         return messages
-    max_tokens_fraction = float(getattr(cfg, "max_tokens_fraction", 0.25))
-    safety_margin = float(getattr(cfg, "digest_compaction_safety_margin", 0.05))
-    threshold = max(0.0, 1.0 - max_tokens_fraction - safety_margin)
+    fill_ratio = float(getattr(cfg, "context_fill_ratio", 0.95))
+    safety_margin = float(getattr(cfg, "digest_compaction_safety_margin", 0.0))
+    threshold = max(0.0, fill_ratio - safety_margin)
     gate_min_mut = int(getattr(cfg, "digest_compaction_gate_min_mutations", 1))
     budget = int(threshold * ctx_size)
     # Cheap-estimate fast path. The exact tokenize via
@@ -516,7 +562,12 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
         cheap_est = int(chars_div_4(messages))
     except Exception:
         cheap_est = None
-    if cheap_est is not None and cheap_est * 1.10 < budget:
+    projected_pt = int(projected_tokens or 0)
+    if (
+        projected_pt <= budget
+        and cheap_est is not None
+        and cheap_est * 1.10 < budget
+    ):
         # Comfortably under budget; no compaction needed and no
         # need to pay for exact tokenization on this turn.
         return messages
@@ -532,15 +583,16 @@ def maybe_compact_messages(session: "Session", messages: list[dict]) -> list[dic
     tool_schemas = effective_model_tool_schemas(session)
     if tokenizer is not None:
         try:
-            est_pt = int(tokenizer.count(messages, tools=tool_schemas))
+            measured_pt = int(tokenizer.count(messages, tools=tool_schemas))
         except Exception as e:
             log.warning("local tokenizer count failed (%s); skipping compaction check", e)
             return messages
     elif cheap_est is not None:
-        est_pt = cheap_est
+        measured_pt = cheap_est
     else:
         return messages
-    if est_pt < budget:
+    est_pt = max(measured_pt, projected_pt)
+    if est_pt <= budget:
         return messages
     mutation_count = sum(1 for ev in session._trace_events
                          if ev.get("event") == "tool_call"

@@ -6,7 +6,7 @@ anomaly. Deliberately a SEPARATE file from ``.trace.jsonl``: the trace
 records what the model did; the system log records where the harness's
 own accounting went wrong — oversized tool results, char-estimate vs
 real-token density blowouts, pre-flight context overflows and how they
-were resolved (re-clip vs session end).
+were resolved (targeted re-clip, last-resort compaction, or session end).
 
 Event schema (every event, absent numerics zeroed):
 
@@ -21,7 +21,8 @@ Event schema (every event, absent numerics zeroed):
   ctx           context window size in tokens
   command_shape binary + flags only, arguments stripped (see command_shape())
   quirk_hit     whether a bash_quirks rewrite touched the producing command
-  action        "reclipped" | "session_end" | "none" (observational)
+  action        "reclipped" | "compacted" | "reclipped_then_compacted" |
+                "session_end" | "none" (observational)
 
 ``command_shape`` is content-blind by construction: binaries are
 basenamed, flag values after ``=`` are stripped, non-flag arguments are

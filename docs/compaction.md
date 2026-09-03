@@ -10,6 +10,13 @@ Yuj can call a trusted Python function when a run needs context compaction.
 The function may use the built-in method, cancel that attempt, or return a
 replacement checkpoint summary.
 
+Compaction is a last resort by default. Yuj first renders the configured
+context strategy, including halflife, and checks the complete request against
+`model.context_fill_ratio`. If it is too large, Yuj re-clips one recent tool
+result by the calculated deficit. Only if the request still does not fit does
+Yuj make one compaction attempt. It ends the session as `context_full` if that
+replacement still cannot fit; it does not compact the same material in a loop.
+
 The function runs inside the Yuj process with your account's permissions. It
 is not a quirk or a shell hook. Review the whole module before you enable it.
 
@@ -77,8 +84,10 @@ The `knobs` mapping contains these keys:
 - `digest_keep_recent_turns`
 - `digest_compaction_gate_min_mutations`
 
-Yuj calls the hook only after the normal token threshold and mutation gate
-pass. It does not call it on every turn.
+Yuj calls the hook only after the last-resort token threshold and mutation
+gate pass. It does not call it on every turn. By default the threshold is
+`model.context_fill_ratio`; a positive `digest_compaction_safety_margin`
+explicitly moves it earlier.
 
 ## Return one of three results
 

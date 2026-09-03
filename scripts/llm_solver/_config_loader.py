@@ -726,7 +726,7 @@ def _extract_config_fields(d: dict) -> dict:
         "pre_mutation_turn_cap": d.get("loop", {}).get("pre_mutation_turn_cap", 0),
         "plan_mode": d.get("loop", {}).get("plan_mode", "off"),
         "plan_mode_max_turns": d.get("loop", {}).get("plan_mode_max_turns", 15),
-        "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.05),
+        "digest_compaction_safety_margin": d.get("context", {}).get("digest_compaction_safety_margin", 0.0),
         "digest_keep_recent_turns": d.get("context", {}).get("digest_keep_recent_turns", 8),
         "digest_compaction_gate_min_mutations": d.get("context", {}).get("digest_compaction_gate_min_mutations", 0),
         "repo_map_tokens": d.get("context", {}).get("repo_map_tokens", 0),

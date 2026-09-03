@@ -1873,7 +1873,7 @@ allow it. These settings live under `[context]`:
 | `compaction_hook` | `""` | Trusted synchronous `module:function` called after the normal threshold and mutation gate. Empty disables the hook. |
 | `checkpoint_keep_recent_tokens` | `0` | Verbatim recent-tail target. Zero means 20% of the live context window, with a 4,096-token minimum. |
 | `checkpoint_max_summary_tokens` | `4000` | Maximum checkpoint response; the runtime also applies a 4,000-token hard cap and the available-reserve limit. |
-| `digest_compaction_safety_margin` | `0.05` | Margin used by the derived compaction threshold. |
+| `digest_compaction_safety_margin` | `0.0` | Headroom subtracted from `context_fill_ratio`; zero keeps compaction at the last-resort prompt wall. |
 | `digest_keep_recent_turns` | `8` | Digest tail size and the close-compaction guard window. |
 | `digest_compaction_gate_min_mutations` | `0` | Minimum successful mutations before compaction may run. |
 

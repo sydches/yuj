@@ -1,9 +1,9 @@
-"""Session-level digest compaction at the derived OOM-safe threshold.
+"""Session-level last-resort digest compaction.
 
-threshold = (1 - max_tokens_fraction) - digest_compaction_safety_margin
+threshold = context_fill_ratio - digest_compaction_safety_margin
 
-Re-fires on every threshold crossing. Mutation gate via
-cfg.digest_compaction_gate_min_mutations (default 0).
+Normal rendering gets the full prompt budget by default. Future content can
+cause another crossing; one call never loops over unchanged material.
 """
 import json
 from pathlib import Path
@@ -45,8 +45,9 @@ def _make_session(
     cfg_kwargs = {
         "base_url": "http://localhost:8080/v1",
         "context_size": 40960,
+        "context_fill_ratio": 0.95,
         "max_tokens_fraction": 0.25,
-        "digest_compaction_safety_margin": 0.05,
+        "digest_compaction_safety_margin": 0.0,
         "digest_compaction_gate_min_mutations": 0,
         "digest_keep_recent_turns": 8,
         "compaction_method": "digest",
@@ -132,9 +133,8 @@ def test_compaction_fires_above_threshold_with_mutation(tmp_path):
         {"event": "tool_call", "tool_name": "edit"},
     ])
     sess.context = _make_fake_context()
-    # Defaults: max_tokens_fraction=0.25, safety_margin=0.05 → threshold=0.70.
-    # 0.70 * 98304 = 68812 tokens; chars_div_4 uses str(msg) framing.
-    # 100 pairs × 5500-char payloads → est_pt over budget.
+    # Default threshold is the 0.95 prompt wall. chars_div_4 includes message
+    # framing, and this payload is well above the wall.
     msgs = _heavy_messages(100, payload_chars=5500)
     out = sess._maybe_compact_messages(msgs)
     assert out is not msgs
@@ -147,8 +147,7 @@ def test_compaction_fires_above_threshold_with_mutation(tmp_path):
     assert out[0]["content"] == "sys prompt"
     assert out[1]["content"] == "task: do thing"
     assert "Compacted history" in out[2]["content"]
-    # Derived threshold reflected in the compaction message text.
-    assert "0.70 of the server context window" in out[2]["content"]
+    assert "0.95 of the server context window" in out[2]["content"]
     # The latest assistant + tool messages from the input survive verbatim.
     assert out[3] is msgs[-2]
     assert out[4] is msgs[-1]
@@ -175,38 +174,29 @@ def test_compaction_refires_each_threshold_crossing(tmp_path):
     assert len(out2) == 5
 
 
-def test_threshold_derivation_from_max_tokens_fraction(tmp_path):
-    """Reducing max_tokens_fraction raises the derived threshold;
-    same payload that fired at 0.70 keeps firing at 0.85 only with
-    a larger payload that crosses the higher budget."""
+def test_max_tokens_fraction_does_not_move_prompt_wall(tmp_path):
+    """Reply allocation no longer controls when lossy compaction starts."""
     _seed_trace_jsonl(tmp_path, 30)
-    # max_tokens_fraction=0.10 + safety=0.05 → threshold=0.85.
-    # 0.85 * 98304 = 83558 tokens.
-    sess = _make_session(tmp_path, trace_events=[
-        {"event": "tool_call", "tool_name": "write"},
-    ], cfg_extra={"max_tokens_fraction": 0.10})
-    sess.context = _make_fake_context()
-    # 80 pairs × 4000 chars ≈ 320k chars / 4 ≈ 80k est_pt — under 0.85.
-    msgs_under = _heavy_messages(80, payload_chars=4000)
-    out_under = sess._maybe_compact_messages(msgs_under)
-    assert sess._compacted is False
-    assert out_under is msgs_under
-    # 100 pairs × 5500 chars ≈ 550k / 4 ≈ 137k est_pt — over 0.85.
-    msgs_over = _heavy_messages(100, payload_chars=5500)
-    out_over = sess._maybe_compact_messages(msgs_over)
-    assert sess._compacted is True
-    assert "0.85 of the server context window" in out_over[2]["content"]
+    messages = _heavy_messages(100, payload_chars=5500)
+    for fraction in (0.25, 0.10):
+        sess = _make_session(tmp_path, trace_events=[
+            {"event": "tool_call", "tool_name": "write"},
+        ], cfg_extra={"max_tokens_fraction": fraction})
+        sess.context = _make_fake_context()
+        out = sess._maybe_compact_messages(messages)
+        assert sess._compacted is True
+        assert "0.95 of the server context window" in out[2]["content"]
 
 
 def test_threshold_derivation_from_safety_margin(tmp_path):
     """Larger safety margin lowers the derived threshold; payload
-    that did NOT fire at 0.70 (margin=0.05) fires at 0.50 (margin=0.25)."""
+    that does not reach the 0.95 wall can opt into a 0.80 trigger."""
     _seed_trace_jsonl(tmp_path, 30)
-    msgs = _heavy_messages(60, payload_chars=4000)  # ~240k chars / 4 ≈ 60k est_pt
+    msgs = _heavy_messages(75, payload_chars=4300)
 
     sess_low_margin = _make_session(tmp_path, trace_events=[
         {"event": "tool_call", "tool_name": "write"},
-    ])  # threshold=0.70 → 68812 budget; payload undershoots.
+    ])  # threshold=0.95; payload undershoots.
     sess_low_margin.context = _make_fake_context()
     out_low = sess_low_margin._maybe_compact_messages(msgs)
     assert sess_low_margin._compacted is False
@@ -214,11 +204,24 @@ def test_threshold_derivation_from_safety_margin(tmp_path):
 
     sess_high_margin = _make_session(tmp_path, trace_events=[
         {"event": "tool_call", "tool_name": "write"},
-    ], cfg_extra={"digest_compaction_safety_margin": 0.25})  # threshold=0.50 → 49152 budget.
+    ], cfg_extra={"digest_compaction_safety_margin": 0.15})
     sess_high_margin.context = _make_fake_context()
     out_high = sess_high_margin._maybe_compact_messages(msgs)
     assert sess_high_margin._compacted is True
-    assert "0.50 of the server context window" in out_high[2]["content"]
+    assert "0.80 of the server context window" in out_high[2]["content"]
+
+
+def test_projected_overflow_can_trigger_digest(tmp_path):
+    """The fit gate can pass its stronger live-density projection."""
+    _seed_trace_jsonl(tmp_path, 30)
+    sess = _make_session(tmp_path, trace_events=[
+        {"event": "tool_call", "tool_name": "write"},
+    ])
+    sess.context = _make_fake_context()
+    msgs = _heavy_messages(20, payload_chars=2000)
+    out = sess._maybe_compact_messages(msgs, projected_tokens=100_000)
+    assert sess._compacted is True
+    assert out is not msgs
 
 
 def test_compaction_mutation_gate_is_configurable(tmp_path):
@@ -276,10 +279,10 @@ def test_latest_pair_truncated_when_alone_exceeds_budget(tmp_path):
     assert "compaction overflow guard" in last_tool["content"]
     assert len(last_tool["content"]) < len(huge_blob)
     # And the post-compaction prompt now fits within budget.
-    # threshold=0.70, ctx=98304 → budget=68812 tokens.
+    # threshold=0.95, ctx=98304 → budget=93388 tokens.
     final_count = _recount_tokens(out, tokenizer=None)
-    assert final_count <= 68812, (
-        f"post-guard final_count={final_count} should be <= budget=68812"
+    assert final_count <= 93388, (
+        f"post-guard final_count={final_count} should be <= budget=93388"
     )
 
 
@@ -292,8 +295,8 @@ def test_compaction_overflow_raises_when_truncation_insufficient(tmp_path):
     """
     from scripts.llm_solver.harness._loop.compaction import CompactionOverflowError
     # Use a TINY ctx so the digest text alone exceeds budget.
-    # threshold=0.70, ctx=2048 → budget=1433 tokens ≈ 5732 chars.
-    # Seed a trace with content that renders into a digest >> 5732 chars.
+    # threshold=0.95, ctx=2048 → budget=1945 tokens ≈ 7780 chars.
+    # Seed a trace with content that renders into a much larger digest.
     rows = []
     for i in range(200):
         rows.append({
@@ -324,7 +327,7 @@ def test_compaction_falls_back_to_cfg_when_server_ctx_unknown(tmp_path):
     ], server_ctx_value=0)
     sess.context = _make_fake_context()
     sess.cfg.base_url = ""  # block /props
-    # cfg.context_size = 40960 → 0.70 × 40960 = 28672 tokens ≈ 114688 chars
+    # cfg.context_size = 40960 → 0.95 × 40960 = 38912 tokens
     msgs = _heavy_messages(100, payload_chars=2500)  # ~510k chars
     out = sess._maybe_compact_messages(msgs)
     assert sess._compacted is True

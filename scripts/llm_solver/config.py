@@ -592,13 +592,11 @@ class Config:
     # and an explicit exit before implementation tools are unlocked.
     plan_mode: str = "off"
     plan_mode_max_turns: int = 15
-    # Digest compaction trigger — fires when the exact pre-flight token
-    # count (via the local tokenizer) crosses the derived threshold:
-    #     threshold = (1 - max_tokens_fraction) - digest_compaction_safety_margin
-    # The derivation guarantees compaction fires before any non-compacted
-    # turn would land est_pt + max_tokens past ctx (server-side OOM).
-    # Re-fires on every crossing.
-    digest_compaction_safety_margin: float = 0.05
+    # Digest compaction is last-resort recovery after the rendered context
+    # reaches context_fill_ratio. A positive margin opts into an earlier
+    # trigger; zero leaves the full prompt budget to normal rendering and
+    # halflife first.
+    digest_compaction_safety_margin: float = 0.0
     digest_keep_recent_turns: int = 8
     digest_compaction_gate_min_mutations: int = 0
     # Ranked repository symbol map appended to the stable task message.
@@ -688,11 +686,10 @@ class Config:
     done_guard_enabled: bool = True
     rumination_enabled: bool = True
     error_ladder_enabled: bool = True
-    # Pre-flight overflow backstop: when the projected prompt exceeds
-    # context_fill_ratio at the top of a turn, re-clip the single
-    # largest oversized message in token space (head+tail, ctx/2-token
-    # budget, visible notice) and re-project once before ending the
-    # session context_full. See _loop/compaction.py::preflight_reclip_oversized.
+    # First step of the post-render fit gate: when the projected prompt
+    # exceeds context_fill_ratio, re-clip one recent result by the calculated
+    # deficit. The loop then escalates once to digest before context_full.
+    # See _loop/compaction.py::preflight_reclip_oversized.
     preflight_reclip_enabled: bool = True
     # Text-transformation accounting. counts stores exact sizes and hashes;
     # debug also stores complete before/after values beside the savings ledger.

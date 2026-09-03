@@ -1,12 +1,10 @@
-"""Pre-flight overflow backstop + system log.
+"""Post-render prompt fit gate and system log.
 
-Pre-fix, a single oversized tool result appended at the tail of a turn
-ended the session context_full at the next pre-flight ("single-turn
-overflow death"). The backstop re-clips that one message in token
-space (head+tail, ctx/2-token budget, visible notice), re-projects
-once, and only ends the session when the projection STILL exceeds the
-window. Every gate firing lands in the per-run system_log.jsonl — the
-harness talking about itself, separate from .trace.jsonl.
+After normal context rendering, an overflowing request gets one targeted
+re-clip sized to its actual deficit. If that is insufficient, the harness
+gets one digest attempt before ending context_full. Every gate firing lands
+in the per-run system_log.jsonl — the harness talking about itself, separate
+from .trace.jsonl.
 
 state.json semantics are untouched: the backstop edits only the in-memory message list via
 ContextManager.replace_all_messages, never the trace or the state
@@ -72,7 +70,7 @@ def _make_turn_result(content="ok", finish_reason="stop"):
 # ── preflight_reclip_oversized (unit) ──────────────────────────────
 
 
-def test_reclip_clips_largest_oversized_message_with_notice():
+def test_reclip_clips_recent_result_to_prompt_deficit_with_notice():
     huge = "line of output\n" * 2000  # ~30k chars ≈ 7.5k est tokens
     sess = _stub_session(1000, [
         {"role": "system", "content": "sys"},
@@ -86,7 +84,10 @@ def test_reclip_clips_largest_oversized_message_with_notice():
     assert info["index"] == 3
     assert info["tool_call_id"] == "c9"
     assert info["orig_pt"] > 1000 // 2
-    assert info["new_pt"] <= 1000 // 2
+    # The result is trimmed only as far as the whole prompt needs. It remains
+    # larger than the old fixed ctx/2 target while the full request now fits.
+    assert info["new_pt"] > 1000 // 2
+    assert sess.context.estimate_tokens() <= info["budget_pt"]
     msgs = sess.context.get_messages()
     clipped = msgs[3]["content"]
     # Visible notice where content was removed: original token size,
@@ -119,7 +120,7 @@ def test_reclip_never_touches_initial_user_or_assistant():
 
 
 def test_reclip_never_changes_a_protected_pending_correction():
-    correction = "c" * 8000
+    correction = "c" * 100
     sess = _stub_session(1000, [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "task prompt"},
@@ -138,13 +139,31 @@ def test_reclip_never_changes_a_protected_pending_correction():
     }
 
 
-def test_reclip_noop_when_no_message_exceeds_half_context():
+def test_reclip_noop_when_prompt_fits():
     sess = _stub_session(100000, [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "task"},
         {"role": "tool", "tool_call_id": "c1", "content": "x" * 5000},
     ])
     assert preflight_reclip_oversized(sess) is None
+
+
+def test_reclip_can_trim_result_smaller_than_half_the_context():
+    sess = _stub_session(1000, [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "working state"},
+        {"role": "tool", "tool_call_id": "c2", "content": "x" * 1600},
+    ])
+    info = preflight_reclip_oversized(
+        sess,
+        projected_tokens=900,
+        budget_tokens=850,
+    )
+    assert info is not None
+    assert info["orig_pt"] < 1000 // 2
+    assert info["new_pt"] < info["orig_pt"]
+    assert info["budget_pt"] == 850
 
 
 def test_reclip_bails_when_strategy_cannot_replace():
@@ -171,7 +190,7 @@ def test_oversized_message_reclipped_and_session_survives(syslog):
     with patch.object(Session, "_get_server_ctx", return_value=0):
         session = Session(cfg, client, "sys", "task prompt", "/tmp")
         # One oversized tool result (~10k est tokens > 0.85*8192) whose
-        # clipped form (ctx/2 = 4096 tokens) fits the projection again.
+        # deficit-sized clipped form fits the projection again.
         session.context.add_tool_result("c1", "y" * 40000, tool_name="bash")
         result = session.run()
     # Pre-fix this ended context_full before any API call. Now: the
@@ -196,9 +215,8 @@ def test_oversized_message_reclipped_and_session_survives(syslog):
 
 
 def test_still_too_big_ends_context_full_with_event(syslog):
-    # Tiny window: even the clipped message (notice included) stays
-    # over budget, so the legacy behavior is preserved: context_full
-    # before any API call, with a session_end event in the system log.
+    # Tiny window: neither the notice-bearing re-clip nor a digest can fit, so
+    # context_full remains the terminal result before any API call.
     cfg = make_config(max_turns=5, context_size=100, context_fill_ratio=0.5)
     client = MagicMock()
     client.chat.side_effect = AssertionError("chat called despite over-budget context")
@@ -211,6 +229,66 @@ def test_still_too_big_ends_context_full_with_event(syslog):
     overflow = [e for e in _events(syslog) if e["type"] == "preflight_overflow"]
     assert len(overflow) == 1
     assert overflow[0]["action"] == "session_end"
+
+
+def test_accumulated_history_uses_one_digest_after_reclip_cannot_help(
+    syslog, tmp_path
+):
+    cfg = make_config(
+        max_turns=5,
+        context_size=8192,
+        context_fill_ratio=0.85,
+        digest_compaction_safety_margin=0.0,
+        digest_compaction_gate_min_mutations=0,
+    )
+    trace_path = tmp_path / ".trace.jsonl"
+    trace_path.write_text(json.dumps({
+        "event": "tool_call",
+        "turn": 1,
+        "name": "read",
+        "args_summary": "path='src/example.py'",
+        "result_summary": "inspected example",
+        "reasoning_summary": "",
+        "prompt_tokens": 100,
+        "completion_tokens": 10,
+    }) + "\n")
+    client = MagicMock()
+    client.chat.return_value = _make_turn_result()
+    client.build_assistant_message.return_value = {
+        "role": "assistant",
+        "content": "ok",
+    }
+    with patch.object(Session, "_get_server_ctx", return_value=0):
+        session = Session(
+            cfg,
+            client,
+            "sys",
+            "task",
+            str(tmp_path),
+            trace_path=trace_path,
+        )
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+        ]
+        for turn in range(20):
+            messages.append({
+                "role": "assistant",
+                "content": f"turn {turn}: " + "a" * 1800,
+            })
+        messages.extend([
+            {"role": "assistant", "content": "latest"},
+            {"role": "tool", "tool_call_id": "tiny", "content": "small"},
+        ])
+        session.context.replace_all_messages(messages)
+        result = session.run()
+
+    assert result.finish_reason == "stop"
+    assert client.chat.call_count == 1
+    assert session._compaction_count == 1
+    overflow = [e for e in _events(syslog) if e["type"] == "preflight_overflow"]
+    assert len(overflow) == 1
+    assert overflow[0]["action"] == "compacted"
 
 
 def test_reclip_disabled_keeps_legacy_end(syslog):

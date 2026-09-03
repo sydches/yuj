@@ -94,7 +94,7 @@ cache_miss_warn_ratio = 0.0            # warn after the first turn below this hi
 name = "qwen3-vl-8b"       # model identifier sent to the server; must match --model or alias
 profile_name = "_base"      # exact profile or unique family; _base is the public compatibility profile
 context_size = 40960        # FALLBACK ONLY. The harness queries llama-server's /props at session start and overwrites this with the live n_ctx_per_slot. Used only when /props is unreachable (e.g. tests, dry-run).
-context_fill_ratio = 0.95   # fail-safe upper bound for end-of-turn pt vs context_size. With server-reported pt now driving the gate (no chars/4 undershoot), 0.95 leaves a small margin to avoid 400 errors. Primary mechanism is digest compaction in Session._maybe_compact_messages, which fires at 0.85 — well below this fail-safe.
+context_fill_ratio = 0.95   # Usable prompt wall vs context_size. After normal rendering/halflife, the harness tries one targeted re-clip and then one digest before ending context_full.
 max_tokens_fraction = 0.25  # generation cap as a fraction of context_size. At ctx=65,536 → max_tokens=16,384 (preserves prior default). Scales correctly when context_size changes — a 32k server gets 8k generation cap, a 128k server gets 32k. Replaces the hardcoded max_tokens=16384 which was wrong-shape at any ctx ≠ 65,536.
 tokenizer_id = ""            # optional Hugging Face tokenizer ID or local path; empty uses the character-count estimate. Runtime files set this for exact experiment runs.
 thinking_level = "off"        # off | minimal | low | medium | high | xhigh | max; profile mapping is applied per request
@@ -126,7 +126,7 @@ error_nudge_threshold = 3   # inject a "re-read the file" nudge after N consecut
 error_same_class_threshold = 0  # 0 = disabled. End session after N errors with the same signature (exit code OR first-line body) regardless of intervening non-error turns. Catches "model repeats the same wrong fix" loops that error_abort_threshold misses because non-error tool calls reset its counter.
 bash_quirks_forbidden_enabled = true  # bash_quirks/forbidden.toml layer — refuse cd into paths outside the sandbox cwd (cd /, cd /home/<other>/, etc.).
 turn_snapshots_enabled = false  # invisible per-turn git snapshots (dangling commits, private index) after each source-write turn; turn->sha map in telemetry dir. Enables rewind/branch at any turn. See harness/turn_snapshots.py.
-preflight_reclip_enabled = true  # Pre-flight overflow backstop: instead of ending the session when the projected prompt exceeds context_fill_ratio, re-clip the single largest oversized message in token space (head+tail with a visible notice, targeting ctx/2 tokens for that message) and re-project once; only if the projection STILL exceeds the window does the session end context_full. Anomalies land in the per-run system_log.jsonl.
+preflight_reclip_enabled = true  # First step of the post-halflife fit gate: re-clip one recent result by the calculated prompt deficit, then escalate once to digest if needed. Anomalies land in system_log.jsonl.
 transform_log_mode = "counts"  # counts | debug. Debug also saves complete before/after text beside the savings ledger; it can retain text that later redaction removes.
 pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls after N orientation turns if no mutation has occurred. 0 = disabled (default). Opt in via configs/toggles/orientation-cap-15.toml.
 # Symmetric to error_nudge: after N consecutive non-mutation tool calls,
@@ -265,17 +265,13 @@ compaction_method = "digest"            # "digest" | "checkpoint"
 compaction_hook = ""                    # trusted synchronous module:function; empty keeps built-in behavior
 checkpoint_keep_recent_tokens = 0       # 0 = max(4096, floor(20% of live context))
 checkpoint_max_summary_tokens = 4000    # hard-capped at 4000 by the runtime
-# The compaction threshold is derived, not configured directly:
-#     threshold = (1 - model.max_tokens_fraction) - digest_compaction_safety_margin
-# At max_tokens_fraction=0.25 + safety_margin=0.05 → threshold=0.70.
-# At max_tokens_fraction=0.10 + safety_margin=0.05 → threshold=0.85.
-# The derivation guarantees a non-firing turn never lands est_pt +
-# max_tokens past ctx (server-side OOM). Mutation gate at 0 means
-# fire regardless of mutation count; bump to 1+ to keep pathological
-# orientation stalls out of the compactor.
-digest_compaction_safety_margin = 0.05
+# The compaction threshold is context_fill_ratio minus this margin. Zero makes
+# digest a last resort at the prompt wall, after normal rendering/halflife and
+# one targeted re-clip. A positive value opts into earlier compaction; the
+# no-compaction overlay retains its historical negative disable value.
+digest_compaction_safety_margin = 0.0
 digest_keep_recent_turns = 8
-digest_compaction_gate_min_mutations = 0
+digest_compaction_gate_min_mutations = 0  # 0 allows last-resort recovery before any edit; 1+ requires that many completed mutations
 # Append a deterministic ranked file/symbol map to the first task message.
 # Zero keeps the existing prompt byte-for-byte unchanged.  Enabled maps use
 # the configured local tokenizer, active profile estimator, or documented
