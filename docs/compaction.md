@@ -17,6 +17,31 @@ result by the calculated deficit. Only if the request still does not fit does
 Yuj make one compaction attempt. It ends the session as `context_full` if that
 replacement still cannot fit; it does not compact the same material in a loop.
 
+If the server rejects a request that passed the local estimate, Yuj forces the
+same last-resort compaction path and retries the same client once. A second
+context rejection ends the session as `context_full`. This recovery does not
+switch models. The mutation gate and the explicit no-compaction overlay still
+apply.
+
+## Built-in digest budget
+
+The deterministic digest uses at most 10% of the resolved context window. Yuj
+keeps the latest assistant and tool exchange outside the digest, so the digest
+does not repeat it. If all older entries fit, Yuj keeps them all. Otherwise it
+uses 20% of the digest entry allowance for the earliest entries and 80% for
+the most recent entries. It keeps whole entries in time order, identifies the
+omitted turn range, and uses spare space from either end.
+
+Yuj counts the finished digest, including its header and omission notice. It
+removes whole entries until the digest fits. It then checks the complete
+request, including instructions, the task, tool definitions, and the retained
+latest exchange.
+
+For a 20,000-token context window, the digest cap is 2,000 tokens. The early
+and recent shares are about 400 and 1,600 tokens before the fixed digest text
+is counted. These values come from the live window; they are not fixed token
+limits.
+
 The function runs inside the Yuj process with your account's permissions. It
 is not a quirk or a shell hook. Review the whole module before you enable it.
 

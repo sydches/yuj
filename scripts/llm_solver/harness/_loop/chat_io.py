@@ -196,12 +196,14 @@ def _emit_api_error(session: "Session", turn: int, exc: Exception, *, kind: str)
 
 def chat_with_retry(session: "Session", turn: int):
     """Call client.chat(), retrying on transient errors."""
+    wire_compaction_attempted = False
     while True:
         cfg = session.cfg
         max_retries = cfg.max_transient_retries
         backoff = cfg.retry_backoff
         restart_with_fallback = False
         restart_after_stream_rule = False
+        restart_after_compaction = False
         for attempt in range(max_retries + 1):
             try:
                 session._compaction_turn = turn
@@ -349,11 +351,33 @@ def chat_with_retry(session: "Session", turn: int):
                 reason = _fallback_reason(exc, None)
                 if reason == "context_overflow":
                     _emit_api_error(session, turn, exc, kind=reason)
-                    if _has_fallback(session) and activate_next_fallback(
-                        session, turn, reason=reason
-                    ):
-                        restart_with_fallback = True
-                        break
+                    if not wire_compaction_attempted:
+                        wire_compaction_attempted = True
+                        count_before = int(
+                            getattr(session, "_compaction_count", 0)
+                        )
+                        try:
+                            maybe_compact_messages(
+                                session,
+                                list(session.context.get_messages()),
+                                force=True,
+                            )
+                        except CompactionOverflowError as recovery_error:
+                            log.warning(
+                                "Wire overflow recovery cannot fit on turn %d: %s",
+                                turn,
+                                recovery_error,
+                            )
+                        if int(
+                            getattr(session, "_compaction_count", 0)
+                        ) > count_before:
+                            log.info(
+                                "Wire context overflow on turn %d recovered by "
+                                "compaction; retrying the same client once",
+                                turn,
+                            )
+                            restart_after_compaction = True
+                            break
                     log.warning("Context full on turn %d: %s", turn, exc)
                     session._last_chat_error_reason = "context_full"
                     return None
@@ -370,6 +394,10 @@ def chat_with_retry(session: "Session", turn: int):
                 log.error("Fatal API error on turn %d: %s", turn, exc)
                 _emit_api_error(session, turn, exc, kind="fatal")
                 return None
-        if restart_with_fallback or restart_after_stream_rule:
+        if (
+            restart_with_fallback
+            or restart_after_stream_rule
+            or restart_after_compaction
+        ):
             continue
         return None

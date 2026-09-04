@@ -486,6 +486,7 @@ def maybe_compact_messages(
     messages: list[dict],
     *,
     projected_tokens: int | None = None,
+    force: bool = False,
 ) -> list[dict]:
     """Digest or checkpoint only when the rendered prompt reaches its wall.
 
@@ -506,6 +507,8 @@ def maybe_compact_messages(
     Checkpoint mode retains raw canonical messages in process, asks the same
     model for a structured checkpoint, and validates structure/path coverage/
     shrinkage before use. Every failure takes the unchanged digest path.
+    ``force`` bypasses only the local fill estimate after a server rejection;
+    the mutation gate and explicit no-compaction setting still apply.
     """
     cfg = session.cfg
     configured_method = str(getattr(cfg, "compaction_method", "digest"))
@@ -545,6 +548,9 @@ def maybe_compact_messages(
     threshold = max(0.0, fill_ratio - safety_margin)
     gate_min_mut = int(getattr(cfg, "digest_compaction_gate_min_mutations", 1))
     budget = int(threshold * ctx_size)
+    # A negative safety margin is the existing explicit no-compaction setting.
+    if force and safety_margin < 0:
+        return messages
     # Cheap-estimate fast path. The exact tokenize via
     # local_tokenizer.count() renders the model's chat template +
     # tokenizes the entire ~25k-token message list — measured
@@ -564,7 +570,8 @@ def maybe_compact_messages(
         cheap_est = None
     projected_pt = int(projected_tokens or 0)
     if (
-        projected_pt <= budget
+        not force
+        and projected_pt <= budget
         and cheap_est is not None
         and cheap_est * 1.10 < budget
     ):
@@ -592,7 +599,7 @@ def maybe_compact_messages(
     else:
         return messages
     est_pt = max(measured_pt, projected_pt)
-    if est_pt <= budget:
+    if not force and est_pt <= budget:
         return messages
     mutation_count = sum(1 for ev in session._trace_events
                          if ev.get("event") == "tool_call"
@@ -733,24 +740,15 @@ def maybe_compact_messages(
         try:
             # Import the content-blind rendering core from _shared.
             from ..._shared.digest_core import (
-                DigestOptions,
+                DIGEST_CONTEXT_FRACTION,
                 _load as digest_load,
-                render_digest,
+                render_bounded_digest,
             )
             rows = digest_load(session._trace_path)
         except Exception as e:
             log.warning("compaction: digest load failed (%s); skipping", e)
             return messages
         if not rows:
-            return messages
-        digest_text = render_digest(rows, DigestOptions(
-            reasoning=False,
-            expand_flags=(),
-            tail_threshold=10**9,
-            collapse_harness=True,
-            head_chars=80,
-        ))
-        if not digest_text.strip():
             return messages
 
     if (
@@ -821,15 +819,59 @@ def maybe_compact_messages(
             for m in messages[last_assistant_idx + 1:]:
                 if m.get("role") == "tool":
                     latest_pair.append(m)
-        compacted_block = (
-            f"[HARNESS: prompt crossed {threshold:.2f} of the server context window "
-            f"(est_pt={est_pt}, ctx={ctx_size}). The prior assistant + tool "
+        digest_rows = rows
+        current_session = int(getattr(session, "_session_number", 0) or 0)
+        if (
+            any(message.get("role") == "tool" for message in latest_pair)
+            and first_kept_turn > 0
+        ):
+            digest_rows = [
+                row
+                for row in rows
+                if not (
+                    row.session == current_session
+                    and row.n == first_kept_turn
+                )
+            ]
+        if not digest_rows:
+            return messages
+
+        trigger = (
+            f"the server rejected the prompt at its {ctx_size}-token context window"
+            if force
+            else (
+                f"prompt crossed {threshold:.2f} of the server context window "
+                f"(est_pt={est_pt}, ctx={ctx_size})"
+            )
+        )
+        digest_prefix = (
+            f"[HARNESS: {trigger}. The prior assistant + tool "
             "history has been replaced by the per-turn digest below; the "
             "most recent assistant + tool exchange is preserved verbatim "
             "after the digest. Continue from the most recent state.]\n\n"
             "=== Compacted history (one line per turn) ===\n"
-            + digest_text
         )
+        digest_budget = int(ctx_size * DIGEST_CONTEXT_FRACTION)
+
+        def count_digest(text: str) -> int:
+            count = _recount_tokens(
+                [{"role": "user", "content": text}], tokenizer
+            )
+            if count <= 0:
+                raise ValueError("cannot count digest tokens")
+            return count
+
+        try:
+            compacted_block = render_bounded_digest(
+                digest_rows,
+                max_tokens=digest_budget,
+                count_tokens=count_digest,
+                prefix=digest_prefix,
+            )
+        except ValueError as exc:
+            raise CompactionOverflowError(
+                f"compaction cannot fit digest: {exc}"
+            ) from exc
         new_messages = list(system_msgs)
         if initial_user is not None:
             new_messages.append(initial_user)

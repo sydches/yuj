@@ -90,6 +90,23 @@ def _seed_trace_jsonl(cwd: Path, n_turns: int) -> None:
     (cwd / ".trace.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
 
 
+def _seed_numbered_trace(cwd: Path, n_turns: int) -> None:
+    rows = [
+        {
+            "event": "tool_call",
+            "session_number": 1,
+            "turn_number": turn,
+            "tool_name": "read",
+            "args_summary": f"path='./f{turn}.py'",
+            "result_summary": f"complete-result-{turn:04d} " + "x" * 80,
+        }
+        for turn in range(1, n_turns + 1)
+    ]
+    (cwd / ".trace.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n"
+    )
+
+
 def _heavy_messages(n_pairs: int, payload_chars: int = 2000) -> list[dict]:
     msgs = [{"role": "system", "content": "sys prompt"}]
     msgs.append({"role": "user", "content": "task: do thing"})
@@ -299,13 +316,13 @@ def test_latest_pair_truncated_when_alone_exceeds_budget(tmp_path):
 
 def test_compaction_overflow_raises_when_truncation_insufficient(tmp_path):
     """When even truncating tool messages to zero cannot fit the prompt
-    (e.g., the digest itself exceeds budget), maybe_compact_messages
+    because protected instructions exceed budget, maybe_compact_messages
     raises CompactionOverflowError so the caller (chat_io) ends the
     session with a debuggable reason instead of sending and taking a
     server 400.
     """
     from scripts.llm_solver.harness._loop.compaction import CompactionOverflowError
-    # Use a TINY ctx so the digest text alone exceeds budget.
+    # Use a TINY ctx and protected content larger than the prompt budget.
     # threshold=0.95, ctx=2048 → budget=1945 tokens ≈ 7780 chars.
     # Seed a trace with content that renders into a much larger digest.
     rows = []
@@ -325,10 +342,74 @@ def test_compaction_overflow_raises_when_truncation_insufficient(tmp_path):
     sess.context = _make_fake_context()
     # Force compaction to fire by providing input over budget.
     msgs = _heavy_messages(50, payload_chars=2000)
+    msgs[0]["content"] = "protected instructions " * 1000
     msgs[-1] = {"role": "tool", "content": "Y" * 10_000}
     with pytest.raises(CompactionOverflowError) as exc_info:
         sess._maybe_compact_messages(msgs)
     assert "cannot fit prompt within budget" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("context_size", [20_000, 43_008])
+def test_digest_budget_scales_from_context_window(tmp_path, context_size):
+    from scripts.llm_solver._shared.digest_core import DIGEST_CONTEXT_FRACTION
+    from scripts.llm_solver.harness._loop.compaction import _recount_tokens
+
+    _seed_numbered_trace(tmp_path, 500)
+    sess = _make_session(tmp_path, [], server_ctx_value=context_size)
+    sess._compaction_turn = 501
+    sess.context = _make_fake_context()
+    messages = _heavy_messages(100, payload_chars=2000)
+    out = sess._maybe_compact_messages(messages)
+    digest = out[2]["content"]
+
+    assert _recount_tokens([out[2]], None) <= int(
+        context_size * DIGEST_CONTEXT_FRACTION
+    )
+    assert "complete-result-0001" in digest
+    assert "complete-result-0500" not in digest
+    assert "complete-result-0499" in digest
+    assert "HARNESS: omitted" in digest
+    assert out[-2:] == messages[-2:]
+
+    entries = [line for line in digest.splitlines() if line.startswith("T")]
+    turns = [int(line[1:].split()[0]) for line in entries]
+    assert turns == sorted(turns)
+    early_count = sum(turn < 250 for turn in turns)
+    recent_count = len(turns) - early_count
+    assert recent_count >= 3 * early_count > 0
+
+
+def test_small_digest_keeps_every_entry():
+    from scripts.llm_solver._shared.digest_core import Turn, render_bounded_digest
+
+    rows = [Turn(i, "read", "file", "short", "", "") for i in range(3)]
+    digest = render_bounded_digest(rows, max_tokens=1000, count_tokens=len)
+
+    assert "omitted" not in digest
+    assert all(f"T{i:>3}" in digest for i in range(3))
+
+
+def test_forced_compaction_respects_explicit_disable(tmp_path):
+    from scripts.llm_solver.harness._loop.compaction import maybe_compact_messages
+
+    _seed_numbered_trace(tmp_path, 30)
+    messages = _heavy_messages(2, payload_chars=500)
+
+    enabled = _make_session(tmp_path, [], cfg_extra={})
+    enabled._compaction_turn = 31
+    enabled.context = _make_fake_context()
+    assert enabled._maybe_compact_messages(messages) is messages
+    compacted = maybe_compact_messages(enabled, messages, force=True)
+    assert compacted is not messages
+
+    disabled = _make_session(
+        tmp_path,
+        [],
+        cfg_extra={"digest_compaction_safety_margin": -10.0},
+    )
+    disabled.context = _make_fake_context()
+    unchanged = maybe_compact_messages(disabled, messages, force=True)
+    assert unchanged is messages
 
 
 def test_compaction_falls_back_to_cfg_when_server_ctx_unknown(tmp_path):

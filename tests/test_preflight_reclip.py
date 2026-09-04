@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import openai
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -393,6 +394,61 @@ def test_after_turn_overflow_uses_next_turn_fit_ladder(syslog, tmp_path):
 
 
 # ── Density blowout / oversized result observation ─────────────────
+
+
+@pytest.mark.parametrize("recovery_enabled", [True, False])
+def test_wire_rejection_reaches_real_digest(tmp_path, recovery_enabled):
+    cfg = make_config(
+        context_size=43_008,
+        max_transient_retries=0,
+        digest_compaction_gate_min_mutations=0 if recovery_enabled else 1_000_000,
+    )
+    trace_path = tmp_path / ".trace.jsonl"
+    trace_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "event": "tool_call",
+                    "session_number": 1,
+                    "turn_number": turn,
+                    "tool_name": "read",
+                    "args_summary": f"path='file_{turn}.py'",
+                    "result_summary": "read file",
+                }
+            )
+            for turn in range(1, 31)
+        )
+    )
+    client = MagicMock()
+    overflow = openai.BadRequestError(
+        "request exceeds the available context size",
+        response=MagicMock(status_code=400),
+        body={"type": "exceed_context"},
+    )
+    completed = _make_turn_result()
+    client.chat.side_effect = [overflow, completed]
+
+    with patch.object(Session, "_get_server_ctx", return_value=0):
+        session = Session(
+            cfg,
+            client,
+            "sys",
+            "task",
+            str(tmp_path),
+            trace_path=trace_path,
+        )
+        result = session._chat_with_retry(31)
+
+    if recovery_enabled:
+        assert result is completed
+        assert client.chat.call_count == 2
+        assert getattr(session, "_compaction_count", 0) == 1
+        assert "Compacted history" in str(client.chat.call_args.args[0])
+    else:
+        assert result is None
+        assert client.chat.call_count == 1
+        assert getattr(session, "_compaction_count", 0) == 0
+        assert session._last_chat_error_reason == "context_full"
 
 
 class _InflatingTokenizer:

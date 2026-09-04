@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,12 @@ _WRITE_TOOLS = {
     "write", "edit", "notebook_edit", "structural_edit", "str_replace", "create",
     "apply_patch", "udiff",
 }
+
+# Last-resort digest policy. Token allowances are always derived from the
+# resolved context window; these fractions never name a particular window.
+DIGEST_CONTEXT_FRACTION = 0.10
+DIGEST_EARLY_FRACTION = 0.20
+DIGEST_RESULT_HEAD_CHARS = 80
 
 # Sandbox-denial keyword set ported from Codex
 # (codex-rs/core/src/exec.rs::is_likely_sandbox_denied). Surfacing escape
@@ -145,6 +152,7 @@ class Turn:
     flags: str
     pt: int = 0
     ct: int = 0
+    session: int = 0
 
 
 def _load(trace_path: Path) -> list[Turn]:
@@ -171,6 +179,7 @@ def _load(trace_path: Path) -> list[Turn]:
                 flags=_flags(d, args, rs),
                 pt=int(d.get("prompt_tokens", 0) or 0),
                 ct=int(d.get("completion_tokens", 0) or 0),
+                session=int(d.get("session_number", 0) or 0),
             ))
     return rows
 
@@ -279,6 +288,127 @@ def render_digest(rows: list[Turn], opts: DigestOptions) -> str:
 
 
 # ─── Compaction helpers (content-blind; consumed by harness/loop.py) ────
+
+def render_bounded_digest(
+    rows: list[Turn],
+    *,
+    max_tokens: int,
+    count_tokens: Callable[[str], int],
+    prefix: str = "",
+) -> str:
+    """Render whole early and recent entries within ``max_tokens``.
+
+    The fixed prefix and omission notice count against the limit. The entry
+    allowance uses the canonical 20/80 early/recent split, then reuses spare
+    space from either end. The final block is recounted before it is returned.
+    """
+    entries: list[tuple[int, int, str]] = []
+    for mode, indices in _collapse_repeated_harness(rows):
+        text = (
+            _render_collapsed_harness(rows, indices)
+            if mode == "collapse"
+            else _render_one_line(
+                rows[indices[0]], head_chars=DIGEST_RESULT_HEAD_CHARS
+            )
+        )
+        entries.append((rows[indices[0]].n, rows[indices[-1]].n, text))
+
+    def assemble(early_count: int, recent_count: int) -> str:
+        if early_count + recent_count >= len(entries):
+            return prefix + "\n".join(entry[2] for entry in entries)
+        omitted_end = len(entries) - recent_count if recent_count else len(entries)
+        omitted = entries[early_count:omitted_end]
+        notice = (
+            f"[HARNESS: omitted {len(omitted)} history entries "
+            f"from T{omitted[0][0]} through T{omitted[-1][1]}]"
+        )
+        kept = [entry[2] for entry in entries[:early_count]]
+        kept.append(notice)
+        if recent_count:
+            kept.extend(entry[2] for entry in entries[-recent_count:])
+        return prefix + "\n".join(kept)
+
+    complete = assemble(len(entries), 0)
+    if count_tokens(complete) <= max_tokens:
+        return complete
+    if not entries:
+        raise ValueError("digest prefix exceeds token budget")
+
+    minimum = assemble(0, 0)
+    fixed_tokens = count_tokens(minimum)
+    if fixed_tokens > max_tokens:
+        raise ValueError("digest header and omission notice exceed token budget")
+
+    prefix_tokens = count_tokens(prefix)
+    costs = [
+        max(1, count_tokens(prefix + entry[2] + "\n") - prefix_tokens)
+        for entry in entries
+    ]
+    entry_budget = max_tokens - fixed_tokens
+    early_budget = int(entry_budget * DIGEST_EARLY_FRACTION)
+    recent_budget = entry_budget - early_budget
+    early_count = recent_count = early_tokens = recent_tokens = 0
+
+    while (
+        early_count + recent_count < len(entries) - 1
+        and early_tokens + costs[early_count] <= early_budget
+    ):
+        early_tokens += costs[early_count]
+        early_count += 1
+    while (
+        early_count + recent_count < len(entries) - 1
+        and recent_tokens + costs[-recent_count - 1] <= recent_budget
+    ):
+        recent_tokens += costs[-recent_count - 1]
+        recent_count += 1
+
+    # Use quota slack, preferring the recent end that owns the larger share.
+    while early_count + recent_count < len(entries) - 1:
+        spare = entry_budget - early_tokens - recent_tokens
+        if costs[-recent_count - 1] <= spare:
+            recent_tokens += costs[-recent_count - 1]
+            recent_count += 1
+        elif costs[early_count] <= spare:
+            early_tokens += costs[early_count]
+            early_count += 1
+        else:
+            break
+
+    result = assemble(early_count, recent_count)
+    while count_tokens(result) > max_tokens:
+        early_share_high = (
+            early_tokens * (1.0 - DIGEST_EARLY_FRACTION)
+            > recent_tokens * DIGEST_EARLY_FRACTION
+        )
+        if early_count and (not recent_count or early_share_high):
+            early_count -= 1
+            early_tokens -= costs[early_count]
+        elif recent_count:
+            recent_tokens -= costs[-recent_count]
+            recent_count -= 1
+        else:
+            raise ValueError("digest cannot fit token budget")
+        result = assemble(early_count, recent_count)
+
+    # Tokenization is not perfectly additive. Reuse any exact-count spare that
+    # the per-entry estimates left behind, while retaining one omitted range.
+    while early_count + recent_count < len(entries) - 1:
+        candidates = (
+            (early_count, recent_count + 1),
+            (early_count + 1, recent_count),
+        )
+        accepted = None
+        for candidate in candidates:
+            candidate_text = assemble(*candidate)
+            if count_tokens(candidate_text) <= max_tokens:
+                accepted = (candidate, candidate_text)
+                break
+        if accepted is None:
+            break
+        (early_count, recent_count), result = accepted
+
+    return result
+
 
 def render_digest_for_compaction(rows: list[Turn], keep_recent: int) -> str:
     """Digest of all-but-last-N turns for context compaction at fill threshold.
