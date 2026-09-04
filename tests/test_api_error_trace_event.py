@@ -17,7 +17,7 @@ def _session_with_chat(side_effect):
     return session
 
 
-def test_fatal_api_error_emits_trace_event(monkeypatch):
+def test_context_overflow_emits_typed_trace_event(monkeypatch):
     monkeypatch.setattr(
         "scripts.llm_solver.harness._loop.chat_io.maybe_compact_messages",
         lambda session, msgs: msgs,
@@ -33,8 +33,27 @@ def test_fatal_api_error_emits_trace_event(monkeypatch):
     kw = calls[0].kwargs
     assert kw["turn_number"] == 82
     assert kw["error_type"] == "BadRequestError"
-    assert kw["error_kind"] == "fatal"
+    assert kw["error_kind"] == "context_overflow"
     assert "108639 tokens" in kw["detail"]
+    assert session._last_chat_error_reason == "context_full"
+
+
+def test_other_bad_request_remains_fatal(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.llm_solver.harness._loop.chat_io.maybe_compact_messages",
+        lambda session, msgs: msgs,
+    )
+    boom = openai.BadRequestError(
+        "invalid tool schema",
+        response=MagicMock(status_code=400),
+        body=None,
+    )
+    session = _session_with_chat(boom)
+    assert chat_with_retry(session, 12) is None
+    calls = [c for c in session._emit.call_args_list if c.args[0] == "api_error"]
+    assert len(calls) == 1
+    assert calls[0].kwargs["error_kind"] == "fatal"
+    assert "_last_chat_error_reason" not in vars(session)
 
 
 def test_transient_exhausted_emits_trace_event(monkeypatch):

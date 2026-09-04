@@ -108,6 +108,23 @@ class TestSessionRun:
         assert result.finish_reason == "context_full"
         assert client.chat.call_count == 0
 
+    def test_server_context_overflow_ends_as_context_full(self):
+        from llm_solver.harness.loop import Session
+        cfg = make_config(max_turns=10, context_size=1_000_000)
+        client = MagicMock()
+        client.chat.side_effect = openai.BadRequestError(
+            "request (43008 tokens) exceeds the available context size (43008 tokens)",
+            response=MagicMock(status_code=400),
+            body={"type": "exceed_context"},
+        )
+
+        with patch.object(Session, "_get_server_ctx", return_value=0):
+            result = Session(cfg, client, "sys", "prompt", "/tmp").run()
+
+        assert result.finish_reason == "context_full"
+        assert result.done is False
+        assert client.chat.call_count == 1
+
     def test_session_context_full_preflight_uses_current_estimate_when_prior_pt_is_stale(self):
         """A large tool result can make the next request over budget even
         when the previous server-reported pt was safe.

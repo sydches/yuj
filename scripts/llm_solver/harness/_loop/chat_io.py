@@ -195,7 +195,7 @@ def _emit_api_error(session: "Session", turn: int, exc: Exception, *, kind: str)
 
 
 def chat_with_retry(session: "Session", turn: int):
-    """Call client.chat(), retrying on transient errors. Returns None on fatal."""
+    """Call client.chat(), retrying on transient errors."""
     while True:
         cfg = session.cfg
         max_retries = cfg.max_transient_retries
@@ -347,6 +347,16 @@ def chat_with_retry(session: "Session", turn: int):
                 return None
             except openai.BadRequestError as exc:
                 reason = _fallback_reason(exc, None)
+                if reason == "context_overflow":
+                    _emit_api_error(session, turn, exc, kind=reason)
+                    if _has_fallback(session) and activate_next_fallback(
+                        session, turn, reason=reason
+                    ):
+                        restart_with_fallback = True
+                        break
+                    log.warning("Context full on turn %d: %s", turn, exc)
+                    session._last_chat_error_reason = "context_full"
+                    return None
                 if reason is not None and _has_fallback(session):
                     _emit_api_error(session, turn, exc, kind=reason)
                     if activate_next_fallback(session, turn, reason=reason):
