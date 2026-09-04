@@ -35,7 +35,7 @@ from llm_solver.harness.system_log import (
     open_system_log,
 )
 from llm_solver.harness._loop.compaction import preflight_reclip_oversized
-from llm_solver.server.types import TurnResult, Usage
+from llm_solver.server.types import ToolCall, TurnResult, Usage
 
 
 @pytest.fixture()
@@ -321,6 +321,75 @@ def test_reclip_disabled_keeps_legacy_end(syslog):
     overflow = [e for e in _events(syslog) if e["type"] == "preflight_overflow"]
     assert len(overflow) == 1
     assert overflow[0]["action"] == "session_end"
+
+
+def test_after_turn_overflow_uses_next_turn_fit_ladder(syslog, tmp_path):
+    cfg = make_config(
+        max_turns=3,
+        context_size=8192,
+        context_fill_ratio=0.85,
+        digest_compaction_safety_margin=0.0,
+        digest_compaction_gate_min_mutations=0,
+    )
+    trace_path = tmp_path / ".trace.jsonl"
+    trace_path.write_text(json.dumps({
+        "event": "tool_call",
+        "turn": 0,
+        "name": "read",
+        "args_summary": "path='src/example.py'",
+        "result_summary": "inspected example",
+        "reasoning_summary": "",
+        "prompt_tokens": 100,
+        "completion_tokens": 10,
+    }) + "\n")
+    tool_call = ToolCall(id="c1", name="read", arguments={"path": "README.md"})
+    client = MagicMock()
+    client.chat.side_effect = [
+        TurnResult(
+            content="Inspect once more.",
+            tool_calls=[tool_call],
+            finish_reason="tool_calls",
+            usage=Usage(prompt_tokens=7000, completion_tokens=10),
+        ),
+        _make_turn_result(),
+    ]
+    client.build_assistant_message.side_effect = [
+        {
+            "role": "assistant",
+            "content": "Inspect once more.",
+            "tool_calls": [{
+                "id": "c1",
+                "type": "function",
+                "function": {
+                    "name": "read",
+                    "arguments": '{"path":"README.md"}',
+                },
+            }],
+        },
+        {"role": "assistant", "content": "ok"},
+    ]
+
+    with patch.object(Session, "_get_server_ctx", return_value=0), patch(
+        "llm_solver.harness.loop.dispatch", return_value="small result"
+    ) as dispatch_mock:
+        session = Session(
+            cfg,
+            client,
+            "sys",
+            "task",
+            str(tmp_path),
+            trace_path=trace_path,
+        )
+        result = session.run()
+
+    assert result.finish_reason == "stop"
+    assert result.done is True
+    assert client.chat.call_count == 2
+    dispatch_mock.assert_called_once()
+    assert session._compaction_count == 1
+    overflow = [e for e in _events(syslog) if e["type"] == "preflight_overflow"]
+    assert len(overflow) == 1
+    assert overflow[0]["action"] == "compacted"
 
 
 # ── Density blowout / oversized result observation ─────────────────

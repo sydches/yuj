@@ -64,7 +64,13 @@ class TestSessionRun:
 
     def test_session_context_full(self):
         from llm_solver.harness.loop import Session
-        cfg = make_config(max_turns=10, context_size=100, context_fill_ratio=0.5)
+        cfg = make_config(
+            max_turns=10,
+            context_size=100,
+            context_fill_ratio=0.5,
+            preflight_reclip_enabled=False,
+            digest_compaction_gate_min_mutations=1_000_000,
+        )
         client = MagicMock()
         # Return a tool call so the session continues, but context estimate will be large
         tc = [ToolCall(id="c1", name="bash", arguments={"cmd": "ls"})]
@@ -75,14 +81,20 @@ class TestSessionRun:
         # isn't silently replaced when a live llama-server happens to be
         # running on :8080. Without this stub the test's tiny budget gets
         # overwritten to whatever the host server's n_ctx is (e.g. 65536),
-        # the post-flight gate never trips, and the duplicate_abort fires
-        # at turn 2 instead of context_full at turn 0.
-        with patch("llm_solver.harness.loop.dispatch", return_value="y" * 1000), \
-             patch.object(Session, "_get_server_ctx", return_value=0):
+        # the next-turn pre-flight gate never trips, and duplicate_abort fires
+        # at turn 2 instead of context_full at the next turn's fit gate.
+        with (
+            patch(
+                "llm_solver.harness.loop.dispatch", return_value="y" * 1000
+            ) as dispatch_mock,
+            patch.object(Session, "_get_server_ctx", return_value=0),
+        ):
             session = Session(cfg, client, "sys", "prompt", "/tmp")
             result = session.run()
 
         assert result.finish_reason == "context_full"
+        assert client.chat.call_count == 1
+        dispatch_mock.assert_called_once()
 
     def test_session_context_full_preflight(self):
         """Pre-flight check ends session BEFORE the API call when context

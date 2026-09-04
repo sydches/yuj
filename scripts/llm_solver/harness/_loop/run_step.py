@@ -904,14 +904,21 @@ def run_session_loop(session: "Session") -> "SessionResult":
         session.context.consume_injected_fragments()
         session._capture_advisor_turn(turn, content, tool_calls)
 
-        # ─── 2. GUARDRAIL: context fill (END tier) ───────────────────
-        # Server-reported pt — accurate, no chars/4 underrun.
+        # ─── 2. Context fill observation ─────────────────────────────
+        # Server-reported pt is accurate, with no chars/4 underrun. The
+        # request has already succeeded, so handle this response normally.
+        # If it requires another model turn, that turn's pre-flight gate runs
+        # the canonical re-clip -> digest -> context_full ladder.
         if cfg.context_size > 0:
             fill = session._last_actual_prompt_tokens / cfg.context_size
             session._last_fill = fill
             if fill > cfg.context_fill_ratio:
-                log.info("Context %.0f%% full at turn %d, ending session", fill * 100, turn)
-                return SessionResult(turn, "context_full", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+                log.info(
+                    "Context %.0f%% full at turn %d; the next model turn will "
+                    "run the pre-flight fit gate",
+                    fill * 100,
+                    turn,
+                )
 
         clarification_action = _handle_clarification_response(
             session, tool_calls, turn=turn
