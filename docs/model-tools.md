@@ -16,7 +16,7 @@ person types into a terminal.
 
 | Tool | Required inputs | Optional inputs | What it does |
 | --- | --- | --- | --- |
-| `bash` | `cmd` | `background` | Run one shell command and return its output. When you enable background work, Yuj returns a process ID instead of waiting. |
+| `bash` | `cmd` | `background`, `output_detail` | Run one shell command and return its output. When you enable background work, Yuj returns a process ID instead of waiting. |
 | `bash_poll` | `proc_id` | `timeout_s` | Return new output from one background command and, when known, its exit status. |
 | `bash_kill` | `proc_id` | None | Stop one background process group. |
 | `terminal_start` | `cmd` | None | Start the session's one bounded interactive terminal process and return its terminal ID. |
@@ -470,6 +470,18 @@ pipeline made only of display filters such as `grep`, `head`, or `tail`. It
 runs the complete registered test command, preserves the runner failure
 status, and places a bounded count-and-first-failure summary before ordinary
 output truncation. Side-effecting and compound pipelines remain unchanged.
+
+Routine pytest commands use `--tb=short -q --no-header`. The runner descriptor
+removes conflicting verbosity, uncaptured-print, and extra-report flags while
+preserving test selection and stop-on-first-failure. It does not add pytest
+flags to unittest or rewrite Python test scripts.
+
+When a compact result lacks the detail needed for diagnosis, the model can set
+`output_detail="full"` on that `bash` call. Yuj then preserves the requested
+runner flags and skips runner-specific output condensation for that call.
+Ordinary size limits, redaction, and execution controls still apply. The next
+call uses compact handling again unless it also requests full detail. Edit
+`scripts/llm_solver/language_quirks/pytest.toml` to change the routine flag set.
 
 ## Finish rule
 

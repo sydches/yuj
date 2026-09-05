@@ -639,6 +639,11 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 except Exception as exc:
                     log.warning("redirect event emit failed: %s", exc)
 
+    # An explicit request for diagnostic detail affects only runner output
+    # reduction. All other admission and execution controls remain active.
+    if name == "bash" and arguments.get("output_detail") == "full":
+        output_control = None
+
     # Pre-execution: rewrite bash commands (quiet flags, test flags, or
     # refuse forbidden patterns). When rewrite_log is provided and a
     # rewrite actually happens, append a record of the ORIGINAL cmd and

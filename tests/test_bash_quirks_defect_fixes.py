@@ -1,9 +1,12 @@
 """Regression tests for refusals and safe command rewrites."""
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
@@ -22,6 +25,45 @@ from scripts.llm_solver.harness._tools._run_in_sandbox import _run_in_sandbox
 
 UR = load_universal_rewrites()
 FR = load_forbidden_rules()
+
+
+@pytest.mark.parametrize("flags", ["-xvs", "-x -vv -s -rA", "-x --verbose --capture=no -r fEsxX", "-x --capture no"])
+def test_routine_pytest_flags_are_quiet(flags):
+    oc = load_output_control(PROJECT_ROOT / "scripts/llm_solver/language_quirks/pytest.toml")
+    rewritten = rewrite_command("pytest tests " + flags, oc)
+    assert shlex.split(rewritten) == ["pytest", "tests", "-x", "--tb=short", "-q", "--no-header"]
+    assert rewrite_command(rewritten, oc) == rewritten
+
+
+def test_quiet_flags_preserve_selection_and_other_runners():
+    oc = load_output_control(PROJECT_ROOT / "scripts/llm_solver/language_quirks/pytest.toml")
+    command = 'pytest -k "has -s or -v" -m fast -xvs tests'
+    rewritten = rewrite_command(command, oc)
+    assert '-k "has -s or -v" -m fast -x tests' in rewritten
+    assert rewrite_command("python -m unittest -v", oc) == "python -m unittest -v"
+    assert rewrite_command('python -c "run_tests(verbosity=2)"', oc) == 'python -c "run_tests(verbosity=2)"'
+    assert shlex.split(rewrite_command("pytest -v -- -s", oc)) == [
+        "pytest", "--tb=short", "-q", "--no-header", "--", "-s"
+    ]
+
+
+def test_full_detail_preserves_flags_for_one_call_and_keeps_output_cap(tmp_path):
+    oc = load_output_control(PROJECT_ROOT / "scripts/llm_solver/language_quirks/pytest.toml")
+    cfg = make_config(max_output_chars=1000, collapse_similar_lines=False)
+    commands = []
+
+    def run(cmd, **kwargs):
+        commands.append(cmd)
+        return "\n".join(f"build detail {i}" for i in range(200)), 0, False
+
+    with mock.patch.object(tools_mod, "_run_in_sandbox", side_effect=run):
+        full = tools_mod.dispatch("bash", {"cmd": "pytest -xvs", "output_detail": "full"},
+                                  cwd=str(tmp_path), cfg=cfg, output_control=oc)
+        tools_mod.dispatch("bash", {"cmd": "pytest -xvs"},
+                           cwd=str(tmp_path), cfg=cfg, output_control=oc)
+    assert commands[0] == "pytest -xvs"
+    assert shlex.split(commands[1]) == ["pytest", "-x", "--tb=short", "-q", "--no-header"]
+    assert "chars omitted" in full
 
 HEREDOC_WRITE = """python << 'EOF'
 # make the edit and write it back

@@ -21,6 +21,15 @@ verification_patterns = [
 # Only appended if not already present in the command.
 [output_control]
 failure_only_flag = "--tb=short -q --no-header"
+# Only pytest accepts this flag set. unittest remains a verification command.
+command_patterns = ['''^(?:\S*/)?(?:pytest|py\.test)\b''', '''^(?:\S*/)?python[0-9.]*\s+-m\s+pytest\b''']
+# Routine runs suppress progress, uncaptured prints, and extra report sections.
+# A bash call with output_detail="full" preserves explicitly requested flags.
+quiet_flags = ["-v", "-q", "-s", "-r*", "--verbose", "--quiet", "--capture=no"]
+# Preserve stop-on-first-failure when it appears in a bundle such as -xvs.
+preserve_short_flags = "x"
+# These options own the following word; never treat that word as an output flag.
+argument_flags = ["-k", "-m", "-c", "-o", "-p", "--override-ini", "--rootdir", "--confcutdir", "--deselect", "--ignore", "--ignore-glob", "--basetemp"]
 passed_marker = "PASSED"       # substring in passing-test lines (stripped from output)
 failed_marker = "FAILED"       # substring in failing-test lines (never stripped)
 

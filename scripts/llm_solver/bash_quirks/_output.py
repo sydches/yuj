@@ -20,6 +20,11 @@ class OutputControl:
         hash=False,
         repr=False,
     )
+    # Verification may recognise more runners than share these CLI flags.
+    command_patterns: tuple[re.Pattern, ...] | None = None
+    quiet_flags: tuple[str, ...] = ()
+    argument_flags: tuple[str, ...] = ()
+    preserve_short_flags: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,14 @@ def load_output_control(task_format_path) -> OutputControl | None:
         failed_marker=oc.get("failed_marker", ""),
         verification_patterns=patterns,
         output_parser=load_output_parser(path),
+        command_patterns=(
+            tuple(re.compile(p, re.IGNORECASE | re.VERBOSE)
+                  for p in oc["command_patterns"])
+            if "command_patterns" in oc else None
+        ),
+        quiet_flags=tuple(oc.get("quiet_flags", ())),
+        argument_flags=tuple(oc.get("argument_flags", ())),
+        preserve_short_flags=oc.get("preserve_short_flags", ""),
     )
 
 

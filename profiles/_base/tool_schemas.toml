@@ -11,7 +11,9 @@
 [[tools]]
 name = "bash"
 required = ["cmd"]
-properties = { cmd = { type = "string" }, background = { type = "boolean" } }
+# Full detail bypasses routine test-output reduction for this call only.
+# Output-size limits, redaction, and sandbox controls still apply.
+properties = { cmd = { type = "string" }, background = { type = "boolean" }, output_detail = { type = "string", enum = ["compact", "full"] } }
 
 [[tools]]
 name = "bash_poll"
