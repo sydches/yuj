@@ -78,13 +78,13 @@ def _auto_commit(repo_dir: Path, session_num: int, finish_reason: str) -> None:
             ["git", "-c", "user.name=yuj-harness",
              "-c", "user.email=yuj@localhost",
              "commit", "-m", msg],
-            cwd=str(repo_dir), capture_output=True, check=True,
+            cwd=str(repo_dir), capture_output=True, text=True, check=True,
         )
         log.info("Auto-commit: session %d (%s)", session_num, finish_reason)
     except (subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
         log.warning(
-            "auto_commit_failed: session=%d finish=%s err=%s",
-            session_num, finish_reason, e,
+            "auto_commit_failed: session=%d finish=%s err=%s stderr=%s",
+            session_num, finish_reason, e, getattr(e, "stderr", None) or "",
         )
 
 

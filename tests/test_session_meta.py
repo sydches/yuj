@@ -17,6 +17,27 @@ from pathlib import Path
 import pytest
 
 
+def test_checkpoint_failure_reports_git_stderr(tmp_path, monkeypatch, caplog):
+    from scripts.llm_solver.harness._loop.session_io import _auto_commit
+
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if "commit" in command:
+            assert kwargs["capture_output"] and kwargs["text"]
+            raise subprocess.CalledProcessError(
+                128, command, stderr="fatal: cannot write checkpoint object"
+            )
+        return subprocess.CompletedProcess(command, 0, stdout=" M file.py\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    _auto_commit(tmp_path, 1, "context_full")
+    assert len(calls) == 3
+    assert "auto_commit_failed" in caplog.text
+    assert "fatal: cannot write checkpoint object" in caplog.text
+
+
 def test_session_meta_writes_on_dry_run(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -49,7 +70,7 @@ def test_session_meta_writes_on_dry_run(tmp_path):
     )
     meta = json.loads(session_path.read_text())
     assert "started_at" in meta
-    assert meta["harness_version"] == "8.0.31"
+    assert meta["harness_version"] == "8.0.32"
     assert "run_dir" in meta
     assert "model" in meta
     assert "context_mode" in meta
