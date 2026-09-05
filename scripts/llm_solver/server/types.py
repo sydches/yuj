@@ -38,6 +38,10 @@ class TurnResult:
     tool_calls: list[ToolCall]
     finish_reason: str  # "stop" | "tool_calls" | "length"
     usage: Usage
+    # Usage sums every call in a logical turn. Context checks need individual
+    # request sizes; None keeps the ordinary one-call behavior.
+    first_prompt_tokens: int | None = None
+    last_prompt_tokens: int | None = None
 
 
 @dataclass(frozen=True)

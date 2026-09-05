@@ -855,6 +855,14 @@ def run_session_loop(session: "Session") -> "SessionResult":
         reason = chat_result.finish_reason
         prompt_tokens = chat_result.usage.prompt_tokens
         completion_tokens = chat_result.usage.completion_tokens
+        first_prompt_tokens = (
+            chat_result.first_prompt_tokens
+            if chat_result.first_prompt_tokens is not None else prompt_tokens
+        )
+        last_prompt_tokens = (
+            chat_result.last_prompt_tokens
+            if chat_result.last_prompt_tokens is not None else prompt_tokens
+        )
         cache_observation = CacheObservation(
             prompt_tokens=int(prompt_tokens or 0),
             cached_tokens=chat_result.usage.cached_tokens,
@@ -886,17 +894,18 @@ def run_session_loop(session: "Session") -> "SessionResult":
             turn_number=turn,
             role=getattr(session, "_active_model_role", "main"),
             **cache_observation.trace_fields(),
+            first_prompt_tokens=first_prompt_tokens,
+            last_prompt_tokens=last_prompt_tokens,
         )
         total_prompt += prompt_tokens
         total_completion += completion_tokens
-        # Canonical pt signal — drives the post-flight gate AND the
-        # next turn's compaction trigger.
-        session._last_actual_prompt_tokens = int(prompt_tokens or 0)
+        # Occupancy belongs to the last request, not cumulative turn usage.
+        session._last_actual_prompt_tokens = int(last_prompt_tokens or 0)
         _observe_token_density(
             session,
             getattr(session, "_preflight_gate_live", 0),
             getattr(session, "_preflight_gate_chars_new", 0),
-            int(prompt_tokens or 0),
+            int(first_prompt_tokens or 0),
         )
         session.context.add_assistant(
             session.client.build_assistant_message(content, tool_calls)

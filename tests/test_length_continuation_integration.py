@@ -113,6 +113,28 @@ def test_usage_aggregation_preserves_unknown_cache_counts() -> None:
     } <= TRACE_EVENT_REQUIRED_FIELDS["length_continue"]
 
 
+def test_continuation_occupancy_uses_last_call_but_totals_keep_both(tmp_path):
+    cfg = make_config(max_turns=1, context_size=43008, sandbox_bash=False)
+    client = _client(cfg, supports_prefill=True, normalize=lambda value: value)
+    client._call_api = MagicMock(side_effect=[
+        _response("partial", "length", prompt_tokens=34317, completion_tokens=8690),
+        _response("more", "length", prompt_tokens=43007, completion_tokens=1),
+    ])
+    with (
+        patch.object(Session, "_get_server_ctx", return_value=43008),
+        patch("scripts.llm_solver.harness._loop.run_step._observe_token_density") as density,
+    ):
+        session = Session(cfg, client, "system", "task", str(tmp_path))
+        result = session.run()
+    assert result.finish_reason == "length"
+    assert result.total_prompt_tokens == 77324
+    assert result.total_completion_tokens == 8691
+    assert session._last_actual_prompt_tokens == 43007
+    assert session._last_fill == pytest.approx(43007 / 43008)
+    # The pre-flight estimate described the first call, before continuation.
+    assert density.call_args.args[-1] == 34317
+
+
 def test_profile_capability_inheritance_override_and_validation(
     tmp_path: Path,
 ) -> None:
@@ -324,6 +346,10 @@ def test_split_thinking_tool_call_joins_once_in_the_real_session(
     assert result.finish_reason == "max_turns"
     assert result.total_prompt_tokens == 37
     assert result.total_completion_tokens == 9
+    assert session._last_actual_prompt_tokens == 15
+    turn_event = next(event for event in _events(trace) if event["event"] == "turn")
+    assert turn_event["first_prompt_tokens"] == 10
+    assert turn_event["last_prompt_tokens"] == 15
     assert len(normalized_inputs) == 1
     assert normalized_inputs[0].endswith(
         '{"name":"read","arguments":{"path":"docs/configuration.md"}}'

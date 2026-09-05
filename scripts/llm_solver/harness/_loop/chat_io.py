@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import openai
@@ -109,11 +110,16 @@ def _chat_with_length_continuation(
             finish_reason=attempt.finish_reason,
         )
     session._length_continuation_count += result.continuation_count
-    return client._turn_result_from_normalized(
+    turn_result = client._turn_result_from_normalized(
         result.response,
         _aggregate_usage(usages),
         turn,
         fallback_finish_reason=result.raw_response["finish_reason"],
+    )
+    return replace(
+        turn_result,
+        first_prompt_tokens=usages[0].prompt_tokens,
+        last_prompt_tokens=usages[-1].prompt_tokens,
     )
 
 
