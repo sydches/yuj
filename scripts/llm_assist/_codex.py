@@ -6,6 +6,8 @@ import json
 import requests
 
 from ..llm_solver.server.client import LlamaClient
+from ..llm_solver.server._streaming import StreamRuleInterrupt
+from ._native_stream import read_responses_stream
 from ._anthropic import _CompatResponse, _Obj, _observed_usage_count
 from ._auth import (
     AuthProtocolError,
@@ -172,6 +174,10 @@ def _responses_to_openai(raw: dict) -> _CompatResponse:
 class CodexSubscriptionClient(LlamaClient):
     """LlamaClient with a pinned ChatGPT subscription HTTP transport."""
 
+    @property
+    def supports_stream_observer(self) -> bool:
+        return True
+
     def __init__(
         self,
         cfg,
@@ -219,6 +225,10 @@ class CodexSubscriptionClient(LlamaClient):
             )
         try:
             response = self._call_responses_api(payload)
+        except StreamRuleInterrupt as exc:
+            if record_transcript:
+                self._write_transcript(f"turn {n:03d} output", exc.model_dump_json())
+            raise
         except ProviderAuthError as exc:
             self._last_provider_auth_error = exc
             if record_transcript:
@@ -256,7 +266,16 @@ class CodexSubscriptionClient(LlamaClient):
                 "codex", "subscription request transport failed"
             ) from exc
         classify_provider_response("codex", response)
-        completed = _completed_response(response)
+        self._last_call_streamed = True
+        if self._stream_observer is not None:
+            try:
+                completed = read_responses_stream(response, self._stream_observer)
+            except StreamRuleInterrupt:
+                raise
+            except Exception as exc:
+                raise AuthProtocolError("codex", "response stream was malformed") from exc
+        else:
+            completed = _completed_response(response)
         return _responses_to_openai(completed)
 
     def health_check(self) -> list[str]:

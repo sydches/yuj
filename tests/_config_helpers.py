@@ -69,9 +69,13 @@ def _defaults() -> dict:
         ),
         intent_gate_repeat="[intent gate: state your reasoning — {count} silent calls since turn {first_turn}]",
         narration_redirect=(
-            "[harness] Narration limit reached. Take the next concrete coding action "
-            "with a tool now, or finish with a concise result or blocker. "
-            "Do not continue the monologue."
+            "[harness] This is autonomous coding. Excessive narration was interrupted "
+            "and discarded from working context. Take the next concrete coding action "
+            "with a tool: gather needed evidence, change the implementation, or verify "
+            "the work. Do not merely describe intended actions. If finished, call done "
+            "with a concise result. If genuinely blocked, state the specific blocker; "
+            "this ends the task without success. Another "
+            "excessive narration attempt or a reply without a tool call ends this task."
         ),
         resume_base="Continue working on the task. Review your previous actions and do the next unit of work.",
         error_nudge="[harness: {count} consecutive errors, consider re-reading the file]",

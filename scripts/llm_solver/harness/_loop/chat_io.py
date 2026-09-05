@@ -266,6 +266,7 @@ def chat_with_retry(session: "Session", turn: int):
         restart_with_fallback = False
         restart_after_stream_rule = False
         restart_after_compaction = False
+        restart_after_handover = False
         for attempt in range(max_retries + 1):
             try:
                 session._compaction_turn = turn
@@ -333,9 +334,10 @@ def chat_with_retry(session: "Session", turn: int):
                 ) == "replay_stop_turn":
                     from .replay_handover import maybe_handover
                     if maybe_handover(session, turn):
-                        result = session.client.chat(
-                            outgoing, effective_model_tool_schemas(session), turn=turn,
-                        )
+                        # Re-enter the request boundary with the new client and
+                        # any handover overlay, including its stream observer.
+                        restart_after_handover = True
+                        break
                 if result is not None and runtime is not None:
                     records = runtime.accept_response(
                         result,
@@ -346,6 +348,7 @@ def chat_with_retry(session: "Session", turn: int):
                         replay=bool(getattr(session.client, "is_replay", False)),
                     )
                     session._record_stream_rule_matches(records, turn=turn)
+                response_usage = result.usage if result is not None else None
                 abandoned = session._abandoned_chat_usage
                 if result is not None and abandoned is not None:
                     result = replace(
@@ -355,6 +358,20 @@ def chat_with_retry(session: "Session", turn: int):
                         usage=_aggregate_usage([abandoned, result.usage]),
                     )
                     session._abandoned_chat_usage = None
+                if narration_interrupts and result is not None and not result.tool_calls:
+                    # A shorter promise is not recovery. Completion must use
+                    # the existing done action after this intervention.
+                    session._abandoned_chat_usage = result.usage
+                    session._last_chat_error_reason = "narration_limit"
+                    session._emit(
+                        "narration_limit", session_number=session._session_number,
+                        turn_number=turn, action="end", cause="no_tool_recovery",
+                        attempt=narration_interrupts + 1,
+                        prompt_tokens=response_usage.prompt_tokens, completion_tokens=response_usage.completion_tokens,
+                        prompt_tokens_known=response_usage.prompt_tokens_known,
+                        completion_tokens_known=response_usage.completion_tokens_known,
+                    )
+                    return None
                 return result
             except StreamRuleInterrupt as exc:
                 records = tuple(exc.matches)
@@ -498,6 +515,7 @@ def chat_with_retry(session: "Session", turn: int):
                 return None
         if (
             restart_with_fallback
+            or restart_after_handover
             or restart_after_stream_rule
             or restart_after_compaction
         ):

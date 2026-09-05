@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -173,6 +174,100 @@ def test_reply_contract_defaults_and_validation(tmp_path):
             load_config(user_config=config)
 
 
+def test_first_live_request_after_replay_obeys_narration_limit(tmp_path, monkeypatch):
+    from scripts.llm_solver.harness._loop.replay_handover import arm
+
+    monkeypatch.setenv("YUJ_STREAMING", "0")
+    cfg = make_config(context_size=43008)
+    recording = tmp_path / "prefix.log"
+    recording.write_text(
+        '=== turn 001 input ===\n{}\n=== turn 001 output ===\n'
+        '{"choices":[{"message":{"content":"prefix"},"finish_reason":"stop"}]}\n'
+    )
+    replay = ReplayClient(recording, stop_turn=1, strict_fidelity=False)
+    live = LlamaClient(cfg, profile=None)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    oversized = _ClosableStream([_chunk(content="x" * (limit + 1))])
+    recovered = _ClosableStream([
+        _chunk(content="The patch is ready.", tool_calls=[SimpleNamespace(
+            index=0, id="done", type="function",
+            function=SimpleNamespace(name="done", arguments="{}"))]),
+        _chunk(finish_reason="tool_calls", usage=_usage(100, 5)),
+    ])
+    live.client.chat.completions.create = MagicMock(side_effect=[oversized, recovered])
+    arm(replay, live_client_factory=lambda: live)
+    session = Session(cfg, replay, "system", "task", str(tmp_path))
+    result = session._chat_with_retry(2)
+    assert session.client is live
+    assert oversized.closed
+    assert result.content == "The patch is ready."
+    assert result.tool_calls[0].name == "done"
+    assert live.client.chat.completions.create.call_count == 2
+    assert all(c.kwargs["stream"] for c in live.client.chat.completions.create.call_args_list)
+    assert "Take the next concrete coding action" in json.dumps(
+        live.client.chat.completions.create.call_args.kwargs["messages"]
+    )
+
+
+@pytest.mark.parametrize("reply", ["I will inspect the code now.", "The work is complete.", ""])
+def test_prose_only_recovery_cannot_be_implicit_success(tmp_path, reply):
+    from scripts.llm_solver.harness.loop import solve_task
+    from scripts.llm_solver._shared.telemetry_paths import trace_path
+
+    cfg = make_config(context_size=43008, max_sessions=3, allow_implicit_done=True)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    client = LlamaClient(cfg, profile=None)
+    streams = [_ClosableStream([_chunk(content="x" * (limit + 1))]),
+               _ClosableStream([_chunk(content=reply),
+                                _chunk(finish_reason="stop", usage=_usage(100, 10))])]
+    client.client.chat.completions.create = MagicMock(side_effect=streams)
+    transcript_dir = tmp_path / "transcripts"
+    (tmp_path / "prompt.txt").write_text("Fix the issue")
+    with patch("scripts.llm_solver.harness.loop._auto_commit"), patch.object(Session, "_get_server_ctx", return_value=43008):
+        assert solve_task(tmp_path, cfg, client, transcript_dir=transcript_dir) is False
+    client.close_transcript()
+    assert client.client.chat.completions.create.call_count == 2
+    metrics = json.loads((tmp_path / "metrics.json").read_text())["metrics"]
+    assert metrics["sessions_used"] == 1
+    assert metrics["total_completion_tokens"] == ((limit + 4) // 4) + 10
+    rows = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()]
+    assert any(row.get("cause") == "no_tool_recovery" for row in rows)
+    assert [r["finish_reason"] for r in rows if r["event"] == "session_end"] == ["narration_limit"]
+    replay = ReplayClient(transcript_dir / f"{tmp_path.name}.log", strict_fidelity=False)
+    replay_result = Session(cfg, replay, "system", "task", str(tmp_path)).run()
+    assert replay_result.finish_reason == "narration_limit" and not replay_result.done
+    assert replay_result.total_completion_tokens == metrics["total_completion_tokens"]
+
+
+def test_recovery_executes_work_and_explicit_completion(tmp_path):
+    cfg = make_config(context_size=43008, max_turns=5, sandbox_bash=False)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+
+    def action(name, arguments):
+        return _ClosableStream([
+            _chunk(content="Apply the next step.", tool_calls=[SimpleNamespace(
+                index=0, id=name, type="function", function=SimpleNamespace(
+                    name=name, arguments=json.dumps(arguments)))]),
+            _chunk(finish_reason="tool_calls", usage=_usage(100, 10)),
+        ])
+
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(side_effect=[
+        _ClosableStream([_chunk(content="x" * (limit + 1))]),
+        action("write", {"path": "out.py", "content": "VALUE = 1\n"}),
+        action("bash", {"cmd": f"{sys.executable} -c 'import out; assert out.VALUE == 1; print(\"verified \" * 30)'"}),
+        action("done", {"message": "Updated out.py."}),
+    ])
+    result = Session(cfg, client, "system", "task", str(tmp_path)).run()
+    assert (tmp_path / "out.py").read_text() == "VALUE = 1\n"
+    assert result.done, client.client.chat.completions.create.call_args.kwargs["messages"][-1]["content"]
+    assert client.client.chat.completions.create.call_count == 4
+    redirect = json.dumps(client.client.chat.completions.create.call_args_list[1].kwargs["messages"])
+    assert "discarded from working context" in redirect
+    assert "Do not merely describe intended actions" in redirect
+    assert "call done" in redirect
+
+
 @pytest.mark.parametrize("context_size", [20000, 43008, 262144])
 def test_narration_allowance_scales_and_excludes_other_surfaces(context_size):
     from scripts.llm_solver.harness.stream_rules import NarrationBudget
@@ -213,6 +308,117 @@ def test_autonomous_rejects_transport_without_observer_before_request(tmp_path):
     client = NonStreamingAdapter(make_config(), profile=None)
     session = Session(client.cfg, client, "system", "task", str(tmp_path))
     assert session._chat_with_retry(1) is None
+
+
+class _NativeResponse:
+    def __init__(self, events):
+        self.events = iter(events)
+        self.closed = False
+
+    def iter_lines(self, **kwargs):
+        for event in self.events:
+            yield "data: " + json.dumps(event)
+            yield ""
+
+    def raise_for_status(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def _message_events(text, *, tool=None):
+    yield {"type": "message_start", "message": {
+        "id": "msg", "content": [], "usage": {"input_tokens": 100, "output_tokens": 1}}}
+    yield {"type": "content_block_start", "index": 0,
+           "content_block": {"type": "text", "text": ""}}
+    yield {"type": "content_block_delta", "index": 0,
+           "delta": {"type": "text_delta", "text": text}}
+    yield {"type": "content_block_stop", "index": 0}
+    if tool:
+        yield {"type": "content_block_start", "index": 1,
+               "content_block": {"type": "tool_use", "id": "call_1_0",
+                                 "name": "write", "input": {}}}
+        yield {"type": "content_block_delta", "index": 1,
+               "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool)}}
+        yield {"type": "content_block_stop", "index": 1}
+    yield {"type": "message_delta", "delta": {
+        "stop_reason": "tool_use" if tool else "end_turn"}, "usage": {"output_tokens": 10000}}
+    yield {"type": "message_stop"}
+
+
+def test_native_messages_interrupt_retry_and_replay(tmp_path, monkeypatch):
+    from scripts.llm_assist._anthropic import AnthropicClient
+
+    cfg = make_config(context_size=43008)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    first = _NativeResponse(_message_events("x" * (limit + 1)))
+    tool = {"path": "out.py", "content": "x" * 40000}
+    second = _NativeResponse(_message_events("Write the fix.", tool=tool))
+    post = MagicMock(side_effect=[first, second])
+    monkeypatch.setattr("scripts.llm_assist._anthropic.requests.post", post)
+    client = AnthropicClient(cfg, profile=None)
+    # The public adapter owns its HTTP session; the internal adapter uses requests.
+    client._http = SimpleNamespace(post=post)
+    transcript = tmp_path / "native.log"
+    client.set_transcript(transcript)
+    session = Session(cfg, client, "system", "task", str(tmp_path))
+    result = session._chat_with_retry(1)
+    client.close_transcript()
+    assert first.closed and second.closed
+    assert next(first.events)["type"] == "content_block_stop"
+    assert result.tool_calls[0].arguments == tool
+    assert post.call_count == 2
+    assert all(c.kwargs["stream"] and c.kwargs["json"]["stream"] for c in post.call_args_list)
+    assert result.usage.completion_tokens > 10000
+    assert not result.usage.completion_tokens_known
+    retry_messages = post.call_args.kwargs["json"]["messages"]
+    assert "Take the next concrete coding action" in json.dumps(retry_messages)
+    assert "x" * (limit + 1) not in json.dumps(retry_messages)
+    replay = ReplayClient(transcript, strict_fidelity=False)
+    replay_result = Session(cfg, replay, "system", "task", str(tmp_path))._chat_with_retry(1)
+    assert replay_result.tool_calls == result.tool_calls
+    assert replay_result.usage == result.usage
+
+
+def test_native_responses_preserve_final_fields_and_stop_before_completion():
+    from scripts.llm_assist._native_stream import read_responses_stream
+    from scripts.llm_solver.harness.stream_rules import NarrationBudget
+    from scripts.llm_solver.server._streaming import StreamRuleInterrupt
+
+    budget = NarrationBudget(context_size=20000, fraction=0.01, message="Act.")
+    long = _NativeResponse([
+        {"type": "response.output_text.delta", "delta": "x" * (budget.limit_chars + 1)},
+        {"type": "response.completed", "response": {}},
+    ])
+    with pytest.raises(StreamRuleInterrupt) as exc:
+        read_responses_stream(long, budget.observe)
+    assert long.closed
+    assert next(long.events)["type"] == "response.completed"
+    assert "_stream_rule_interrupt" in exc.value.model_dump_json()
+    final = {"status": "completed", "output": [{"opaque": "retained"}]}
+    stream = _NativeResponse([
+        {"type": "response.reasoning_summary_text.delta", "delta": "x" * 40000},
+        {"type": "response.output_item.added", "output_index": 1,
+         "item": {"type": "function_call", "call_id": "c", "name": "write", "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "output_index": 1,
+         "delta": json.dumps({"content": "x" * 40000})},
+        {"type": "response.completed", "response": final},
+    ])
+    fresh = NarrationBudget(context_size=20000, fraction=0.01, message="Act.")
+    assert read_responses_stream(stream, fresh.observe) == final
+    assert stream.closed and fresh.chars == 0
+
+
+@pytest.mark.parametrize("protocol", ["anthropic", "responses"])
+def test_native_incomplete_stream_closes_without_success(protocol):
+    from openai import APIConnectionError
+    from scripts.llm_assist import _native_stream
+
+    stream = _NativeResponse([])
+    with pytest.raises(APIConnectionError, match="stream produced no chunks"):
+        getattr(_native_stream, f"read_{protocol}_stream")(stream, None)
+    assert stream.closed
 
 
 def test_interrupted_continuation_counts_completed_and_interrupted_calls(tmp_path):

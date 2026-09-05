@@ -18,6 +18,8 @@ from ._auth import (
     ProviderAuthError,
     classify_provider_response,
 )
+from ..llm_solver.server._streaming import StreamRuleInterrupt
+from ._native_stream import read_anthropic_stream
 
 _ANTHROPIC_VERSION = "2023-06-01"
 _CLAUDE_CODE_VERSION = "2.1.220"
@@ -215,7 +217,10 @@ class _CompatResponse:
         self.usage = usage
 
     def model_dump_json(self) -> str:
-        return json.dumps(self._raw, default=str)
+        return json.dumps({
+            "choices": self.choices, "usage": self.usage,
+            "_provider_response": self._raw,
+        }, default=lambda value: value.__dict__)
 
 
 def _to_anthropic_payload(payload: dict, *, subscription: bool = False) -> dict:
@@ -471,6 +476,10 @@ def _anthropic_to_openai_response(
 class AnthropicClient(LlamaClient):
     """LlamaClient with the HTTP boundary swapped to Anthropic Messages."""
 
+    @property
+    def supports_stream_observer(self) -> bool:
+        return True
+
     def __init__(
         self,
         cfg,
@@ -512,8 +521,7 @@ class AnthropicClient(LlamaClient):
     def _call_api(
         self, payload: dict, *, record_transcript: bool = True
     ):
-        # Mirrors LlamaClient._call_api's transcript contract, minus the
-        # streaming branch — the Messages adapter is request/response only.
+        # Keep successful and interrupted responses replayable by the core.
         n = 0
         if record_transcript:
             self._transcript_call_n += 1
@@ -524,6 +532,10 @@ class AnthropicClient(LlamaClient):
             )
         try:
             resp = self._call_anthropic_api(payload)
+        except StreamRuleInterrupt as e:
+            if record_transcript:
+                self._write_transcript(f"turn {n:03d} output", e.model_dump_json())
+            raise
         except ProviderAuthError as e:
             self._last_provider_auth_error = e
             if record_transcript:
@@ -552,12 +564,19 @@ class AnthropicClient(LlamaClient):
         anthropic_payload = _to_anthropic_payload(
             payload, subscription=subscription
         )
+        streaming = bool(getattr(self, "_narration_streaming", False)
+                         or self._stream_observer is not None)
+        self._last_call_streamed = streaming
+        if streaming:
+            anthropic_payload["stream"] = True
         headers = self._headers()
         try:
             request = {
                 "headers": headers,
                 "timeout": (self.cfg.timeout_connect, self.cfg.timeout_read),
             }
+            if streaming:
+                request["stream"] = True
             if subscription:
                 request["data"] = _serialize_subscription_body(
                     anthropic_payload
@@ -579,7 +598,10 @@ class AnthropicClient(LlamaClient):
         else:
             classify_provider_response("claude", resp)
         try:
-            raw = resp.json()
+            raw = (read_anthropic_stream(resp, self._stream_observer)
+                   if streaming else resp.json())
+        except StreamRuleInterrupt:
+            raise
         except Exception as exc:
             if self._auth is not None:
                 raise AuthProtocolError(

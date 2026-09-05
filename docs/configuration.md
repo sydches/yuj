@@ -105,16 +105,26 @@ at four characters per token. It is a character bound, not an exact tokenizer
 count. Code in tool arguments and separate reasoning are outside this limit.
 
 On a breach, Yuj closes the stream, discards the monologue from working context,
-and gives the same model one short user-role redirect. A second breach ends
-the task as `narration_limit`; it does not start another session. The transcript
+and gives the same model one short user-role redirect. That retry must produce
+a tool call, including `done` for an explicit finish. A prose-only retry or a
+second text-limit breach ends the task as `narration_limit`; it does not start
+another session. A concise blocker also ends without success. The transcript
 retains the interrupted text. Usage includes interrupted and recovery calls,
 with estimated counts marked in the trace and `usage_estimated` in metrics.
 
-This mode requires the OpenAI-compatible chat streaming transport. The current
-native Anthropic and Codex subscription adapters do not expose the required
-stream observer, so autonomous mode rejects those adapters before a model
-request. Their ordinary conversation mode is unchanged. Yuj does not silently
-replace interruption with clipping after the reply has finished.
+The harness checks the tool-call boundary, not words such as "edit" in a reply.
+Tool calls still pass through the normal validation and completion guards.
+The narration allowance starts fresh on each request; the one-retry limit
+applies to the interrupted turn. These rules bound wasted narration. They do
+not prove that the model's next action solves the task.
+
+This rule covers OpenAI-compatible chat, native Anthropic Messages, and Codex
+subscription streams, including the first live request after replay handover.
+The adapters keep their own authentication and request formats. The harness
+uses the same text limit and retry rule for each transport. Native transcript
+records include replayable choices and usage, with the original response under
+`_provider_response`. Yuj does not replace interruption with clipping after the
+reply has finished.
 
 ### Apply settings in order
 

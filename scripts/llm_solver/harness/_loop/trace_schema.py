@@ -44,7 +44,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "session_number", "turn_number", "attempt", "action",
         "prompt_tokens", "completion_tokens", "prompt_tokens_known",
         "completion_tokens_known",
-    })),
+    }), frozenset({"cause"})),
     TraceEventSpec(
         "session_start", frozenset({
             "session_number", "thinking_level", "sandbox_backend",

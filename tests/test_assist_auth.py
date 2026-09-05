@@ -935,6 +935,65 @@ def test_codex_subscription_request_pins_yuj_session_envelope(tmp_path: Path):
     assert client._headers()["version"] == _YUJ_CLIENT_VERSION
 
 
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_native_subscription_narration_retry_and_replay(tmp_path, provider):
+    from tests.test_stream_rules_integration import _NativeResponse, _message_events
+    from scripts.llm_solver.harness.loop import Session
+    from scripts.llm_solver.server.replay_client import ReplayClient
+
+    store = CredentialStore(tmp_path / "auth")
+    binding = store.save_subscription(
+        provider, access_token=_jwt(), refresh_token="refresh", expires_at=10000,
+        account_id="acct_test",
+    )
+    cfg = make_config(
+        context_size=43008, reply_mode="autonomous",
+        provider="anthropic" if provider == "claude" else "openai-compatible",
+        base_url=("https://api.anthropic.com/v1" if provider == "claude"
+                  else "https://chatgpt.com/backend-api/codex"),
+    )
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    tool = {"path": "out.py", "content": "x" * 40000}
+    if provider == "claude":
+        streams = [_NativeResponse(_message_events("x" * (limit + 1))),
+                   _NativeResponse(_message_events("Write the fix.", tool=tool))]
+    else:
+        streams = [_NativeResponse([
+            {"type": "response.output_text.delta", "delta": "x" * (limit + 1)},
+            {"type": "response.completed", "response": {}},
+        ]), _NativeResponse([
+            {"type": "response.output_item.added", "output_index": 0,
+             "item": {"type": "function_call", "name": "write", "call_id": "call_1_0", "arguments": ""}},
+            {"type": "response.function_call_arguments.delta", "output_index": 0,
+             "delta": json.dumps(tool)},
+            {"type": "response.completed", "response": {
+                "status": "completed", "output": [{"type": "function_call", "name": "write",
+                "call_id": "call_1_0", "arguments": json.dumps(tool)}],
+                "usage": {"input_tokens": 100, "output_tokens": 10000}}},
+        ])]
+    for stream in streams:
+        stream.status_code, stream.ok = 200, True
+    http = FakeHTTP(*streams)
+    client = _make_client(cfg, profile=None, auth_binding=binding, auth_store=store,
+                          http=http, now=lambda: 1000.0)
+    transcript = tmp_path / "subscription.log"
+    client.set_transcript(transcript)
+    result = Session(cfg, client, "system", "task", str(tmp_path))._chat_with_retry(1)
+    client.close_transcript()
+    assert result.tool_calls[0].arguments == tool
+    assert all(stream.closed for stream in streams)
+    assert len(http.posts) == 2
+    assert result.usage.completion_tokens > 10000
+    assert not result.usage.completion_tokens_known
+    request = http.posts[1][1]
+    assert request["stream"]
+    assert "Take the next concrete coding action" in str(request)
+    replay = ReplayClient(transcript, strict_fidelity=False)
+    recovered = Session(cfg, replay, "system", "task", str(tmp_path))._chat_with_retry(1)
+    assert recovered.tool_calls == result.tool_calls
+    assert recovered.usage == result.usage
+
+
 @pytest.mark.parametrize(
     ("event_type", "status", "expected_status", "expected_finish_reason"),
     [
@@ -999,7 +1058,8 @@ def test_codex_terminal_events_preserve_or_default_response_status(
         "max_tokens": 10,
     })
 
-    assert json.loads(response.model_dump_json())["status"] == expected_status
+    recorded = json.loads(response.model_dump_json())
+    assert recorded["_provider_response"]["status"] == expected_status
     assert response.choices[0].finish_reason == expected_finish_reason
 
 
