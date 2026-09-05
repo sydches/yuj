@@ -843,6 +843,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
         chat_result = session._chat_with_retry(turn)
         _phase_chat_ms = (time.perf_counter() - _chat_t0) * 1000
         if chat_result is None:
+            abandoned = getattr(session, "_abandoned_chat_usage", None)
+            if abandoned is not None:
+                total_prompt += abandoned.prompt_tokens
+                total_completion += abandoned.completion_tokens
+                session._abandoned_chat_usage = None
             # chat_io may have set a more specific reason (e.g.
             # "compaction_overflow"); fall back to "error" otherwise.
             err_reason = getattr(session, "_last_chat_error_reason", None) or "error"
@@ -896,6 +901,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
             **cache_observation.trace_fields(),
             first_prompt_tokens=first_prompt_tokens,
             last_prompt_tokens=last_prompt_tokens,
+            prompt_tokens_known=chat_result.usage.prompt_tokens_known,
+            completion_tokens_known=chat_result.usage.completion_tokens_known,
         )
         total_prompt += prompt_tokens
         total_completion += completion_tokens

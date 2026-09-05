@@ -294,6 +294,7 @@ def solve_task(
     pending_handoff = None
     agg_prompt = 0
     agg_completion = 0
+    agg_usage_estimated = False
     agg_turns = 0
     agg_done_blocked = 0
     # Cross-session totals for the per-session counters. Previously only
@@ -829,6 +830,7 @@ def solve_task(
             # threshold value, so summing across sessions gives a
             # comparison-ready total).
             agg_prompt += result.total_prompt_tokens
+            agg_usage_estimated = agg_usage_estimated or result.usage_estimated
             agg_completion += result.total_completion_tokens
             agg_turns += result.turns
             agg_length_continuations += int(
@@ -870,6 +872,7 @@ def solve_task(
                 finish_reason=result.finish_reason,
                 turns=result.turns,
                 total_prompt_tokens=result.total_prompt_tokens,
+                usage_estimated=result.usage_estimated,
             )
             if state_path is not None:
                 write_state_from_trace(
@@ -907,6 +910,10 @@ def solve_task(
             # Auto-commit for non-error sessions.
             if auto_commit:
                 _auto_commit(work_dir, session_num, result.finish_reason)
+
+            if result.finish_reason == "narration_limit":
+                write_checkpoint(artifact_dir, cfg.model, "error")
+                break
 
             # The per-task wall-clock budget bounds how long one task can run.
             # It is checked after the session's
@@ -954,6 +961,7 @@ def solve_task(
     metrics: dict = {
         "total_prompt_tokens": agg_prompt,
         "total_completion_tokens": agg_completion,
+        "usage_estimated": agg_usage_estimated,
         "total_tokens": total_tokens,
         "wall_clock_seconds": round(wall_clock, 2),
         "sessions_used": sessions_used,

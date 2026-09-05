@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -10,7 +11,7 @@ import openai
 
 from ...server._streaming import StreamRuleInterrupt
 from ...server.types import Usage
-from ..stream_rules import format_interrupt_fragment
+from ..stream_rules import NarrationBudget, format_interrupt_fragment
 from .compaction import CompactionOverflowError, maybe_compact_messages
 from .length_continuation import continue_length_response
 from .model_fallback_runtime import activate_next_fallback
@@ -85,7 +86,12 @@ def _chat_with_length_continuation(
     usages = [initial_raw.get("usage")]
 
     def call_model(request):
-        response = client._call_raw_profile_request(request)
+        try:
+            response = client._call_raw_profile_request(request)
+        except StreamRuleInterrupt as exc:
+            exc.prior_usages = tuple(usages)
+            exc.request_messages = request.get("messages", [])
+            raise
         usages.append(response.get("usage"))
         return response
 
@@ -200,9 +206,59 @@ def _emit_api_error(session: "Session", turn: int, exc: Exception, *, kind: str)
         log.exception("failed to emit api_error trace event")
 
 
+def _record_narration_usage(session, outgoing, exc, turn, attempt):
+    """Charge interrupted work and label counts missing from the server."""
+    from .compaction import _recount_tokens
+
+    partial = exc.partial_response
+    usage = getattr(partial, "usage", None)
+    prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+    completion = int(getattr(usage, "completion_tokens", 0) or 0)
+    prompt_known, completion_known = prompt > 0, completion > 0
+    chars = 0
+    if partial is not None and partial.choices:
+        message = partial.choices[0].message
+        chars = len(message.content or "")
+        chars += sum(len(tc.function.arguments) for tc in (message.tool_calls or ()))
+    if not prompt_known:
+        from ..plan_mode import effective_model_tool_schemas
+
+        prompt = _recount_tokens(
+            getattr(exc, "request_messages", outgoing),
+            getattr(session, "_tokenizer", None),
+            tools=effective_model_tool_schemas(session),
+        )
+    if not completion_known:
+        observed = max((int(r.get("observed_chars", 0)) for r in exc.matches), default=0)
+        chars = max(chars, observed)
+        completion = math.ceil(chars / 4)
+    charged = Usage(
+        prompt, completion, prompt_tokens_known=prompt_known,
+        completion_tokens_known=completion_known,
+    )
+    usages = [*getattr(exc, "prior_usages", ()), charged]
+    prior = session._abandoned_chat_usage
+    if prior is not None:
+        usages.insert(0, prior)
+    session._abandoned_chat_usage = _aggregate_usage(usages)
+    session._narration_usage_estimated = (
+        getattr(session, "_narration_usage_estimated", False)
+        or not prompt_known or not completion_known
+    )
+    session._emit(
+        "narration_limit", session_number=session._session_number,
+        turn_number=turn, attempt=attempt, prompt_tokens=prompt,
+        completion_tokens=completion, prompt_tokens_known=prompt_known,
+        completion_tokens_known=completion_known,
+        action="retry" if attempt == 1 else "end",
+    )
+
+
 def chat_with_retry(session: "Session", turn: int):
     """Call client.chat(), retrying on transient errors."""
     wire_compaction_attempted = False
+    narration_interrupts = 0
+    session._abandoned_chat_usage = None
     while True:
         cfg = session.cfg
         max_retries = cfg.max_transient_retries
@@ -219,11 +275,27 @@ def chat_with_retry(session: "Session", turn: int):
                 _release_protected_correction(session, outgoing)
                 length_continue_max = _length_continue_max(cfg)
                 runtime = getattr(session, "_stream_rule_runtime", None)
+                narration = (
+                    NarrationBudget(
+                        context_size=cfg.context_size,
+                        fraction=cfg.narration_context_fraction,
+                        message=cfg.narration_redirect,
+                    )
+                    if getattr(cfg, "reply_mode", "conversation") == "autonomous"
+                    else None
+                )
                 if runtime is not None:
                     runtime.begin_attempt()
+                if narration is not None and getattr(
+                    session.client, "supports_stream_observer", True
+                ) is False:
+                    raise ValueError(
+                        "Autonomous replies require a transport with streaming "
+                        "interruption support; this adapter does not provide it."
+                    )
                 client_state = getattr(session.client, "__dict__", {})
                 observer_supported = (
-                    runtime is not None
+                    (runtime is not None or narration is not None)
                     and isinstance(client_state, dict)
                     and "_stream_observer" in client_state
                 )
@@ -232,9 +304,15 @@ def chat_with_retry(session: "Session", turn: int):
                     if observer_supported else None
                 )
                 if observer_supported:
-                    session.client._stream_observer = (
-                        lambda delta: runtime.observe(delta, turn=turn)
-                    )
+                    def observe(delta):
+                        if narration is not None:
+                            narration.observe(delta)
+                        if runtime is not None:
+                            runtime.observe(delta, turn=turn)
+                    session.client._stream_observer = observe
+                prior_streaming = getattr(session.client, "_narration_streaming", False)
+                if observer_supported and narration is not None:
+                    session.client._narration_streaming = True
                 try:
                     if length_continue_max > 0 and _can_continue_raw(session.client):
                         result = _chat_with_length_continuation(
@@ -249,6 +327,7 @@ def chat_with_retry(session: "Session", turn: int):
                 finally:
                     if observer_supported:
                         session.client._stream_observer = prior_observer
+                        session.client._narration_streaming = prior_streaming
                 if result is not None and getattr(
                     result, "finish_reason", ""
                 ) == "replay_stop_turn":
@@ -267,11 +346,28 @@ def chat_with_retry(session: "Session", turn: int):
                         replay=bool(getattr(session.client, "is_replay", False)),
                     )
                     session._record_stream_rule_matches(records, turn=turn)
+                abandoned = session._abandoned_chat_usage
+                if result is not None and abandoned is not None:
+                    result = replace(
+                        result,
+                        first_prompt_tokens=(result.first_prompt_tokens if result.first_prompt_tokens is not None else result.usage.prompt_tokens),
+                        last_prompt_tokens=(result.last_prompt_tokens if result.last_prompt_tokens is not None else result.usage.prompt_tokens),
+                        usage=_aggregate_usage([abandoned, result.usage]),
+                    )
+                    session._abandoned_chat_usage = None
                 return result
             except StreamRuleInterrupt as exc:
                 records = tuple(exc.matches)
+                automatic = any(r.get("kind") == "narration_limit" for r in records)
+                if automatic:
+                    narration_interrupts += 1
+                    _record_narration_usage(session, outgoing, exc, turn, narration_interrupts)
                 session._record_stream_rule_matches(records, turn=turn)
-                if getattr(cfg, "stream_rules_context_mode", "discard") == "keep":
+                if automatic and narration_interrupts > 1:
+                    session._last_chat_error_reason = "narration_limit"
+                    log.warning("Narration limit repeated on turn %d; ending task", turn)
+                    return None
+                if not automatic and getattr(cfg, "stream_rules_context_mode", "discard") == "keep":
                     partial = exc.partial_response
                     partial_content = None
                     if partial is not None and partial.choices:
@@ -306,7 +402,7 @@ def chat_with_retry(session: "Session", turn: int):
                     },
                 )
                 runtime = getattr(session, "_stream_rule_runtime", None)
-                if runtime is not None:
+                if runtime is not None and not automatic:
                     runtime.mark_injected(records, turn=turn)
                 session._record_stream_rule_injection(
                     records, turn=turn, delivery="retry"

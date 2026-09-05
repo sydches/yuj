@@ -110,6 +110,12 @@ rewind_enabled = false
 rewind_max_per_session = 1
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
 length_continue_max = 1     # same-turn follow-ups after finish_reason=length; 0 disables
+# Measurement runs default to autonomous replies; assistant runs default to
+# conversation. Set reply_mode="autonomous" for unattended assistant coding,
+# or "conversation" for prose tasks. Autonomous mode requires a transport
+# with streaming interruption support; unsupported adapters fail before a call.
+reply_mode = "auto" # Select autonomous in measurement mode and conversation in assistant mode; explicit values override that choice.
+narration_context_fraction = 0.01 # Positive share of the resolved context for narration, estimated at four characters per token; tool arguments remain separate.
 handoff_summary_enabled = false  # opt in to a validated model-written handoff at eligible session boundaries
 # Mid-stream rules load once at task startup from the task repository. With
 # YUJ_STREAMING=1, an interrupt-worthy match closes the SSE response, injects
@@ -646,6 +652,10 @@ state_context_suffix = "Continue. Progress tracked in .solver/state.json."
 # Format placeholders: {count}, {first_turn}.
 intent_gate_first = "[harness] Silent tool call rejected. State what you are doing and why, then re-issue."
 intent_gate_repeat = "[intent gate: state reasoning — {count} silent since turn {first_turn}]"
+
+# One user-role redirect after an autonomous narration interruption. Keep it
+# short and action-focused; a second breach ends the task instead of retrying.
+narration_redirect = "[harness] Narration limit reached. Take the next concrete coding action with a tool now, or finish with a concise result or blocker. Do not continue the monologue."
 
 # Injected at every session boundary (session 2+) as the base continuation instruction.
 resume_base = "Continue. Review prior actions, do the next step."

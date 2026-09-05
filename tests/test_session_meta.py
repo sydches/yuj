@@ -70,7 +70,7 @@ def test_session_meta_writes_on_dry_run(tmp_path):
     )
     meta = json.loads(session_path.read_text())
     assert "started_at" in meta
-    assert meta["harness_version"] == "8.0.34"
+    assert meta["harness_version"] == "8.0.35"
     assert "run_dir" in meta
     assert "model" in meta
     assert "context_mode" in meta

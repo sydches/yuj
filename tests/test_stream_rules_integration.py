@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -89,6 +89,149 @@ def _compact_context() -> CompactTranscript:
         min_turns=0,
         args_summary_chars=80,
     )
+
+
+@pytest.mark.parametrize("context_factory", [FullTranscript, _compact_context])
+def test_autonomous_narration_stops_early_recovers_and_replays(tmp_path, monkeypatch, context_factory):
+    monkeypatch.setenv("YUJ_STREAMING", "0")
+    cfg = make_config(context_size=43008, stream_rules_enabled=False)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    first = _ClosableStream([_chunk(content="x" * (limit + 1)), _chunk(content="unread" * 8000)])
+    call = SimpleNamespace(index=0, id="call_1_0", type="function", function=SimpleNamespace(
+        name="write", arguments=json.dumps({"path": "out.py", "content": "x" * 40000})
+    ))
+    second = _ClosableStream([
+        _chunk(content="Write the fix.", tool_calls=[call]),
+        _chunk(finish_reason="tool_calls", usage=_usage(300, 10000)),
+    ])
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(side_effect=[first, second])
+    transcript = tmp_path / "narration.log"
+    client.set_transcript(transcript)
+    trace = io.StringIO()
+    session = Session(cfg, client, "system", "task", str(tmp_path),
+                      context_manager=context_factory(), trace_file=trace)
+    result = session._chat_with_retry(1)
+    client.close_transcript()
+    assert first.closed
+    assert next(first._chunks).choices[0].delta.content.startswith("unread")
+    assert result.tool_calls[0].name == "write"
+    assert len(result.tool_calls[0].arguments["content"]) == 40000
+    assert client.client.chat.completions.create.call_count == 2
+    retry = client.client.chat.completions.create.call_args_list[1].kwargs
+    assert retry["stream"] is True
+    assert retry["model"] == client.client.chat.completions.create.call_args_list[0].kwargs["model"]
+    assert "Take the next concrete coding action" in json.dumps(retry["messages"])
+    assert "x" * (limit + 1) not in json.dumps(retry["messages"])
+    assert result.usage.completion_tokens > 10000
+    assert result.usage.completion_tokens_known is False
+    assert result.last_prompt_tokens == 300
+    events = _trace_rows(trace)
+    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["retry"]
+
+    replay = ReplayClient(transcript, strict_fidelity=False)
+    replay_session = Session(cfg, replay, "system", "task", str(tmp_path),
+                             context_manager=context_factory())
+    replay_result = replay_session._chat_with_retry(1)
+    assert replay_result.tool_calls == result.tool_calls
+    assert replay_result.usage == result.usage
+
+
+def test_second_narration_breach_ends_task_without_session_restart(tmp_path, monkeypatch):
+    from scripts.llm_solver.harness.loop import solve_task
+    from scripts.llm_solver._shared.telemetry_paths import trace_path
+
+    monkeypatch.setenv("YUJ_STREAMING", "0")
+    cfg = make_config(max_sessions=3, max_turns=5, context_size=43008, sandbox_bash=False)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    streams = [_ClosableStream([_chunk(content="x" * (limit + 1))]) for _ in range(2)]
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(side_effect=streams)
+    (tmp_path / "prompt.txt").write_text("Fix the issue")
+    with patch("scripts.llm_solver.harness.loop._auto_commit"), patch.object(Session, "_get_server_ctx", return_value=43008):
+        assert solve_task(tmp_path, cfg, client) is False
+    assert client.client.chat.completions.create.call_count == 2
+    assert all(stream.closed for stream in streams)
+    metrics = json.loads((tmp_path / "metrics.json").read_text())["metrics"]
+    assert metrics["sessions_used"] == 1
+    assert metrics["usage_estimated"] is True
+    assert metrics["total_completion_tokens"] == 2 * ((limit + 4) // 4)
+    events = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()]
+    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["retry", "end"]
+    assert [e["finish_reason"] for e in events if e["event"] == "session_end"] == ["narration_limit"]
+
+
+def test_reply_contract_defaults_and_validation(tmp_path):
+    assert load_config().reply_mode == "autonomous"
+    assert load_config(overrides={"runtime_mode": "assistant"}).reply_mode == "conversation"
+    assert load_config(overrides={"runtime_mode": "assistant", "reply_mode": "auto"}).reply_mode == "conversation"
+    assert load_config(overrides={"runtime_mode": "assistant", "reply_mode": "autonomous"}).reply_mode == "autonomous"
+    for setting in ['reply_mode="unknown"', 'narration_context_fraction=0', 'narration_context_fraction=true']:
+        config = tmp_path / "reply.toml"
+        config.write_text("[loop]\n" + setting + "\n")
+        with pytest.raises(ValueError):
+            load_config(user_config=config)
+
+
+@pytest.mark.parametrize("context_size", [20000, 43008, 262144])
+def test_narration_allowance_scales_and_excludes_other_surfaces(context_size):
+    from scripts.llm_solver.harness.stream_rules import NarrationBudget
+    from scripts.llm_solver.server._streaming import StreamDelta, StreamRuleInterrupt
+
+    budget = NarrationBudget(context_size=context_size, fraction=0.01, message="Act.")
+    assert budget.limit_chars == int(context_size * 0.01 * 4)
+    budget.observe(StreamDelta("thinking", "x" * 40000))
+    budget.observe(StreamDelta("tool", "x" * 40000))
+    budget.observe(StreamDelta("text", "x" * budget.limit_chars))
+    with pytest.raises(StreamRuleInterrupt):
+        budget.observe(StreamDelta("text", "x"))
+
+
+def test_conversation_keeps_long_prose_and_does_not_force_streaming(tmp_path, monkeypatch):
+    from scripts.llm_solver.server._streaming import assemble_stream
+
+    monkeypatch.setenv("YUJ_STREAMING", "0")
+    cfg = make_config(reply_mode="conversation")
+    response = assemble_stream([
+        _chunk(content="x" * 40000),
+        _chunk(finish_reason="stop", usage=_usage(100, 10000)),
+    ])
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(return_value=response)
+    session = Session(cfg, client, "system", "task", str(tmp_path))
+    result = session._chat_with_retry(1)
+    assert result.content == "x" * 40000
+    assert client.client.chat.completions.create.call_count == 1
+    assert not client.client.chat.completions.create.call_args.kwargs.get("stream")
+
+
+def test_autonomous_rejects_transport_without_observer_before_request(tmp_path):
+    class NonStreamingAdapter(LlamaClient):
+        def _call_api(self, payload, **kwargs):
+            pytest.fail("unsupported adapter must not start generation")
+
+    client = NonStreamingAdapter(make_config(), profile=None)
+    session = Session(client.cfg, client, "system", "task", str(tmp_path))
+    assert session._chat_with_retry(1) is None
+
+
+def test_interrupted_continuation_counts_completed_and_interrupted_calls(tmp_path):
+    from scripts.llm_solver.harness._loop.chat_io import _record_narration_usage
+    from scripts.llm_solver.server._streaming import StreamRuleInterrupt, assemble_stream
+
+    cfg = make_config()
+    session = Session(cfg, _StaticClient(None), "system", "task", str(tmp_path))
+    session._abandoned_chat_usage = None
+    partial = assemble_stream([
+        _chunk(content="too much text"),
+        _chunk(finish_reason="stop", usage=_usage(150, 8)),
+    ])
+    exc = StreamRuleInterrupt([{"observed_chars": 13}], partial)
+    exc.prior_usages = (Usage(100, 10),)
+    _record_narration_usage(session, [], exc, 1, 1)
+    assert session._abandoned_chat_usage.prompt_tokens == 250
+    assert session._abandoned_chat_usage.completion_tokens == 18
+    assert session._narration_usage_estimated is False
 
 
 def test_fake_stream_is_closed_discard_omits_partial_and_replay_retries(

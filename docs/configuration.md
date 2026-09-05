@@ -86,6 +86,38 @@ save the localhost address and `local` key.
 
 ## Understand setting order
 
+### Choose the reply contract
+
+The default `loop.reply_mode="auto"` selects conversation for assistant
+sessions and autonomous coding for measurement runs. Conversation permits
+prose replies. For unattended coding through
+the assistant, put these settings in an explicit overlay:
+
+```toml
+[loop]
+reply_mode = "autonomous" # Use "conversation" when prose is part of the task.
+narration_context_fraction = 0.01 # Share of the resolved context allowed for narration; increase only when the task needs longer explanations.
+```
+
+Autonomous mode bounds text during generation, even when custom stream rules
+are off. The default allowance is 1% of the resolved context window, estimated
+at four characters per token. It is a character bound, not an exact tokenizer
+count. Code in tool arguments and separate reasoning are outside this limit.
+
+On a breach, Yuj closes the stream, discards the monologue from working context,
+and gives the same model one short user-role redirect. A second breach ends
+the task as `narration_limit`; it does not start another session. The transcript
+retains the interrupted text. Usage includes interrupted and recovery calls,
+with estimated counts marked in the trace and `usage_estimated` in metrics.
+
+This mode requires the OpenAI-compatible chat streaming transport. The current
+native Anthropic and Codex subscription adapters do not expose the required
+stream observer, so autonomous mode rejects those adapters before a model
+request. Their ordinary conversation mode is unchanged. Yuj does not silently
+replace interruption with clipping after the reply has finished.
+
+### Apply settings in order
+
 Yuj calls the starting group of settings a base.
 
 Yuj applies settings in this order:

@@ -122,7 +122,7 @@ _SHELL_SEPARATORS = frozenset({"&&", "||", "|", ";"})
 # ── Error taxonomy ───────────────────────────────────────────────────────
 
 NORMAL_LIFECYCLE = frozenset({"context_full", "length"})
-MODEL_STUCK = frozenset({"duplicate_abort", "max_turns"})
+MODEL_STUCK = frozenset({"duplicate_abort", "max_turns", "narration_limit"})
 _TRANSIENT_ERRORS = (openai.APIConnectionError, openai.APITimeoutError)
 
 
@@ -155,6 +155,7 @@ _KNOWN_FINISH_REASONS: frozenset[str] = frozenset({
     "stop",
     "model_done",
     "no_tool_call",
+    "narration_limit",
     "max_turns",
     "context_full",
     "duplicate_abort",
@@ -187,6 +188,7 @@ class SessionResult:
     done: bool
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    usage_estimated: bool = False
 
     def __post_init__(self):
         # Warn (don't raise) on unknown finish_reason — a typo at the
@@ -1672,6 +1674,8 @@ class Session:
             try:
                 runner = maybe_install_persistent_bash(self)
                 result = run_session_loop(self)
+                if getattr(self, "_narration_usage_estimated", False):
+                    result = replace(result, usage_estimated=True)
                 self._own_prompt_tokens = result.total_prompt_tokens
                 self._own_completion_tokens = result.total_completion_tokens
                 if self._subagent_prompt_tokens or self._subagent_completion_tokens:

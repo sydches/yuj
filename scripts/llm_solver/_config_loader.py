@@ -802,6 +802,13 @@ def _extract_config_fields(d: dict) -> dict:
         "interrupted_turn_mode": d.get("loop", {}).get(
             "interrupted_turn_mode", "mechanical"
         ),
+        "reply_mode": (
+            ("conversation" if d.get("runtime", {}).get("mode") == "assistant" else "autonomous")
+            if d.get("loop", {}).get("reply_mode", "auto") == "auto"
+            else d["loop"]["reply_mode"]
+        ),
+        "narration_context_fraction": d.get("loop", {}).get("narration_context_fraction", 0.01),
+        "narration_redirect": _require(d, "prompts", "narration_redirect"),
         "length_continue_max": d.get("loop", {}).get(
             "length_continue_max", 1
         ),
@@ -1374,6 +1381,17 @@ def _validate_coupling(
             "config error: loop.length_continue_max must be a non-negative "
             "integer."
         )
+    if cfg.reply_mode not in {"autonomous", "conversation"}:
+        raise ValueError("config error: loop.reply_mode must be autonomous or conversation")
+    if not isinstance(cfg.narration_redirect, str) or not cfg.narration_redirect.strip():
+        raise ValueError("config error: prompts.narration_redirect must not be empty")
+    if (
+        isinstance(cfg.narration_context_fraction, bool)
+        or not isinstance(cfg.narration_context_fraction, (int, float))
+        or not math.isfinite(cfg.narration_context_fraction)
+        or not 0 < cfg.narration_context_fraction <= 1
+    ):
+        raise ValueError("config error: loop.narration_context_fraction must be in (0, 1]")
     if not isinstance(cfg.stream_rules_enabled, bool):
         raise ValueError(
             "config error: loop.stream_rules_enabled must be a boolean."

@@ -40,6 +40,11 @@ class TraceEventSpec:
 
 
 TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
+    TraceEventSpec("narration_limit", frozenset({
+        "session_number", "turn_number", "attempt", "action",
+        "prompt_tokens", "completion_tokens", "prompt_tokens_known",
+        "completion_tokens_known",
+    })),
     TraceEventSpec(
         "session_start", frozenset({
             "session_number", "thinking_level", "sandbox_backend",

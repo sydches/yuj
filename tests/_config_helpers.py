@@ -68,6 +68,11 @@ def _defaults() -> dict:
             "a reasoning prefix."
         ),
         intent_gate_repeat="[intent gate: state your reasoning — {count} silent calls since turn {first_turn}]",
+        narration_redirect=(
+            "[harness] Narration limit reached. Take the next concrete coding action "
+            "with a tool now, or finish with a concise result or blocker. "
+            "Do not continue the monologue."
+        ),
         resume_base="Continue working on the task. Review your previous actions and do the next unit of work.",
         error_nudge="[harness: {count} consecutive errors, consider re-reading the file]",
         rumination_nudge=(

@@ -255,6 +255,10 @@ class Config:
     rewind_max_per_session: int = 1
     interrupted_turn_mode: str = "mechanical"
     length_continue_max: int = 1
+    # Autonomous coding bounds narration; conversation permits prose replies.
+    reply_mode: str = "autonomous"
+    narration_context_fraction: float = 0.01
+    narration_redirect: str = ""
     project_docs_enabled: bool = False
     project_doc_names: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md")
     project_doc_max_bytes: int = 32768
@@ -910,6 +914,8 @@ _OVERRIDE_SETTING_PATHS: dict[str, SettingPath] = {
     "sandbox_backend": ("sandbox", "backend"),
     "sandbox_container_image": ("sandbox", "container_image"),
     "sandbox_container_flags": ("sandbox", "container_flags"),
+    "reply_mode": ("loop", "reply_mode"),
+    "narration_context_fraction": ("loop", "narration_context_fraction"),
     "thinking_level": ("model", "thinking_level"),
     "tool_desc": ("experiment", "tool_desc"),
     "tools_constrained_decoding": ("tools", "constrained_decoding"),

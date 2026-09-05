@@ -252,6 +252,12 @@ class LlamaClient:
             self._transcript_file.write("\n")
         self._transcript_file.flush()
 
+    @property
+    def supports_stream_observer(self) -> bool:
+        # An adapter replacing this transport must explicitly provide its own
+        # observer support before autonomous execution can rely on it.
+        return type(self)._call_api is LlamaClient._call_api
+
     def _call_api(self, payload: dict, *, record_transcript: bool = True):
         """Send one HTTP request and save its payload and response.
 
@@ -271,7 +277,7 @@ class LlamaClient:
                 f"turn {n:03d} input",
                 json.dumps(payload, default=str),
             )
-        if _streaming_enabled():
+        if _streaming_enabled() or getattr(self, "_narration_streaming", False):
             self._last_call_streamed = True
             stream_payload = dict(payload)
             stream_payload["stream"] = True
