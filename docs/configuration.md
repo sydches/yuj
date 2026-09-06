@@ -113,6 +113,13 @@ time and turn limits still apply. The transcript retains the interrupted
 text. Usage includes interrupted and recovery calls,
 with estimated counts marked in the trace and `usage_estimated` in metrics.
 
+The trace action `force_tool_requested` describes the selected recovery
+request, not proof of server enforcement. A completed required-tool reply
+with no tool call records `cause=forced_request_no_tool`. A required-tool
+reply cut for excessive prose records `cause=forced_request_interrupted`.
+Some servers may ignore the required-tool setting; these events expose that
+behavior without changing recovery or ending the task.
+
 Work means a tool call that runs, including one returned after the redirect.
 A tool error goes through the normal error ladder and does not add a narration
 penalty. A `done` call still passes through the completion guard; it does not

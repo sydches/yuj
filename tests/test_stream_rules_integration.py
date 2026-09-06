@@ -155,8 +155,10 @@ def test_repeated_narration_uses_normal_turn_limit(tmp_path, monkeypatch):
     client = LlamaClient(cfg, profile=None)
     client.client.chat.completions.create = MagicMock(side_effect=streams)
     (tmp_path / "prompt.txt").write_text("Fix the issue")
+    transcript_dir = tmp_path / "transcripts"
     with patch("scripts.llm_solver.harness.loop._auto_commit"), patch.object(Session, "_get_server_ctx", return_value=43008):
-        assert solve_task(tmp_path, cfg, client) is False
+        assert solve_task(tmp_path, cfg, client, transcript_dir=transcript_dir) is False
+    client.close_transcript()
     assert client.client.chat.completions.create.call_count == 3
     assert [c.kwargs["tool_choice"] for c in client.client.chat.completions.create.call_args_list] == ["auto", "auto", "required"]
     assert all(stream.closed for stream in streams)
@@ -165,8 +167,15 @@ def test_repeated_narration_uses_normal_turn_limit(tmp_path, monkeypatch):
     assert metrics["usage_estimated"] is True
     assert metrics["total_completion_tokens"] == 3 * ((limit + 4) // 4)
     events = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()]
-    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["redirect", "force_tool", "force_tool"]
+    breaches = [e for e in events if e["event"] == "narration_limit"]
+    assert [e["action"] for e in breaches] == ["redirect", "force_tool_requested", "force_tool_requested"]
+    assert [e.get("cause") for e in breaches] == [None, None, "forced_request_interrupted"]
     assert [e["finish_reason"] for e in events if e["event"] == "session_end"] == ["max_turns"]
+    replay_trace = io.StringIO()
+    replay = ReplayClient(transcript_dir / f"{tmp_path.name}.log", strict_fidelity=False)
+    replay_result = Session(cfg, replay, "system", "task", str(tmp_path), trace_file=replay_trace).run()
+    assert replay_result.finish_reason == "max_turns"
+    assert [r.get("cause") for r in _trace_rows(replay_trace) if r["event"] == "narration_limit"] == [None, None, "forced_request_interrupted"]
 
 
 def test_reply_contract_defaults_and_validation(tmp_path):
@@ -244,9 +253,13 @@ def test_prose_only_recovery_cannot_be_implicit_success(tmp_path, reply):
     assert metrics["total_completion_tokens"] == ((limit + 4) // 4) + 20
     rows = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()]
     assert any(row.get("cause") == "no_tool_recovery" for row in rows)
+    breaches = [r for r in rows if r["event"] == "narration_limit"]
+    assert [r.get("cause") for r in breaches] == [None, "no_tool_recovery", "forced_request_no_tool"]
     assert [r["finish_reason"] for r in rows if r["event"] == "session_end"] == ["max_turns"]
     replay = ReplayClient(transcript_dir / f"{tmp_path.name}.log", strict_fidelity=False)
-    replay_result = Session(cfg, replay, "system", "task", str(tmp_path)).run()
+    replay_trace = io.StringIO()
+    replay_result = Session(cfg, replay, "system", "task", str(tmp_path), trace_file=replay_trace).run()
+    assert [r.get("cause") for r in _trace_rows(replay_trace) if r["event"] == "narration_limit"] == [None, "no_tool_recovery", "forced_request_no_tool"]
     assert replay_result.finish_reason == "max_turns" and not replay_result.done
     assert replay_result.total_completion_tokens == metrics["total_completion_tokens"]
 
@@ -325,8 +338,9 @@ def test_narration_escalates_and_resets_after_executed_work(tmp_path, error_argu
     assert [r["turn_number"] for r in done_rows] == [4, 9]
     assert "Session ended by model" not in done_rows[0]["result_summary"]
     assert [r["action"] for r in rows if r["event"] == "narration_limit"] == [
-        "redirect", "redirect", "force_tool", "redirect",
+        "redirect", "redirect", "force_tool_requested", "redirect",
     ]
+    assert not any(r.get("cause", "").startswith("forced_request_") for r in rows)
     if error_arguments is not None:
         assert any(r["event"] == "tool_call" and r.get("tool_name") == "read" and r.get("outcome") == "error" for r in rows)
     replay_trace = io.StringIO()
@@ -335,7 +349,7 @@ def test_narration_escalates_and_resets_after_executed_work(tmp_path, error_argu
     assert replay_result.done
     assert replay_result.total_completion_tokens == result.total_completion_tokens
     assert [r["action"] for r in _trace_rows(replay_trace) if r["event"] == "narration_limit"] == [
-        "redirect", "redirect", "force_tool", "redirect",
+        "redirect", "redirect", "force_tool_requested", "redirect",
     ]
 
 

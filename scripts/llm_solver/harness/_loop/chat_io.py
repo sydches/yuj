@@ -206,7 +206,7 @@ def _emit_api_error(session: "Session", turn: int, exc: Exception, *, kind: str)
         log.exception("failed to emit api_error trace event")
 
 
-def _record_narration_usage(session, outgoing, exc, turn, attempt):
+def _record_narration_usage(session, outgoing, exc, turn, attempt, *, tool_required=False):
     """Charge interrupted work and label counts missing from the server."""
     from .compaction import _recount_tokens
 
@@ -247,7 +247,8 @@ def _record_narration_usage(session, outgoing, exc, turn, attempt):
         turn_number=turn, attempt=attempt, prompt_tokens=prompt,
         completion_tokens=completion, prompt_tokens_known=prompt_known,
         completion_tokens_known=completion_known,
-        action="redirect" if attempt == 1 else "force_tool",
+        action="redirect" if attempt == 1 else "force_tool_requested",
+        **({"cause": "forced_request_interrupted"} if tool_required else {}),
     )
     return charged
 
@@ -271,7 +272,6 @@ def chat_with_retry(session: "Session", turn: int):
                     session, session.context.get_messages()
                 )
                 _release_protected_correction(session, outgoing)
-                length_continue_max = _length_continue_max(cfg)
                 runtime = getattr(session, "_stream_rule_runtime", None)
                 narration = (
                     NarrationBudget(
@@ -283,8 +283,7 @@ def chat_with_retry(session: "Session", turn: int):
                     else None
                 )
                 recovering = narration is not None and getattr(session, "_narration_breaches", 0) > 0
-                if recovering:
-                    length_continue_max = 0
+                length_continue_max = 0 if recovering else _length_continue_max(cfg)
                 if runtime is not None:
                     runtime.begin_attempt()
                 if narration is not None and getattr(
@@ -313,7 +312,7 @@ def chat_with_retry(session: "Session", turn: int):
                     session.client._stream_observer = observe
                 prior_streaming = getattr(session.client, "_narration_streaming", False)
                 prior_required = getattr(session.client, "_narration_tool_required", False)
-                session.client._narration_tool_required = recovering and session._narration_breaches > 1
+                session.client._narration_tool_required = tool_required = recovering and session._narration_breaches > 1
                 if observer_supported and narration is not None:
                     session.client._narration_streaming = True
                 try:
@@ -358,7 +357,8 @@ def chat_with_retry(session: "Session", turn: int):
                     session._narration_breaches = 2
                     session._emit(
                         "narration_limit", session_number=session._session_number,
-                        turn_number=turn, action="force_tool", cause="no_tool_recovery",
+                        turn_number=turn, action="force_tool_requested",
+                        cause="forced_request_no_tool" if tool_required else "no_tool_recovery",
                         attempt=2,
                         prompt_tokens=response_usage.prompt_tokens, completion_tokens=response_usage.completion_tokens,
                         prompt_tokens_known=response_usage.prompt_tokens_known,
@@ -371,7 +371,7 @@ def chat_with_retry(session: "Session", turn: int):
                 automatic = any(r.get("kind") == "narration_limit" for r in records)
                 if automatic:
                     session._narration_breaches = min(2, getattr(session, "_narration_breaches", 0) + 1)
-                    charged = _record_narration_usage(session, outgoing, exc, turn, session._narration_breaches)
+                    charged = _record_narration_usage(session, outgoing, exc, turn, session._narration_breaches, tool_required=tool_required)
                     prior_usages = getattr(exc, "prior_usages", ())
                     discarded = TurnResult(
                         None, [], "narration_discarded", session._abandoned_chat_usage,
