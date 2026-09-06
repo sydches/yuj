@@ -849,13 +849,13 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         try:
             if succeeded and name == "read":
                 read_path = str(arguments.get("path", ""))
-                candidate = Path(read_path)
-                if (
-                    not candidate.is_absolute()
-                    or candidate.resolve(strict=False) == Path(cwd).resolve()
-                    or Path(cwd).resolve() in candidate.resolve(strict=False).parents
-                ):
-                    stale_guard.observe_read(read_path)
+                from ._tools._common import _resolve_read
+                candidate = _resolve_read(
+                    cwd, read_path,
+                    readonly_roots=tuple(getattr(cfg, "skills_readable_dirs", ()) or ()),
+                )
+                if Path(cwd).resolve() in candidate.parents:
+                    stale_guard.observe_read(str(candidate))
             elif succeeded and name in {
                 "write", "edit", "notebook_edit", "structural_edit",
             }:

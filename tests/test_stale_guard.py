@@ -318,18 +318,21 @@ def test_session_blocks_unread_edit_then_allows_edit_after_read(tmp_path):
     assert {event["source"] for event in observations} >= {"read", "edit"}
 
 
-def test_dispatch_blocks_edit_after_external_modification(tmp_path):
+@pytest.mark.parametrize("path_kind", ["relative", "absolute", "rerooted"])
+def test_dispatch_blocks_edit_after_external_modification(tmp_path, path_kind):
     target = tmp_path / "src.py"
     target.write_text("old\n")
     events = []
     guard = StaleFileGuard(cwd=tmp_path, mode="block", event_sink=events.append)
     cfg = make_config(tools_unified_envelope_enabled=True)
 
+    read_path = {"relative": "src.py", "absolute": str(target), "rerooted": "/src.py"}[path_kind]
     read_result = dispatch(
-        "read", {"path": "src.py"}, cwd=str(tmp_path), cfg=cfg,
+        "read", {"path": read_path}, cwd=str(tmp_path), cfg=cfg,
         stale_guard=guard,
     )
     assert is_error_result(read_result) is False
+    assert guard.check_edit("src.py").allowed is True
     target.write_text("external\n")
     result = dispatch(
         "edit", {"path": "src.py", "old_str": "external", "new_str": "ours"},
@@ -357,6 +360,23 @@ def test_warn_mode_runs_edit_and_places_warning_inside_envelope(tmp_path):
     assert "WARNING: stale_file: read src.py first" in result
     assert result.index("WARNING: stale_file") < result.rindex("</tool_result>")
     assert guard.check_edit("src.py").allowed is True
+
+
+def test_external_skill_read_does_not_credit_workspace_shadow(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill = tmp_path / "skill"
+    skill.mkdir()
+    external = skill / "guide.md"
+    external.write_text("external\n")
+    shadow = workspace / str(external).lstrip("/")
+    shadow.parent.mkdir(parents=True)
+    shadow.write_text("workspace\n")
+    cfg = make_config(skills_readable_dirs=(str(skill),))
+    guard = StaleFileGuard(cwd=workspace, mode="block")
+    result = dispatch("read", {"path": str(external)}, cwd=str(workspace), cfg=cfg, stale_guard=guard)
+    assert "external" in result
+    assert guard.check_edit(str(shadow)).reason == "unread"
 
 
 @pytest.mark.parametrize(
