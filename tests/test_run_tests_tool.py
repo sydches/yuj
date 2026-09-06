@@ -823,7 +823,7 @@ class TestBashStillWorks:
             )
         assert out == "ERROR: command timed out after 11s"
 
-    @pytest.mark.parametrize("module", ["numpy", "zope.interface"])
+    @pytest.mark.parametrize("module", ["numpy", "zope.interface", "cx_Oracle", "tests.missing_label"])
     def test_bash_missing_python_module_uses_actionable_generic_advice(
         self, tmp_path, module,
     ):
@@ -839,12 +839,14 @@ class TestBashStillWorks:
             )
         advice = _advice_text(out)
         assert f"cannot import `{module}`" in advice
-        assert f"-c 'import {module}'" in advice
-        assert ".venv/bin/python" in advice
-        assert "/opt/conda/envs/*/bin/python" in advice
-        assert "/opt/miniconda3/envs/*/bin/python" in advice
-        assert "Rerun the failed command with the printed interpreter" in advice
-        assert "`uv run`" in advice
+        assert f"ModuleNotFoundError: No module named '{module}'" in out
+        assert "command and module path" in advice
+        assert "optional dependency" in advice
+        assert "declared requirements" in advice
+        assert "follow task restrictions" in advice
+        assert "only if allowed and needed" in advice
+        assert "for py" not in advice
+        assert "/opt/conda" not in advice
         assert "SWE-bench" not in advice
         assert "testbed" not in advice
         assert "[HARNESS:" not in out
