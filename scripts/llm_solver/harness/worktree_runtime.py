@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -185,21 +186,42 @@ def _git_path(repo_root: Path, name: str) -> Path:
     return path.resolve() if path.is_absolute() else (repo_root / path).resolve()
 
 
-def _ensure_local_exclude(repo_root: Path) -> None:
+def _ensure_local_exclude(repo_root: Path, patterns: tuple[str, ...] = (_LOCAL_EXCLUDE,)) -> None:
     exclude = _git_path(repo_root, "info/exclude")
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_bytes() if exclude.is_file() else b""
     lines = {line.strip() for line in existing.decode(errors="replace").splitlines()}
-    if _LOCAL_EXCLUDE in lines:
+    missing = [pattern for pattern in patterns if pattern not in lines]
+    if not missing:
         return
     fd = os.open(exclude, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         if existing and not existing.endswith(b"\n"):
             _write_all(fd, b"\n")
-        _write_all(fd, (_LOCAL_EXCLUDE + "\n").encode())
+        _write_all(fd, ("\n".join(missing) + "\n").encode())
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def exclude_runtime_directories(cwd: Path) -> None:
+    """Keep reserved runtime directories out of untracked Git status only.
+
+    Keep their readable paths unchanged. Local excludes do not hide tracked
+    edits and do not change the project's committed ignore rules.
+    """
+    try:
+        cwd = Path(cwd).resolve()
+        repo_root = _repo_root(cwd)
+        relative = cwd.relative_to(repo_root)
+        prefix = "" if relative == Path(".") else relative.as_posix() + "/"
+        # Gitignore metacharacters in a workspace path must stay literal.
+        prefix = re.sub(r"([\\*?\[\] ])", r"\\\1", prefix)
+        patterns = tuple(f"/{prefix}{name}/" for name in (".tool_output", ".solver"))
+        with _GIT_LOCK:
+            _ensure_local_exclude(repo_root, patterns)
+    except (OSError, ValueError, WorktreeRuntimeError) as exc:
+        logging.getLogger(__name__).debug("Runtime Git exclude unavailable: %s", exc)
 
 
 def _registered_worktrees(repo_root: Path) -> tuple[_RegisteredWorktree, ...]:

@@ -50,6 +50,55 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize("subdir", ["", "src", "odd [name]"])
+def test_runtime_excludes_preserve_source_and_existing_rules(tmp_path, subdir):
+    from scripts.llm_solver.harness.worktree_runtime import exclude_runtime_directories
+    repo = _make_repo(tmp_path)
+    cwd = repo / subdir
+    cwd.mkdir(exist_ok=True)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.write_text("# existing rule\n/local-cache/")
+    for name in (".solver", ".tool_output"):
+        (cwd / name).mkdir()
+        (cwd / name / "raw.txt").write_text("runtime data")
+    (cwd / "source.py").write_text("new source")
+    # Even a tracked file inside a reserved directory must remain visible.
+    _git(repo, "add", "-f", str(cwd / ".solver" / "raw.txt"))
+    _git(repo, "commit", "-qm", "tracked fixture")
+    (cwd / ".solver" / "raw.txt").write_text("changed tracked data")
+    exclude_runtime_directories(cwd)
+    first = exclude.read_bytes()
+    exclude_runtime_directories(cwd)
+    assert exclude.read_bytes() == first
+    assert first.startswith(b"# existing rule\n/local-cache/\n")
+    status = _git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+    assert "source.py" in status
+    assert ".solver/raw.txt" in status
+    assert ".tool_output" not in status
+    assert not (repo / ".gitignore").exists()
+
+
+def test_session_sinks_stay_readable_but_not_untracked(tmp_path):
+    from unittest.mock import MagicMock
+    from _config_helpers import make_config
+    from scripts.llm_solver.harness.loop import Session
+    from scripts.llm_solver.harness._loop.trace_output import _sink_trace_output
+    repo = _make_repo(tmp_path)
+    info = create_session_worktree(repo, mode="auto", run_id="sink-session")
+    session = Session(make_config(), MagicMock(), "sys", "task", str(info.session_cwd))
+    pointer = session._sink_to_disk("full shell bytes", 1)
+    trace_path = _sink_trace_output(session, "full trace bytes", 2)
+    assert ".tool_output/" in pointer
+    assert (info.session_cwd / trace_path).read_text() == "full trace bytes"
+    assert not _git(info.session_cwd, "status", "--porcelain=v1")
+
+
+def test_runtime_excludes_do_not_require_a_git_repository(tmp_path):
+    from scripts.llm_solver.harness.worktree_runtime import exclude_runtime_directories
+    exclude_runtime_directories(tmp_path)
+    assert not (tmp_path / ".git").exists()
+
+
 def test_auto_worktree_isolates_bytes_and_preserves_original_checkout(tmp_path):
     repo = _make_repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD")

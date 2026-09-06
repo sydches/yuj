@@ -272,6 +272,9 @@ class Session:
         )
         self.client = client
         self.cwd = cwd
+        from .worktree_runtime import exclude_runtime_directories
+        if getattr(client, "is_replay", False) is not True:
+            exclude_runtime_directories(Path(cwd))
         if effective_env is None:
             resolved_env, resolved_login_shell = (
                 _effective_command_environment(cfg)
