@@ -11,7 +11,7 @@ import openai
 
 from ...server._streaming import StreamRuleInterrupt
 from ...server.types import TurnResult, Usage
-from ..stream_rules import NarrationBudget, format_interrupt_fragment
+from ..stream_rules import NarrationBudget, inject_interrupt_fragments
 from .compaction import CompactionOverflowError, maybe_compact_messages
 from .length_continuation import continue_length_response
 from .model_fallback_runtime import activate_next_fallback
@@ -364,6 +364,10 @@ def chat_with_retry(session: "Session", turn: int):
                         prompt_tokens_known=response_usage.prompt_tokens_known,
                         completion_tokens_known=response_usage.completion_tokens_known,
                     )
+                    inject_interrupt_fragments(session, ({
+                        "rule": "autonomous_narration", "kind": "narration_limit",
+                        "scope": "text", "body": cfg.narration_redirect,
+                    },), turn=turn)
                     return replace(result, content=None, tool_calls=[], finish_reason="narration_discarded")
                 return result
             except StreamRuleInterrupt as exc:
@@ -380,8 +384,6 @@ def chat_with_retry(session: "Session", turn: int):
                     )
                     session._abandoned_chat_usage = None
                 session._record_stream_rule_matches(records, turn=turn)
-                if automatic and session._narration_breaches > 1:
-                    return discarded
                 if not automatic and getattr(cfg, "stream_rules_context_mode", "discard") == "keep":
                     partial = exc.partial_response
                     partial_content = None
@@ -395,32 +397,8 @@ def chat_with_retry(session: "Session", turn: int):
                             "role": "assistant",
                             "content": partial_content,
                         })
-                inserted = "\n\n".join(
-                    format_interrupt_fragment(record) for record in records
-                )
-                session.context.add_injected_fragment(inserted)
-                from ..savings import get_ledger
-                get_ledger().record_transform(
-                    bucket="stream_rule_intervention",
-                    layer="harness",
-                    mechanism="retry_interrupt_fragment",
-                    before="",
-                    after=inserted,
-                    surface="injected_message",
-                    change_count=len(records),
-                    ctx={
-                        "rules": [
-                            str(record.get("rule") or "")
-                            for record in records
-                        ],
-                        "delivery": "retry",
-                    },
-                )
-                runtime = getattr(session, "_stream_rule_runtime", None)
-                if runtime is not None and not automatic:
-                    runtime.mark_injected(records, turn=turn)
-                session._record_stream_rule_injection(
-                    records, turn=turn, delivery="retry"
+                inject_interrupt_fragments(
+                    session, records, turn=turn, mark_runtime=not automatic,
                 )
                 if automatic:
                     # Recovery uses ordinary turns and their time/turn limits.

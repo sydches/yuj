@@ -178,6 +178,63 @@ def test_repeated_narration_uses_normal_turn_limit(tmp_path, monkeypatch):
     assert [r.get("cause") for r in _trace_rows(replay_trace) if r["event"] == "narration_limit"] == [None, None, "forced_request_interrupted"]
 
 
+@pytest.mark.parametrize("context_mode", ["full", "compact", "compound_selective"])
+@pytest.mark.parametrize("failed_reply", ["overflow", "short", "empty"])
+def test_every_discard_changes_the_request_and_allows_work(tmp_path, context_mode, failed_reply):
+    from scripts.llm_solver.harness._loop._session_setup import build_context_manager
+    from scripts.llm_solver.harness.context_strategies.compound_selective_context import CompoundSelectiveContext
+
+    cfg = make_config(context_size=43008, max_turns=4, min_turns_before_context=0)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    classes = {"full": FullTranscript, "compact": CompactTranscript,
+               "compound_selective": CompoundSelectiveContext}
+
+    def context():
+        return build_context_manager(classes[context_mode], cfg, tmp_path, "task", 0, None)
+
+    requests = []
+
+    def respond(**request):
+        messages = json.dumps(request["messages"])
+        requests.append(messages)
+        redirects = messages.count("Take the next concrete coding action")
+        # Ignore tool_choice, as an unsupported server can. Recovery here
+        # requires a new visible redirect after each of three discards.
+        if redirects < 3:
+            text = "x" * (limit + 1) if not redirects or failed_reply == "overflow" else (
+                "I will inspect the code." if failed_reply == "short" else ""
+            )
+            return _ClosableStream([_chunk(content=text),
+                                    _chunk(finish_reason="stop", usage=_usage(100, 10))])
+        return _ClosableStream([
+            _chunk(content="Write the fix.", tool_calls=[SimpleNamespace(
+                index=0, id="call_3_0", type="function", function=SimpleNamespace(
+                    name="write", arguments=json.dumps({"path": "out.py", "content": "VALUE = 1\n"})))]),
+            _chunk(finish_reason="tool_calls", usage=_usage(100, 10)),
+        ])
+
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(side_effect=respond)
+    transcript = tmp_path / "fresh_redirects.log"
+    client.set_transcript(transcript)
+    trace = io.StringIO()
+    session = Session(cfg, client, "system", "task", str(tmp_path), context_manager=context(), trace_file=trace)
+    session.run()
+    client.close_transcript()
+    assert len(requests) == len(set(requests)) == 4
+    assert [m.count("Take the next concrete coding action") for m in requests] == [0, 1, 2, 3]
+    assert all("x" * (limit + 1) not in m for m in requests)
+    assert (tmp_path / "out.py").read_text() == "VALUE = 1\n"
+    assert session._narration_breaches == 0
+    assert len([r for r in _trace_rows(trace) if r["event"] == "stream_rule_injection"]) == 3
+    replay_trace = io.StringIO()
+    replay = ReplayClient(transcript, strict_fidelity=False)
+    replay_session = Session(cfg, replay, "system", "task", str(tmp_path), context_manager=context(), trace_file=replay_trace)
+    replay_session.run()
+    assert replay_session._narration_breaches == 0
+    assert len([r for r in _trace_rows(replay_trace) if r["event"] == "stream_rule_injection"]) == 3
+
+
 def test_reply_contract_defaults_and_validation(tmp_path):
     assert load_config().reply_mode == "autonomous"
     assert load_config(overrides={"runtime_mode": "assistant"}).reply_mode == "conversation"

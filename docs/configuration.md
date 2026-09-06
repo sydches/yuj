@@ -113,6 +113,12 @@ time and turn limits still apply. The transcript retains the interrupted
 text. Usage includes interrupted and recovery calls,
 with estimated counts marked in the trace and `usage_estimated` in metrics.
 
+Every discarded recovery reply adds a fresh user-role redirect to the next
+request. This includes repeated cutoffs and short or empty prose-only
+replies, even while a tool call is required. The next request must contain
+that new advice; it must not repeat the same unchanged messages. Discarded
+model prose stays out of working context.
+
 The trace action `force_tool_requested` describes the selected recovery
 request, not proof of server enforcement. A completed required-tool reply
 with no tool call records `cause=forced_request_no_tool`. A required-tool

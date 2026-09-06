@@ -45,6 +45,24 @@ class NarrationBudget:
         },))
 
 
+def inject_interrupt_fragments(session, records, *, turn, mark_runtime=False):
+    """Deliver recovery advice and record its existing transformation surface."""
+    inserted = "\n\n".join(format_interrupt_fragment(record) for record in records)
+    session.context.add_injected_fragment(inserted)
+    from .savings import get_ledger
+    get_ledger().record_transform(
+        bucket="stream_rule_intervention", layer="harness",
+        mechanism="retry_interrupt_fragment", before="", after=inserted,
+        surface="injected_message", change_count=len(records),
+        ctx={"rules": [str(record.get("rule") or "") for record in records],
+             "delivery": "retry"},
+    )
+    runtime = getattr(session, "_stream_rule_runtime", None)
+    if runtime is not None and mark_runtime:
+        runtime.mark_injected(records, turn=turn)
+    session._record_stream_rule_injection(records, turn=turn, delivery="retry")
+
+
 __all__ = [
     "NarrationBudget",
     "LoadedStreamRules",
@@ -54,6 +72,7 @@ __all__ = [
     "StreamRuleScope",
     "format_interrupt_fragment",
     "format_tool_reminder",
+    "inject_interrupt_fragments",
     "load_stream_rules",
     "parse_stream_rule",
 ]
