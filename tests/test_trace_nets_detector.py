@@ -52,7 +52,7 @@ def test_adaptive_warning_describes_a_continuing_session():
     from scripts.llm_solver.harness.adaptive_control.executors import compose_user_turn_message
     message = compose_user_turn_message(SimpleNamespace(_trace_events=[]), evidence="T3:repeated call",
                                         rung=2, hurdle_family="repeat_wall", turn=3)
-    assert message.startswith("The harness detected a problem: repeated call.")
+    assert message.startswith("Harness observation at turn 3: repeated call.")
     assert "stopped" not in message and "end the session" not in message
     assert "warning" in message
 
@@ -83,6 +83,28 @@ def test_guard_description_reports_selection_not_new_activation(rung):
         assert ("Selected guard response:" in message) is include_guard
         assert "now" not in message
         assert "will warn" not in message
+
+
+@pytest.mark.parametrize("include_guard", [False, True])
+def test_adaptive_advice_dates_edit_state_in_retained_history(include_guard):
+    from scripts.llm_solver.harness.adaptive_control.executors import compose_user_turn_message
+    session = SimpleNamespace(_trace_events=[])
+    before = compose_user_turn_message(session, evidence="repeat", rung=1,
+                                      hurdle_family="repeat_wall", turn=21,
+                                      include_guard=include_guard)
+    session._trace_events.append({"turn_number": 24, "source_write_like": True})
+    after = compose_user_turn_message(session, evidence="repeat", rung=1,
+                                     hurdle_family="repeat_wall", turn=36,
+                                     include_guard=include_guard)
+    historical = compose_user_turn_message(session, evidence="repeat", rung=1,
+                                          hurdle_family="repeat_wall", turn=21,
+                                          include_guard=include_guard)
+    assert before == historical
+    assert "observation at turn 21" in before
+    assert "At that point, no source edit had been recorded." in before
+    assert "observation at turn 36" in after
+    assert "At that point, the last recorded source edit was at turn 24." in after
+    assert "You have not made any source edits yet" not in before + after
 
 
 def test_identical_repeat_plateau_fires_repeat_wall():
