@@ -36,14 +36,12 @@ def _maybe_apply_detector_intervention(
             row["intervention_error"] = f"{type(exc).__name__}: {exc}"
         return
 
-    if verdict.hurdle_present != "yes":
-        return
-
     if not bool(getattr(cfg, "adaptive_control_enabled", False)):
-        row["intervention_selection"] = {
-            "selection_status": "not_attempted",
-            "selection_blocked_reason": "adaptive_control_disabled",
-        }
+        if verdict.hurdle_present == "yes":
+            row["intervention_selection"] = {
+                "selection_status": "not_attempted",
+                "selection_blocked_reason": "adaptive_control_disabled",
+            }
         return
 
     from . import episode
@@ -52,17 +50,36 @@ def _maybe_apply_detector_intervention(
     if machine.state == episode.EPISODE_EXHAUSTED:
         progress_refs = _material_progress_after_exhaustion(session, machine, turn)
         if not progress_refs:
-            row["intervention_selection"] = {
-                "selection_status": "not_attempted",
-                "selection_blocked_reason": episode.CANDIDATE_EXHAUSTED,
-            }
+            if verdict.hurdle_present == "yes":
+                row["intervention_selection"] = {
+                    "selection_status": "not_attempted",
+                    "selection_blocked_reason": episode.CANDIDATE_EXHAUSTED,
+                }
             return
         exhausted_slot = machine.exhausted_slot
+        # No candidates left is not progress. Keep the last response until
+        # a later trace proves progress, including a negative detector verdict.
+        from . import CONTROLLER_VERSION
+        restored = _restore_baseline_for_watch_close(session, row, "progress_after_exhaustion")
+        _append_detector_control_ledger(
+            session=session, turn=turn, verdict=verdict,
+            controller_version=CONTROLLER_VERSION,
+            chosen={"intervention_id": "toml_overlay.restore_baseline"},
+            apply_status=restored.apply_status, blocked_reason=restored.blocked_reason,
+            result=restored, episode_transition=episode.CLEARED_TO_PROGRESS,
+            controller_state=episode.MONITORING if restored.applied else machine.state,
+            immediate_effect="baseline_restored_after_progress" if restored.applied else "baseline_restore_failed",
+        )
+        if not restored.applied:
+            return
         episode.resume_after_progress(machine)
         row["episode_resume_after_progress"] = {
             "prior_exhausted_slot": exhausted_slot,
             "material_progress_refs": progress_refs,
         }
+
+    if verdict.hurdle_present != "yes":
+        return
 
     try:
         _select_and_apply_ranked_ladder(session, turn, verdict, row)
@@ -331,35 +348,9 @@ def _select_and_apply_ranked_ladder(
             previous_intervention_id=plan.previous_intervention_id,
             same_hurdle_escalation="true" if plan.is_escalation or same_hurdle_escalation else "false",
             hurdle_episode_id=getattr(exhausted, "episode_id", "") if exhausted else "",
+            immediate_effect="active_config_retained",
         )
-        if not baseline_already_restored:
-            restore_result = _restore_baseline_for_watch_close(session, row, selection_reason)
-            row["baseline_restore_after_block"] = _result_dict(restore_result)
-            _append_detector_control_ledger(
-                session=session,
-                turn=turn,
-                verdict=verdict,
-                controller_version=CONTROLLER_VERSION,
-                chosen={"intervention_id": "toml_overlay.restore_baseline"},
-                apply_status=restore_result.apply_status,
-                blocked_reason=restore_result.blocked_reason,
-                result=restore_result,
-                episode_transition=episode.CANDIDATE_EXHAUSTED,
-                controller_state=machine.state,
-                immediate_effect=(
-                    "baseline_restored_after_exhaustion"
-                    if restore_result.applied
-                    else "baseline_restore_failed_after_exhaustion"
-                ),
-                active_hurdle_mode=verdict.hurdle_family,
-                hurdle_episode_id=getattr(exhausted, "episode_id", "") if exhausted else "",
-                episode_online_signal_id=(
-                    getattr(exhausted, "online_signal_id", "") if exhausted else ""
-                ),
-                episode_attempt_index=(
-                    str(getattr(exhausted, "attempt_index", "")) if exhausted else ""
-                ),
-            )
+        row["exhaustion_effect"] = "active_config_retained"
         return
 
     if not plan.allowed:

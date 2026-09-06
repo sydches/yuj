@@ -914,7 +914,7 @@ def test_live_hook_advances_at_budget_limit_after_silence_without_progress(tmp_p
     assert all(row["active_config_basis"] == "baseline_plus_candidate" for row in ledger_rows)
 
 
-def test_live_hook_walks_each_rank_once_then_exhausts_on_baseline(tmp_path: Path) -> None:
+def test_live_hook_walks_each_rank_once_then_retains_last_response(tmp_path: Path) -> None:
     atlas_path = _llm_atlas(tmp_path / "hurdle_dictionary.llm.v1.tsv")
     candidate1 = tmp_path / "candidate1.toml"
     candidate1.write_text("[loop]\nloop_detect_enabled = true\n", encoding="utf-8")
@@ -977,7 +977,7 @@ def test_live_hook_walks_each_rank_once_then_exhausts_on_baseline(tmp_path: Path
     assert exhausted["intervention_apply"]["blocked_reason"] == "candidate_exhausted"
     assert session.cfg.loop_detect_enabled is False
     assert session.cfg.compound_selective_trace_test_anchor_lines == 0
-    assert session.cfg.compound_selective_trace_source_anchor_lines == 0
+    assert session.cfg.compound_selective_trace_source_anchor_lines == 1
     machine = session._adaptive_control_episode_machine
     assert machine.episodes_opened == 1
     assert machine.interventions_total == 3
@@ -1001,9 +1001,9 @@ def test_live_hook_walks_each_rank_once_then_exhausts_on_baseline(tmp_path: Path
         row for row in ledger_rows
         if row["intervention_id"] == "toml_overlay.restore_baseline"
     ]
-    assert len(restore_rows) == 1
-    assert restore_rows[0]["active_config_basis"] == "baseline"
-    assert restore_rows[0]["immediate_effect"] == "baseline_restored_after_exhaustion"
+    assert restore_rows == []
+    assert exhausted["exhaustion_effect"] == "active_config_retained"
+    assert ledger_rows[-1]["immediate_effect"] == "active_config_retained"
 
 
 def test_live_hook_records_clean_exhaustion_with_multiple_episode_allowance(tmp_path: Path) -> None:
@@ -1069,7 +1069,10 @@ def test_live_hook_records_clean_exhaustion_with_multiple_episode_allowance(tmp_
     maybe_run_llm_hurdle_detector(session, turn=24)
     exhausted = maybe_run_llm_hurdle_detector(session, turn=29)
     later = maybe_run_llm_hurdle_detector(session, turn=30)
+    assert session.cfg.loop_detect_enabled is True
     progress = maybe_run_llm_hurdle_detector(session, turn=31)
+    assert session.cfg.loop_detect_enabled is False
+    assert progress["baseline_restore"]["applied"] is True
     resumed = maybe_run_llm_hurdle_detector(session, turn=32)
 
     assert exhausted["intervention_apply"]["blocked_reason"] == "candidate_exhausted"
@@ -1081,7 +1084,7 @@ def test_live_hook_records_clean_exhaustion_with_multiple_episode_allowance(tmp_
     assert "intervention_apply" not in later
     assert progress["verdict"]["hurdle_present"] == "no"
     assert "intervention_selection" not in progress
-    assert resumed["episode_resume_after_progress"] == {
+    assert progress["episode_resume_after_progress"] == {
         "prior_exhausted_slot": 29,
         "material_progress_refs": ["turn=31"],
     }
@@ -1319,3 +1322,32 @@ def test_live_hook_setup_error_is_fatal(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="unreadable"):
         maybe_run_llm_hurdle_detector(session, turn=0)
     assert client.calls == []
+
+
+@pytest.mark.parametrize("hurdle_present", ["yes", "no"])
+@pytest.mark.parametrize("restore_succeeds", [True, False])
+def test_exhausted_progress_restores_before_resuming_without_resetting_caps(
+    monkeypatch, hurdle_present, restore_succeeds,
+):
+    from unittest.mock import Mock
+    from llm_solver.harness.adaptive_control import episode, llm_detector_apply as live
+    from llm_solver.harness.adaptive_control.executors import ExecutorResult
+    machine = episode.EpisodeMachine(state=episode.EPISODE_EXHAUSTED,
+                                     exhausted_slot=10, interventions_total=5, episodes_opened=1)
+    session = SimpleNamespace(cfg=SimpleNamespace(adaptive_control_enabled=True),
+                              _adaptive_control_episode_machine=machine)
+    monkeypatch.setattr(live, "_material_progress_after_exhaustion", lambda *args: ["turn=12"])
+    restore = Mock(return_value=ExecutorResult("toml_overlay.restore_baseline",
+                   applied=restore_succeeds, blocked_reason="" if restore_succeeds else "unavailable"))
+    select = Mock()
+    monkeypatch.setattr(live, "_restore_baseline_for_watch_close", restore)
+    monkeypatch.setattr(live, "_select_and_apply_ranked_ladder", select)
+    monkeypatch.setattr(live, "_append_detector_control_ledger", Mock())
+    verdict = LLMDetectorVerdict(hurdle_present, "loop_churn", "high", ["T12"])
+    row = {}
+    live._maybe_apply_detector_intervention(session, 12, verdict, row)
+    restore.assert_called_once()
+    assert select.call_count == int(restore_succeeds and hurdle_present == "yes")
+    assert machine.state == (episode.MONITORING if restore_succeeds else episode.EPISODE_EXHAUSTED)
+    assert machine.interventions_total == 5 and machine.episodes_opened == 1
+    assert ("episode_resume_after_progress" in row) is restore_succeeds
