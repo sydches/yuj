@@ -565,14 +565,11 @@ _UT_SUGGESTION = {
                     "different action toward the task"),
 }
 _UT_GUARD_BY_RUNG = {
-    1: "loop_detect — it will warn you if identical calls repeat",
-    2: "duplicate_guard — repeating an identical call now draws a warning",
-    3: ("loop_detect recovery guidance — repeated calls now get explicit "
-        "recovery instructions"),
-    4: ("unified tool-result envelope — tool results now carry explicit "
-        "status fields"),
-    5: ("intent gate — tool calls without a stated intent are now "
-        "rejected"),
+    1: "loop_detect (warnings for repeated identical calls)",
+    2: "duplicate_guard (warnings for repeated identical calls)",
+    3: "loop_detect recovery guidance (recovery instructions for repeated calls)",
+    4: "unified tool-result envelope (explicit tool-result status fields)",
+    5: "intent gate (checks for stated tool-call intent)",
 }
 
 
@@ -582,8 +579,8 @@ def compose_user_turn_message(session, *, evidence: str, rung: int,
     """Build a user-turn message from live session state.
 
     ``include_guard=False`` drops the
-    "A guard is now active" sentence — no overlay is applied in that
-    mode, so the sentence would be false.
+    selected-response sentence because that mode applies no guard overlay.
+    Selection does not claim new activation or promise that settings persist.
     """
     ev = evidence.split(";", 1)[0]
     if ":" in ev and ev.split(":", 1)[0].startswith("T"):
@@ -607,7 +604,7 @@ def compose_user_turn_message(session, *, evidence: str, rung: int,
     guard_sentence = ""
     if include_guard:
         guard = _UT_GUARD_BY_RUNG.get(int(rung) or 1, _UT_GUARD_BY_RUNG[1])
-        guard_sentence = f"A guard is now active: {guard}. "
+        guard_sentence = f"Selected guard response: {guard}. "
     return (f"The harness detected a problem: "
             f"{ev}. {edit_line} Suggestion: {sug}. "
             f"{guard_sentence}"

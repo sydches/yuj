@@ -72,6 +72,19 @@ def test_reread_advice_keeps_broader_verification_available():
     assert "seek new evidence" in message
 
 
+@pytest.mark.parametrize("rung", range(1, 6))
+def test_guard_description_reports_selection_not_new_activation(rung):
+    from scripts.llm_solver.harness.adaptive_control.executors import compose_user_turn_message
+    for include_guard in (True, False):
+        message = compose_user_turn_message(SimpleNamespace(_trace_events=[]),
+                                            evidence="T9:repeated call", rung=rung,
+                                            hurdle_family="repeat_wall", turn=9,
+                                            include_guard=include_guard)
+        assert ("Selected guard response:" in message) is include_guard
+        assert "now" not in message
+        assert "will warn" not in message
+
+
 def test_identical_repeat_plateau_fires_repeat_wall():
     ev = [_ev(t, args=f"c{t}", sha=f"s{t}") for t in range(10)]
     ev += [_ev(10, args="same", sha="X"), _ev(11, args="same", sha="X")]
