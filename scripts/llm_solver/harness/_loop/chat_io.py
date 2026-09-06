@@ -311,6 +311,10 @@ def chat_with_retry(session: "Session", turn: int):
                             runtime.observe(delta, turn=turn)
                     session.client._stream_observer = observe
                 prior_streaming = getattr(session.client, "_narration_streaming", False)
+                counter_supported = "_request_token_counter" in client_state
+                prior_counter = client_state.get("_request_token_counter")
+                if counter_supported and getattr(session, "_tokenizer", None) is not None:
+                    session.client._request_token_counter = session._tokenizer.count
                 prior_required = getattr(session.client, "_narration_tool_required", False)
                 session.client._narration_tool_required = tool_required = recovering and session._narration_breaches > 1
                 if observer_supported and narration is not None:
@@ -327,6 +331,8 @@ def chat_with_retry(session: "Session", turn: int):
                             outgoing, effective_model_tool_schemas(session), turn=turn,
                         )
                 finally:
+                    if counter_supported:
+                        session.client._request_token_counter = prior_counter
                     session.client._narration_tool_required = prior_required
                     if observer_supported:
                         session.client._stream_observer = prior_observer

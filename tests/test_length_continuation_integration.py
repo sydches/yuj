@@ -551,3 +551,26 @@ def test_streamed_raw_pieces_use_the_same_normalize_once_path(
     assert len(payloads) == 2
     assert payloads[1]["extra_body"]["continue_final_message"] is True
     assert payloads[1]["stream"] is True
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_solver_binds_and_restores_request_counter(tmp_path, fail):
+    from scripts.llm_solver.harness._loop.chat_io import chat_with_retry
+    from scripts.llm_solver.server.types import TurnResult
+
+    cfg = make_config(context_size=43008, length_continue_max=0, reply_mode="conversation")
+    client = LlamaClient(cfg, profile=None)
+    counter = lambda messages, *, tools: 100
+    tokenizer = SimpleNamespace(id="unit", count=counter)
+    session = Session(cfg, client, "system", "task", str(tmp_path), local_tokenizer=tokenizer)
+    def respond(*args, **kwargs):
+        assert client._request_token_counter is counter
+        if fail:
+            raise ValueError("test failure")
+        return TurnResult(content="ok", tool_calls=[], finish_reason="stop", usage=Usage(100, 1))
+    client.chat = respond
+    if fail:
+        assert chat_with_retry(session, 1) is None
+    else:
+        assert chat_with_retry(session, 1).content == "ok"
+    assert client._request_token_counter is None

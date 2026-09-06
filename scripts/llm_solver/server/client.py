@@ -106,6 +106,7 @@ class LlamaClient:
         # observer out of the request payload preserves provider/profile
         # behavior while exposing SSE deltas to the owning harness layer.
         self._stream_observer = None
+        self._request_token_counter = None
         self._last_call_streamed = False
         self._image_inputs: tuple[ImageInput, ...] = ()
         self._image_target_correction: str | None = None
@@ -272,6 +273,10 @@ class LlamaClient:
         and are classified by chat_with_retry's _TRANSIENT_ERRORS
         tuple. See server/_streaming.py for the assembly contract.
         """
+        payload = request_controls.bound_completion_budget(
+            payload, self.cfg.context_size,
+            token_counter=self._request_token_counter,
+        )
         n = 0
         if record_transcript:
             self._transcript_call_n += 1

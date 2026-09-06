@@ -1,4 +1,4 @@
-"""Focused tests for per-request reasoning and cache policy helpers."""
+"""Focused tests for per-request reasoning, cache, and output budgets."""
 import json
 import logging
 from types import SimpleNamespace
@@ -438,3 +438,63 @@ def test_default_halflife_model_prefix_is_byte_identical_across_turns():
     ).encode("utf-8")
 
     assert second_prefix == first_prefix
+
+
+@pytest.mark.parametrize("window,prompt,requested,expected", [
+    (43008, 40644, 10752, 2363), (20000, 18000, 5000, 1999),
+    (262144, 250000, 16384, 12143), (20000, 100, 50, 50),
+    (20000, 19999, 50, 1),
+])
+def test_completion_allowance_uses_this_request(window, prompt, requested, expected):
+    from scripts.llm_solver.server.request_controls import bound_completion_budget
+    payload = {"messages": [{"role": "user", "content": "task"}],
+               "tools": [{"type": "function"}], "max_tokens": requested}
+    seen = []
+    def count(messages, *, tools):
+        seen.append((messages, tools))
+        return prompt
+    result = bound_completion_budget(payload, window, token_counter=count)
+    assert result["max_tokens"] == expected
+    assert payload["max_tokens"] == requested
+    assert seen == [(payload["messages"], payload["tools"])]
+
+
+def test_completion_estimate_counts_tools_and_recounts_changed_messages():
+    from scripts.llm_solver.server.request_controls import bound_completion_budget
+    base = {"messages": [{"role": "user", "content": "x" * 2000}], "max_tokens": 1000}
+    first = bound_completion_budget(base, 2000)
+    larger = {**base, "tools": [{"description": "x" * 4000}]}
+    second = bound_completion_budget(larger, 2000)
+    assert second["max_tokens"] < first["max_tokens"]
+    continued = {**larger, "messages": [*base["messages"], {"role": "assistant", "content": "x" * 400}]}
+    assert bound_completion_budget(continued, 2000)["max_tokens"] < second["max_tokens"]
+
+
+@pytest.mark.parametrize("with_profile", [False, True])
+def test_wire_budget_bounds_main_and_side_requests(tmp_path, with_profile):
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from _config_helpers import make_config
+    from scripts.llm_solver.server.client import LlamaClient
+    from scripts.llm_solver.server.profile_loader import load_profile
+
+    cfg = make_config(context_size=43008, max_tokens=10752)
+    profile = load_profile("_base", Path(__file__).resolve().parent.parent / "profiles") if with_profile else None
+    client = LlamaClient(cfg, profile=profile)
+    client._request_token_counter = lambda messages, *, tools: 40644
+    transcript = tmp_path / "wire.log"
+    client.set_transcript(transcript)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=[]), finish_reason="stop")],
+        usage=SimpleNamespace(prompt_tokens=40644, completion_tokens=1), model_dump_json=lambda: "{}",
+    )
+    messages = [{"role": "user", "content": "task"}]
+    with patch.object(client.client.chat.completions, "create", return_value=response) as call:
+        client.chat(messages, [], turn=0)
+        client.complete_tool_side_request(messages, [])
+        client.complete_side_request({"messages": messages, "max_tokens": 50})
+    assert [c.kwargs["max_tokens"] for c in call.call_args_list] == [2363, 2363, 50]
+    assert client.cfg.max_tokens == 10752
+    client.close_transcript()
+    assert '"max_tokens": 2363' in transcript.read_text()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import logging
 import math
 from collections.abc import Mapping, Sequence
@@ -16,6 +17,30 @@ from dataclasses import dataclass
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+
+def bound_completion_budget(payload: dict, context_size: int, *, token_counter=None) -> dict:
+    """Cap completion tokens against this request, without changing its owner."""
+    requested = payload.get("max_tokens")
+    if not isinstance(requested, int) or isinstance(requested, bool) or requested <= 0:
+        return payload
+    messages, tools = payload.get("messages", []), payload.get("tools", [])
+    basis = "character_estimate"
+    prompt_tokens = None
+    if token_counter is not None:
+        try:
+            prompt_tokens = int(token_counter(messages, tools=tools))
+            basis = "bound_tokenizer"
+        except Exception as exc:
+            log.warning("request token count failed; using character estimate: %s", exc)
+    if prompt_tokens is None:
+        prompt_tokens = (sum(len(str(m)) for m in messages) + len(json.dumps(tools))) // 4
+    bounded = min(requested, max(1, context_size - prompt_tokens - 1))
+    if bounded == requested:
+        return payload
+    log.info("request completion budget: %d -> %d (prompt=%d context=%d count=%s)",
+             requested, bounded, prompt_tokens, context_size, basis)
+    return {**payload, "max_tokens": bounded}
 
 
 THINKING_LEVELS: tuple[str, ...] = (

@@ -392,7 +392,8 @@ def test_side_request_omits_tools_and_does_not_advance_transcript(tmp_path):
         create=lambda **payload: captured.append(payload) or response
     )
     client = LlamaClient.__new__(LlamaClient)
-    client.cfg = SimpleNamespace(model="same-model")
+    client.cfg = SimpleNamespace(model="same-model", context_size=8192)
+    client._request_token_counter = None
     client.profile = None
     client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     client._transcript_path = None
