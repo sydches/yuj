@@ -122,8 +122,8 @@ def duplicate_guard(state: GuardrailState, cfg: Any, *,
     # zero it; previously that silently never matched the deque length and
     # the warn text printed "session ends at 0 identical").
     if (cfg.duplicate_abort > 0
-            and len(state.recent_calls) == cfg.duplicate_abort
-            and len(set(state.recent_calls)) == 1):
+            and len(state.recent_calls) >= cfg.duplicate_abort
+            and len(set(list(state.recent_calls)[-cfg.duplicate_abort:])) == 1):
         return Decision.end("duplicate_abort")
     # WARN (optional, config-gated)
     if cfg.duplicate_warn_count > 0:

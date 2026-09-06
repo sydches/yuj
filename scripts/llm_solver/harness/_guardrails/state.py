@@ -139,7 +139,7 @@ class GuardrailState:
     # default_factory uses maxlen=1 (not 0) so a direct GuardrailState()
     # construction in tests still produces a usable deque. The real
     # deque is replaced wholesale by init_guardrail_state(cfg) with
-    # maxlen=cfg.duplicate_abort.
+    # capacity for both the warning and abort thresholds.
     recent_calls: deque = field(default_factory=lambda: deque(maxlen=1))
     consecutive_errors: dict[str, int] = field(default_factory=dict)
     same_class_error_signature: str = ""
@@ -266,10 +266,10 @@ def init_guardrail_state(cfg: Any) -> GuardrailState:
         arm_pct = cfg.rumination_gate_arm_threshold or cfg.rumination_nudge_threshold
         arm = max(nudge, int(cfg.max_turns * arm_pct / 100))
     # Deque max length must tolerate duplicate_abort=0 (guardrail disabled).
-    # maxlen=0 would make the deque never retain anything; treat 0 as "no
-    # abort" by giving the deque a nominal length of 1 so it still appends
+    # A disabled abort must not prevent a warning-only guard retaining
+    # its full window. Keep at least one slot when both thresholds are zero.
     # (the guardrail function will short-circuit on its enabled flag).
-    deque_len = max(1, cfg.duplicate_abort)
+    deque_len = max(1, cfg.duplicate_abort, getattr(cfg, "duplicate_warn_count", 0))
     return GuardrailState(
         recent_calls=deque(maxlen=deque_len),
         rumination_nudge_threshold=nudge,

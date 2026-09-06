@@ -380,7 +380,7 @@ class Config:
     mutation_repeat_block_after: int = 0  # Block when repeating the same successful mutation N times in a row (0 = disabled).
     mutation_repeat_abort_after: int = 0  # End session after N blocked identical mutation retries (0 = disabled).
     duplicate_warn_count: int = 0  # append warning text at N identical consecutive calls (0 = disabled)
-    duplicate_warn: str = "[harness: {count} identical tool calls in a row. Change approach — session ends at {abort} identical.]"
+    duplicate_warn: str = "[harness: {count} identical tool calls in a row. Change approach.]"
     error_abort_threshold: int = 0  # end session after N consecutive errors of any kind (0 = disabled)
     error_same_class_threshold: int = 0  # end session after N errors with the same signature (exit code or first-token error string), regardless of interleaved non-error turns. 0 = disabled. Catches the "model repeats the same wrong fix" pattern that error_abort_threshold misses because intervening mutation calls reset its counter.
     intent_abort_threshold: int = 0  # end session after N consecutive silent intent-gate rejections (0 = disabled)

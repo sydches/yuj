@@ -120,6 +120,7 @@ _CONTEXT_CACHE_ATTRS = (
 
 _GUARD_STATE_REFRESH_FIELDS = {
     "duplicate_abort",
+    "duplicate_warn_count",
     "rumination_enabled",
     "rumination_gate_arm_threshold",
     "rumination_gate_arm_threshold_abs",
@@ -266,7 +267,7 @@ def _prepare_guardrail_state(session, new_cfg, changed: set[str]):
 
     fresh = init_guardrail_state(new_cfg)
     recent_calls = None
-    if "duplicate_abort" in changed and hasattr(state, "recent_calls"):
+    if {"duplicate_abort", "duplicate_warn_count"} & changed and hasattr(state, "recent_calls"):
         maxlen = fresh.recent_calls.maxlen
         recent = list(state.recent_calls)
         if maxlen is not None:

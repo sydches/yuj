@@ -68,6 +68,45 @@ def _read_tsv(path):
         return list(csv.DictReader(handle, delimiter="\t"))
 
 
+def test_duplicate_activation_warns_only_on_a_repeat(tmp_path):
+    from scripts.llm_solver.harness.guardrails import Action, init_guardrail_state, duplicate_guard
+
+    baseline = tmp_path / "disabled.toml"
+    baseline.write_text("[loop]\nduplicate_guard_enabled = false\nduplicate_abort = 0\nduplicate_warn_count = 0\n")
+    cfg = load_config(user_config=baseline)
+    session = SimpleNamespace(cfg=cfg, _guards=init_guardrail_state(cfg), adaptive_control_resolved_baseline_cfg=cfg,
+                              adaptive_control_baseline_config_paths=(str(baseline),))
+    payload = InterventionPayload(
+        intervention_id="toml_overlay.apply::loop.duplicate_guard",
+        executor_id="toml_overlay.apply", timing_class="immediate",
+        candidate_config_path=str(PROJECT_ROOT / "configs/treatment/overlays/duplicate_guard.toml"),
+    )
+    assert executors.apply(session, payload).applied
+    state = session._guards
+    assert state.recent_calls.maxlen == 2
+    for sig in [("read a",), ("read b",), ("edit a",)]:
+        assert duplicate_guard(state, session.cfg, tool_calls_sig=sig).action == Action.PASS
+    repeated = duplicate_guard(state, session.cfg, tool_calls_sig=("edit a",))
+    assert repeated.action == Action.WARN
+    assert "2 identical" in repeated.text
+    assert "ends" not in repeated.text and "disabled" not in repeated.text
+    assert duplicate_guard(state, session.cfg, tool_calls_sig=("test a",)).action == Action.PASS
+    assert executors.restore_baseline(session).applied
+    assert session.cfg.duplicate_guard_enabled is False
+    assert state.recent_calls.maxlen == 1
+
+
+def test_duplicate_abort_keeps_its_own_window():
+    from dataclasses import replace
+    from scripts.llm_solver.harness.guardrails import Action, init_guardrail_state, duplicate_guard
+
+    cfg = replace(load_config(), duplicate_guard_enabled=True, duplicate_abort=2, duplicate_warn_count=5)
+    state = init_guardrail_state(cfg)
+    assert duplicate_guard(state, cfg, tool_calls_sig=("old",)).action == Action.PASS
+    assert duplicate_guard(state, cfg, tool_calls_sig=("new",)).action == Action.PASS
+    assert duplicate_guard(state, cfg, tool_calls_sig=("new",)).action == Action.END
+
+
 def test_public_treatment_data_contains_only_released_runtime_fields():
     dictionary_path = (
         PROJECT_ROOT / "configs/treatment/hurdle_dictionary.trace_nets.v1.tsv"

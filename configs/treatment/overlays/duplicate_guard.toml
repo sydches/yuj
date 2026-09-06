@@ -1,5 +1,5 @@
 # Detector-activated duplicate-call guardrail.
 
 [loop]
-duplicate_guard_enabled = true
-duplicate_warn_count = 1
+duplicate_guard_enabled = true # Watch consecutive identical tool calls.
+duplicate_warn_count = 2 # Warn on the first repeat, not on a novel call.
