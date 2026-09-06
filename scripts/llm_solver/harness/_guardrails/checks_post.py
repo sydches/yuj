@@ -292,7 +292,9 @@ def _update_same_target_streak(
 
 
 def mark_bash_verified(state: GuardrailState, cfg: Any, *,
-                       tc_name: str, result: str, gate_blocked: bool, **_: Any) -> None:
+                       tc_name: str, result: str, gate_blocked: bool,
+                       tc_args: dict | None = None, cwd: str | None = None,
+                       **_: Any) -> None:
     """Update verified_since_mutation on a content-blind signal.
 
     Two pathways qualify (post-mutation, non-blocked, non-ERROR):
@@ -306,6 +308,10 @@ def mark_bash_verified(state: GuardrailState, cfg: Any, *,
     across loop.py / OBSERVER_ORDER / tests).
     """
     if not state.has_mutated or gate_blocked:
+        return
+    from .verification import verification_changes_tree, verification_tree_matches
+    if (not verification_tree_matches(state, cwd)
+            or verification_changes_tree(tc_name, tc_args)):
         return
     if is_error_result(result):
         return

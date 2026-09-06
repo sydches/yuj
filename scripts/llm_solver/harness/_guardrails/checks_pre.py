@@ -233,6 +233,11 @@ def done_guard(
     """
     if tc_name != "done":
         return PASS
+    from .verification import verification_tree_matches
+    if (state.has_mutated and (cfg.done_guard_enabled
+                 or int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0)
+            and not verification_tree_matches(state, cwd)):
+        return _done_block_or_abort(state, cfg, cfg.done_reject_no_verify)
     if (
         int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
         and state.has_mutated

@@ -987,3 +987,87 @@ class TestPostMutationVerificationNudge:
             "1 failed" in str(message.get("content") or "")
             for message in request_after_failure
         )
+
+
+@pytest.mark.parametrize("baseline_passes", [False, True])
+@pytest.mark.parametrize("edit_passes", [False, True])
+def test_verification_credit_survives_baseline_comparison_only(tmp_path, baseline_passes, edit_passes):
+    import subprocess
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.checks_post import mark_bash_verified
+    from scripts.llm_solver.harness._guardrails.checks_pre import done_guard
+    from scripts.llm_solver.harness._guardrails.verification import observe_post_mutation_verification
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init")
+    source = tmp_path / "module.py"
+    source.write_text("original = True\n")
+    git("add", "module.py")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "base")
+    source.write_text("fixed = True\n")
+    cfg = load_config()
+    state = GuardrailState(has_mutated=True)
+
+    def observe(name, result, args=None, paths=()):
+        mark_bash_verified(state, cfg, tc_name=name, result=result, gate_blocked=False,
+                           tc_args=args, cwd=str(tmp_path))
+        observe_post_mutation_verification(state, cfg, tc_name=name, result=result,
+                                           gate_blocked=False, tc_args=args,
+                                           source_write_paths=paths, cwd=tmp_path)
+
+    observe("edit", "OK", paths=("module.py",))
+    if edit_passes:
+        observe("run_tests", '<test_results status="passed" exit_code="0">1 passed</test_results>')
+    assert state.formal_verification_passed_since_mutation is edit_passes
+    git("stash", "push")
+    observe("bash", "saved", {"cmd": "git stash"})
+    baseline_result = "1 passed\n[exit code: 0]" if baseline_passes else "1 failed\n[exit code: 1]"
+    observe("bash", baseline_result, {"cmd": "pytest tests/test_module.py"})
+    assert state.formal_verification_passed_since_mutation is edit_passes
+    assert done_guard(state, cfg, tc_name="done", cwd=str(tmp_path)).action.name != "PASS"
+    git("stash", "pop")
+    observe("bash", "restored", {"cmd": "git stash pop"})
+    assert (done_guard(state, cfg, tc_name="done", cwd=str(tmp_path)).action.name == "PASS") is edit_passes
+    observe("bash", "1 failed\n[exit code: 1]", {"cmd": "pytest tests/test_module.py"})
+    assert not state.formal_verification_passed_since_mutation
+    assert not state.verified_since_mutation
+
+
+def test_verification_does_not_credit_compound_tree_changes_or_missing_edit(tmp_path):
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.checks_post import mark_bash_verified
+    from scripts.llm_solver.harness._guardrails.verification import (
+        observe_post_mutation_verification, verification_tree_matches, verification_changes_tree,
+    )
+    cfg = load_config()
+    state = GuardrailState(has_mutated=True)
+    source = tmp_path / "module.py"
+    source.write_text("fixed = True\n")
+    observe_post_mutation_verification(state, cfg, tc_name="edit", result="OK",
+                                       gate_blocked=False, source_write_paths=("module.py",), cwd=tmp_path)
+    for cmd in ("git stash && pytest; git stash pop", "git status; git -C . restore module.py; pytest",
+                "git checkout HEAD~1 && pytest", "git reset --hard HEAD && pytest"):
+        assert verification_changes_tree("bash", {"cmd": cmd})
+        mark_bash_verified(state, cfg, tc_name="bash", result="passed " * 200,
+                           gate_blocked=False, tc_args={"cmd": cmd}, cwd=str(tmp_path))
+        observe_post_mutation_verification(state, cfg, tc_name="bash", result="[exit code: 0]",
+                                           gate_blocked=False, tc_args={"cmd": cmd}, cwd=tmp_path)
+        assert not state.formal_verification_passed_since_mutation
+        assert not state.verified_since_mutation
+    assert not verification_changes_tree("bash", {"cmd": "git diff; pytest"})
+    assert not verification_changes_tree("bash", {"cmd": "echo 'git stash'; pytest"})
+    source.unlink()
+    assert not verification_tree_matches(state, tmp_path)
+    source.write_text("fixed = True\n")
+    assert verification_tree_matches(state, tmp_path)
+
+
+def test_revision_check_does_not_enable_disabled_done_gates(tmp_path):
+    from dataclasses import replace
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.checks_pre import done_guard
+    cfg = replace(load_config(), done_guard_enabled=False, post_mutation_verification_gate_after=0)
+    state = GuardrailState(has_mutated=True, verification_file_revisions={"module.py": "old"})
+    assert done_guard(state, cfg, tc_name="done", cwd=str(tmp_path)).action.name == "PASS"

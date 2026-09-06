@@ -162,6 +162,8 @@ class GuardrailState:
     gate_block_count: int = 0
     has_mutated: bool = False
     verified_since_mutation: bool = False
+    # Verification belongs to these observed file revisions, not a stashed baseline.
+    verification_file_revisions: dict[str, str] = field(default_factory=dict)
     # Total done blocks in the session. Used by the done-loop failsafe:
     # after N blocks the session ends regardless of cause (parity flake,
     # novel verify-path drift, model genuinely misreading the gate). Bounds

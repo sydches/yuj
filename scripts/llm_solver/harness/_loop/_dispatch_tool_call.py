@@ -136,12 +136,15 @@ def _run_automatic_component_verification(
         resolve_component_verification_target,
         verification_runner_unavailable,
         verification_result_passed,
+        verification_tree_matches,
     )
 
     session = state.session
     cfg = state.cfg
     guards = session._guards
     if not automatic_component_verification_due(guards, cfg):
+        return result, 0.0
+    if not verification_tree_matches(guards, session.cwd):
         return result, 0.0
 
     target = resolve_component_verification_target(
@@ -231,6 +234,7 @@ def _run_automatic_component_verification(
         tc_name="run_tests",
         result=auto_result,
         gate_blocked=False,
+        cwd=session.cwd,
     )
     observe_verification(
         guards,
@@ -239,6 +243,7 @@ def _run_automatic_component_verification(
         result=auto_result,
         gate_blocked=False,
         tc_args={"path": target.path},
+        cwd=session.cwd,
     )
     passed = verification_result_passed("run_tests", auto_result)
     if (
@@ -1839,6 +1844,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             session._guards, cfg,
             tc_name=tc.name, result=result,
             gate_blocked=gate_blocked_flag,
+            tc_args=tc.arguments, cwd=session.cwd,
         )
         observers["observe_test_file_read"](
             session._guards, cfg,
@@ -1864,6 +1870,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             gate_blocked=gate_blocked_flag,
             tc_args=tc.arguments,
             source_write_paths=tuple(metadata.get("source_write_paths") or ()),
+            cwd=session.cwd,
         )
         result, automatic_verification_ms = (
             _run_automatic_component_verification(

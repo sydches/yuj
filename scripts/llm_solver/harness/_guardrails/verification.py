@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -14,8 +15,59 @@ from ...language_quirks import (
     load_run_tests_quirk_object,
 )
 from ..command_redirect import split_shell_fragments, strip_leading_assignments
+from ..bash_write_classification import is_workspace_path, normalize_trace_path
 from .extractors import MUTATION_TOOLS, _is_bash_write_like, _is_test_command
 from .state import PASS, Decision, GuardrailState
+
+
+def _file_revision(cwd: str | Path, path: str) -> str:
+    try:
+        root = Path(cwd).resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root):
+            return ""
+        with target.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, RuntimeError):
+        return ""
+
+
+def verification_tree_matches(state: GuardrailState, cwd: str | Path | None) -> bool:
+    """Check only the files observed in successful edits, not task semantics."""
+    revisions = state.verification_file_revisions
+    if not revisions:
+        return True
+    return bool(cwd) and all(
+        digest and _file_revision(cwd, path) == digest
+        for path, digest in revisions.items()
+    )
+
+
+def verification_changes_tree(tc_name: str, tc_args: dict | None) -> bool:
+    """Do not credit a test bundled with an explicit Git tree change."""
+    if tc_name != "bash" or not isinstance(tc_args, dict):
+        return False
+    for fragment in split_shell_fragments(str(tc_args.get("cmd") or "")):
+        try:
+            argv = shlex.split(strip_leading_assignments(fragment.text))
+        except ValueError:
+            continue
+        if not argv or argv[0].rsplit("/", 1)[-1] != "git":
+            continue
+        args = iter(argv[1:])
+        for arg in args:
+            if arg in {"-C", "-c", "--git-dir", "--work-tree"}:
+                next(args, None)
+            elif not arg.startswith("-"):
+                if arg in {
+                    "stash", "checkout", "switch", "restore", "reset",
+                    "revert", "cherry-pick", "rebase", "merge", "apply", "clean",
+                }:
+                    return True
+                break
+    return False
 
 
 @dataclass(frozen=True)
@@ -370,6 +422,7 @@ def observe_post_mutation_verification(
     gate_blocked: bool,
     tc_args: dict | None = None,
     source_write_paths: tuple[str, ...] = (),
+    cwd: str | Path | None = None,
     **_: Any,
 ) -> None:
     """Arm one automatic component run after repeated custom checks."""
@@ -377,6 +430,13 @@ def observe_post_mutation_verification(
         return
     if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
         if not is_error_result(result):
+            if cwd:
+                paths = set(state.verification_file_revisions)
+                paths.update(normalize_trace_path(path) for path in source_write_paths
+                             if is_workspace_path(path))
+                state.verification_file_revisions = {
+                    path: _file_revision(cwd, path) for path in sorted(paths)
+                }
             state.post_mutation_non_test_bash_count = 0
             state.post_mutation_verification_gate_armed = False
             state.formal_verification_passed_since_mutation = False
@@ -388,6 +448,11 @@ def observe_post_mutation_verification(
             state.post_mutation_automatic_verification_unavailable = False
         return
     if not state.has_mutated:
+        return
+    if tc_name not in {"bash", "exec_cell", "run_tests"}:
+        return
+    if (not verification_tree_matches(state, cwd)
+            or verification_changes_tree(tc_name, tc_args)):
         return
     if _is_test_command(tc_name, tc_args):
         state.post_mutation_non_test_bash_count = 0
