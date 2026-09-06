@@ -98,7 +98,7 @@ def test_autonomous_narration_stops_early_recovers_and_replays(tmp_path, monkeyp
     cfg = make_config(context_size=43008, stream_rules_enabled=False)
     limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
     first = _ClosableStream([_chunk(content="x" * (limit + 1)), _chunk(content="unread" * 8000)])
-    call = SimpleNamespace(index=0, id="call_1_0", type="function", function=SimpleNamespace(
+    call = SimpleNamespace(index=0, id="call_2_0", type="function", function=SimpleNamespace(
         name="write", arguments=json.dumps({"path": "out.py", "content": "x" * 40000})
     ))
     second = _ClosableStream([
@@ -113,6 +113,9 @@ def test_autonomous_narration_stops_early_recovers_and_replays(tmp_path, monkeyp
     session = Session(cfg, client, "system", "task", str(tmp_path),
                       context_manager=context_factory(), trace_file=trace)
     result = session._chat_with_retry(1)
+    assert result.finish_reason == "narration_discarded"
+    discarded_usage = result.usage
+    result = session._chat_with_retry(2)
     client.close_transcript()
     assert first.closed
     assert next(first._chunks).choices[0].delta.content.startswith("unread")
@@ -124,42 +127,46 @@ def test_autonomous_narration_stops_early_recovers_and_replays(tmp_path, monkeyp
     assert retry["model"] == client.client.chat.completions.create.call_args_list[0].kwargs["model"]
     assert "Take the next concrete coding action" in json.dumps(retry["messages"])
     assert "x" * (limit + 1) not in json.dumps(retry["messages"])
-    assert result.usage.completion_tokens > 10000
-    assert result.usage.completion_tokens_known is False
-    assert result.last_prompt_tokens == 300
+    assert discarded_usage.completion_tokens > 0
+    assert discarded_usage.completion_tokens_known is False
+    assert result.usage.prompt_tokens == 300
     events = _trace_rows(trace)
-    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["retry"]
+    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["redirect"]
 
     replay = ReplayClient(transcript, strict_fidelity=False)
     replay_session = Session(cfg, replay, "system", "task", str(tmp_path),
                              context_manager=context_factory())
     replay_result = replay_session._chat_with_retry(1)
+    assert replay_result.finish_reason == "narration_discarded"
+    assert replay_result.usage == discarded_usage
+    replay_result = replay_session._chat_with_retry(2)
     assert replay_result.tool_calls == result.tool_calls
     assert replay_result.usage == result.usage
 
 
-def test_second_narration_breach_ends_task_without_session_restart(tmp_path, monkeypatch):
+def test_repeated_narration_uses_normal_turn_limit(tmp_path, monkeypatch):
     from scripts.llm_solver.harness.loop import solve_task
     from scripts.llm_solver._shared.telemetry_paths import trace_path
 
     monkeypatch.setenv("YUJ_STREAMING", "0")
-    cfg = make_config(max_sessions=3, max_turns=5, context_size=43008, sandbox_bash=False)
+    cfg = make_config(max_sessions=1, max_turns=3, context_size=43008, sandbox_bash=False)
     limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
-    streams = [_ClosableStream([_chunk(content="x" * (limit + 1))]) for _ in range(2)]
+    streams = [_ClosableStream([_chunk(content="x" * (limit + 1))]) for _ in range(3)]
     client = LlamaClient(cfg, profile=None)
     client.client.chat.completions.create = MagicMock(side_effect=streams)
     (tmp_path / "prompt.txt").write_text("Fix the issue")
     with patch("scripts.llm_solver.harness.loop._auto_commit"), patch.object(Session, "_get_server_ctx", return_value=43008):
         assert solve_task(tmp_path, cfg, client) is False
-    assert client.client.chat.completions.create.call_count == 2
+    assert client.client.chat.completions.create.call_count == 3
+    assert [c.kwargs["tool_choice"] for c in client.client.chat.completions.create.call_args_list] == ["auto", "auto", "required"]
     assert all(stream.closed for stream in streams)
     metrics = json.loads((tmp_path / "metrics.json").read_text())["metrics"]
     assert metrics["sessions_used"] == 1
     assert metrics["usage_estimated"] is True
-    assert metrics["total_completion_tokens"] == 2 * ((limit + 4) // 4)
+    assert metrics["total_completion_tokens"] == 3 * ((limit + 4) // 4)
     events = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()]
-    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["retry", "end"]
-    assert [e["finish_reason"] for e in events if e["event"] == "session_end"] == ["narration_limit"]
+    assert [e["action"] for e in events if e["event"] == "narration_limit"] == ["redirect", "force_tool", "force_tool"]
+    assert [e["finish_reason"] for e in events if e["event"] == "session_end"] == ["max_turns"]
 
 
 def test_reply_contract_defaults_and_validation(tmp_path):
@@ -200,6 +207,8 @@ def test_first_live_request_after_replay_obeys_narration_limit(tmp_path, monkeyp
     result = session._chat_with_retry(2)
     assert session.client is live
     assert oversized.closed
+    assert result.finish_reason == "narration_discarded"
+    result = session._chat_with_retry(3)
     assert result.content == "The patch is ready."
     assert result.tool_calls[0].name == "done"
     assert live.client.chat.completions.create.call_count == 2
@@ -214,10 +223,12 @@ def test_prose_only_recovery_cannot_be_implicit_success(tmp_path, reply):
     from scripts.llm_solver.harness.loop import solve_task
     from scripts.llm_solver._shared.telemetry_paths import trace_path
 
-    cfg = make_config(context_size=43008, max_sessions=3, allow_implicit_done=True)
+    cfg = make_config(context_size=43008, max_sessions=1, max_turns=3, allow_implicit_done=True)
     limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
     client = LlamaClient(cfg, profile=None)
     streams = [_ClosableStream([_chunk(content="x" * (limit + 1))]),
+               _ClosableStream([_chunk(content=reply),
+                                _chunk(finish_reason="stop", usage=_usage(100, 10))]),
                _ClosableStream([_chunk(content=reply),
                                 _chunk(finish_reason="stop", usage=_usage(100, 10))])]
     client.client.chat.completions.create = MagicMock(side_effect=streams)
@@ -226,16 +237,17 @@ def test_prose_only_recovery_cannot_be_implicit_success(tmp_path, reply):
     with patch("scripts.llm_solver.harness.loop._auto_commit"), patch.object(Session, "_get_server_ctx", return_value=43008):
         assert solve_task(tmp_path, cfg, client, transcript_dir=transcript_dir) is False
     client.close_transcript()
-    assert client.client.chat.completions.create.call_count == 2
+    assert client.client.chat.completions.create.call_count == 3
+    assert client.client.chat.completions.create.call_args.kwargs["tool_choice"] == "required"
     metrics = json.loads((tmp_path / "metrics.json").read_text())["metrics"]
     assert metrics["sessions_used"] == 1
-    assert metrics["total_completion_tokens"] == ((limit + 4) // 4) + 10
+    assert metrics["total_completion_tokens"] == ((limit + 4) // 4) + 20
     rows = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()]
     assert any(row.get("cause") == "no_tool_recovery" for row in rows)
-    assert [r["finish_reason"] for r in rows if r["event"] == "session_end"] == ["narration_limit"]
+    assert [r["finish_reason"] for r in rows if r["event"] == "session_end"] == ["max_turns"]
     replay = ReplayClient(transcript_dir / f"{tmp_path.name}.log", strict_fidelity=False)
     replay_result = Session(cfg, replay, "system", "task", str(tmp_path)).run()
-    assert replay_result.finish_reason == "narration_limit" and not replay_result.done
+    assert replay_result.finish_reason == "max_turns" and not replay_result.done
     assert replay_result.total_completion_tokens == metrics["total_completion_tokens"]
 
 
@@ -266,6 +278,91 @@ def test_recovery_executes_work_and_explicit_completion(tmp_path):
     assert "discarded from working context" in redirect
     assert "Do not merely describe intended actions" in redirect
     assert "call done" in redirect
+
+
+@pytest.mark.parametrize("error_arguments", [None, {}])
+def test_narration_escalates_and_resets_after_executed_work(tmp_path, error_arguments):
+    cfg = make_config(context_size=43008, max_turns=10, sandbox_bash=False)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+
+    def breach():
+        return _ClosableStream([_chunk(content="x" * (limit + 1))])
+
+    def action(name, arguments):
+        return _ClosableStream([
+            _chunk(content="Take the next step.", tool_calls=[SimpleNamespace(
+                index=0, id=name, type="function", function=SimpleNamespace(
+                    name=name, arguments=json.dumps(arguments)))]),
+            _chunk(finish_reason="tool_calls", usage=_usage(100, 10)),
+        ])
+
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(side_effect=[
+        breach(), action("write", {"path": "out.py", "content": "VALUE = 1\n"}),
+        breach(), breach(),
+        action("done", {"message": "Not verified yet."}),
+        action("read", {"path": "out.py"} if error_arguments is None else error_arguments),
+        breach(), action("read", {"path": "out.py"}),
+        action("bash", {"cmd": f"{sys.executable} -c 'import out; assert out.VALUE == 1; print(\"verified \" * 30)'"}),
+        action("done", {"message": "Updated out.py."}),
+    ])
+    trace = io.StringIO()
+    transcript = tmp_path / "reset.log"
+    client.set_transcript(transcript)
+    session = Session(cfg, client, "system", "task", str(tmp_path), trace_file=trace)
+    result = session.run()
+    client.close_transcript()
+    assert result.done and result.turns == 9  # The normal loop numbers turns from zero.
+    assert session._narration_breaches == 0
+    assert (tmp_path / "out.py").read_text() == "VALUE = 1\n"
+    calls = client.client.chat.completions.create.call_args_list
+    assert [c.kwargs["tool_choice"] for c in calls] == [
+        "auto", "auto", "auto", "auto", "required", "required", "auto", "auto", "auto", "auto",
+    ]
+    assert client._narration_tool_required is False
+    rows = _trace_rows(trace)
+    done_rows = [r for r in rows if r["event"] == "tool_call" and r.get("tool_name") == "done"]
+    assert [r["turn_number"] for r in done_rows] == [4, 9]
+    assert "Session ended by model" not in done_rows[0]["result_summary"]
+    assert [r["action"] for r in rows if r["event"] == "narration_limit"] == [
+        "redirect", "redirect", "force_tool", "redirect",
+    ]
+    if error_arguments is not None:
+        assert any(r["event"] == "tool_call" and r.get("tool_name") == "read" and r.get("outcome") == "error" for r in rows)
+    replay_trace = io.StringIO()
+    replay = ReplayClient(transcript, strict_fidelity=False)
+    replay_result = Session(cfg, replay, "system", "task", str(tmp_path), trace_file=replay_trace).run()
+    assert replay_result.done
+    assert replay_result.total_completion_tokens == result.total_completion_tokens
+    assert [r["action"] for r in _trace_rows(replay_trace) if r["event"] == "narration_limit"] == [
+        "redirect", "redirect", "force_tool", "redirect",
+    ]
+
+
+def test_forced_tool_choice_does_not_leak_to_side_requests():
+    client = LlamaClient(make_config(), profile=None)
+    client._narration_tool_required = True
+    payload = {"tools": [{"type": "function", "function": {"name": "read"}}], "tool_choice": "auto"}
+    assert client._attach_request_controls(dict(payload), side_request=False)["tool_choice"] == "required"
+    assert client._attach_request_controls(dict(payload), side_request=True)["tool_choice"] == "auto"
+    assert "tool_choice" not in client._attach_request_controls({}, side_request=False)
+
+
+def test_interrupted_partial_tool_call_never_runs(tmp_path):
+    cfg = make_config(context_size=43008, max_turns=1)
+    limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
+    partial = SimpleNamespace(index=0, id="unfinished", type="function",
+                              function=SimpleNamespace(name="write", arguments='{"path":"out.py",'))
+    stream = _ClosableStream([_chunk(tool_calls=[partial]), _chunk(content="x" * (limit + 1))])
+    client = LlamaClient(cfg, profile=None)
+    client.client.chat.completions.create = MagicMock(return_value=stream)
+    session = Session(cfg, client, "system", "task", str(tmp_path))
+    with patch("scripts.llm_solver.harness.loop.dispatch") as dispatch:
+        result = session.run()
+    dispatch.assert_not_called()
+    assert result.finish_reason == "max_turns" and not result.done
+    assert not (tmp_path / "out.py").exists()
+    assert all(not m.get("tool_calls") for m in session.context.get_messages())
 
 
 @pytest.mark.parametrize("context_size", [20000, 43008, 262144])
@@ -327,7 +424,7 @@ class _NativeResponse:
         self.closed = True
 
 
-def _message_events(text, *, tool=None):
+def _message_events(text, *, tool=None, tool_id="call_1_0"):
     yield {"type": "message_start", "message": {
         "id": "msg", "content": [], "usage": {"input_tokens": 100, "output_tokens": 1}}}
     yield {"type": "content_block_start", "index": 0,
@@ -337,7 +434,7 @@ def _message_events(text, *, tool=None):
     yield {"type": "content_block_stop", "index": 0}
     if tool:
         yield {"type": "content_block_start", "index": 1,
-               "content_block": {"type": "tool_use", "id": "call_1_0",
+               "content_block": {"type": "tool_use", "id": tool_id,
                                  "name": "write", "input": {}}}
         yield {"type": "content_block_delta", "index": 1,
                "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool)}}
@@ -353,9 +450,10 @@ def test_native_messages_interrupt_retry_and_replay(tmp_path, monkeypatch):
     cfg = make_config(context_size=43008)
     limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
     first = _NativeResponse(_message_events("x" * (limit + 1)))
+    repeated = _NativeResponse(_message_events("x" * (limit + 1)))
     tool = {"path": "out.py", "content": "x" * 40000}
-    second = _NativeResponse(_message_events("Write the fix.", tool=tool))
-    post = MagicMock(side_effect=[first, second])
+    second = _NativeResponse(_message_events("Write the fix.", tool=tool, tool_id="call_3_0"))
+    post = MagicMock(side_effect=[first, repeated, second])
     monkeypatch.setattr("scripts.llm_assist._anthropic.requests.post", post)
     client = AnthropicClient(cfg, profile=None)
     # The public adapter owns its HTTP session; the internal adapter uses requests.
@@ -364,21 +462,32 @@ def test_native_messages_interrupt_retry_and_replay(tmp_path, monkeypatch):
     client.set_transcript(transcript)
     session = Session(cfg, client, "system", "task", str(tmp_path))
     result = session._chat_with_retry(1)
+    assert result.finish_reason == "narration_discarded"
+    discarded_usage = result.usage
+    assert session._chat_with_retry(2).finish_reason == "narration_discarded"
+    result = session._chat_with_retry(3)
     client.close_transcript()
     assert first.closed and second.closed
     assert next(first.events)["type"] == "content_block_stop"
     assert result.tool_calls[0].arguments == tool
-    assert post.call_count == 2
+    assert post.call_count == 3
+    assert "tool_choice" not in post.call_args_list[1].kwargs["json"]
+    assert post.call_args.kwargs["json"]["tool_choice"] == {"type": "any"}
     assert all(c.kwargs["stream"] and c.kwargs["json"]["stream"] for c in post.call_args_list)
-    assert result.usage.completion_tokens > 10000
-    assert not result.usage.completion_tokens_known
+    assert discarded_usage.completion_tokens > 0
+    assert not discarded_usage.completion_tokens_known
     retry_messages = post.call_args.kwargs["json"]["messages"]
     assert "Take the next concrete coding action" in json.dumps(retry_messages)
     assert "x" * (limit + 1) not in json.dumps(retry_messages)
     replay = ReplayClient(transcript, strict_fidelity=False)
-    replay_result = Session(cfg, replay, "system", "task", str(tmp_path))._chat_with_retry(1)
+    replay_session = Session(cfg, replay, "system", "task", str(tmp_path))
+    assert replay_session._chat_with_retry(1).usage == discarded_usage
+    assert replay_session._chat_with_retry(2).finish_reason == "narration_discarded"
+    replay_result = replay_session._chat_with_retry(3)
     assert replay_result.tool_calls == result.tool_calls
-    assert replay_result.usage == result.usage
+    # Replay does not restore native cache telemetry; compare charged tokens.
+    assert replay_result.usage.prompt_tokens == result.usage.prompt_tokens
+    assert replay_result.usage.completion_tokens == result.usage.completion_tokens
 
 
 def test_native_responses_preserve_final_fields_and_stop_before_completion():

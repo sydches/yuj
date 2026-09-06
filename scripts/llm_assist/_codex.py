@@ -76,7 +76,7 @@ def _to_responses_payload(payload: dict, *, session_id: str) -> dict:
     tools = payload.get("tools") or []
     if tools:
         request["tools"] = [_to_responses_tool(tool) for tool in tools]
-        request["tool_choice"] = "auto"
+        request["tool_choice"] = payload.get("tool_choice", "auto")
     if session_id:
         request["prompt_cache_key"] = session_id
     return request

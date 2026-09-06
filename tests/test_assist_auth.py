@@ -956,21 +956,26 @@ def test_native_subscription_narration_retry_and_replay(tmp_path, provider):
     tool = {"path": "out.py", "content": "x" * 40000}
     if provider == "claude":
         streams = [_NativeResponse(_message_events("x" * (limit + 1))),
-                   _NativeResponse(_message_events("Write the fix.", tool=tool))]
+                   _NativeResponse(_message_events("Write the fix.", tool=tool, tool_id="call_3_0"))]
     else:
         streams = [_NativeResponse([
             {"type": "response.output_text.delta", "delta": "x" * (limit + 1)},
             {"type": "response.completed", "response": {}},
         ]), _NativeResponse([
             {"type": "response.output_item.added", "output_index": 0,
-             "item": {"type": "function_call", "name": "write", "call_id": "call_1_0", "arguments": ""}},
+             "item": {"type": "function_call", "name": "write", "call_id": "call_3_0", "arguments": ""}},
             {"type": "response.function_call_arguments.delta", "output_index": 0,
              "delta": json.dumps(tool)},
             {"type": "response.completed", "response": {
                 "status": "completed", "output": [{"type": "function_call", "name": "write",
-                "call_id": "call_1_0", "arguments": json.dumps(tool)}],
+                "call_id": "call_3_0", "arguments": json.dumps(tool)}],
                 "usage": {"input_tokens": 100, "output_tokens": 10000}}},
         ])]
+    repeated = (_message_events("x" * (limit + 1)) if provider == "claude" else [
+        {"type": "response.output_text.delta", "delta": "x" * (limit + 1)},
+        {"type": "response.completed", "response": {}},
+    ])
+    streams.insert(1, _NativeResponse(repeated))
     for stream in streams:
         stream.status_code, stream.ok = 200, True
     http = FakeHTTP(*streams)
@@ -978,20 +983,32 @@ def test_native_subscription_narration_retry_and_replay(tmp_path, provider):
                           http=http, now=lambda: 1000.0)
     transcript = tmp_path / "subscription.log"
     client.set_transcript(transcript)
-    result = Session(cfg, client, "system", "task", str(tmp_path))._chat_with_retry(1)
+    session = Session(cfg, client, "system", "task", str(tmp_path))
+    discarded = session._chat_with_retry(1)
+    assert discarded.finish_reason == "narration_discarded"
+    assert session._chat_with_retry(2).finish_reason == "narration_discarded"
+    result = session._chat_with_retry(3)
     client.close_transcript()
     assert result.tool_calls[0].arguments == tool
     assert all(stream.closed for stream in streams)
-    assert len(http.posts) == 2
-    assert result.usage.completion_tokens > 10000
-    assert not result.usage.completion_tokens_known
+    assert len(http.posts) == 3
+    assert discarded.usage.completion_tokens > 0
+    assert not discarded.usage.completion_tokens_known
     request = http.posts[1][1]
     assert request["stream"]
     assert "Take the next concrete coding action" in str(request)
+    request_kwargs = http.posts[2][1]
+    forced_request = (json.loads(request_kwargs["data"]) if provider == "claude" else request_kwargs["json"])
+    forced = forced_request["tool_choice"]
+    assert forced == ({"type": "any"} if provider == "claude" else "required")
     replay = ReplayClient(transcript, strict_fidelity=False)
-    recovered = Session(cfg, replay, "system", "task", str(tmp_path))._chat_with_retry(1)
+    replay_session = Session(cfg, replay, "system", "task", str(tmp_path))
+    assert replay_session._chat_with_retry(1).usage == discarded.usage
+    assert replay_session._chat_with_retry(2).finish_reason == "narration_discarded"
+    recovered = replay_session._chat_with_retry(3)
     assert recovered.tool_calls == result.tool_calls
-    assert recovered.usage == result.usage
+    assert recovered.usage.prompt_tokens == result.usage.prompt_tokens
+    assert recovered.usage.completion_tokens == result.usage.completion_tokens
 
 
 @pytest.mark.parametrize(

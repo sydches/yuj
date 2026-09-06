@@ -911,10 +911,6 @@ def solve_task(
             if auto_commit:
                 _auto_commit(work_dir, session_num, result.finish_reason)
 
-            if result.finish_reason == "narration_limit":
-                write_checkpoint(artifact_dir, cfg.model, "error")
-                break
-
             # The per-task wall-clock budget bounds how long one task can run.
             # It is checked after the session's
             # auto-commit so the partial work survives.

@@ -122,7 +122,7 @@ _SHELL_SEPARATORS = frozenset({"&&", "||", "|", ";"})
 # ── Error taxonomy ───────────────────────────────────────────────────────
 
 NORMAL_LIFECYCLE = frozenset({"context_full", "length"})
-MODEL_STUCK = frozenset({"duplicate_abort", "max_turns", "narration_limit"})
+MODEL_STUCK = frozenset({"duplicate_abort", "max_turns"})
 _TRANSIENT_ERRORS = (openai.APIConnectionError, openai.APITimeoutError)
 
 
@@ -155,7 +155,6 @@ _KNOWN_FINISH_REASONS: frozenset[str] = frozenset({
     "stop",
     "model_done",
     "no_tool_call",
-    "narration_limit",
     "max_turns",
     "context_full",
     "duplicate_abort",

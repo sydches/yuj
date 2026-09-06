@@ -73,9 +73,7 @@ def _defaults() -> dict:
             "and discarded from working context. Take the next concrete coding action "
             "with a tool: gather needed evidence, change the implementation, or verify "
             "the work. Do not merely describe intended actions. If finished, call done "
-            "with a concise result. If genuinely blocked, state the specific blocker; "
-            "this ends the task without success. Another "
-            "excessive narration attempt or a reply without a tool call ends this task."
+            "with a concise result."
         ),
         resume_base="Continue working on the task. Review your previous actions and do the next unit of work.",
         error_nudge="[harness: {count} consecutive errors, consider re-reading the file]",

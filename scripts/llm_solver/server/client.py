@@ -200,7 +200,7 @@ class LlamaClient:
             policy_extra = {"chat_template_kwargs": {"enable_thinking": False}}
         elif policy_extra is None:
             policy_extra = dict(self.thinking_resolution.request_extra)
-        return request_controls.apply_request_controls(
+        controlled = request_controls.apply_request_controls(
             payload,
             session_id=getattr(self, "_session_id", ""),
             server_request_extra=getattr(
@@ -212,6 +212,9 @@ class LlamaClient:
             policy_extra=policy_extra,
             request_dialect=getattr(self.cfg, "request_dialect", "llama"),
         )
+        if not side_request and controlled.get("tools") and getattr(self, "_narration_tool_required", False):
+            controlled["tool_choice"] = "required"
+        return controlled
 
     def set_transcript(self, path: Path | None, append: bool = False) -> None:
         """Enable verbatim transcript at `path`. Truncates and resets counter.

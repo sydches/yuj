@@ -105,18 +105,26 @@ at four characters per token. It is a character bound, not an exact tokenizer
 count. Code in tool arguments and separate reasoning are outside this limit.
 
 On a breach, Yuj closes the stream, discards the monologue from working context,
-and gives the same model one short user-role redirect. That retry must produce
-a tool call, including `done` for an explicit finish. A prose-only retry or a
-second text-limit breach ends the task as `narration_limit`; it does not start
-another session. A concise blocker also ends without success. The transcript
-retains the interrupted text. Usage includes interrupted and recovery calls,
+and gives the same model a short user-role redirect. If the model still does
+not act, Yuj requires a tool call on the next request. When a tool runs, the
+rule resets: a later cutoff starts with a redirect again. Narration alone
+never ends the task. Each recovery attempt uses a normal turn, and normal
+time and turn limits still apply. The transcript retains the interrupted
+text. Usage includes interrupted and recovery calls,
 with estimated counts marked in the trace and `usage_estimated` in metrics.
 
-The harness checks the tool-call boundary, not words such as "edit" in a reply.
-Tool calls still pass through the normal validation and completion guards.
-The narration allowance starts fresh on each request; the one-retry limit
-applies to the interrupted turn. These rules bound wasted narration. They do
-not prove that the model's next action solves the task.
+Work means a tool call that runs, including one returned after the redirect.
+A tool error goes through the normal error ladder and does not add a narration
+penalty. A `done` call still passes through the completion guard; it does not
+substitute for work or required verification. Never execute an unfinished
+tool call from a cut reply. Discarded prose, a shorter promise, and an empty
+recovery reply count as neither work nor completion. Resetting the rule does
+not reset time, token, or turn accounting.
+
+The allowance limits prose, not just loops; a long plan can also cross it.
+If the cutoff fires too often, adjust `narration_context_fraction`. This
+correction leaves the default at 1%. Tool execution does not itself prove
+that the model's next action solves the task.
 
 This rule covers OpenAI-compatible chat, native Anthropic Messages, and Codex
 subscription streams, including the first live request after replay handover.

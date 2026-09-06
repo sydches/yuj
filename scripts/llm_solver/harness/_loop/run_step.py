@@ -914,6 +914,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
             getattr(session, "_preflight_gate_chars_new", 0),
             int(first_prompt_tokens or 0),
         )
+        if reason == "narration_discarded":
+            # Charge the attempt, retain the redirect, and never treat its
+            # discarded/empty response as implicit completion.
+            _run_post_turn_hooks(session, turn, run_advisor=False)
+            continue
         session.context.add_assistant(
             session.client.build_assistant_message(content, tool_calls)
         )

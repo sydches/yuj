@@ -302,6 +302,8 @@ def _to_anthropic_payload(payload: dict, *, subscription: bool = False) -> dict:
                 _to_anthropic_tool(tool, subscription=True)
                 for tool in tools
             ]
+            if payload.get("tool_choice") == "required":
+                out["tool_choice"] = {"type": "any"}
         out["max_tokens"] = min(
             payload["max_tokens"], _SUBSCRIPTION_MAX_OUTPUT_TOKENS
         )
@@ -320,6 +322,8 @@ def _to_anthropic_payload(payload: dict, *, subscription: bool = False) -> dict:
             _to_anthropic_tool(tool, subscription=False)
             for tool in tools
         ]
+        if payload.get("tool_choice") == "required":
+            out["tool_choice"] = {"type": "any"}
     return out
 
 

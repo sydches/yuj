@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import openai
 
 from ...server._streaming import StreamRuleInterrupt
-from ...server.types import Usage
+from ...server.types import TurnResult, Usage
 from ..stream_rules import NarrationBudget, format_interrupt_fragment
 from .compaction import CompactionOverflowError, maybe_compact_messages
 from .length_continuation import continue_length_response
@@ -237,9 +237,6 @@ def _record_narration_usage(session, outgoing, exc, turn, attempt):
         completion_tokens_known=completion_known,
     )
     usages = [*getattr(exc, "prior_usages", ()), charged]
-    prior = session._abandoned_chat_usage
-    if prior is not None:
-        usages.insert(0, prior)
     session._abandoned_chat_usage = _aggregate_usage(usages)
     session._narration_usage_estimated = (
         getattr(session, "_narration_usage_estimated", False)
@@ -250,14 +247,14 @@ def _record_narration_usage(session, outgoing, exc, turn, attempt):
         turn_number=turn, attempt=attempt, prompt_tokens=prompt,
         completion_tokens=completion, prompt_tokens_known=prompt_known,
         completion_tokens_known=completion_known,
-        action="retry" if attempt == 1 else "end",
+        action="redirect" if attempt == 1 else "force_tool",
     )
+    return charged
 
 
 def chat_with_retry(session: "Session", turn: int):
     """Call client.chat(), retrying on transient errors."""
     wire_compaction_attempted = False
-    narration_interrupts = 0
     session._abandoned_chat_usage = None
     while True:
         cfg = session.cfg
@@ -285,6 +282,9 @@ def chat_with_retry(session: "Session", turn: int):
                     if getattr(cfg, "reply_mode", "conversation") == "autonomous"
                     else None
                 )
+                recovering = narration is not None and getattr(session, "_narration_breaches", 0) > 0
+                if recovering:
+                    length_continue_max = 0
                 if runtime is not None:
                     runtime.begin_attempt()
                 if narration is not None and getattr(
@@ -312,6 +312,8 @@ def chat_with_retry(session: "Session", turn: int):
                             runtime.observe(delta, turn=turn)
                     session.client._stream_observer = observe
                 prior_streaming = getattr(session.client, "_narration_streaming", False)
+                prior_required = getattr(session.client, "_narration_tool_required", False)
+                session.client._narration_tool_required = recovering and session._narration_breaches > 1
                 if observer_supported and narration is not None:
                     session.client._narration_streaming = True
                 try:
@@ -326,6 +328,7 @@ def chat_with_retry(session: "Session", turn: int):
                             outgoing, effective_model_tool_schemas(session), turn=turn,
                         )
                 finally:
+                    session.client._narration_tool_required = prior_required
                     if observer_supported:
                         session.client._stream_observer = prior_observer
                         session.client._narration_streaming = prior_streaming
@@ -349,41 +352,36 @@ def chat_with_retry(session: "Session", turn: int):
                     )
                     session._record_stream_rule_matches(records, turn=turn)
                 response_usage = result.usage if result is not None else None
-                abandoned = session._abandoned_chat_usage
-                if result is not None and abandoned is not None:
-                    result = replace(
-                        result,
-                        first_prompt_tokens=(result.first_prompt_tokens if result.first_prompt_tokens is not None else result.usage.prompt_tokens),
-                        last_prompt_tokens=(result.last_prompt_tokens if result.last_prompt_tokens is not None else result.usage.prompt_tokens),
-                        usage=_aggregate_usage([abandoned, result.usage]),
-                    )
-                    session._abandoned_chat_usage = None
-                if narration_interrupts and result is not None and not result.tool_calls:
+                if recovering and result is not None and not result.tool_calls:
                     # A shorter promise is not recovery. Completion must use
                     # the existing done action after this intervention.
-                    session._abandoned_chat_usage = result.usage
-                    session._last_chat_error_reason = "narration_limit"
+                    session._narration_breaches = 2
                     session._emit(
                         "narration_limit", session_number=session._session_number,
-                        turn_number=turn, action="end", cause="no_tool_recovery",
-                        attempt=narration_interrupts + 1,
+                        turn_number=turn, action="force_tool", cause="no_tool_recovery",
+                        attempt=2,
                         prompt_tokens=response_usage.prompt_tokens, completion_tokens=response_usage.completion_tokens,
                         prompt_tokens_known=response_usage.prompt_tokens_known,
                         completion_tokens_known=response_usage.completion_tokens_known,
                     )
-                    return None
+                    return replace(result, content=None, tool_calls=[], finish_reason="narration_discarded")
                 return result
             except StreamRuleInterrupt as exc:
                 records = tuple(exc.matches)
                 automatic = any(r.get("kind") == "narration_limit" for r in records)
                 if automatic:
-                    narration_interrupts += 1
-                    _record_narration_usage(session, outgoing, exc, turn, narration_interrupts)
+                    session._narration_breaches = min(2, getattr(session, "_narration_breaches", 0) + 1)
+                    charged = _record_narration_usage(session, outgoing, exc, turn, session._narration_breaches)
+                    prior_usages = getattr(exc, "prior_usages", ())
+                    discarded = TurnResult(
+                        None, [], "narration_discarded", session._abandoned_chat_usage,
+                        last_prompt_tokens=charged.prompt_tokens,
+                        first_prompt_tokens=(prior_usages[0].prompt_tokens if prior_usages else charged.prompt_tokens),
+                    )
+                    session._abandoned_chat_usage = None
                 session._record_stream_rule_matches(records, turn=turn)
-                if automatic and narration_interrupts > 1:
-                    session._last_chat_error_reason = "narration_limit"
-                    log.warning("Narration limit repeated on turn %d; ending task", turn)
-                    return None
+                if automatic and session._narration_breaches > 1:
+                    return discarded
                 if not automatic and getattr(cfg, "stream_rules_context_mode", "discard") == "keep":
                     partial = exc.partial_response
                     partial_content = None
@@ -424,6 +422,9 @@ def chat_with_retry(session: "Session", turn: int):
                 session._record_stream_rule_injection(
                     records, turn=turn, delivery="retry"
                 )
+                if automatic:
+                    # Recovery uses ordinary turns and their time/turn limits.
+                    return discarded
                 log.info(
                     "Stream rule interrupted turn %d; retrying with rule(s): %s",
                     turn,

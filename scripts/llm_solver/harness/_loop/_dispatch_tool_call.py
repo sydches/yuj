@@ -1918,6 +1918,10 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         not gate_blocked_flag
         and bool(execution_metadata.get("executed", True))
     )
+    if call_executed and dispatch_started and tc.name != "done":
+        # Returning to action resets narration recovery, including tool errors.
+        # Blocked completion and calls that never ran do not count as work.
+        session._narration_breaches = 0
     if (getattr(cfg, "turn_snapshots_enabled", False)
             and metadata.get("source_write_like") and call_executed):
         from ..turn_snapshots import snapshot as _turn_snapshot
