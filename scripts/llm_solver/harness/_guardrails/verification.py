@@ -122,7 +122,12 @@ def verification_result_passed(tc_name: str, result: str) -> bool:
 
 def verification_runner_unavailable(result: str) -> bool:
     """Return whether a registered runner could not start."""
-    return '<test_results status="runner_unavailable"' in result
+    from .._tools._pytest_hints import _pytest_binary_missing
+    return (
+        '<test_results status="runner_unavailable"' in result
+        or _UNAVAILABLE_EXIT_RE.search(result) is not None
+        or _pytest_binary_missing(result, None)
+    )
 
 
 _RUNTIME_FAMILIES = {

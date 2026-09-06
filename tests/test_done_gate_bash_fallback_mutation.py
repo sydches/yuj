@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
@@ -39,6 +41,43 @@ def _make_cfg(**overrides):
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg
+
+
+@pytest.mark.parametrize("command", ["python tests/runtests.py unit", "python3.12 ./run_tests.py unit"])
+def test_project_runner_pass_satisfies_independent_formal_gate(command):
+    from llm_solver.harness._guardrails.verification import observe_post_mutation_verification
+    state = GuardrailState()
+    state.has_mutated = True
+    cfg = _make_cfg(done_guard_enabled=False, post_mutation_verification_gate_after=3,
+                    done_reject_no_formal_verification="formal suite required")
+    assert done_guard(state, cfg, tc_name="done").action == Action.BLOCK
+    observe_post_mutation_verification(state, cfg, tc_name="bash", tc_args={"cmd": command},
+                                      result="3 passed", gate_blocked=False)
+    assert state.formal_verification_passed_since_mutation
+    assert done_guard(state, cfg, tc_name="done").action == Action.PASS
+
+
+@pytest.mark.parametrize("result,unavailable", [
+    ("/usr/bin/python: No module named pytest\n[exit code: 1]", True),
+    ("pytest: command not found\n[exit code: 127]", True),
+    ("1 failed\n[exit code: 1]", False),
+    ("ModuleNotFoundError: No module named 'hypothesis'\n[exit code: 1]", False),
+])
+def test_formal_gate_preserves_only_runner_unavailable_exception(result, unavailable):
+    from llm_solver.harness._guardrails.verification import observe_post_mutation_verification
+    state = GuardrailState()
+    state.has_mutated = True
+    state.post_mutation_automatic_verification_unavailable = True
+    cfg = _make_cfg(done_guard_enabled=False, post_mutation_verification_gate_after=3,
+                    done_reject_no_formal_verification="formal suite required")
+    observe_post_mutation_verification(state, cfg, tc_name="bash",
+                                      tc_args={"cmd": "python -m pytest tests/test_source.py"},
+                                      result=result, gate_blocked=False)
+    assert state.post_mutation_automatic_verification_unavailable is unavailable
+    assert done_guard(state, cfg, tc_name="done").action == (Action.PASS if unavailable else Action.BLOCK)
+    observe_post_mutation_verification(state, cfg, tc_name="edit", tc_args={"path": "source.py"},
+                                      result="OK", gate_blocked=False, source_write_paths=("source.py",))
+    assert not state.post_mutation_automatic_verification_unavailable
 
 
 def _init_git_repo(d: str) -> None:

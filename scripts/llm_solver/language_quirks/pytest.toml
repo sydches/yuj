@@ -15,6 +15,8 @@ description = "pytest / py.test / unittest / python -m pytest invocations"
 verification_patterns = [
     '''(?:^|[\s/'"])(?:pytest|py\.test|unittest)\b''',
     '''(?:^|[\s/'"])python[0-9]?\s+(?:-m\s+)?(?:pytest|unittest)\b''',
+    # Project test entrypoints: recognition only, not pytest flag rewriting.
+    '''(?:^|[\s/'"])python[0-9.]*\s+['"]?(?:[^\s;|&]+/)?run_?tests\.py['"]?(?:\s|$)''',
 ]
 
 # Flags appended to test commands by the harness to reduce output volume.
