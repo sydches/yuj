@@ -3,6 +3,15 @@ from __future__ import annotations
 from scripts.llm_solver.harness.action_metadata import action_metadata
 
 
+def test_action_identity_uses_full_arguments_and_tool_name():
+    args = {"cmd": "x" * 220 + "A", "timeout": 5}
+    identity = action_metadata("bash", args)["action_sha256"]
+    assert len(identity) == 64
+    assert action_metadata("bash", dict(reversed(list(args.items()))))["action_sha256"] == identity
+    assert action_metadata("bash", {**args, "cmd": "x" * 220 + "B"})["action_sha256"] != identity
+    assert action_metadata("read", args)["action_sha256"] != identity
+
+
 def test_python_read_heredoc_is_not_source_write_like():
     meta = action_metadata("bash", {
         "cmd": "python3 << 'PY'\nwith open('/testbed/src/app.py') as f:\n    print(f.read())\nPY"

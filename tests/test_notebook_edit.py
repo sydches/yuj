@@ -415,6 +415,7 @@ def test_permission_presets_and_action_metadata_treat_tool_as_an_edit() -> None:
     metadata = action_metadata(
         "notebook_edit", {"path": "analysis.ipynb", "new_source": "x"}
     )
+    assert len(metadata.pop("action_sha256")) == 64
     assert metadata == {
         "write_like": True,
         "source_write_like": True,

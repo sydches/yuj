@@ -1,5 +1,8 @@
 """trace_nets detector backend: mechanical soft-tier nets in the live slot."""
 from types import SimpleNamespace
+import pytest
+
+from scripts.llm_solver.harness.action_metadata import action_metadata
 
 from scripts.llm_solver.harness.adaptive_control.trace_nets_detector import (
     evaluate_trace_nets,
@@ -9,9 +12,49 @@ from scripts.llm_solver.harness.adaptive_control.trace_nets_detector import (
 def _ev(turn, args="cmd", sha="s0", pf="fail", write="False", execution_sha=""):
     row = {"event": "tool_call", "turn_number": turn, "args_summary": args,
            "output_sha256": sha, "pass_fail": pf, "source_write_like": write}
+    row["action_sha256"] = action_metadata("bash", {"cmd": args})["action_sha256"]
     if execution_sha:
         row["execution_output_sha256"] = execution_sha
     return row
+
+
+def test_full_call_identity_distinguishes_shared_summary_prefixes():
+    from scripts.llm_solver.trace_net_facts import args_reread_after_gap, identical_repeat_plateau_start
+    prefix = "print('" + "x" * 220
+    first, second = _ev(1, prefix + "A')"), _ev(5, prefix + "B')")
+    first["args_summary"] = second["args_summary"] = prefix[:200]
+    assert identical_repeat_plateau_start([first, second], 1) is None
+    assert args_reread_after_gap([first, second], 1, min_args_len=20, min_gap=3, max_gap=30) is None
+    second["action_sha256"] = first["action_sha256"]
+    assert identical_repeat_plateau_start([first, second], 1) is not None
+    assert args_reread_after_gap([first, second], 1, min_args_len=20, min_gap=3, max_gap=30) is not None
+
+
+def test_legacy_summary_alone_cannot_prove_identical_calls():
+    from scripts.llm_solver.trace_net_facts import args_reread_after_gap, identical_repeat_plateau_start
+    rows = [_ev(1, "long matching summary"), _ev(5, "long matching summary")]
+    for row in rows:
+        row.pop("action_sha256")
+    assert identical_repeat_plateau_start(rows, 1) is None
+    assert args_reread_after_gap(rows, 1, min_args_len=20, min_gap=3, max_gap=30) is None
+
+
+@pytest.mark.parametrize("evidence", ["", "   ", "T3:"])
+def test_adaptive_advice_without_evidence_is_not_delivered(evidence):
+    from scripts.llm_solver.harness.adaptive_control.executors import user_turn_msg_only_apply
+    session = SimpleNamespace(_trace_events=[])
+    result = user_turn_msg_only_apply(session, evidence=evidence, rung=2, turn=3)
+    assert not result.applied and result.blocked_reason == "no_evidence"
+    assert not getattr(session, "_adaptive_user_turn_pending", None)
+
+
+def test_adaptive_warning_describes_a_continuing_session():
+    from scripts.llm_solver.harness.adaptive_control.executors import compose_user_turn_message
+    message = compose_user_turn_message(SimpleNamespace(_trace_events=[]), evidence="T3:repeated call",
+                                        rung=2, hurdle_family="repeat_wall", turn=3)
+    assert message.startswith("The harness detected a problem: repeated call.")
+    assert "stopped" not in message and "end the session" not in message
+    assert "warning" in message
 
 
 def _session(events, arm_after=0):

@@ -482,7 +482,9 @@ def test_approval_stale_permission_checkpoint_and_trace_controls(
     assert PERMISSION_PRESET_SPECS["allow-edits"].tool_decisions[
         "structural_edit"
     ] == "allow"
-    assert action_metadata("structural_edit", edit_args) == {
+    metadata = action_metadata("structural_edit", edit_args)
+    assert len(metadata.pop("action_sha256")) == 64
+    assert metadata == {
         "write_like": True,
         "source_write_like": True,
         "source_write_paths": ["sample.py"],

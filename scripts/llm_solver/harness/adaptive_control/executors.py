@@ -566,8 +566,7 @@ _UT_SUGGESTION = {
 }
 _UT_GUARD_BY_RUNG = {
     1: "loop_detect — it will warn you if identical calls repeat",
-    2: ("duplicate_guard — repeating an identical call now draws a "
-        "warning and can end the session"),
+    2: "duplicate_guard — repeating an identical call now draws a warning",
     3: ("loop_detect recovery guidance — repeated calls now get explicit "
         "recovery instructions"),
     4: ("unified tool-result envelope — tool results now carry explicit "
@@ -589,6 +588,9 @@ def compose_user_turn_message(session, *, evidence: str, rung: int,
     ev = evidence.split(";", 1)[0]
     if ":" in ev and ev.split(":", 1)[0].startswith("T"):
         ev = ev.split(":", 1)[1]
+    ev = ev.strip()
+    if not ev:
+        return ""
     last_edit = None
     for event in getattr(session, "_trace_events", []) or []:
         t = event.get("turn_number")
@@ -606,7 +608,7 @@ def compose_user_turn_message(session, *, evidence: str, rung: int,
     if include_guard:
         guard = _UT_GUARD_BY_RUNG.get(int(rung) or 1, _UT_GUARD_BY_RUNG[1])
         guard_sentence = f"A guard is now active: {guard}. "
-    return (f"The session was stopped because a problem was detected: "
+    return (f"The harness detected a problem: "
             f"{ev}. {edit_line} Suggestion: {sug}. "
             f"{guard_sentence}"
             f"Your previous work is saved and in place. Continue.")
@@ -628,7 +630,8 @@ def user_turn_apply(session, payload: InterventionPayload,
         session, evidence=evidence, rung=rung,
         hurdle_family=hurdle_family, turn=turn,
     )
-    setattr(session, "_adaptive_user_turn_pending", msg)
+    if msg:
+        setattr(session, "_adaptive_user_turn_pending", msg)
     return dataclasses.replace(result, executor_id=USER_TURN_EXECUTOR_ID)
 
 
@@ -665,7 +668,8 @@ def tool_result_apply(session, payload: InterventionPayload,
         session, evidence=evidence, rung=rung,
         hurdle_family=hurdle_family, turn=turn,
     )
-    setattr(session, "_adaptive_tool_note_pending", msg)
+    if msg:
+        setattr(session, "_adaptive_tool_note_pending", msg)
     return dataclasses.replace(result, executor_id=TOOL_RESULT_EXECUTOR_ID)
 
 
@@ -677,6 +681,9 @@ def user_turn_msg_only_apply(session, *, evidence: str = "", rung: int = 0,
         session, evidence=evidence, rung=rung,
         hurdle_family=hurdle_family, turn=turn, include_guard=False,
     )
+    if not msg:
+        return ExecutorResult(USER_TURN_MSG_ONLY_EXECUTOR_ID, applied=False,
+                              blocked_reason="no_evidence")
     setattr(session, "_adaptive_user_turn_pending", msg)
     return ExecutorResult(USER_TURN_MSG_ONLY_EXECUTOR_ID, applied=True,
                           active_config_basis="baseline")

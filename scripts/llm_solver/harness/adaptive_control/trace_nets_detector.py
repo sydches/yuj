@@ -7,7 +7,7 @@ recurrence. Emits an ``LLMDetectorVerdict`` so everything downstream
 (family lookup, executor apply, watch, restore, escalation) is reused
 unchanged.
 
-No text parsing: output_sha256 / output_snippet / args_summary equality
+No text parsing: output_sha256 / output_snippet / full action_sha256 equality
 and pass_fail flags only. Warmup honored via
 ``guardrails_arm_after_turn`` (the same key the pre-dispatch guardrails
 use): no fire at or before that turn.

@@ -7,6 +7,8 @@ source mutation rather than another read of the same file.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from .bash_write_classification import (
@@ -27,9 +29,15 @@ def action_metadata(tool_name: str, arguments: dict[str, Any] | None) -> dict[st
     - ``source_write_like`` additionally requires at least one source-looking
       path in the action arguments.
     - ``source_write_paths`` is a small ordered path list for state projection.
+    - ``action_sha256`` identifies the full tool name and arguments, not a
+      truncated display summary. No raw arguments are added to the trace.
     """
     arguments = arguments or {}
     tool_name = tool_name or ""
+    action_sha = hashlib.sha256(json.dumps(
+        [tool_name, arguments], sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
     text = ""
     write_like = False
 
@@ -42,6 +50,7 @@ def action_metadata(tool_name: str, arguments: dict[str, Any] | None) -> dict[st
         write_like = classification.action_write_like
         paths = list(classification.source_write_paths)
         return {
+            "action_sha256": action_sha,
             "write_like": write_like,
             "source_write_like": classification.source_write_like,
             "source_write_paths": paths[:8],
@@ -59,6 +68,7 @@ def action_metadata(tool_name: str, arguments: dict[str, Any] | None) -> dict[st
         if not paths:
             paths = list(extract_source_write_paths(text))
     return {
+        "action_sha256": action_sha,
         "write_like": write_like,
         "source_write_like": bool(write_like and paths),
         "source_write_paths": paths[:8],

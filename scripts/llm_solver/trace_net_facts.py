@@ -34,11 +34,11 @@ def identical_repeat_plateau_start(
         return None
     cur = turns[idx]
     prev = turns[idx - 1]
-    cur_args = str(cur.get("args_summary") or "")
+    cur_args = str(cur.get("action_sha256") or "")
     cur_hash = result_hash(cur)
     if not cur_args or not cur_hash:
         return None
-    if cur_args != str(prev.get("args_summary") or ""):
+    if cur_args != str(prev.get("action_sha256") or ""):
         return None
     if cur_hash != result_hash(prev):
         return None
@@ -108,11 +108,12 @@ def args_reread_after_gap(
 ) -> TraceNetFact | None:
     cur = turns[idx]
     args = str(cur.get("args_summary") or "")
-    if len(args) < min_args_len or source_write_like(cur):
+    identity = str(cur.get("action_sha256") or "")
+    if not identity or len(args) < min_args_len or source_write_like(cur):
         return None
     prev_idx = None
     for cursor in range(idx - 1, -1, -1):
-        if str(turns[cursor].get("args_summary") or "") == args:
+        if str(turns[cursor].get("action_sha256") or "") == identity:
             prev_idx = cursor
             break
     if prev_idx is None:
