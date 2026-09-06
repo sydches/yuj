@@ -7,6 +7,7 @@ cause-hint attribute).
 from __future__ import annotations
 
 import re
+import pytest
 import sys
 from pathlib import Path
 
@@ -46,6 +47,27 @@ class TestRankCandidates:
 
 
 class TestStrictEditMode:
+
+    @pytest.mark.parametrize("cascade", [False, True])
+    @pytest.mark.parametrize("source,old", [(b"aaa", "aa"), (b"a\r\nb\r\na\r\n", "a")])
+    def test_ambiguous_exact_edit_preserves_bytes(self, tmp_path, cascade, source, old):
+        path = tmp_path / "f.py"
+        path.write_bytes(source)
+        result = edit("f.py", old, "new", cwd=str(tmp_path),
+                      cfg=make_config(edit_fuzzy_cascade_enabled=cascade))
+        assert result.startswith("ERROR: old_str matches more than once")
+        assert "unique surrounding text" in result
+        assert path.read_bytes() == source
+
+    def test_ambiguous_edit_retry_targets_the_named_function(self, tmp_path):
+        source = "def first():\n    return True\n\ndef second():\n    return True\n"
+        path = tmp_path / "f.py"
+        path.write_text(source)
+        assert edit("f.py", "return True", "return False", cwd=str(tmp_path)).startswith("ERROR:")
+        assert path.read_text() == source
+        old = "def second():\n    return True"
+        assert edit("f.py", old, old.replace("True", "False"), cwd=str(tmp_path)) == "OK"
+        assert path.read_text() == source.replace(old, old.replace("True", "False"))
 
     def test_default_mode_is_strict(self):
         cfg = make_config()

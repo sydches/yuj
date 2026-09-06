@@ -1,4 +1,4 @@
-"""edit tool: replace first occurrence of old_str with new_str in a file."""
+"""edit tool: replace a unique exact span, with optional fuzzy recovery."""
 from ...config import Config
 from ._common import (
     _is_external_readonly_path,
@@ -51,7 +51,7 @@ def _format_candidates_block(text: str, candidates, path: str) -> str:
 
 def edit(path: str, old_str: str, new_str: str, *, cwd: str,
          cfg: Config | None = None) -> str:
-    """Replace first occurrence of old_str with new_str in a file.
+    """Replace a unique exact span of old_str with new_str in a file.
 
     Match policy is controlled by two cfg flags:
 
@@ -109,6 +109,12 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
         head = ""
         # Pass 1: exact.
         if old_str in text:
+            first = text.find(old_str)
+            if text.find(old_str, first + 1) >= 0:
+                return (
+                    f"ERROR: old_str matches more than once in {path}. "
+                    "No changes made. Include unique surrounding text in old_str."
+                )
             new_text = text.replace(old_str, new_str, 1)
             head = "OK"
         elif cfg is not None and cfg.edit_fuzzy_cascade_enabled:

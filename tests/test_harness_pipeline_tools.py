@@ -449,10 +449,8 @@ class TestHarnessTools:
         # File unchanged
         assert (tmp_path / "f.py").read_text() == "def foo_bar():\n    return 1\n"
 
-    def test_edit_whitespace_fallback_uses_first_match(self, tmp_path):
-        """Cascade arm: when normalized match has multiple candidates,
-        use the first occurrence — same contract as the exact-match
-        path."""
+    def test_edit_cascade_does_not_bypass_ambiguous_exact_match(self, tmp_path):
+        """An enabled cascade must not bypass an ambiguous exact match."""
         from llm_solver.harness.tools import edit
         cfg = make_config(edit_fuzzy_cascade_enabled=True,
                           edit_strict_match=False)
@@ -460,9 +458,8 @@ class TestHarnessTools:
         (tmp_path / "a.py").write_text(src)
         result = edit("a.py", "pass", "yield",
                       cwd=str(tmp_path), cfg=cfg)
-        assert "OK" in result
-        # Only the first pass is replaced.
-        assert (tmp_path / "a.py").read_text() == "yield\n\npass\n"
+        assert "ERROR: old_str matches more than once" in result
+        assert (tmp_path / "a.py").read_text() == src
 
     def test_glob_tool(self, tmp_path):
         from llm_solver.harness.tools import glob_files

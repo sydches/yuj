@@ -6,8 +6,8 @@ Borrowed in spirit from opencode's nine-strategy cascade
 (``sst/opencode`` ``packages/opencode/src/tool/edit.ts``). Trimmed to
 the strategies that match our failure distribution — we see
 whitespace drift, indentation drift, and serialization escaping
-artifacts; we do not see multi-match replace-all requests (the
-``edit`` tool contract is first-occurrence).
+artifacts. These span finders do not implement replace-all. The ``edit``
+tool rejects ambiguous exact matches before entering this cascade.
 
 Each strategy is a pure function ``(text, old_str) -> (start, end) |
 None``. Non-whitespace characters MUST still match exactly — the
