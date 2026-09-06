@@ -194,6 +194,45 @@ def test_reclip_bails_when_strategy_cannot_replace():
     assert preflight_reclip_oversized(sess) is None
 
 
+@pytest.mark.parametrize("second_old_size", [8000, 16000])
+def test_reclip_prefers_largest_old_result_and_oldest_tie(second_old_size):
+    fresh = "fresh result\n" * 2000
+    messages = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "old read"},
+        {"role": "tool", "tool_call_id": "old1", "content": "a" * 16000},
+        {"role": "assistant", "content": "second read"},
+        {"role": "tool", "tool_call_id": "old2", "content": "b" * second_old_size},
+        {"role": "assistant", "content": "latest read"},
+        {"role": "tool", "tool_call_id": "fresh", "content": fresh},
+    ]
+    session = _stub_session(20000, messages)
+    projected = session.context.estimate_tokens()
+    info = preflight_reclip_oversized(session, projected_tokens=projected, budget_tokens=projected - 1500)
+    assert info["tool_call_id"] == "old1"
+    assert session.context.get_messages()[-1] == messages[-1]
+    assert session.context.get_messages()[2]["content"].startswith("a")
+    assert session.context.get_messages()[2]["content"].endswith("a")
+
+
+def test_reclip_leaves_too_small_target_for_compaction():
+    messages = [{"role": "user", "content": "task"},
+                {"role": "assistant", "content": "read"},
+                {"role": "tool", "tool_call_id": "read", "content": "x" * 4000}]
+    session = _stub_session(2000, messages)
+    assert preflight_reclip_oversized(session, projected_tokens=1100, budget_tokens=100) is None
+    assert session.context.get_messages() == messages
+
+
+@pytest.mark.parametrize("budget", [0, 1, 80, 160])
+@pytest.mark.parametrize("head_ratio", [0, 0.4, 1])
+def test_head_tail_never_exceeds_tiny_budget(budget, head_ratio):
+    from llm_solver.harness._loop.compaction import _head_tail_truncate
+    for marker in (None, "[trimmed]"):
+        result = _head_tail_truncate("x" * 1000, budget, head_ratio, marker)
+        assert len(result) <= budget
+
+
 # ── Loop-level: session survives / still ends (integration) ───────
 
 

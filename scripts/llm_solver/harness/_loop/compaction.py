@@ -194,18 +194,20 @@ def _head_tail_truncate(text: str, char_budget: int, head_ratio: float = 0.4,
     ``marker`` notice inserted where content was removed).
     """
     if char_budget <= 0:
-        return "" if marker is None else marker
+        return ""
     if len(text) <= char_budget:
         return text
     marker_reserve = 80 if marker is None else len(marker) + 2
-    slice_budget = max(1, char_budget - marker_reserve)
+    slice_budget = char_budget - marker_reserve
+    if slice_budget <= 0:
+        return ""
     head_budget = int(slice_budget * head_ratio)
     tail_budget = slice_budget - head_budget
     head = text[:head_budget]
     last_nl = head.rfind("\n")
     if last_nl > head_budget // 2:
         head = head[: last_nl + 1]
-    tail = text[-tail_budget:]
+    tail = text[-tail_budget:] if tail_budget else ""
     first_nl = tail.find("\n")
     if 0 <= first_nl < tail_budget // 2:
         tail = tail[first_nl + 1:]
@@ -246,8 +248,8 @@ def preflight_reclip_oversized(
 
     This is the first, local step of the last-resort fit gate. It runs only
     after the rendered context (including halflife) exceeds
-    ``context_fill_ratio * context_size``. The newest batch of tool results is
-    preferred; otherwise the newest non-initial user message is eligible. The
+    ``context_fill_ratio * context_size``. Older tool results are preferred
+    when one can cover the deficit; otherwise the newest batch is eligible. The
     selected message is clipped head+tail against the prompt's actual token
     deficit, rather than against a fixed fraction of the whole context.
 
@@ -322,24 +324,21 @@ def preflight_reclip_oversized(
     if not candidates:
         return None
 
-    # Parallel tool calls can append several results after one assistant
-    # message. Prefer the largest result in that newest batch. If there is no
-    # trailing tool batch, use the newest eligible user message.
+    # Preserve fresh results when an older tool body can cover the deficit.
+    # Size and age are mechanical signals, not a guess about task relevance.
     last_assistant = max(
         (i for i, message in enumerate(msgs) if message.get("role") == "assistant"),
         default=-1,
     )
-    trailing_tools = [
-        (i, pt)
-        for i, pt in candidates
-        if i > last_assistant and msgs[i].get("role") == "tool"
-    ]
+    required_reduction = projected_pt - prompt_budget
+    tool_results = [(i, pt) for i, pt in candidates if msgs[i].get("role") == "tool"]
+    older_tools = [(i, pt) for i, pt in tool_results if i < last_assistant and pt > required_reduction]
+    preferred = older_tools or tool_results
     best_i, best_pt = (
-        max(trailing_tools, key=lambda item: item[1])
-        if trailing_tools
+        max(preferred, key=lambda item: (item[1], -item[0]))
+        if preferred
         else candidates[-1]
     )
-    required_reduction = projected_pt - prompt_budget
     target_pt = best_pt - required_reduction
     if target_pt <= 0:
         return None
@@ -362,6 +361,8 @@ def preflight_reclip_oversized(
     # not fit.
     chars_per_token = max(1.0, len(content) / best_pt)
     char_budget = max(0, int(target_pt * chars_per_token * 0.95))
+    if char_budget < len(notice) + 5:
+        return None  # No room for the notice and both slices; use compaction.
     clipped = _head_tail_truncate(content, char_budget, marker=notice)
     new_target = dict(target)
     new_target["content"] = clipped
