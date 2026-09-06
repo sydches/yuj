@@ -1,4 +1,7 @@
 # Detector-activated identical-call guardrail.
 
 [loop]
-loop_detect_enabled = true
+loop_detect_enabled = true # Watch for consecutive identical tool calls.
+# Restore the tolerance when earlier disabled layers set it to zero.
+# Warn on the fifth identical call; end only if the next call repeats again.
+loop_detect_threshold = 5

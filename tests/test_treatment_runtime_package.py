@@ -24,6 +24,45 @@ def _repeat_event(turn: int) -> dict[str, object]:
     }
 
 
+def test_loop_activation_restores_threshold_and_baseline(tmp_path):
+    from scripts.llm_solver.harness.guardrails import (
+        Action, init_guardrail_state, loop_detect,
+    )
+
+    baseline = tmp_path / "disabled.toml"
+    baseline.write_text("[loop]\nloop_detect_enabled = false\nloop_detect_threshold = 0\n")
+    cfg = load_config(user_config=baseline)
+    session = SimpleNamespace(
+        cfg=cfg, adaptive_control_resolved_baseline_cfg=cfg,
+        adaptive_control_baseline_config_paths=(str(baseline),),
+    )
+    payload = InterventionPayload(
+        intervention_id="toml_overlay.apply::loop.loop_detect_on_default",
+        executor_id="toml_overlay.apply", timing_class="immediate",
+        candidate_config_path=str(PROJECT_ROOT / "configs/treatment/overlays/loop_detect.toml"),
+    )
+    applied = executors.apply(session, payload)
+    assert applied.applied, applied.blocked_reason
+    assert {"loop_detect_enabled", "loop_detect_threshold"} <= set(applied.changed_config_fields)
+    assert session.cfg.loop_detect_enabled is True
+    assert session.cfg.loop_detect_threshold == 5
+
+    state = init_guardrail_state(session.cfg)
+    sig = (("read", '{"path": "a.py"}'),)
+    actions = [loop_detect(state, session.cfg, tool_calls_sig=sig).action for _ in range(6)]
+    assert actions == [Action.PASS] * 4 + [Action.WARN, Action.END]
+    changed = (("read", '{"path": "b.py"}'),)
+    assert loop_detect(state, session.cfg, tool_calls_sig=changed).action == Action.PASS
+    assert state.loop_detect_streak == 1
+    assert state.loop_detect_warned is False
+
+    assert executors.restore_baseline(session).applied
+    assert session.cfg.loop_detect_enabled is False
+    assert session.cfg.loop_detect_threshold == 0
+    assert loop_detect(state, session.cfg, tool_calls_sig=changed).action == Action.PASS
+    assert state.loop_detect_streak == 0
+
+
 def _read_tsv(path):
     with path.open(encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
