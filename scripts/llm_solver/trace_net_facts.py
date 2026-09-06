@@ -45,6 +45,23 @@ def identical_repeat_plateau_start(
     return TraceNetFact((_turn_number(prev), _turn_number(cur)), occurrences=2)
 
 
+def same_action_repeat(
+    turns: list[dict[str, Any]], idx: int, *, min_streak: int,
+) -> TraceNetFact | None:
+    """Count consecutive identical full calls even when output bytes vary."""
+    identity = str(turns[idx].get("action_sha256") or "")
+    if not identity or source_write_like(turns[idx]):
+        return None
+    evidence = []
+    for row in reversed(turns[:idx + 1]):
+        if str(row.get("action_sha256") or "") != identity or source_write_like(row):
+            break
+        evidence.append(_turn_number(row))
+    if len(evidence) < max(2, min_streak):
+        return None
+    return TraceNetFact(tuple(reversed(evidence[:5])), occurrences=len(evidence))
+
+
 def same_failed_output_repeat(
     turns: list[dict[str, Any]],
     idx: int,
@@ -173,6 +190,7 @@ __all__ = [
     "args_reread_after_gap",
     "identical_repeat_plateau_start",
     "result_hash",
+    "same_action_repeat",
     "same_failed_output_repeat",
     "same_passing_output_recurrence",
 ]

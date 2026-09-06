@@ -20,9 +20,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...config import Config
 from ...trace_net_facts import (
     args_reread_after_gap,
     identical_repeat_plateau_start,
+    same_action_repeat,
     same_failed_output_repeat,
     same_passing_output_recurrence,
 )
@@ -85,7 +87,12 @@ def evaluate_trace_nets(session: Any, turn: int) -> LLMDetectorVerdict:
     p_reread_min_args_len = _p(cfg, "reread_min_args_len", _REREAD_MIN_ARGS_LEN)
     p_reread_min_gap = _p(cfg, "reread_min_gap", _REREAD_MIN_GAP)
     p_reread_max_gap = _p(cfg, "reread_max_gap", _REREAD_MAX_GAP)
-    window = p_reread_max_gap + 1
+    # A disabled guard may have a zeroed threshold in the baseline. Detection
+    # still uses the guard's normal threshold so it can select that guard.
+    repeat_threshold = int(getattr(cfg, "loop_detect_threshold", 0) or 0)
+    if repeat_threshold <= 0:
+        repeat_threshold = Config.__dataclass_fields__["loop_detect_threshold"].default
+    window = max(p_reread_max_gap + 1, repeat_threshold)
     tail = _events_tail(session, turn, window)
     if len(tail) < 4:
         return _no_fire("too_few_turns")
@@ -93,6 +100,15 @@ def evaluate_trace_nets(session: Any, turn: int) -> LLMDetectorVerdict:
     cur = tail[-1]
     idx = len(tail) - 1
     fires: list[tuple[str, str, str]] = []  # (family, net, evidence_ref)
+
+    repeated = same_action_repeat(tail, idx, min_streak=repeat_threshold)
+    if repeated is not None:
+        fires.append((
+            "repeat_wall",
+            "same_action_repeat",
+            f"T{cur.get('turn_number')}:same full tool call issued "
+            f"{repeated.occurrences} consecutive times; output bytes may differ",
+        ))
 
     exact = identical_repeat_plateau_start(tail, idx)
     if exact is not None:

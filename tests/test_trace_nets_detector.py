@@ -79,6 +79,30 @@ def test_identical_repeat_plateau_fires_repeat_wall():
     assert v.hurdle_present == "yes" and v.hurdle_family == "repeat_wall"
 
 
+@pytest.mark.parametrize("threshold", [0, 5, 8])
+def test_repeated_full_calls_fire_despite_changing_output(threshold):
+    from scripts.llm_solver.config import Config
+    count = threshold or Config.__dataclass_fields__["loop_detect_threshold"].default
+    ev = [_ev(t, args="run tests", sha=f"timing-{t}", pf="pass") for t in range(count)]
+    session = _session(ev)
+    session.cfg.loop_detect_threshold = threshold
+    assert evaluate_trace_nets(session, count - 2).hurdle_present == "no"
+    result = evaluate_trace_nets(session, count - 1)
+    assert result.hurdle_family == "repeat_wall"
+    assert "same full tool call" in result.evidence_refs[0]
+    session._trace_events.append(_ev(count, args="different action", sha="new", pf="pass"))
+    assert evaluate_trace_nets(session, count).hurdle_present == "no"
+
+
+def test_repeated_action_fact_requires_full_identity_and_no_source_write():
+    from scripts.llm_solver.trace_net_facts import same_action_repeat
+    events = [_ev(t, args="same", sha=str(t), pf="pass") for t in range(5)]
+    events[-1].pop("action_sha256")
+    assert same_action_repeat(events, 4, min_streak=5) is None
+    events[-1] = _ev(4, args="same", sha="4", write=True)
+    assert same_action_repeat(events, 4, min_streak=5) is None
+
+
 def test_nonconsecutive_shared_failure_hash_stays_silent():
     ev = [_ev(t, args=f"c{t}", sha="DEAD", pf="fail") for t in (3, 7, 12)]
     ev = [_ev(t, args=f"x{t}", sha=f"s{t}", pf="pass") for t in range(3)] + ev
@@ -272,6 +296,7 @@ def test_trace_nets_watch_restores_baseline_on_first_unlock_turn(tmp_path):
         lookup_path,
         baseline_path,
         backend="trace_nets",
+        max_interventions=2,
     )
 
     events = [_event(t) for t in range(4)]
@@ -308,3 +333,15 @@ def test_trace_nets_watch_restores_baseline_on_first_unlock_turn(tmp_path):
     assert cleared["watch_transition"]["budget_exhausted"] is False
     assert cleared["baseline_restore"]["apply_status"] == "applied"
     assert session.cfg.loop_detect_enabled is False
+
+    # A later command loop must open a fresh episode, even when its timing
+    # or output order changes on every run. The earlier guard stays cleared.
+    for turn in range(5, 10):
+        session._trace_events.append(_ev(turn, args="new repeated test command",
+                                         sha=f"different output {turn}", pf="pass"))
+        observed = maybe_run_llm_hurdle_detector(session, turn=turn)
+        if turn < 9:
+            assert session.cfg.loop_detect_enabled is False
+    assert observed["intervention_apply"]["apply_status"] == "applied"
+    assert session.cfg.loop_detect_enabled is True
+    assert session._adaptive_control_episode_machine.episodes_opened == 2
