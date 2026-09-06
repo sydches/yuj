@@ -540,6 +540,13 @@ class TestPostMutationVerificationNudge:
             for message in second_request
         )
         third_request = client.chat.call_args_list[2].args[0]
+        automatic_result = next(
+            result for result in tool_results if "<automatic_verification" in result
+        )
+        assert 'scope="conventional_component"' in automatic_result
+        assert 'task_requirement="not_checked"' in automatic_result
+        assert "does not confirm the task requirement" in automatic_result
+        assert '<test_results status="passed"' in automatic_result
         assert any(
             message.get("role") == "user"
             and advice in str(message.get("content") or "")
@@ -694,6 +701,13 @@ class TestPostMutationVerificationNudge:
 
         assert result.done is True
         assert "run_tests" not in executed
+        request_after_probe = client.chat.call_args_list[2].args[0]
+        assert any(
+            message.get("role") == "tool"
+            and 'status="target_unavailable"' in str(message.get("content") or "")
+            and "could not be checked automatically" in str(message.get("content") or "")
+            for message in request_after_probe
+        )
 
     def test_custom_shell_streak_runs_component_target_without_blocking(self, tmp_path):
         from llm_solver.harness.loop import Session

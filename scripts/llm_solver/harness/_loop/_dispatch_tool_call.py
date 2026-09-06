@@ -153,6 +153,14 @@ def _run_automatic_component_verification(
     if target is None:
         guards.post_mutation_automatic_verification_unavailable = True
         metadata["automatic_verification"] = "target_unavailable"
+        result = (
+            '<automatic_verification status="target_unavailable" '
+            'task_requirement="not_checked">\n'
+            "No unambiguous conventional component suite was found. "
+            "The task requirement could not be checked automatically.\n"
+            "</automatic_verification>\n\n"
+            f"{result}"
+        )
         return (
             _append_intervention(
                 result,
@@ -260,7 +268,10 @@ def _run_automatic_component_verification(
     before = result
     combined = (
         f'<automatic_verification runner="{html.escape(target.runner, quote=True)}" '
-        f'target="{html.escape(target.display, quote=True)}">\n'
+        f'target="{html.escape(target.display, quote=True)}" '
+        'scope="conventional_component" task_requirement="not_checked">\n'
+        "This runs the conventional adjacent component suite. Its result "
+        "does not confirm the task requirement or coverage of all affected behavior.\n"
         f"{auto_result}\n"
         "</automatic_verification>\n\n"
         f"{result}"
