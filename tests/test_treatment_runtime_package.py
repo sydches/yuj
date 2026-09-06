@@ -1,5 +1,6 @@
 """The public treatment data loads and keeps the released response order."""
 import csv
+import pytest
 from types import SimpleNamespace
 
 from scripts.llm_solver.config import PROJECT_ROOT, load_config
@@ -24,7 +25,8 @@ def _repeat_event(turn: int) -> dict[str, object]:
     }
 
 
-def test_loop_activation_restores_threshold_and_baseline(tmp_path):
+@pytest.mark.parametrize("overlay", ["loop_detect.toml", "loop_detect_recovery.toml"])
+def test_loop_activation_restores_threshold_and_baseline(tmp_path, overlay):
     from scripts.llm_solver.harness.guardrails import (
         Action, init_guardrail_state, loop_detect,
     )
@@ -39,7 +41,7 @@ def test_loop_activation_restores_threshold_and_baseline(tmp_path):
     payload = InterventionPayload(
         intervention_id="toml_overlay.apply::loop.loop_detect_on_default",
         executor_id="toml_overlay.apply", timing_class="immediate",
-        candidate_config_path=str(PROJECT_ROOT / "configs/treatment/overlays/loop_detect.toml"),
+        candidate_config_path=str(PROJECT_ROOT / "configs/treatment/overlays" / overlay),
     )
     applied = executors.apply(session, payload)
     assert applied.applied, applied.blocked_reason

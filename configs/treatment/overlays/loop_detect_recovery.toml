@@ -1,7 +1,8 @@
 # Detector-activated identical-call guardrail and recovery message.
 
 [loop]
-loop_detect_enabled = true
+loop_detect_enabled = true # Watch for consecutive identical tool calls.
+loop_detect_threshold = 5 # Warn on the fifth; the next identical call ends the session. Restore after a zeroed baseline.
 
 [prompts]
 loop_detect_recovery = "<system-reminder>Loop: {streak} identical calls. The repeat produces nothing new. Name one fact you still need, then issue a DIFFERENT call to get it. One more identical call ends the session.</system-reminder>"
