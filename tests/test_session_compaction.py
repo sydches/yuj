@@ -99,6 +99,7 @@ def _seed_numbered_trace(cwd: Path, n_turns: int) -> None:
             "tool_name": "read",
             "args_summary": f"path='./f{turn}.py'",
             "result_summary": f"complete-result-{turn:04d} " + "x" * 80,
+            "tool_call_id": f"numbered-{turn}",
         }
         for turn in range(1, n_turns + 1)
     ]
@@ -359,6 +360,10 @@ def test_digest_budget_scales_from_context_window(tmp_path, context_size):
     sess._compaction_turn = 501
     sess.context = _make_fake_context()
     messages = _heavy_messages(100, payload_chars=2000)
+    # The retained exchange must identify the row excluded from the digest.
+    messages[-1]["tool_call_id"] = "numbered-500"
+    messages[-2]["tool_calls"] = [{"id": "numbered-500", "type": "function",
+                                  "function": {"name": "read", "arguments": "{}"}}]
     out = sess._maybe_compact_messages(messages)
     digest = out[2]["content"]
 

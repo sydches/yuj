@@ -820,20 +820,22 @@ def maybe_compact_messages(
             for m in messages[last_assistant_idx + 1:]:
                 if m.get("role") == "tool":
                     latest_pair.append(m)
-        digest_rows = rows
         current_session = int(getattr(session, "_session_number", 0) or 0)
-        if (
-            any(message.get("role") == "tool" for message in latest_pair)
-            and first_kept_turn > 0
-        ):
-            digest_rows = [
-                row
-                for row in rows
-                if not (
-                    row.session == current_session
-                    and row.n == first_kept_turn
-                )
-            ]
+        retained_ids = {
+            message["tool_call_id"] for message in latest_pair
+            if message.get("role") == "tool" and message.get("tool_call_id")
+        }
+        retained_rows = [
+            row for row in rows
+            if row.session == current_session and row.tool_call_id in retained_ids
+        ]
+        # Match actual retained results, not a guessed turn offset. Legacy
+        # traces without IDs stay in the digest rather than losing history.
+        first_kept_turn = min((row.n for row in retained_rows), default=0)
+        digest_rows = [
+            row for row in rows
+            if not (row.session == current_session and row.tool_call_id in retained_ids)
+        ]
         if not digest_rows:
             return messages
 

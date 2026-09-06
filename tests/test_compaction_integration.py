@@ -132,6 +132,41 @@ def hook_module(monkeypatch):
     return module.__name__
 
 
+@pytest.mark.parametrize("current_turn", [10, 11, 15])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_digest_excludes_only_retained_results_from_current_session(tmp_path, current_turn, legacy):
+    session, calls, emitted = _session(tmp_path, "")
+    session.cfg.compaction_method = "digest"
+    session._compaction_turn = current_turn
+    rows = []
+    for turn, call_id, number, marker in [
+        (9, "older", 1, "OLDER_BOUNDARY"),
+        (10, "kept", 1, "RETAINED_ROW"),
+        (10, "other", 1, "PARALLEL_NOT_RETAINED"),
+        (10, "kept", 0, "PREVIOUS_SESSION"),
+    ]:
+        row = dict(session._trace_events[0], turn_number=turn,
+                   session_number=number, result_summary=marker)
+        if not legacy:
+            row["tool_call_id"] = call_id
+        rows.append(row)
+    session._trace_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    messages = _messages(pairs=2, payload_chars=500)
+    messages[-2] = {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "kept", "type": "function", "function": {"name": "read", "arguments": "{}"}}
+    ]}
+    messages[-1] = {"role": "tool", "tool_call_id": "kept", "content": "FRESH_RESULT"}
+    compacted = maybe_compact_messages(session, messages, force=True)
+    digest = compacted[2]["content"]
+    assert "OLDER_BOUNDARY" in digest
+    assert "PARALLEL_NOT_RETAINED" in digest
+    assert "PREVIOUS_SESSION" in digest
+    assert ("RETAINED_ROW" in digest) is legacy
+    assert compacted[-2:] == messages[-2:]
+    assert emitted[-1]["first_kept_turn"] == (0 if legacy else 10)
+    assert calls == []
+
+
 def test_checkpoint_branch_replaces_context_and_emits_exact_trace(tmp_path):
     session, calls, emitted = _session(tmp_path, _summary())
     original = list(session.context.get_messages())

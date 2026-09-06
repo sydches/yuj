@@ -153,6 +153,7 @@ class Turn:
     pt: int = 0
     ct: int = 0
     session: int = 0
+    tool_call_id: str = ""
 
 
 def _load(trace_path: Path) -> list[Turn]:
@@ -180,6 +181,7 @@ def _load(trace_path: Path) -> list[Turn]:
                 pt=int(d.get("prompt_tokens", 0) or 0),
                 ct=int(d.get("completion_tokens", 0) or 0),
                 session=int(d.get("session_number", 0) or 0),
+                tool_call_id=str(d.get("tool_call_id") or ""),
             ))
     return rows
 
