@@ -558,9 +558,9 @@ REGISTRY[USER_TURN_EXECUTOR_ID] = ExecutorSpec(
 
 # Fixed one-sentence message parts.
 _UT_SUGGESTION = {
-    "reread_slump": ("stop re-reading and re-verifying things you have "
-                     "already confirmed; make your next action a source "
-                     "edit or a test run"),
+    "reread_slump": ("seek new evidence instead of repeating the same inspection; "
+                     "a broader regression test run is useful when coverage "
+                     "is still missing"),
     "repeat_wall": ("do not repeat the same command again; take a "
                     "different action toward the task"),
 }

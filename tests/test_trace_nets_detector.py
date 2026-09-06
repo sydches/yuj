@@ -62,6 +62,16 @@ def _session(events, arm_after=0):
                            _trace_events=events)
 
 
+def test_reread_advice_keeps_broader_verification_available():
+    from scripts.llm_solver.harness.adaptive_control.executors import compose_user_turn_message
+    message = compose_user_turn_message(SimpleNamespace(_trace_events=[]),
+                                        evidence="T51:repeated inspection", rung=1,
+                                        hurdle_family="reread_slump", turn=51)
+    assert "broader regression test run is useful" in message
+    assert "stop re-reading and re-verifying" not in message
+    assert "seek new evidence" in message
+
+
 def test_identical_repeat_plateau_fires_repeat_wall():
     ev = [_ev(t, args=f"c{t}", sha=f"s{t}") for t in range(10)]
     ev += [_ev(10, args="same", sha="X"), _ev(11, args="same", sha="X")]
