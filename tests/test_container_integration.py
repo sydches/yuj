@@ -85,9 +85,17 @@ def test_run_in_sandbox_executes_container_argv_without_shell(
 
     def fake_run(argv, **kwargs):
         calls.append((argv, kwargs))
+        if argv[1:3] == ['image', 'inspect']:
+            return SimpleNamespace(returncode=0, stdout=DIGEST, stderr='')
         return SimpleNamespace(returncode=0, stdout="container-ok\n", stderr="")
 
     monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0,
+                               communicate=lambda **kw: ('container-ok\n', ''))
+
+    monkeypatch.setattr(runner_module.subprocess, 'Popen', fake_popen)
     out, exit_code, timed_out = _run_in_sandbox(
         "pwd", cwd=str(tmp_path), timeout=10, sandbox=True,
         bwrap_bin=MISSING_BWRAP, sandbox_required=True,
@@ -95,7 +103,9 @@ def test_run_in_sandbox_executes_container_argv_without_shell(
         container_image=IMAGE, container_flags=("--memory", "1g"),
     )
 
-    argv, kwargs = calls[0]
+    assert calls[0][0][1:3] == ['image', 'inspect']
+    argv, kwargs = calls[1]
+    assert DIGEST in argv and IMAGE not in argv
     assert argv[:2] == ["/usr/bin/docker", "run"]
     assert "--network" in argv and "none" in argv
     assert str(tmp_path) in argv
@@ -185,6 +195,7 @@ def test_run_tests_threads_container_settings(monkeypatch, tmp_path: Path) -> No
         cwd=str(tmp_path),
         cfg=make_config(
             tools_run_tests_enabled=True,
+            analysis_task_format="pytest",
             sandbox_backend="container",
             sandbox_container_runtime="podman",
             sandbox_container_image=IMAGE,
@@ -254,7 +265,7 @@ def test_container_runtime_envelope_inspects_local_image_once(
         lambda self, *, sandbox_required: "/usr/bin/docker",
     )
 
-    def image_digest(self, runtime_bin, *, timeout=15):
+    def image_digest(self, runtime_bin, *, timeout=None):
         calls.append((runtime_bin, timeout))
         return DIGEST
 
@@ -270,7 +281,7 @@ def test_container_runtime_envelope_inspects_local_image_once(
         tmp_path,
     )
 
-    assert calls == [("/usr/bin/docker", 15)]
+    assert calls == [("/usr/bin/docker", None)]
     assert fields["sandbox_mode"] == "container"
     assert fields["sandbox_engaged"] is True
     assert fields["sandbox_backend"] == "container"
@@ -310,6 +321,7 @@ def test_required_missing_runtime_stops_before_the_model(
 
 
 def test_lsp_builder_uses_container_backend(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(ContainerBackend, 'image_digest', lambda *a, **kw: DIGEST)
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
     monkeypatch.setattr(
         ContainerBackend,
@@ -334,6 +346,16 @@ def test_solve_task_records_container_provenance_on_every_session_start(
     from scripts.llm_solver._shared.telemetry_paths import trace_path
     from scripts.llm_solver.harness.loop import solve_task
     from scripts.llm_solver.server.types import TurnResult, Usage
+    from dataclasses import replace
+    from scripts.llm_solver.harness import task_file_runtime
+
+    # This test owns trace emission, not container transport. Supply an explicit
+    # local fixture executor alongside its synthetic runtime-envelope record.
+    make_files = task_file_runtime.make_task_files
+    monkeypatch.setattr(task_file_runtime, 'make_task_files',
+                        lambda cwd, cfg, **kw: make_files(
+                            cwd, replace(cfg, sandbox_bash=False, sandbox_required=False,
+                                sandbox_backend='none', sandbox_resolved_backend='none'), **kw))
 
     (tmp_path / "prompt.txt").write_text("finish")
     client = MagicMock()
@@ -374,8 +396,14 @@ def test_solve_task_records_container_provenance_on_every_session_start(
         "scripts.llm_solver.harness._loop.driver.compute_runtime_envelope_fields",
         lambda _cfg, _repo: dict(fields),
     )
+    from scripts.llm_solver.harness.sandbox.policy import SandboxCapabilities, SandboxResolution
+    monkeypatch.setattr('scripts.llm_solver.harness.sandbox.policy.preflight_sandbox',
+        lambda cfg: SandboxResolution('docker', 'docker',
+            SandboxCapabilities('linux', ('docker',), ('docker',), {'docker': '/fixture/docker'}),
+            '/fixture/docker', False, True, DIGEST))
     cfg = make_config(
         max_sessions=1,
+        sandbox_env_inherit="none",
         sandbox_bash=True,
         sandbox_required=True,
         sandbox_backend="container",

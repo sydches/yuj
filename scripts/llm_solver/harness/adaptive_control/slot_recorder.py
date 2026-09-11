@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-import shlex
+import json
+
+SLOT_PROJECTION_VERSION = "runner_facts_v1"
 
 try:  # real harness constants in production
     from .._guardrails.extractors import MUTATION_TOOLS as _MUTATION_TOOLS
@@ -41,21 +43,13 @@ _OP_KIND = {
     "apply_patch": "EDIT", "udiff": "EDIT", "insert": "EDIT",
     "done": "SUBMIT", "submit": "SUBMIT",
 }
-_TEST_NEEDLES = ("pytest", "tox", "unittest", "npm test", "cargo test", "go test", "mvn test", "test_")
+from .._shell_patterns import command_from_summary, matches_command
 # read-only commands that merely MENTION tests (grep a test name, cat a test
 # file) are not verification; anchored at the command start.
 _READ_ONLY_CMD_RE = re.compile(
     r"^\s*(?:cmd=)?[\'\"]?\s*(?:grep|cat|head|tail|ls|find|wc|rg|sed\s+-n)\b")
-# Keep test-outcome projection separate from _TEST_NEEDLES so test_like_action
-# keeps its current behavior. Match an executed runner, then use the exit marker
-# and runner summary. Treat output without a verdict as unknown.
-_TEST_EXEC_RE = re.compile(
-    r"(?:python[\w.]*\s+(?:-m\s+)?pytest|(?<![\w/.])pytest\s|python[\w.]*\s+\S*runtests\.py"
-    r"|manage\.py\s+test|python[\w.]*\s+-m\s+unittest|(?<![\w/.])tox\b"
-    r"|npm test|cargo test|go test|mvn test"
-    # Multilingual runners (additive; Python shapes above unchanged):
-    r"|(?<![\w/.])jest\b|(?<![\w/.])vitest\b|npx\s+(?:jest|vitest)|(?:pnpm|yarn)\s+test"
-    r"|(?<![\w/.])ctest\b|go\s+vet|cargo\s+(?:check|clippy))")
+# Match a registered runner, then use the exit marker and runner summary.
+# Treat output without a verdict as unknown.
 _TEST_NON_RUN_FLAGS = ("--help", "--collect-only", "--version", "--co")
 # Verdict markers. Python: "N failed"/FAILED/ERRORS, "N passed"/OK. Additive
 # non-Python shapes: go `--- FAIL:`/`--- PASS:`, cargo `test result: FAILED/ok`,
@@ -94,7 +88,6 @@ _V3_VERBOSE_FAIL_RE = re.compile(
 _V3_SUITE_GREEN_RE = re.compile(r"Ran \d+ tests?[\s\S]{0,200}?^OK(?:\s*\(.*\))?\s*$", re.MULTILINE)
 # Self-declared simulations and text checks do not verify behavior.
 _V3_MOCK_RE = re.compile(r"(?i)\bmock|without running|fix is present")
-_V3_RUNNER_FAMILY_RE = re.compile(r"pytest|runtests\.py|manage\.py\s+test|-m\s+unittest")
 _V3_UNITTEST_RUN_RE = re.compile(
     r"Ran \d+ tests?[\s\S]{0,400}?(?:^OK(?:\s*\(.*\))?\s*$|^FAILED \()",
     re.MULTILINE,
@@ -140,18 +133,17 @@ _V2_NON_TMP_PATH_RE = re.compile(r"(?:^|[\s='\"])/(?!tmp[/\s])[\w.-]+(?:/[\w.-]+
 _V2_PERM_FAIL_RE = re.compile(r"PermissionError|Permission denied|Operation not permitted")
 _TMP_HEREDOC_RE = re.compile(r"^\s*(?:cmd=)?[\"']?cat\s+>\s+/tmp/[^;\n]+<<")
 # Multilingual crash-frame extraction (v3.1 inline-behavioral reds).
-# A crash marker gates it; the frame regex captures /testbed source paths
+# A crash marker gates it; the frame regex captures source paths
 # in any implementation language via the shared source-extension set.
 from ..bash_write_classification import _SOURCE_EXT_RE as _SRC_EXT
 _CRASH_MARKER_RE = re.compile(
     r"Traceback|panic:|thread '.*' panicked|^\s*at\s+\S|Exception|goroutine\s+\d+")
 _CRASH_FRAME_RE = re.compile(
     r'(?:File "|\bat\s+(?:[\w.$<>]+\s+\()?|[\s\t])'          # py / js-at / bare-tab frame
-    rf'(/testbed/[^\s":()]+\.(?:{_SRC_EXT}))'                # /testbed source path
+    rf'(/[^\s":()]+\.(?:{_SRC_EXT}))'                       # absolute source path
     r'(?::\d+)?')                                            # optional :line
 _NO_OUTPUT_MARKERS = {"", "(command produced no output)"}
 _FORMAT_PATH_RE = r"format\s*=\s*['\"]{path}['\"]"
-_RUNTESTS_STOP_TOKENS = {"|", "&&", ";", "2>&1", "1>&2"}
 
 
 def _op_kind(tool_name: str) -> str:
@@ -190,33 +182,6 @@ def _drop_bare_duplicate_ids(ids: set[str]) -> list[str]:
     return sorted(out)
 
 
-def _runner_targets(args: str, runner_family: str) -> str:
-    if runner_family != "runtests.py":
-        return ""
-    text = args
-    if text.startswith("cmd="):
-        text = text[4:]
-        if len(text) >= 2 and text[0] in {"'", '"'} and text[-1] == text[0]:
-            text = text[1:-1]
-    try:
-        tokens = shlex.split(text)
-    except ValueError:
-        tokens = text.replace("|", " | ").replace(";", " ; ").split()
-    try:
-        idx = next(i for i, tok in enumerate(tokens) if tok.endswith("runtests.py"))
-    except StopIteration:
-        return ""
-    targets = []
-    for tok in tokens[idx + 1:]:
-        if tok in _RUNTESTS_STOP_TOKENS or tok.startswith("-") or ">&" in tok:
-            break
-        if "=" in tok or tok.isdigit():
-            continue
-        if re.match(r"^[A-Za-z_][\w.]*$", tok):
-            targets.append(tok)
-    return ";".join(targets)
-
-
 def _stale_bash_format_path_false_positive(args: str, paths: list[str]) -> bool:
     """True for old trace metadata that mistook a domain format for a file write.
 
@@ -242,10 +207,8 @@ def _stale_bash_format_path_false_positive(args: str, paths: list[str]) -> bool:
 def project_tool_event(ev: dict) -> dict:
     """Project one `tool_call` trace event into an adaptive-control slot dict.
 
-    Source-contact facts come from the action-metadata already emitted on the
-    event (`source_write_like` / `write_like` / `source_write_paths`), so a bash
-    source write is recognized as a mutation; tool-name membership is only a
-    fallback when that metadata is absent.
+    Prefer recorded file effects independently of command success. Legacy
+    events without observations retain action-metadata and tool-name fallbacks.
     """
     tool = ev.get("tool_name", "") or ""
     result = ev.get("result_summary", "") or ""
@@ -264,6 +227,9 @@ def project_tool_event(ev: dict) -> dict:
         or result.startswith("ERROR:")
         or bool(_is_error_result(result))
     )
+    if ev.get("outcome_version") == "native_execution_v1":
+        error = explicit_pass_fail == "fail" or explicit_outcome == "error"
+        gate_blocked = gate_blocked or explicit_outcome in {"blocked", "not_executed", "unknown"}
     clean = not error and not gate_blocked
 
     sw_like = _truthy(ev.get("source_write_like"))
@@ -278,8 +244,14 @@ def project_tool_event(ev: dict) -> dict:
 
     # source mutation: emitted source-contact metadata, else tool-name fallback
     source_mutation = clean and (sw_like or tool in _MUTATION_TOOLS)
+    from ..file_changes import observed_mutation
+    observed = observed_mutation(ev)
+    if observed is not None:
+        source_mutation = observed
+    elif ev.get("outcome_version") == "native_execution_v1" and tool in _MUTATION_TOOLS:
+        source_mutation = False
     # a write-shaped action (incl. non-source writes) shows as an edit slot
-    write_action = source_mutation or (clean and write_like)
+    write_action = observed if observed is not None else source_mutation or (clean and write_like)
 
     op = _op_kind(tool)
     # gated on clean like test_like: a gate-blocked done never executed and
@@ -287,9 +259,8 @@ def project_tool_event(ev: dict) -> dict:
     submit = clean and (op == "SUBMIT" or tool in ("done", "submit"))
     # A gate-blocked call did not run, so it cannot count as verification.
     # A read-only command that names a test also does not run that test.
-    test_like = (clean and op == "RUN"
-                 and any(n in args.lower() for n in _TEST_NEEDLES)
-                 and not _READ_ONLY_CMD_RE.match(args))
+    registered_command = matches_command(command_from_summary(args))
+    test_like = clean and op == "RUN" and registered_command
 
     # Test-outcome projection (verification finish guards): bash appends
     # `[exit code: N]` to result_summary ONLY for nonzero exits, and summaries
@@ -300,17 +271,45 @@ def project_tool_event(ev: dict) -> dict:
     # never green.
     m = _EXIT_CODE_RE.search(result)
     exit_code = str(explicit_exit) if explicit_exit is not None else (m.group(1) if m else "")
+    if ev.get("outcome_version") == "native_execution_v1":
+        exit_code = str(explicit_exit) if explicit_exit is not None else ""
     args_l = args.lower()
+    from ..runner_invocations import recorded_runner_requests
+    runner_requests = recorded_runner_requests(ev)
+    runner_request = runner_requests[0] if len(runner_requests) == 1 else {}
+    supported_request = bool(runner_request.get('family')) and runner_request.get('basis') in {
+        'invocation_syntax', 'runtime_selection', 'explicit_configuration',
+    }
     test_exec = (
         op == "RUN"
+        and not write_action
         and (
-            _TEST_EXEC_RE.search(args_l)
-            or _V3_UNITTEST_RUN_RE.search(result)
+            registered_command
+            or (not _READ_ONLY_CMD_RE.match(args) and _V3_UNITTEST_RUN_RE.search(result))
         )
         and not any(f in args_l for f in _TEST_NON_RUN_FLAGS)
     )
+    verification_status = str(ev.get("verification_status") or "")
+    if tool == "run_tests":
+        # A structured tool has no shell command to recognize. Its producer
+        # records the runner status independently of rendered output.
+        test_exec = supported_request and verification_status in {"passed", "failed", "timed_out"}
+        test_like = clean and test_exec
+    elif tool == "bash" and verification_status:
+        # New traces carry the shell's attributed result. A recognized but
+        # skipped/ambiguous invocation is not an executed test.
+        test_exec = supported_request and verification_status in {"passed", "failed", "timed_out"}
+        test_like = clean and test_exec
+    elif tool == "bash_poll" and verification_status:
+        test_exec = supported_request and verification_status in {"passed", "failed"}
+        test_like = clean and test_exec
     if not test_exec:
         test_exit_status = ""
+    elif tool == "run_tests" or (tool in {"bash", "bash_poll"} and verification_status):
+        test_exit_status = (
+            "pass" if verification_status == "passed" and explicit_exit == 0 and clean
+            else "fail"
+        )
     elif exit_code not in ("", "0"):
         test_exit_status = "fail"
     elif _TEST_FAIL_OUT_RE.search(result):
@@ -363,22 +362,25 @@ def project_tool_event(ev: dict) -> dict:
                          for g in m2.groups() if g}) if is_run else []
     if is_run:  # Django and unittest verbose greens count as green IDs.
         passed_ids = sorted(set(passed_ids) | {m2.group(1) for m2 in _V3_VERBOSE_OK_RE.finditer(result)})
+    if ev.get("outcome_version") == "native_execution_v1":
+        exec_outcome = explicit_pass_fail if explicit_pass_fail in {"pass", "fail"} else ""
     # Treat any "backup" substring as an exclusion marker, not only ".backup".
     # This covers restore commands such as `cp /tmp/autodoc_backup.py <src>`.
     exclusion = bool(_V2_EXCLUSION_RE.search(args)) or "backup" in args
     script_m = _V3_SCRIPT_PATH_RE.search(args)
-    runner_m = _V3_RUNNER_FAMILY_RE.search(args)
-    runner_family = runner_m.group(0) if runner_m else ""
+    runner_family = runner_request.get("family", "")
+    attributed_test_execution = (
+        test_exec and not gate_blocked and ev.get("error_class") != "security_block"
+        and verification_status in {"passed", "failed"}
+        and supported_request
+    )
     suite_green = bool(is_run and not error and not nonzero_exit
                        and _V3_SUITE_GREEN_RE.search(result))
-    # Traceback frames in /testbed source can open red-test state when no runner
-    # verdict exists. Require the frame to name a changed file.
-    # Crash-frame source paths. Python: `File "/testbed/x.py"` under a
-    # Traceback. Additive non-Python: go panic frames (`\t/testbed/x.go:12`),
-    # rust panic frames (`/testbed/src/x.rs:12:5`), js stack frames
-    # (`at ... (/testbed/x.js:1:2)`) under any crash marker.
+    # Retain crash-frame paths only inside the discovered task workspace.
+    from ..bash_write_classification import is_workspace_path
     traceback_paths = sorted({m2.group(1) for m2 in
-                              _CRASH_FRAME_RE.finditer(result)}) \
+                              _CRASH_FRAME_RE.finditer(result)
+                              if is_workspace_path(m2.group(1))}) \
         if (is_run and (nonzero_exit or error) and _CRASH_MARKER_RE.search(result)) else []
 
     # Do not count a flagged write that failed or only touched /tmp. Count a
@@ -389,7 +391,9 @@ def project_tool_event(ev: dict) -> dict:
         and result.strip() in _NO_OUTPUT_MARKERS
         and not _V2_MUT_CMD_RE.search(args)
     )
-    if source_mutation and (_V2_PERM_FAIL_RE.search(result) or nonzero_exit or tmp_only_paths):
+    if observed is not None:
+        effective_mutation = observed
+    elif source_mutation and (_V2_PERM_FAIL_RE.search(result) or nonzero_exit or tmp_only_paths):
         effective_mutation = False
     elif source_mutation and tmp_heredoc_prep:
         effective_mutation = False
@@ -404,6 +408,8 @@ def project_tool_event(ev: dict) -> dict:
                                        and bool(_V2_NON_TMP_PATH_RE.search(args)))))
 
     return {
+        "slot_projection_version": SLOT_PROJECTION_VERSION,
+        "execution_outcome_version": ev.get("outcome_version", "legacy_text_inference"),
         "slot_idx": int(ev.get("turn_number", 0) or 0),
         "slot_presence": "filled",
         "slot_state": slot_state,
@@ -412,9 +418,9 @@ def project_tool_event(ev: dict) -> dict:
         "contact_state": "source_write" if source_mutation else "",
         "source_mutation": "true" if source_mutation else "false",
         "test_like_action": "true" if test_like else "false",
-        "test_execution_action": "true" if (test_exec and not gate_blocked) else "false",
+        "test_execution_action": "true" if attributed_test_execution else "false",
         "exit_code": exit_code,
-        "test_exit_status": test_exit_status,
+        "test_exit_status": test_exit_status if attributed_test_execution else "",
         "exec_outcome": exec_outcome,
         "failed_test_ids": ";".join(failed_ids),
         "passed_test_ids": ";".join(passed_ids),
@@ -423,7 +429,12 @@ def project_tool_event(ev: dict) -> dict:
         "args_prefix": args[:80],
         "script_path": script_m.group(1) if script_m else "",
         "runner_family": runner_family,
-        "runner_targets": _runner_targets(args, runner_family),
+        "runner_targets": ";".join(runner_request.get("targets", [])),
+        "runner_identity_source": runner_request.get("basis", "unknown"),
+        "runner_target_status": runner_request.get("target_status", "unknown"),
+        "runner_requests": json.dumps(runner_requests, sort_keys=True),
+        "runner_execution_source": "recorded_status" if attributed_test_execution else "unknown",
+        "runner_execution_status": verification_status or "unknown",
         "suite_green": "true" if suite_green else "false",
         "traceback_paths": ";".join(traceback_paths),
         "submit_like_action": "true" if submit else "false",

@@ -20,26 +20,93 @@ from ._stream_rule_runtime import (
 
 
 class NarrationBudget:
-    """Cheap, per-attempt text bound for the autonomous reply contract."""
+    """Bound visible prose using backend text tokens or an explicit estimate."""
 
-    def __init__(self, *, context_size: int, fraction: float, message: str):
-        self.limit_chars = max(1, int(context_size * fraction * 4))
+    def __init__(self, *, context_size: int, fraction: float, message: str, text_counter=None):
+        self.policy_limit_tokens = max(1, int(context_size * fraction))
+        self.limit_tokens = self.policy_limit_tokens
+        self.text_counter = text_counter
+        self.text = ""
+        self.tokens = 0
+        self.next_count_chars = self.limit_tokens
+        self.measurement = {}
+        self.policy_limit_chars = max(1, int(context_size * fraction * 4))
+        self.limit_chars = self.policy_limit_chars
         self.message = message
         self.chars = 0
+        self.completion_tokens = None
+        self.request_model = None
+
+    def prepare_request(self, *, completion_tokens, model=None) -> None:
+        """Bind after transport budget resolution; never reset attempt usage.
+
+        A length continuation has its own request cap but shares the attempt's
+        narration policy. Retokenize its retained prose before rebinding.
+        Missing limits stay unknown; four characters per token is fallback only.
+        """
+        self.completion_tokens = (
+            completion_tokens if type(completion_tokens) is int
+            and completion_tokens > 0 else None
+        )
+        self.request_model = model if isinstance(model, str) and model else None
+        if self.text_counter is not None and self.text:
+            self._count_text()
+        self.limit_tokens = self.policy_limit_tokens
+        if self.completion_tokens is not None:
+            self.limit_tokens = min(self.limit_tokens, self.tokens + self.completion_tokens)
+        self.next_count_chars = min(self.next_count_chars,
+                                   self.chars + max(1, self.limit_tokens - self.tokens))
+        self.limit_chars = self.policy_limit_chars
+        if self.completion_tokens is not None:
+            self.limit_chars = min(
+                self.policy_limit_chars, self.chars + self.completion_tokens * 4,
+            )
+
+    def _count_text(self):
+        from .time_budget import remaining_run_seconds
+        value = self.text_counter.count(self.text, model=self.request_model,
+                                        remaining_seconds=remaining_run_seconds())
+        self.measurement = dict(self.text_counter.last)
+        if value is None:
+            self.text_counter = None
+        else:
+            self.tokens = value
+        return value
 
     def observe(self, delta) -> None:
         if delta.source != "text":
             return
         self.chars += len(delta.delta or "")
-        if self.chars <= self.limit_chars:
+        self.text += delta.delta or ""
+        if self.text_counter is not None:
+            if self.chars < self.next_count_chars:
+                return
+            count = self._count_text()
+            if count is not None and count <= self.limit_tokens:
+                # Batch counting by remaining token allowance, not stream chunks.
+                self.next_count_chars = self.chars + max(1, self.limit_tokens - count)
+                return
+        if self.text_counter is None and self.chars <= self.limit_chars:
             return
         from ..server._streaming import StreamRuleInterrupt
         raise StreamRuleInterrupt(({
             "rule": "autonomous_narration",
             "kind": "narration_limit",
             "scope": "text",
-            "offset": self.limit_chars,
+            "offset": self.chars if self.text_counter is not None else self.limit_chars,
             "observed_chars": self.chars,
+            "measurement_basis": "backend_text_tokens" if self.text_counter is not None else "character_estimate",
+            "observed_text_tokens": self.tokens if self.text_counter is not None else None,
+            "limit_text_tokens": self.limit_tokens,
+            "text_count": self.measurement,
+            "characters_per_estimated_token": None if self.text_counter is not None else 4,
+            "policy_limit_chars": self.policy_limit_chars,
+            "request_completion_tokens": self.completion_tokens,
+            "request_budget_basis": (
+                "prepared_request_max_tokens" if self.completion_tokens is not None
+                else "unknown"
+            ),
+            "request_model": self.request_model,
             "interrupt": True,
             "body": self.message,
         },))

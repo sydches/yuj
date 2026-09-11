@@ -51,7 +51,7 @@ def _sha(path: Path) -> str:
 
 
 @pytest.mark.parametrize("subdir", ["", "src", "odd [name]"])
-def test_runtime_excludes_preserve_source_and_existing_rules(tmp_path, subdir):
+def test_legacy_runtime_exclusion_call_preserves_all_existing_files(tmp_path, subdir):
     from scripts.llm_solver.harness.worktree_runtime import exclude_runtime_directories
     repo = _make_repo(tmp_path)
     cwd = repo / subdir
@@ -70,11 +70,11 @@ def test_runtime_excludes_preserve_source_and_existing_rules(tmp_path, subdir):
     first = exclude.read_bytes()
     exclude_runtime_directories(cwd)
     assert exclude.read_bytes() == first
-    assert first.startswith(b"# existing rule\n/local-cache/\n")
+    assert first == b"# existing rule\n/local-cache/"
     status = _git(repo, "status", "--porcelain=v1", "--untracked-files=all")
     assert "source.py" in status
     assert ".solver/raw.txt" in status
-    assert ".tool_output" not in status
+    assert ".tool_output/raw.txt" in status
     assert not (repo / ".gitignore").exists()
 
 

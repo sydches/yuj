@@ -30,11 +30,9 @@ log = logging.getLogger(__name__)
 # silently if the cap fires.
 _UNREADABLE_HARD_CAP = 50_000
 
-# Cache for unreadable_paths expansion. Keyed by (frozenset(patterns),
-# hard_cap). The pattern set does not change mid-process — the config is
-# loaded once at startup — so a one-shot expansion amortises across every
-# bash call for the rest of the process lifetime. Entry value is the
-# (mask_args, n_files, n_dirs) triple ready to splice into argv.
+# Optional expansion cache, scoped by patterns, limits and the captured task
+# root. Execution callers refresh so newly created matching paths stay hidden.
+# Values contain (mask_args, n_files, n_dirs) ready to splice into argv.
 _UNREADABLE_CACHE: dict[tuple, tuple[list[str], int, int]] = {}
 
 
@@ -57,6 +55,8 @@ def _expand_unreadable_paths(
     *,
     hard_cap: int = _UNREADABLE_HARD_CAP,
     sandbox_required: bool = False,
+    refresh: bool = False,
+    base_dir: str | None = None,
 ) -> tuple[list[str], int, int]:
     """Expand a tuple of glob patterns into bwrap mount args that mask each match.
 
@@ -67,14 +67,16 @@ def _expand_unreadable_paths(
     Symlink matches resolve to their targets via `Path.resolve()` and
     are masked by their resolved kind.
 
-    Cached at module level keyed by `(frozenset(patterns), hard_cap)`; the
-    expansion runs once per process and is reused for every bash call.
+    Cache entries include the captured task root. ``refresh=True`` re-enumerates
+    matches; execution callers use it to include newly created paths.
     Empty patterns tuple short-circuits to `([], 0, 0)`.
     """
     if not patterns:
         return [], 0, 0
-    cache_key = (frozenset(patterns), hard_cap)
-    cached = _UNREADABLE_CACHE.get(cache_key)
+    from ..task_path import active_task_host_root, captured_host_path
+    observed_root = active_task_host_root(base_dir) if base_dir is not None else None
+    cache_key = (frozenset(patterns), hard_cap, sandbox_required, base_dir, observed_root)
+    cached = None if refresh else _UNREADABLE_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
@@ -90,10 +92,13 @@ def _expand_unreadable_paths(
         optional = pat.startswith("optional:")
         if optional:
             pat = pat[len("optional:"):]
-        # Expand $VARS and ~ so the default config can reference
-        # $YUJ_REPO_ROOT and operators on
-        # other hosts get working masks without rewriting paths.
+        # Expand explicitly supplied environment names and ~ in patterns.
+        # This does not discover the task root or validate mask provenance.
         pat = os.path.expandvars(os.path.expanduser(pat))
+        if base_dir is not None:
+            pat = str(captured_host_path(base_dir, pat))
+        if base_dir is not None and not Path(pat).is_absolute():
+            pat = str(Path(observed_root or base_dir) / pat)
         # recursive=True so '**' matches across directories. include_hidden
         # so we catch dotted leaf names (.repo_cache) and dotted parents.
         try:

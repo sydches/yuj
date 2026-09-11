@@ -7,7 +7,7 @@ dispatch helper itself smaller without further fragmenting the logic.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,6 +45,8 @@ class TurnState:
     observers: dict
     plan_mode_active: bool
     turn_had_pressure: bool = False
+    observations: dict[str, dict] = field(default_factory=dict)
+    preexecuted_metadata: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass

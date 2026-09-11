@@ -13,18 +13,19 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from .prompt_imports import process_imports
+from .task_path import TaskPath, NativeUnreadableMatcher, startup_task_path, startup_source_path
 
 
 DEFAULT_PROJECT_DOC_NAMES = ("AGENTS.md", "CLAUDE.md")
 DEFAULT_PROJECT_ROOT_MARKERS = (".git", ".hg", ".sl")
 DEFAULT_OVERRIDE_NAME = "AGENTS.override.md"
-DEFAULT_PROJECT_DOC_MAX_BYTES = 32 * 1024
+DEFAULT_PROJECT_DOC_MAX_BYTES = 0
 _GLOB_META = frozenset("*?[")
 
 
 @dataclass(frozen=True, slots=True)
 class InstructionDocument:
-    """One selected instruction file and the bounded content loaded from it."""
+    """One selected instruction file and its complete admitted content."""
 
     source_path: Path
     display_path: str
@@ -88,6 +89,10 @@ class _UnreadableMatcher:
     """Expand sandbox unreadable patterns once and reject descendants."""
 
     def __init__(self, base_dir: Path, patterns: Sequence[str]) -> None:
+        self._native = NativeUnreadableMatcher(base_dir, patterns) if isinstance(base_dir, TaskPath) else None
+        self._host_source = (Path(str(base_dir)), patterns) if self._native is not None else None
+        if self._native is not None:
+            return
         blocked: set[Path] = set()
         for original in patterns:
             pattern = str(original)
@@ -112,6 +117,11 @@ class _UnreadableMatcher:
         self._blocked = tuple(sorted(blocked, key=lambda item: str(item)))
 
     def blocks(self, path: Path) -> bool:
+        if self._native is not None:
+            if isinstance(path, TaskPath):
+                return self._native.blocks(path)
+            # Explicit global guidance remains an operator-owned host source.
+            return _UnreadableMatcher(*self._host_source).blocks(path)
         resolved = path.resolve(strict=False)
         return any(
             resolved == blocked or blocked in resolved.parents
@@ -124,7 +134,7 @@ def find_project_root(
     markers: Sequence[str] = DEFAULT_PROJECT_ROOT_MARKERS,
 ) -> Path:
     """Find the nearest marked ancestor, falling back to ``cwd``."""
-    current = Path(cwd).resolve()
+    current = startup_task_path(cwd)
     if not current.is_dir():
         raise ValueError(f"project instruction cwd is not a directory: {cwd}")
     marker_names = _validated_names(markers, field="project_root_markers")
@@ -217,14 +227,14 @@ def _read_first_nonempty(
             scope=scope,
             project_root=project_root,
         )
-        if unreadable.blocks(candidate):
-            continue
-        resolved = candidate.resolve(strict=False)
-        if not _within(resolved, allowed_root) or resolved in seen_paths:
-            continue
-        if not candidate.is_file():
-            continue
         try:
+            if unreadable.blocks(candidate):
+                continue
+            resolved = candidate.resolve(strict=False)
+            if not _within(resolved, allowed_root) or resolved in seen_paths:
+                continue
+            if not candidate.is_file():
+                continue
             raw = candidate.read_bytes()
         except OSError as exc:
             last_diagnostic = InstructionDiagnostic(
@@ -240,13 +250,14 @@ def _read_first_nonempty(
     return last_diagnostic
 
 
-def _truncate_utf8(data: bytes, limit: int) -> tuple[str, int, bool]:
-    if len(data) <= limit:
-        return data.decode("utf-8"), len(data), False
-    prefix = data[:limit]
-    text = prefix.decode("utf-8", errors="ignore")
-    used = len(text.encode("utf-8"))
-    return text, used, True
+def _admit_utf8(data: bytes, limit: int | None) -> tuple[str, int, bool]:
+    if limit is not None and len(data) > limit:
+        raise ValueError(
+            f"project instruction byte ceiling exceeded: {len(data)} bytes required, "
+            f"{limit} remaining; increase prompts.project_doc_max_bytes or set it to 0 "
+            "to remove the independent byte ceiling. No instruction prefix was admitted."
+        )
+    return data.decode("utf-8"), len(data), False
 
 
 def discover_project_instructions(
@@ -265,20 +276,19 @@ def discover_project_instructions(
 
     One first-nonempty file is selected per directory.  Global guidance is
     considered first, followed by project directories from root to ``cwd``.
-    The source-content budget is measured in UTF-8 bytes and may truncate the
-    final selected document at a valid character boundary. Session assembly
-    uses ``defer_byte_cap`` so imports can be expanded before this same budget
-    is applied to the resolved content.
+    A positive source-content ceiling is measured in UTF-8 bytes and rejects
+    an oversized chain; zero adds no independent byte ceiling. Session assembly
+    uses ``defer_byte_cap`` to check the complete expanded content instead.
     """
     if max_bytes < 0:
         raise ValueError("project_doc_max_bytes must be non-negative")
-    resolved_cwd = Path(cwd).resolve()
+    resolved_cwd = startup_task_path(cwd)
     project_root = find_project_root(resolved_cwd, root_markers)
     names = _candidate_names(doc_names, override_name=override_name)
     unreadable = _UnreadableMatcher(project_root, unreadable_paths)
     locations: list[tuple[Path, str, Path]] = []
     if global_dir is not None:
-        resolved_global = Path(global_dir).expanduser().resolve()
+        resolved_global = startup_source_path(global_dir, resolved_cwd).resolve()
         locations.append((resolved_global, "global", resolved_global))
     locations.extend(
         (directory, "project", project_root)
@@ -291,9 +301,6 @@ def discover_project_instructions(
     used = 0
     chain_truncated = False
     for directory, scope, allowed_root in locations:
-        if not defer_byte_cap and used >= max_bytes:
-            chain_truncated = True
-            break
         if not directory.is_dir() or unreadable.blocks(directory):
             continue
         selected = _read_first_nonempty(
@@ -311,11 +318,8 @@ def discover_project_instructions(
         if selected is None:
             continue
         source_path, _text, encoded = selected
-        remaining = len(encoded) if defer_byte_cap else max_bytes - used
-        content, byte_count, truncated = _truncate_utf8(encoded, remaining)
-        if not content:
-            chain_truncated = True
-            break
+        remaining = None if defer_byte_cap or max_bytes == 0 else max_bytes - used
+        content, byte_count, truncated = _admit_utf8(encoded, remaining)
         display_path = _safe_display_path(
             source_path,
             scope=scope,
@@ -333,9 +337,6 @@ def discover_project_instructions(
         )
         seen_paths.add(source_path)
         used += byte_count
-        if truncated:
-            chain_truncated = True
-            break
 
     parts: list[str] = []
     if developer_instructions.strip():
@@ -361,13 +362,15 @@ def resolve_project_instruction_imports(
     max_depth: int,
     unreadable_paths: Sequence[str] = (),
 ) -> ProjectInstructions:
-    """Resolve selected documents once, then cap the final UTF-8 content.
+    """Resolve selected documents once, then check a declared byte ceiling.
 
     Project documents may import anywhere below the discovered project root.
     A global document is intentionally narrower: it may import only below its
     chosen global directory. The returned trace envelopes contain safe labels
     and byte counts, never prompt bodies or host paths.
     """
+    if project.truncated or any(document.truncated for document in project.documents):
+        raise ValueError("cannot assemble previously truncated project instructions")
     documents: list[InstructionDocument] = []
     import_tree: list[dict[str, object]] = []
     source_bytes = 0
@@ -375,11 +378,8 @@ def resolve_project_instruction_imports(
     resolved_bytes = 0
     chain_truncated = False
 
-    for index, document in enumerate(project.documents):
-        remaining = project.max_bytes - resolved_bytes
-        if remaining <= 0:
-            chain_truncated = True
-            break
+    for document in project.documents:
+        remaining = project.max_bytes - resolved_bytes if project.max_bytes > 0 else None
         allowed_root = (
             project.project_root
             if document.scope == "project"
@@ -401,7 +401,7 @@ def resolve_project_instruction_imports(
             tree = processed.trace_tree()
             document_imported_bytes = processed.imported_bytes
 
-        content, admitted_bytes, truncated = _truncate_utf8(
+        content, admitted_bytes, truncated = _admit_utf8(
             resolved_content.encode("utf-8"), remaining
         )
         import_tree.append(
@@ -413,9 +413,6 @@ def resolve_project_instruction_imports(
                 "imports": tree,
             }
         )
-        if not content:
-            chain_truncated = True
-            break
         documents.append(
             InstructionDocument(
                 source_path=document.source_path,
@@ -429,15 +426,6 @@ def resolve_project_instruction_imports(
         source_bytes += document.byte_count
         imported_bytes += document_imported_bytes
         resolved_bytes += admitted_bytes
-        if truncated:
-            chain_truncated = True
-            break
-        if (
-            resolved_bytes >= project.max_bytes
-            and index + 1 < len(project.documents)
-        ):
-            chain_truncated = True
-            break
 
     parts: list[str] = []
     if project.developer_instructions.strip():

@@ -39,12 +39,14 @@ class ReplayDivergence(RuntimeError):
     """A replayed tool execution differed from the recording."""
 
 
-# Volatile-output normalization (docs/replay_mode_spec.md): a NAMED list of
-# per-container/per-wall-clock fields that re-execute non-identically on a
-# faithful replay. Add an entry only after the fidelity check finds that
-# changing value in a real replay. Apply each rule to both sides.
-VOLATILE_NORMALIZATION_VERSION = "replay_volatile_norm_v14"
-_VOLATILE_PATTERNS = (
+# Historical rules explain past comparisons; a replay mismatch alone does not
+# establish producer or field authority. See docs/replay_mode_spec.md.
+VOLATILE_NORMALIZATION_VERSION = "replay_volatile_norm_v15"
+_LEGACY_SPHINX_REVISION = (re.compile(r"(Sphinx v[\d.]+)\+/[0-9a-f]+"), r"\1+/<volatile>")
+_LEGACY_MATPLOTLIB_CACHE = (
+    re.compile(r"^Matplotlib is building the font cache; this may take a moment\.\n?", re.MULTILINE), "",
+)
+_LEGACY_V14_PATTERNS = (
     # Docker overlayfs device ID in stat output.
     (re.compile(r"Device: [0-9a-fA-F]+h/\d+d"), "Device: <volatile>"),
     # stat timestamp lines: wall-clock of the replay, not model-relevant
@@ -94,16 +96,14 @@ _VOLATILE_PATTERNS = (
     # strict because file sizes carry task state.
     (re.compile(r"^(d[\w-]{9,10}\s+\d+\s+\S+\s+\S+)\s+\d+(\s+.+)$",
                 re.MULTILINE), r"\1 <volatile>\2"),
-    # setuptools_scm version hash suffix from runtime Git state
-    (re.compile(r"(Sphinx v[\d.]+)\+/[0-9a-f]+"), r"\1+/<volatile>"),
+    # Retained only to reconstruct the historical v14 comparison.
+    _LEGACY_SPHINX_REVISION,
     # setuptools_scm local date suffix from the replay clock
     (re.compile(r"\.d\d{8}\b"), ".d<volatile-date>"),
     # dd timing and throughput; byte counts stay strict
     (re.compile(r"\b\d+(?:\.\d+)?(?:e-?\d+)? s, [\d.]+ [KMGT]?B/s"),
      "<volatile> s, <volatile>"),
-    # one-time font-cache banner from a fresh cache
-    (re.compile(r"^Matplotlib is building the font cache; this may take a moment\.\n?",
-                re.MULTILINE), ""),
+    _LEGACY_MATPLOTLIB_CACHE,
     # summary annotations may carry content-length counts that vary with
     # traversal order inside truncated output
     (re.compile(r"\[\.\.\. \d+ chars omitted \.\.\.\]"),
@@ -136,6 +136,11 @@ _VOLATILE_PATTERNS = (
 )
 
 
+# Source revision and cache initialization differences remain visible in v15.
+# Other inherited rules still need producer/field binding under audit 081.
+_VOLATILE_PATTERNS = tuple(rule for rule in _LEGACY_V14_PATTERNS
+                           if rule not in (_LEGACY_SPHINX_REVISION, _LEGACY_MATPLOTLIB_CACHE))
+
 _SET_REPR_RE = re.compile(r"\{('[^'{}]*'(?:, '[^'{}]*')+)\}")
 
 
@@ -167,10 +172,20 @@ def _collapse_volatile_runs(text: str) -> str:
     return "\n".join(out) + tail
 
 
-def normalize_volatile(text: str) -> str:
-    for pat, repl in _VOLATILE_PATTERNS:
+def _normalize_with_patterns(text: str, patterns: tuple) -> str:
+    for pat, repl in patterns:
         text = pat.sub(repl, text)
     return _collapse_volatile_runs(_sort_set_reprs(text))
+
+
+def normalize_volatile(text: str) -> str:
+    """Current v15 comparison; still limited by inherited unbound rules."""
+    return _normalize_with_patterns(text, _VOLATILE_PATTERNS)
+
+
+def normalize_volatile_v14_for_history(text: str) -> str:
+    """Reconstruct v14 for inspection only; the replay gate never calls this."""
+    return _normalize_with_patterns(text, _LEGACY_V14_PATTERNS)
 
 
 def ordering_only_equal(a: str, b: str) -> bool:

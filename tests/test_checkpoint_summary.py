@@ -14,6 +14,7 @@ from scripts.llm_solver.harness._loop.checkpoint_summary import (
     build_mechanical_appendix,
     generate_checkpoint,
     loop_guard_forces_digest,
+    make_checkpoint_message,
     select_checkpoint_cut,
     serialize_checkpoint_head,
     summary_token_limit,
@@ -212,11 +213,11 @@ def test_checkpoint_request_omits_tools_and_turns_thinking_off() -> None:
     assert summary_token_limit(
         reserve_tokens=10_000,
         configured_max_tokens=9_000,
-    ) == 4_000
+    ) == 9_000
     assert summary_token_limit(
         reserve_tokens=1_000,
         configured_max_tokens=9_000,
-    ) == 800
+    ) == 9_000
 
     request = build_checkpoint_request(
         model="local-model",
@@ -350,12 +351,16 @@ def test_generate_checkpoint_places_valid_summary_after_untouched_task() -> None
     assert "<modified-files>" in result.summary_with_appendix
 
 
-def test_generate_checkpoint_bad_model_output_falls_back_to_digest() -> None:
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_generate_checkpoint_bad_model_output_falls_back_to_digest(exhausted) -> None:
     calls = 0
 
     def call_model(_request: dict[str, Any]) -> str:
         nonlocal calls
         calls += 1
+        if exhausted:
+            from scripts.llm_solver.server.types import ContextBudgetExceeded
+            raise ContextBudgetExceeded(100, {"prompt_tokens": 100, "count_basis": "backend_input_tokens"})
         return "not a structured checkpoint"
 
     result = generate_checkpoint(
@@ -374,7 +379,120 @@ def test_generate_checkpoint_bad_model_output_falls_back_to_digest() -> None:
     assert result.valid is False
     assert result.fallback == "digest"
     assert result.compacted_messages is None
-    assert "required headers" in result.reason
+    assert ("ContextBudgetExceeded" if exhausted else "required headers") in result.reason
+
+
+def _generate_with_appendix(events, tokenizer, call_model, *, budget=3_000):
+    return generate_checkpoint(
+        model="local-model",
+        messages=_messages(3),
+        trace_events=events,
+        tokenizer=tokenizer,
+        keep_recent_tokens=1,
+        max_summary_tokens=4_000,
+        budget=budget,
+        tokens_before=5_000,
+        call_model=call_model,
+        tools=[{"type": "function", "function": {"name": "read"}}],
+    )
+
+
+def _read_events(count):
+    return [
+        {"event": "tool_call", "tool_name": "read",
+         "args_summary": f"path='src/observed_file_{index}.py'"}
+        for index in range(count)
+    ]
+
+
+def test_checkpoint_reserve_counts_wrapper_appendix_and_tools_before_call() -> None:
+    tokenizer = CharTokenizer()
+    events = _read_events(1)
+    wrapper = make_checkpoint_message("\n\n" + build_mechanical_appendix(events).render())
+    expected = _messages(0) + [wrapper] + _assistant_turn(2)
+    tools = [{"type": "function", "function": {"name": "read"}}]
+
+    def call_model(_request):
+        assert (expected, tools) in tokenizer.calls
+        return _valid_summary()
+
+    result = _generate_with_appendix(events, tokenizer, call_model)
+
+    assert result.valid is True
+
+
+def test_receiver_appendix_does_not_redefine_producer_token_permission() -> None:
+    requests = []
+
+    def call_model(request):
+        requests.append(request)
+        return _valid_summary()
+
+    small = _generate_with_appendix(_read_events(1), CharTokenizer(), call_model)
+    large = _generate_with_appendix(_read_events(20), CharTokenizer(), call_model)
+
+    assert small.valid and large.valid
+    assert requests[1]["max_tokens"] == requests[0]["max_tokens"] == 4_000
+
+
+@pytest.mark.parametrize("budget_offset", [-1, 0])
+def test_checkpoint_with_no_known_content_reserve_skips_generation(budget_offset) -> None:
+    events = _read_events(100)
+    tokenizer = CharTokenizer()
+    wrapper = make_checkpoint_message("\n\n" + build_mechanical_appendix(events).render())
+    known_count = tokenizer.count(
+        _messages(0) + [wrapper] + _assistant_turn(2),
+        tools=[{"type": "function", "function": {"name": "read"}}],
+    )
+    calls = []
+
+    def call_model(request):
+        calls.append(request)
+        return _valid_summary()
+
+    result = _generate_with_appendix(
+        events, tokenizer, call_model, budget=known_count + budget_offset,
+    )
+
+    assert calls == []
+    assert result.request is None
+    assert result.fallback == "digest"
+    assert "no checkpoint summary reserve" in result.reason
+
+
+def test_checkpoint_known_content_count_failure_skips_generation() -> None:
+    class UnavailableCount(CharTokenizer):
+        def count(self, messages, tools=None):
+            if any(CHECKPOINT_MESSAGE_PREFIX in str(m.get("content")) for m in messages):
+                raise RuntimeError("count unavailable")
+            return super().count(messages, tools)
+
+    calls = []
+
+    def call_model(request):
+        calls.append(request)
+        return _valid_summary()
+
+    result = _generate_with_appendix(_read_events(1), UnavailableCount(), call_model)
+
+    assert calls == []
+    assert result.fallback == "digest"
+    assert "count unavailable" in result.reason
+
+
+def test_checkpoint_known_content_count_does_not_replace_final_recount() -> None:
+    calls = []
+
+    def call_model(request):
+        calls.append(request)
+        return _valid_summary() + "\n" + "extra facts " * 1_000
+
+    result = _generate_with_appendix(_read_events(1), CharTokenizer(), call_model)
+
+    assert len(calls) == 1
+    assert result.fallback == "digest"
+    assert "does not fit budget" in result.reason
+    assert result.compacted_messages is None
 
 
 @pytest.mark.parametrize(

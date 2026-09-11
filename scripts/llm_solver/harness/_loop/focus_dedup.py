@@ -5,7 +5,6 @@ import json
 import logging
 import re
 import shlex
-from pathlib import Path
 
 from .._shell_patterns import TEST_COMMAND_RE as _TEST_COMMAND_RE
 
@@ -138,25 +137,27 @@ def _truncate_focus_display(text: str, max_chars: int = 96) -> str:
 
 def _encode_focus_path(path: str, cwd: str) -> tuple[str, str]:
     canon = _canon_focus_path(path)
-    if path.startswith("/") and not _path_within_cwd(path, cwd):
+    if path.startswith("/") and _path_within_cwd(path, cwd) is False:
         return f"outside:{canon}", path
     return f"file:{canon}", path
 
 
 def _encode_focus_target(key_base: str, display: str, *, root_path: str, cwd: str) -> tuple[str, str]:
-    if root_path.startswith("/") and not _path_within_cwd(root_path, cwd):
+    if root_path.startswith("/") and _path_within_cwd(root_path, cwd) is False:
         return f"outside:{key_base}", display
     return f"bash:{key_base}", display
 
 
-def _path_within_cwd(path: str, cwd: str) -> bool:
+def _path_within_cwd(path: str, cwd: str) -> bool | None:
+    """Classify location in the selected view; unavailable evidence is unknown."""
+    from ..task_path import resolve_task_path
     try:
-        path_res = Path(path).resolve()
-        cwd_res = Path(cwd).resolve()
-        path_res.relative_to(cwd_res)
+        resolve_task_path(cwd, path)
         return True
-    except (ValueError, OSError):
+    except ValueError:
         return False
+    except OSError:
+        return None
 
 
 def _split_bash_segments(cmd: str) -> list[list[str]]:

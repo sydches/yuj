@@ -83,6 +83,11 @@ def maybe_handover(session, turn: int) -> bool:
                      turn + 1, turn + watch)
         except Exception as e:  # noqa: BLE001 - watch bound is advisory
             log.warning("watch bound not applied: %s", e)
+    from ..context import chars_div_4
+    from ..request_counting import bind_session_counter
+    from .profile_resolution import _resolve_token_estimator
+    session.context.set_token_estimator(_resolve_token_estimator(live) or chars_div_4)
+    bind_session_counter(session, reset_observations=True)
     return True
 
 

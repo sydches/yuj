@@ -318,7 +318,7 @@ def test_session_blocks_unread_edit_then_allows_edit_after_read(tmp_path):
     assert {event["source"] for event in observations} >= {"read", "edit"}
 
 
-@pytest.mark.parametrize("path_kind", ["relative", "absolute", "rerooted"])
+@pytest.mark.parametrize("path_kind", ["relative", "absolute"])
 def test_dispatch_blocks_edit_after_external_modification(tmp_path, path_kind):
     target = tmp_path / "src.py"
     target.write_text("old\n")
@@ -326,7 +326,7 @@ def test_dispatch_blocks_edit_after_external_modification(tmp_path, path_kind):
     guard = StaleFileGuard(cwd=tmp_path, mode="block", event_sink=events.append)
     cfg = make_config(tools_unified_envelope_enabled=True)
 
-    read_path = {"relative": "src.py", "absolute": str(target), "rerooted": "/src.py"}[path_kind]
+    read_path = {"relative": "src.py", "absolute": str(target)}[path_kind]
     read_result = dispatch(
         "read", {"path": read_path}, cwd=str(tmp_path), cfg=cfg,
         stale_guard=guard,
@@ -342,6 +342,20 @@ def test_dispatch_blocks_edit_after_external_modification(tmp_path, path_kind):
     assert target.read_text() == "external\n"
     assert 'status="error" error_kind="stale_file"' in result
     assert events[-1]["reason"] == "modified"
+
+
+def test_rejected_outside_read_does_not_admit_a_same_named_task_file(tmp_path):
+    target = tmp_path / "src.py"
+    target.write_text("task bytes\n")
+    guard = StaleFileGuard(cwd=tmp_path, mode="block")
+    result = dispatch(
+        "read", {"path": "/src.py"}, cwd=str(tmp_path),
+        cfg=make_config(tools_unified_envelope_enabled=True), stale_guard=guard,
+    )
+    assert is_error_result(result)
+    assert "task bytes" not in result
+    assert guard.check_edit("src.py").reason == "unread"
+    assert not guard.ledger_snapshot()
 
 
 def test_warn_mode_runs_edit_and_places_warning_inside_envelope(tmp_path):

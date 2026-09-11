@@ -29,6 +29,11 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
     cfg = getattr(session, "cfg", None)
     if not bool(getattr(cfg, "llm_hurdle_detector_enabled", False)):
         return None
+    if (bool(getattr(cfg, "adaptive_control_enabled", False))
+            and getattr(cfg, "adaptive_control_delivery", "in_place") == "stop_resume"):
+        from . import episode
+        # Restore once before cadence and watch routing consume saved state.
+        episode.machine(session)
     pending = _pending_watch(session)
     cadence = max(1, int(getattr(cfg, "llm_hurdle_detector_cadence_turns", 1) or 1))
     if not pending and (int(turn) + 1) % cadence != 0:
@@ -70,6 +75,7 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
     messages = render_detector_messages(packet)
     raw_response = ""
     routed = None
+    request_allowance = None
     backend = str(getattr(cfg, "llm_hurdle_detector_backend", "llm") or "llm")
     try:
         if backend == "trace_nets":
@@ -78,6 +84,9 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
             verdict = evaluate_trace_nets(session, int(turn))
             raw_response = "trace_nets_backend"
         else:
+            from ..time_budget import command_allowance
+            request_allowance = command_allowance()
+            request_allowance.remaining()
             routed = consumer_role_client(session, "weak")
             if routed.resolution is None:
                 # Preserve the injectable legacy test/replay client contract.
@@ -128,8 +137,13 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
             verdict=verdict,
         )
         row["detector_error"] = f"{type(exc).__name__}: {exc}"
+    if request_allowance is not None:
+        row["detector_request_allowance"] = request_allowance.record
     if routed is not None:
         row.update(routed.trace_fields())
+    if backend == "trace_nets":
+        from .observation_notice import record_observation_notice
+        record_observation_notice(session, int(turn), row)
     _maybe_apply_detector_intervention(session, int(turn), verdict, row)
     append_detector_log(log_path, row)
     return row

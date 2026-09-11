@@ -38,6 +38,29 @@ def test_core_inherits_only_the_declared_core_names() -> None:
     }
 
 
+def test_runtime_inherits_observed_sdk_settings_without_test_or_setup_controls():
+    source = dict(HOST_ENV, GOPATH="/sdk/work", GOTOOLCHAIN="go1.fixture+path",
+                  GOCACHE="/scratch/build", CONDA_PREFIX="/envs/project", UV_PYTHON="/envs/project/bin/python",
+                  CARGO_HOME="/tools/cargo", NODE_PATH="/modules", JAVA_HOME="/sdk/java",
+                  PYTEST_ADDOPTS="--reruns=3", GOFLAGS="-mod=vendor", NODE_OPTIONS="--require private.js",
+                  SETUP='{"credential":"private-value"}', UV_UNKNOWN_SETTING="unreviewed")
+    effective = EnvironmentPolicy(inherit="runtime").resolve(source)
+    for name in ("GOPATH", "GOTOOLCHAIN", "GOCACHE", "CONDA_PREFIX", "UV_PYTHON", "CARGO_HOME", "NODE_PATH", "JAVA_HOME"):
+        assert effective[name] == source[name]
+    assert all(name not in effective for name in ("PYTEST_ADDOPTS", "GOFLAGS", "NODE_OPTIONS", "SETUP", "UV_UNKNOWN_SETTING", "SAFE_NAME"))
+    assert "GOMODCACHE" not in effective, "do not invent an absent runtime setting"
+    assert "GOPATH" not in EnvironmentPolicy().resolve(source)
+
+
+def test_runtime_still_obeys_exclusions_explicit_overrides_and_final_allowlist():
+    source = dict(HOST_ENV, GOPATH="/observed/modules", GOCACHE="/observed/cache")
+    policy = EnvironmentPolicy(inherit="runtime", set={"GOCACHE": "/owned/cache"},
+                               filters={"GOPATH": "exclude", "GOCACHE": "include"})
+    assert policy.resolve(source) == {"GOCACHE": "/owned/cache"}
+    assert EnvironmentPolicy(inherit="runtime", filters={"SETUP": "include"}).resolve(
+        {"SETUP": "private"}) == {}
+
+
 def test_default_excludes_drop_secret_like_names_case_insensitively() -> None:
     host = dict(HOST_ENV, lowercase_token="also-secret", MONKEY="contains-key")
 

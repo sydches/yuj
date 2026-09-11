@@ -13,6 +13,8 @@ def prepopulate_from_trace(
     cwd: Path,
     recent_tool_results: deque,
     budget: int,
+    *,
+    state_path: Path | None = None,
 ) -> int:
     """Pre-populate the rolling window from files modified in prior sessions.
 
@@ -24,7 +26,8 @@ def prepopulate_from_trace(
 
     Returns the number of files injected.
     """
-    state_path = cwd / ".solver" / "state.json"
+    if state_path is None:
+        state_path = cwd / ".solver" / "state.json"
     if not state_path.is_file():
         return 0
     try:
@@ -43,7 +46,7 @@ def prepopulate_from_trace(
     seen: set[str] = set()
     files_to_read: list[tuple[str, str]] = []
     chars_used = 0
-    cwd_resolved = cwd.resolve()
+    from ..task_path import resolve_task_path
     budget_full = False
     for entry in reversed(trace):
         action = entry.get("action", "")
@@ -57,20 +60,15 @@ def prepopulate_from_trace(
         if not raw_paths:
             continue
         for fpath in reversed(raw_paths):
-            if fpath in seen or fpath.endswith("state.json"):
+            if fpath in seen:
                 continue
             seen.add(fpath)
-            stripped = fpath.lstrip("/").lstrip("./")
-            target = (cwd_resolved / stripped).resolve(strict=False)
             try:
-                target.relative_to(cwd_resolved)
-            except ValueError:
-                continue
-            if not target.is_file():
-                continue
-            try:
+                target = resolve_task_path(cwd, fpath)
+                if not target.is_file():
+                    continue
                 content = target.read_text()
-            except OSError:
+            except (OSError, ValueError, RuntimeError):
                 continue
             if chars_used + len(content) > budget:
                 budget_full = True

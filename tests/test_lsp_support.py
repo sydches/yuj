@@ -124,6 +124,33 @@ def make_manager(tmp_path: Path, **overrides):
     return manager, popen, events, warnings
 
 
+@pytest.mark.parametrize('mismatch', [False, True])
+def test_guarded_lsp_startup_preserves_rpc_and_refuses_changed_credentials(tmp_path, native_process_identity, mismatch):
+    from dataclasses import replace
+    from scripts.llm_solver.harness.process_identity import guarded_process_argv
+    identity = native_process_identity
+    if mismatch:
+        identity = replace(identity, uids=(identity.uids[0] + 1,) * 4)
+    spec = fake_spec(tmp_path)
+    started = tmp_path / 'server-started'
+    target = tmp_path / 'app.py'
+    target.write_text('bad\ncode\n')
+    manager, _popen, _events, warnings = make_manager(tmp_path, spec=spec)
+    Path(spec.command[-1]).write_text(
+        f'from pathlib import Path\nPath({str(started)!r}).touch()\n' + _FAKE_SERVER)
+    manager.argv_builder = lambda server, root: guarded_process_argv([], server.command, identity)
+    try:
+        report = manager.after_edit('app.py')
+        if mismatch:
+            assert report.status == 'unavailable' and not started.exists()
+            assert any('verified process credentials' in warning for warning in warnings)
+        else:
+            assert report is not None and report.errors == 1 and started.exists()
+            assert not warnings
+    finally:
+        manager.close()
+
+
 def test_lazy_server_collects_diagnostics_and_emits_trace(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     target = tmp_path / "pkg" / "app.py"
@@ -328,6 +355,30 @@ def test_lsp_sandbox_argv_uses_no_network_bwrap(tmp_path, monkeypatch):
     assert "--unshare-net" in argv
     assert "--die-with-parent" in argv
     assert argv[-2:] == ["fake-lsp", "--stdio"]
+
+
+def test_container_lsp_keeps_stdin_and_the_credential_frame_contract(
+    tmp_path, monkeypatch, native_process_identity,
+):
+    import os
+    from scripts.llm_solver.harness import task_environment
+    from scripts.llm_solver.harness.process_identity import GuardedProcessArgv
+    from scripts.llm_solver.harness._tools._run_in_sandbox import _execute
+    selected = task_environment.TaskEnvironment(
+        str(tmp_path), '/selected/task', ('/selected/task',),
+        container='named-task', container_id='c' * 64, process_identity=native_process_identity,
+    )
+    monkeypatch.setenv('YUJ_CONTAINER', 'named-task')
+    monkeypatch.setattr(task_environment, 'discover_task_environment', lambda cwd: selected)
+    argv = build_lsp_sandbox_argv(
+        ['cat'], cwd=str(tmp_path), bwrap_bin='unused',
+        effective_env={'PATH': os.environ['PATH']},
+    )
+    assert isinstance(argv, GuardedProcessArgv)
+    assert argv[:6] == ['docker', 'exec', '-i', '--workdir', '/selected/task', 'c' * 64]
+    request = b'Content-Length: 2\r\n\r\n{}'
+    result = _execute(GuardedProcessArgv(argv[6:]), timeout=3, input_bytes=request, binary=True)
+    assert result.returncode == 0 and result.stdout == request
 
 
 def _turn(*, tool_calls=(), content="", reason="tool_calls") -> TurnResult:

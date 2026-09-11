@@ -46,36 +46,36 @@ def _truncate_pretest_output(output: str, head_chars: int, tail_chars: int) -> s
 
 
 def run_pretest(repo_dir: Path, *, pretest_script: Path | None = None, pretest_timeout: int,
-                pretest_head_chars: int, pretest_tail_chars: int) -> str:
-    """Run the per-task pretest script and format the verdict for prepending.
+                pretest_head_chars: int, pretest_tail_chars: int, report_cfg=None) -> str:
+    """Run an explicitly supplied script through the legacy pretest adapter.
 
-    The outside task runner supplies an executable shell script. That script
-    produces the starting test result in the environment that the task needs.
-    It must also remove any paths that the model must not see. The harness
-    runs the script and adds its output without reading or changing the text.
-
-    Location convention: ``<run_dir>/pretest/<iid>.sh`` where ``run_dir``
-    is ``repo_dir.parent.parent`` and ``<iid>`` is the task directory name.
-    The script stays outside the model's working directory.
-
-    Return ``""`` when no script exists. Return a result string for a script
-    failure or timeout so the pretest cannot break the model loop.
+    An absent selection returns no block; neighboring filenames are not input.
+    An unavailable explicit selection reports that execution did not start.
+    Existing scripts retain the subprocess and output-formatting behavior.
+    Explicit selection alone does not establish task permission, test coverage
+    or revision-bound result authority; this adapter does not bind those facts.
     """
-    script = pretest_script
-    if script is None:
-        run_dir = repo_dir.parent.parent
-        script = run_dir / "pretest" / f"{repo_dir.name}.sh"
-    if not script.exists():
+    if pretest_script is None:
         return ""
+    script = Path(pretest_script)
+    if not script.is_file():
+        return "## Pretest execution\n(pretest not started: declared script unavailable)\n"
 
+    native_report = None
     try:
-        result = subprocess.run(
-            ["bash", str(script.resolve())],
-            cwd=str(repo_dir),
-            capture_output=True,
-            text=True,
-            timeout=pretest_timeout,
-        )
+        from ..test_report import capture_test_report
+        with capture_test_report(repo_dir, report_cfg) as capture:
+            result = subprocess.run(
+                ["bash", str(script.resolve())],
+                cwd=str(repo_dir),
+                capture_output=True,
+                text=True,
+                timeout=pretest_timeout,
+                **({"env": capture.environment} if capture is not None else {}),
+            )
+            if capture is not None:
+                capture.finish(result.returncode)
+                native_report = capture.record
     except subprocess.TimeoutExpired:
         return (
             "## Current test state\n"
@@ -87,18 +87,22 @@ def run_pretest(repo_dir: Path, *, pretest_script: Path | None = None, pretest_t
     merged = (result.stdout or "") + (result.stderr or "")
     merged = _sanitize_runner_timing(merged)
     truncated = _truncate_pretest_output(merged, pretest_head_chars, pretest_tail_chars)
-    return (
+    from .._tools._common import ToolExecutionText
+    block = ToolExecutionText(
         "## Current test state\n"
         "```\n"
         f"{truncated}\n"
         "```\n\n"
-        f"exit code: {result.returncode}\n"
+        f"exit code: {result.returncode}\n", exit_status=result.returncode,
     )
+    block.native_test_report = native_report
+    return block
 
 
 def _pretest_is_green(block: str) -> bool:
-    """True if the pretest block indicates a clean green run (exit code 0)."""
-    return bool(block) and "\nexit code: 0\n" in block
+    """Use the current pretest's native status, never a printed exit marker."""
+    return (getattr(block, "exit_status", None) == 0
+            and not getattr(block, "timed_out", False))
 
 
 def build_resume_prompt(

@@ -451,19 +451,27 @@ type. It omits argument values from both the returned error and trace metadata.
 
 ## Test runners
 
-`run_tests` detects one of these runners from files in the task repository:
+`run_tests` uses permitted project declarations and executable observations to
+select a runner. An explicit task-format setting is a requested runner, not a
+discovery result. Supported interfaces include:
 
 | Project files | Runner |
 | --- | --- |
-| Python project files | `pytest` |
+| Python test declarations | `pytest` |
 | `Cargo.toml` | Cargo tests |
 | `go.mod` | Go tests |
-| `package.json` | Jest |
+| `package.json` scripts and dependencies | npm or Jest |
 | CMake build files | CTest |
+| `pom.xml` | Maven |
+
+Missing or ambiguous declarations stay unresolved. A Python source file alone
+does not establish that pytest is the project's runner.
 
 Yuj returns the runner name and result status in a `<test_results>` block. It
 also returns `exit_code` when the test runner exits. A timeout or tool error has
-no `exit_code`. The default timeout is 240 seconds.
+no `exit_code`. A configured timeout is an additional ceiling on the remaining
+run time. The default `0` adds no separate ceiling; without a declared run
+deadline, it imposes no time cutoff.
 
 With task-format output handling enabled, Yuj removes a trailing runner
 pipeline made only of display filters such as `grep`, `head`, or `tail`. It
@@ -485,12 +493,14 @@ call uses compact handling again unless it also requests full detail. Edit
 
 ## Finish rule
 
-When Yuj can identify and start a registered test runner, it requires a passing
-result after the latest source change before it accepts explicit or implicit
-completion. After three eligible executable checks that do not invoke a
-registered runner, Yuj selects one unambiguous component target from the
-changed source path and the active runner descriptor. Inspection commands do
-not advance this count.
+The enabled finish checks use execution evidence after the latest source
+change. Successful registered runners and custom checks can supply that
+evidence. Printed success text alone does not establish a passing check, and
+a passing command does not establish complete task coverage.
+
+After the configured number of eligible checks, automatic verification may
+select one conventional component target from the changed path and the
+observed runner. Inspection commands do not advance this count.
 
 Yuj runs the selected target once and puts the bounded result in the current
 tool output. When an earlier eligible check used an executable from the same

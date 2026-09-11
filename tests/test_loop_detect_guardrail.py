@@ -1,142 +1,92 @@
-"""Tests for the loop_detect guardrail — tight consecutive-identical
-signature detector with a single recovery-inject before hard abort.
-"""
-from __future__ import annotations
+"""Request repetition stays diagnostic; native observations drive notices."""
+import io
+import json
+from dataclasses import replace
+from unittest.mock import MagicMock
 
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-
-from _config_helpers import make_config
-from llm_solver.harness.guardrails import (
-    Action,
-    GuardrailState,
-    init_guardrail_state,
-    loop_detect,
-)
-from llm_solver.harness._loop.run_step import _run_post_turn_hooks
-from llm_solver.server.types import ToolCall, TurnResult, Usage
+import pytest
+from tests._config_helpers import make_config
+from scripts.llm_solver.harness.guardrails import Action, init_guardrail_state, loop_detect
+from scripts.llm_solver.harness._loop.run_step import _run_post_turn_hooks
+from scripts.llm_solver.harness.loop import Session
+from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
 
 
-def _state() -> GuardrailState:
-    cfg = make_config(loop_detect_enabled=True, loop_detect_threshold=3)
-    return init_guardrail_state(cfg), cfg
-
-
-class TestLoopDetect:
-
-    def test_disabled_passes(self):
-        cfg = make_config(loop_detect_enabled=False, loop_detect_threshold=3)
-        state = init_guardrail_state(cfg)
-        sig = (("read", '{"path": "a"}'),)
-        for _ in range(20):
-            d = loop_detect(state, cfg, tool_calls_sig=sig)
-            assert d.action == Action.PASS
-        assert state.loop_detect_streak == 0
-
-    def test_passes_below_threshold(self):
-        state, cfg = _state()
-        sig = (("read", '{"path": "a"}'),)
-        for _ in range(2):  # threshold is 3
-            d = loop_detect(state, cfg, tool_calls_sig=sig)
-            assert d.action == Action.PASS
-        assert state.loop_detect_streak == 2
+@pytest.mark.parametrize("threshold", [0, 1, 5, 8])
+def test_request_signatures_never_warn_or_end_even_after_legacy_warning(threshold):
+    cfg = make_config(loop_detect_enabled=True, loop_detect_threshold=threshold)
+    state = init_guardrail_state(cfg)
+    state.loop_detect_warned = True
+    for index in range(12):
+        decision = loop_detect(state, cfg, tool_calls_sig=("same",),
+                               allow_intervention=index > 3)
+        assert decision.action == Action.PASS
+        assert state.loop_detect_streak == index + 1
         assert not state.loop_detect_warned
-
-    def test_warns_at_threshold(self):
-        state, cfg = _state()
-        sig = (("read", '{"path": "a"}'),)
-        loop_detect(state, cfg, tool_calls_sig=sig)       # streak 1
-        loop_detect(state, cfg, tool_calls_sig=sig)       # streak 2
-        d = loop_detect(state, cfg, tool_calls_sig=sig)   # streak 3 → WARN
-        assert d.action == Action.WARN
-        assert "Loop detected" in d.text
-        assert state.loop_detect_warned
-
-    def test_ends_on_next_repeat_after_warn(self):
-        state, cfg = _state()
-        sig = (("read", '{"path": "a"}'),)
-        loop_detect(state, cfg, tool_calls_sig=sig)
-        loop_detect(state, cfg, tool_calls_sig=sig)
-        loop_detect(state, cfg, tool_calls_sig=sig)       # WARN
-        d = loop_detect(state, cfg, tool_calls_sig=sig)   # END
-        assert d.action == Action.END
-        assert d.reason == "loop_detected"
-
-    def test_reset_on_different_signature(self):
-        state, cfg = _state()
-        sig_a = (("read", '{"path": "a"}'),)
-        sig_b = (("read", '{"path": "b"}'),)
-        loop_detect(state, cfg, tool_calls_sig=sig_a)
-        loop_detect(state, cfg, tool_calls_sig=sig_a)
-        loop_detect(state, cfg, tool_calls_sig=sig_a)     # WARN
-        assert state.loop_detect_warned
-        d = loop_detect(state, cfg, tool_calls_sig=sig_b)
-        assert d.action == Action.PASS
-        assert state.loop_detect_streak == 1
-        assert not state.loop_detect_warned
-
-    def test_warn_then_break_then_warn_again(self):
-        """A broken pattern resets fully; a new pattern must earn its
-        own WARN before END can fire."""
-        state, cfg = _state()
-        sig_a = (("read", '{"path": "a"}'),)
-        sig_b = (("read", '{"path": "b"}'),)
-        for _ in range(3):
-            loop_detect(state, cfg, tool_calls_sig=sig_a)  # WARN on 3rd
-        loop_detect(state, cfg, tool_calls_sig=sig_b)      # break
-        # Now build a second streak on sig_b; it should WARN not END.
-        loop_detect(state, cfg, tool_calls_sig=sig_b)
-        d = loop_detect(state, cfg, tool_calls_sig=sig_b)  # streak 3 on sig_b
-        assert d.action == Action.WARN
-
-    def test_registry_exposes_loop_detect(self):
-        from llm_solver.harness.guardrails import (
-            build_guardrail_registry,
-            validate_guardrail_registry,
-        )
-        reg = build_guardrail_registry()
-        assert "loop_detect" in reg.turn_pre_dispatch
-        validate_guardrail_registry(reg)
+    loop_detect(state, cfg, tool_calls_sig=("changed",))
+    assert state.loop_detect_streak == 1
+    cfg = replace(cfg, loop_detect_enabled=False)
+    loop_detect(state, cfg, tool_calls_sig=("same",))
+    assert state.loop_detect_streak == 0
 
 
-def test_active_adaptive_watch_cannot_suppress_terminal_loop_guard(tmp_path):
-    from llm_solver.harness.loop import Session
-
-    cfg = make_config(
-        max_turns=6,
-        duplicate_abort=20,
-        loop_detect_enabled=True,
-        loop_detect_threshold=2,
-        adaptive_control_enabled=False,
-    )
+@pytest.mark.parametrize("mode", ["stable", "changing", "respond_to_notice"])
+@pytest.mark.parametrize("arm_after", [0, 3])
+def test_actual_reads_and_recovery_respect_observations_and_budget(tmp_path, mode, arm_after):
+    cfg = make_config(max_turns=8, loop_detect_enabled=True, loop_detect_threshold=2,
+                      duplicate_guard_enabled=False, adaptive_control_enabled=False,
+                      guardrails_arm_after_turn=arm_after, require_intent=False,
+                      tools_output_dedup_enabled=False)
     client = MagicMock()
-    client.chat.return_value = TurnResult(
-        content=None,
-        tool_calls=[ToolCall(
-            id="repeat",
-            name="read",
-            arguments={"path": "same.py"},
-        )],
-        finish_reason="tool_calls",
-        usage=Usage(prompt_tokens=10, completion_tokens=5),
-    )
-    client.build_assistant_message.return_value = {
-        "role": "assistant", "content": None,
-    }
-    session = Session(cfg, client, "sys", "prompt", str(tmp_path))
+    calls = []
+    def chat(messages, tools, **kwargs):
+        turn = len(calls)
+        calls.append(str(messages))
+        content = str(turn) if mode == "changing" else "same"
+        if mode == "respond_to_notice" and "same completed observation" in str(messages):
+            content = "new evidence after notice"
+        (tmp_path / "status.txt").write_text(content)
+        return TurnResult(content=None, tool_calls=[ToolCall(id=str(turn), name="read",
+            arguments={"path": "status.txt"})], finish_reason="tool_calls",
+            usage=Usage(prompt_tokens=10, completion_tokens=5))
+    client.chat.side_effect = chat
+    client.build_assistant_message.return_value = {"role": "assistant", "content": None}
+    trace = io.StringIO()
+    session = Session(cfg, client, "system", "task", str(tmp_path), trace_file=trace)
     session._llm_detector_pending_watch = {"watch_window_end": 99}
+    result = session.run()
+    assert result.finish_reason == "max_turns"
+    assert len(calls) == 8
+    rows = [json.loads(line) for line in trace.getvalue().splitlines()]
+    reads = [row for row in rows if row["event"] == "tool_call" and row["tool_name"] == "read"]
+    assert len(reads) == 8
+    assert len({row["inspection_evidence"]["sha256"] for row in reads}) == {
+        "changing": 8, "stable": 1, "respond_to_notice": 2,
+    }[mode]
+    notices = [row for row in rows if row["event"] == "completed_observation_notice"
+               and row["delivery"] == "queued"]
+    assert len(notices) == {"changing": 0, "stable": 1, "respond_to_notice": 2}[mode]
+    if mode != "changing":
+        assert notices[0]["current_turn"] == max(1, arm_after + 1)
+        assert notices[0]["progress"] == "unknown"
+        assert "same completed observation" in calls[-1]
+        assert "stalled progress;" in calls[-1]
 
-    with patch("llm_solver.harness.loop.dispatch", return_value="ok"):
-        result = session.run()
 
-    assert result.finish_reason == "loop_detected"
-    assert result.done is False
-    assert client.chat.call_count == 4
+def test_completed_repetition_allowance_still_stops_at_its_declared_budget(tmp_path):
+    cfg = make_config(max_turns=8, loop_detect_enabled=True, loop_detect_threshold=1,
+                      duplicate_guard_enabled=True, duplicate_abort=3,
+                      adaptive_control_enabled=False, guardrails_arm_after_turn=0,
+                      require_intent=False)
+    (tmp_path / "same.txt").write_text("same")
+    client = MagicMock()
+    client.chat.return_value = TurnResult(content=None,
+        tool_calls=[ToolCall(id="read", name="read", arguments={"path": "same.txt"})],
+        finish_reason="tool_calls", usage=Usage(prompt_tokens=10, completion_tokens=5))
+    client.build_assistant_message.return_value = {"role": "assistant", "content": None}
+    result = Session(cfg, client, "system", "task", str(tmp_path)).run()
+    assert result.finish_reason == "duplicate_abort"
+    assert client.chat.call_count == 3
 
 
 def test_blocked_turn_runs_all_post_turn_hooks():

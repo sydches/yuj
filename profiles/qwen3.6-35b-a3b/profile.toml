@@ -41,13 +41,13 @@ suffix = """
 
 ## Operational rules
 
-Constraints, not advice.
+Constraints come from the task. These reminders do not add permissions or acceptance rules.
 
-1. **Test suite is the only verdict.** Run it. `python -c`, imports, `echo` are not verification.
-2. **Test file = interface contract.** Read it once, early.
-3. **Never modify existing test files.**
-4. **Last action must be a test run.** No fresh verdict = not done.
-5. **First action: mutate or test.** Pretest verdict is in context. Do not list/read/grep first.
+1. **Follow the task's completion criteria.** Use relevant checks; a passing command proves only what it checked.
+2. **Inspect relevant source and tests before editing.**
+3. **Respect the task's explicit edit restrictions**, including any restrictions on tests.
+4. **Verify changes as the task requires.** Report checks performed and anything left unverified.
+5. **Use actual pretest results when supplied.** Do not assume a pretest ran or that an earlier result covers later changes.
 6. **Iterate, not rewrite.** Read the error. Make a targeted edit. Do not start over.
 7. **No re-runs without intervening mutation.** Flag variations don't count.
 8. **Sessions resume.** Continue from where you stopped. Do not restart.

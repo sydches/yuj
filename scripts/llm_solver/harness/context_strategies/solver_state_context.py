@@ -20,17 +20,16 @@ from ..context import ContextManager, chars_div_4
 from ..checkpoint_rewind import preserve_rewind_reports
 
 
-from ._solver_state_dedup import apply_dedup
+from ._solver_state_dedup import render_recent_results
 from ._solver_state_format import (
     format_list,
     format_state,
     format_todo_section,
     format_trace,
 )
-# Re-exports so existing imports `from .solver_state_context import _TEST_PREFIXES`
-# / `_classify_cmd` / `_dedup_message` / `_extract_error_snippet` keep working.
+# Re-export command classification and dedup helpers.
 from ._solver_state_helpers import (
-    _READ_PREFIXES, _SEARCH_PREFIXES, _TEST_PREFIXES,
+    _READ_PREFIXES, _SEARCH_PREFIXES,
     _classify_cmd, _dedup_message, _extract_error_snippet,
 )
 from ._solver_state_io import prepopulate_from_trace as _prepopulate_from_trace
@@ -102,14 +101,10 @@ class SolverStateContext(ContextManager):
         # _file_cache — a new tool result means state.json has been
         # regenerated and the parse is stale.
         self._raw_state_cache: dict | None = None
-        # Escalating dedup: tracks how many times each unique output has
-        # been deduplicated. Keyed by hash(content). Escalation:
-        #   1st dedup (2nd attempt): behavioral warning
-        #   2nd+ dedup (3rd+ attempt): hard block
-        # Cleared on successful write/edit (code change invalidates the
-        # assumption that repeated commands produce identical output).
-        self._dedup_counts: dict[int, int] = {}
+        # The existing reset boundary separates eligible compression sources.
+        # Equality is checked at render time; it never authorizes intervention.
         self._dedup_epoch: int = 0
+        self._rendered_result_references: list[dict] = []
         # Per-turn message + token caches. _build_from_solver rebuilds the
         # full user-message payload (reads state.json, formats trace,
         # splits evidence). Both get_messages and estimate_tokens are
@@ -155,43 +150,13 @@ class SolverStateContext(ContextManager):
         self._turn_count += 1
 
     def reset_dedup_counts(self) -> None:
-        """Clear dedup escalation state.
-
-        Called by the session loop after a successful write/edit — a code
-        change invalidates the assumption that repeated commands will produce
-        identical output.
-        """
-        self._dedup_counts.clear()
-        # Increment epoch so both dedup tiers skip pre-edit entries.
-        # Replaces the old cmd_sig stripping approach — epoch handles
-        # both cmd-sig (tier 1) and content (tier 2) in one shot.
+        """Start a new compression epoch after the caller's reset boundary."""
         self._dedup_epoch += 1
+        self._msg_cache = None
+        self._tok_cache = None
 
     def add_tool_result(self, tool_call_id: str, content: str, *, tool_name: str = "", cmd_signature: str = "", gate_blocked: bool = False) -> None:
-        original_content = content
-        content, dedup_fired, dedup_tier = apply_dedup(
-            content,
-            tool_name=tool_name,
-            cmd_signature=cmd_signature,
-            recent_tool_results=self._recent_tool_results,
-            dedup_counts=self._dedup_counts,
-            dedup_epoch=self._dedup_epoch,
-            turn_count=self._turn_count,
-        )
-
-        # Token accounting: record exact dedup savings when either tier fires.
-        if dedup_fired and original_content != content:
-            from ..savings import get_ledger
-            get_ledger().record_transform(
-                bucket="dedup",
-                layer="context_strategy",
-                mechanism=dedup_tier,
-                before=original_content,
-                after=content,
-                surface="stored_tool_output",
-                ctx={"tool_name": tool_name, "gate_blocked": gate_blocked},
-            )
-
+        # Keep supplied text intact in history and the rolling source window.
         # Gate-blocked entries get epoch -1 so dedup tiers never match
         # against them — the tool was never executed, the content is a
         # gate message, not real output.
@@ -217,7 +182,8 @@ class SolverStateContext(ContextManager):
         self._prune_expired_thought_results()
         if self._msg_cache is not None:
             return self._msg_cache
-        solver_dir = self._cwd / ".solver"
+        self._rendered_result_references = []
+        solver_dir = (self._artifact_dir or self._cwd) / ".solver"
         if (
             self._ignore_state
             or not (solver_dir / "state.json").is_file()
@@ -249,6 +215,7 @@ class SolverStateContext(ContextManager):
                     "turn_count": self._turn_count,
                     "messages": len(self._msg_cache),
                     "encoding": "message_list_json_utf8_v1",
+                    "result_references": self._rendered_result_references,
                 },
             )
         return self._msg_cache
@@ -296,7 +263,6 @@ class SolverStateContext(ContextManager):
             message.get("role") == "assistant"
             for message in self._all_messages
         )
-        self._dedup_counts.clear()
         self._dedup_epoch = 0
         self._file_cache = None
         self._raw_state_cache = None
@@ -387,15 +353,15 @@ class SolverStateContext(ContextManager):
     def prepopulate_from_trace(self) -> int:
         return _prepopulate_from_trace(
             self._cwd, self._recent_tool_results, self._recent_tool_results_chars,
+            state_path=(self._artifact_dir or self._cwd) / ".solver" / "state.json",
         )
 
     def _format_tool_results(self) -> str:
         """Format recent tool results for injection into user message.
 
-        Walks the rolling window newest-first, accumulating full contents
-        until recent_tool_results_chars is exhausted. Older results drop
-        out. The result is rendered oldest-to-newest so the model reads
-        it in chronological order.
+        Select newest-first within the rolling character policy. An older
+        result can reference identical full text already selected in this
+        view. Render oldest-to-newest, preserving the chronological order.
 
         Also trims the deque as a side-effect: anything that didn't fit
         in this turn's window is evicted permanently so the memory
@@ -404,27 +370,10 @@ class SolverStateContext(ContextManager):
         self._prune_expired_thought_results()
         if not self._recent_tool_results:
             return ""
-        # Walk newest to oldest, keep within char budget.
-        kept_rev: list[dict] = []
-        chars_used = 0
-        for tr in reversed(self._recent_tool_results):
-            content = tr.get("content") or ""
-            if chars_used + len(content) > self._recent_tool_results_chars and kept_rev:
-                break
-            kept_rev.append(tr)
-            chars_used += len(content)
-        # Evict anything beyond what we kept so the deque doesn't grow
-        # without bound over a long session.
-        while len(self._recent_tool_results) > len(kept_rev):
-            self._recent_tool_results.popleft()
-        parts = [tr["content"] for tr in reversed(kept_rev)]
-        results = "\n---\n".join(parts)
-        label = (
-            f"=== Tool results (last {len(kept_rev)}, newest last) ==="
-            if len(kept_rev) > 1
-            else "=== Tool result from your last action ==="
+        rendered, self._rendered_result_references = render_recent_results(
+            self._recent_tool_results, self._recent_tool_results_chars, self._dedup_epoch,
         )
-        return f"{label}\n{results}"
+        return rendered
 
     def _build_from_solver(self, solver_dir: Path) -> list[dict]:
         """Build a two-message prompt: system + user.

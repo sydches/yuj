@@ -20,11 +20,19 @@ class ToolExecutionText(str):
         *,
         exit_status: int | None,
         timed_out: bool = False,
+        verification_status: str = "",
+        runner_request: dict | None = None,
+        execution_budget: dict | None = None,
+        executed: bool | None = None,
         user_turn_injections: Iterable["UserTurnInjection"] = (),
     ) -> "ToolExecutionText":
         value = super().__new__(cls, text)
         value.exit_status = exit_status
         value.timed_out = bool(timed_out)
+        value.verification_status = verification_status
+        value.runner_request = runner_request
+        value.execution_budget = execution_budget
+        value.executed = executed
         value.user_turn_injections = tuple(user_turn_injections)
         return value
 
@@ -43,61 +51,20 @@ def _tool_advice(
     )
 
 
-def _resolve(cwd: str, path: str) -> Path:
-    """Resolve a tool path relative to cwd with containment.
+def _resolve(cwd: str, path: str):
+    """Resolve a contained task path in the caller's selected file view.
 
-    Path handling:
-
-    - Relative paths: joined against ``cwd``.
-    - Absolute paths already inside ``cwd``: used as-is after
-      ``resolve(strict=False)``.
-    - Absolute paths outside ``cwd``: re-rooted under ``cwd`` by
-      stripping the leading slash. This preserves the sandbox
-      perimeter (an attempt to read ``/etc/passwd`` resolves to
-      ``<cwd>/etc/passwd`` which safely won't exist).
-
-    The result is normalized against ``..`` and symlinks via
-    ``Path.resolve(strict=False)`` and must remain inside ``cwd``
-    after resolution; out-of-cwd resolution raises ``ValueError`` so
-    the caller can surface a structured ERROR. The harness's FS tools
-    (read/write/edit/glob/grep/list_definitions) all run in-process
-    and rely on this helper — not on the bash sandbox — for their
-    cwd perimeter.
+    A bound executor owns native path aliases and filesystem operations.
+    Without one, this helper resolves only local task paths. Outside absolute
+    paths are refused, never reinterpreted as different files under cwd.
+    Container mount metadata alone cannot authorize host access.
     """
+    from ..task_path import bound_task_path
+    bound = bound_task_path(cwd, path)
+    if bound is not None:
+        return bound
     cwd_p = Path(cwd).resolve()
-    if path.startswith("/"):
-        abs_target = Path(path).resolve(strict=False)
-        try:
-            abs_target.relative_to(cwd_p)
-            target = abs_target
-        except ValueError:
-            # Local import: harness.sandbox at module level drags the
-            # full harness package (server client, openai) into every
-            # tools consumer; tests import _resolve standalone.
-            from ..sandbox import AMBIENT_CONTAINER, container_mode
-            mode = container_mode()
-            if mode is not None and mode != AMBIENT_CONTAINER:
-                # docker-exec mode: bash runs inside a container that
-                # mounts cwd AT /testbed (sandbox/__init__.py argv
-                # builder), while FS tools run on the host. /testbed/...
-                # is therefore an alias for cwd; any other absolute path
-                # is container-local and a host-side re-root would write
-                # a phantom the model's bash can never see (ledger #13,
-                # v3 task 333: "OK: wrote 218 bytes" vs "No such file").
-                parts = PurePosixPath(path).parts
-                if parts[:2] == ("/", "testbed"):
-                    target = (cwd_p.joinpath(*parts[2:])).resolve(strict=False)
-                else:
-                    raise ValueError(
-                        f"absolute path {path} is container-local and not "
-                        "visible to the write/read/edit tools; use a path "
-                        "under /testbed or a relative path"
-                    ) from None
-            else:
-                # bwrap/ambient: re-root for sandbox containment.
-                target = (cwd_p / path.lstrip("/")).resolve(strict=False)
-    else:
-        target = (cwd_p / path).resolve(strict=False)
+    target = (cwd_p / path).resolve(strict=False)
     try:
         target.relative_to(cwd_p)
     except ValueError:
@@ -117,6 +84,18 @@ def _resolve_read(
     relative tool behavior rooted at the task while allowing the system
     prompt to disclose exact ``SKILL.md`` and resource paths.
     """
+    from ..task_path import active_task_files, TaskPath, native_requested_path
+    files = active_task_files(cwd)
+    if files is not None:
+        value = PurePosixPath(path)
+        requested = native_requested_path(TaskPath(files, files.root), path, expand=False)
+        if value.is_absolute() and not requested.path.is_relative_to(files.root):
+            for raw_root in readonly_roots:
+                root = PurePosixPath(raw_root)
+                if root.is_absolute() and value.is_relative_to(root):
+                    external = files.readonly_view(root)
+                    return TaskPath(external, external.root / value.relative_to(root)).resolve()
+        return _resolve(cwd, path)
     if path.startswith("/") and readonly_roots:
         target = Path(path).resolve(strict=False)
         for raw_root in readonly_roots:
@@ -135,6 +114,14 @@ def _is_external_readonly_path(
     """Return whether an absolute target belongs to an external skill root."""
     if not path.startswith("/"):
         return False
+    from ..task_path import active_task_files, TaskPath, native_requested_path
+    files = active_task_files(cwd)
+    if files is not None:
+        target = PurePosixPath(path)
+        requested = native_requested_path(TaskPath(files, files.root), path, expand=False)
+        if requested.path.is_relative_to(files.root):
+            return False
+        return any(target.is_relative_to(PurePosixPath(root)) for root in readonly_roots)
     target = Path(path).resolve(strict=False)
     cwd_path = Path(cwd).resolve(strict=False)
     if target == cwd_path or cwd_path in target.parents:
@@ -153,6 +140,10 @@ def _require_external_readable(
     unreadable_paths: tuple[str, ...] = (),
 ) -> None:
     """Apply configured masks to an otherwise allowed external read."""
+    from ..task_path import TaskPath
+    if isinstance(target, TaskPath):
+        # Native task access already uses the selected command file view.
+        return
     cwd_path = Path(cwd).resolve(strict=False)
     if target == cwd_path or cwd_path in target.parents or not unreadable_paths:
         return
@@ -163,16 +154,19 @@ def _require_external_readable(
 
 
 def _path_hint(cwd: str, path: str) -> str:
-    """Suggest a corrected path when a file-not-found error occurs.
+    """Suggest an existing path after a file-not-found error.
 
-    Catches the `.seaborn/X` → `seaborn/X` pattern where the model
-    confuses `.solver/` (hidden dir) with the package directory.
+    Strip leading dot and slash characters, then suggest the resulting
+    cwd-relative path only when it exists.
     """
     stripped = path.lstrip("./")
     if stripped != path:
-        candidate = Path(cwd) / stripped
-        if candidate.exists():
-            return f" (did you mean '{stripped}'?)"
+        try:
+            candidate = _resolve(cwd, stripped)
+            if candidate.exists():
+                return f" (did you mean '{stripped}'?)"
+        except (ValueError, OSError):
+            pass
     return ""
 
 

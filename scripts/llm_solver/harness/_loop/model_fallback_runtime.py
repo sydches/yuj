@@ -31,28 +31,19 @@ def _stored_attr(owner: Any, name: str, default: Any = None) -> Any:
     return default
 
 
-def _apply_context_size(client: Any, context_size: int) -> None:
-    """Synchronize all context-derived fields on one replacement client."""
-    cfg = client.cfg
-    token_budget = int(context_size * cfg.context_fill_ratio)
-    updates = {
-        "context_size": context_size,
-        "max_tokens": int(context_size * cfg.max_tokens_fraction),
-        "recent_tool_results_chars": int(token_budget * 0.45 * 4),
-        "max_output_chars": int(token_budget * 0.40 * 4),
-    }
-    try:
-        client.cfg = replace(cfg, **updates)
-    except TypeError:
-        for name, value in updates.items():
-            setattr(cfg, name, value)
+def _apply_context_size(client: Any, context_size: int | None) -> None:
+    """Constrain the replacement without replacing its declared permission."""
+    from ...context_allocation import allocate_context
+    client.cfg = allocate_context(
+        client.cfg, observed=context_size, profile=getattr(client, "profile", None),
+    )
 
 
 def _live_context_size(routed: ResolvedRoleClient) -> int | None:
-    """Query a production client; injected clients use their resolved profile."""
+    """Query capacity without labelling a declaration as an observation."""
     query = getattr(routed.client, "query_server_context", None)
     if query is None:
-        return int(routed.resolution.target.context_size or 0) or None
+        return None
     try:
         live = query()
     except Exception as exc:  # target health failure is not a harness crash
@@ -71,10 +62,20 @@ def _candidate_prompt_tokens(
     session: Any,
     routed: ResolvedRoleClient,
     tool_schemas: list[dict],
-) -> tuple[int, Any]:
+) -> tuple[int, Any, Any]:
     """Estimate the replacement profile's actual wire messages and tools."""
     estimator = _resolve_token_estimator(routed.client) or chars_div_4
     canonical = [dict(message) for message in session.context.get_messages()]
+    from ..request_counting import resolve_counter
+    counter = resolve_counter(
+        routed.client, routed.client.cfg,
+        event_sink=lambda event, **fields: session._emit(
+            event, session_number=session._session_number,
+            turn_number=session._current_turn, **fields,
+        ),
+    )
+    if counter is not None:
+        return int(counter.count(canonical, tools=tool_schemas)), estimator, counter
     profile = routed.resolution.profile
     wire = (
         profile.denormalize_messages(canonical)
@@ -85,14 +86,15 @@ def _candidate_prompt_tokens(
     prompt_tokens += sum(
         len(json.dumps(schema, sort_keys=True, default=str)) for schema in tool_schemas
     ) // 4
-    return prompt_tokens, estimator
+    return prompt_tokens, estimator, None
 
 
-def _emit_transition(session: Any, turn: int, transition: Any) -> None:
+def _emit_transition(session: Any, turn: int, transition: Any, allocation=None) -> None:
     session._emit(
         "model_fallback",
         session_number=getattr(session, "_session_number", 0),
         turn_number=turn,
+        context_allocation=allocation,
         **transition.trace_fields(),
     )
 
@@ -116,15 +118,6 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             return False
         routed = switched.routed_client
         live_context = _live_context_size(routed)
-        if live_context is None:
-            _emit_transition(session, turn, switched.transition)
-            log.error(
-                "model fallback target %s did not report a live context window",
-                switched.transition.to_resolution.target.label(),
-            )
-            next_reason = "context_window_unavailable"
-            continue
-
         skill_roots = tuple(
             getattr(session.cfg, "skills_readable_dirs", ()) or ()
         )
@@ -180,7 +173,7 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             if bool(getattr(session._plan_mode, "active", False))
             else candidate_schemas
         )
-        prompt_tokens, estimator = _candidate_prompt_tokens(
+        prompt_tokens, estimator, counter = _candidate_prompt_tokens(
             session, routed, request_schemas,
         )
         window = check_context_window(
@@ -188,7 +181,7 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             effective_resolution,
             routed.client.cfg.context_fill_ratio,
         )
-        _emit_transition(session, turn, transition)
+        _emit_transition(session, turn, transition, routed.client.cfg.context_allocation)
         if not window.fits:
             log.warning(
                 "model fallback target %s cannot fit prompt: %d > %d",
@@ -212,8 +205,10 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
         session._plan_tool_schemas = candidate_plan_schemas
         session._plan_tool_schema_set = candidate_plan_schema_set
         session.context.set_token_estimator(estimator)
-        session._tokenizer = None
-        session._server_ctx_cache = live_context
+        from ..request_counting import bind_session_counter
+        bind_session_counter(session, counter, reset_observations=True)
+        session._server_ctx_cache = session.cfg.context_size
+        session._server_ctx_binding = None
         session._server_ctx_synced = True
         routed.client._model_role_resolution = effective_resolution
         log.warning(

@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from scripts.llm_solver.harness._loop.handoff_summary import (
     HANDOFF_FALLBACK,
     HandoffResult,
@@ -195,12 +197,16 @@ def test_generate_handoff_calls_model_once_and_validates_modified_files() -> Non
     assert "Earlier work remains valid." in captured[0]["messages"][1]["content"]
 
 
-def test_invalid_handoff_leaves_mechanical_resume_prompt_byte_identical() -> None:
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_invalid_handoff_leaves_mechanical_resume_prompt_byte_identical(exhausted) -> None:
     calls = 0
 
     def call_model(_request: dict[str, Any]) -> str:
         nonlocal calls
         calls += 1
+        if exhausted:
+            from scripts.llm_solver.server.types import ContextBudgetExceeded
+            raise ContextBudgetExceeded(100, {"prompt_tokens": 100, "count_basis": "backend_input_tokens"})
         return "missing every required header"
 
     result = generate_handoff(

@@ -6,12 +6,10 @@ every time the model invokes bash. For a session of N turns issuing
 bash on most of them, that's N × 100 ms of harness overhead the
 persistent path eliminates by reusing one bwrap+bash subprocess.
 
-Lifetime: one PersistentBashSession per harness Session. Installed
-on a ``threading.local`` registry by ``Session.run()`` so the per-call
-dispatch (``_run_in_sandbox``) finds it; cleared on session end.
-Worker threads (parallel-readonly dispatch) see no installed runner
-and fall through to per-call ``subprocess.run`` — keeps the persistent
-path single-threaded by contract instead of needing thread-safe I/O.
+Lifetime: one PersistentBashSession per harness Session. Installed in a
+context variable by ``Session.run()`` and cleared on session end. Read-only
+dispatch workers inherit that context and serialize access to its pipe.
+Unrelated threads receive no runner.
 
 Bwrap-mode only: ambient and docker-exec sandboxes use the per-call
 path (different process model — ambient is just ``subprocess.run``,
@@ -23,28 +21,50 @@ the argv builder this class wraps.
 from __future__ import annotations
 
 import secrets
+import json
+import os
+import select
+import io
+from contextlib import contextmanager
 import shlex
 import subprocess
 import threading
 from collections.abc import Mapping
+from contextvars import ContextVar
 
 
-_persistent_local = threading.local()
+_persistent_runner = ContextVar('persistent_bash_runner', default=None)
 
 
 def get_persistent_runner() -> "PersistentBashSession | None":
-    """Return the active PersistentBashSession on this thread, or None."""
-    return getattr(_persistent_local, "runner", None)
+    """Return the runner admitted to this execution context, or None."""
+    return _persistent_runner.get()
 
 
 def set_persistent_runner(runner: "PersistentBashSession | None") -> None:
-    """Install a PersistentBashSession on the current thread (or clear)."""
-    _persistent_local.runner = runner
+    """Install or clear the runner in the current execution context."""
+    _persistent_runner.set(runner)
 
 
 # Marker prefix for command boundaries on the persistent bash stdout.
 # Per-call random suffix appended for collision safety with model output.
 _PERSISTENT_MARKER_PREFIX = "___YUJ_END_"
+
+
+def _startup_bytes(descriptor, *, line=False):
+    """Wait for startup data within the same allowance as the command."""
+    from ..time_budget import command_timeout
+    chunks = []
+    while True:
+        timeout = command_timeout()
+        if not select.select([descriptor], [], [], timeout)[0]:
+            raise subprocess.TimeoutExpired('persistent shell startup', timeout)
+        chunk = os.read(descriptor, io.DEFAULT_BUFFER_SIZE)
+        if not chunk:
+            return b''.join(chunks)
+        chunks.append(chunk)
+        if line and b'\n' in chunk:
+            return b''.join(chunks)
 
 
 class PersistentBashSession:
@@ -80,19 +100,13 @@ class PersistentBashSession:
         SECURITY boundary is bwrap, not bash state.
       - finish_reason / exit code semantics identical to per-call.
 
-    Thread-safety: methods are NOT safe for concurrent use. Each
-    Session uses one instance from one thread; worker threads fall
-    back via the threading.local registry above.
+    Concurrent run calls serialize configuration and pipe I/O under one lock.
+    The owning session closes the runner after its workers finish.
 
     Restart on death: if bash dies (timeout-kill, OOM, etc.), the
     next call lazy-restarts via start(). The dying call returns an
     ERROR string and the harness keeps going.
     """
-
-    # Hard ceiling on the per-call timer accuracy. We don't need
-    # sub-second precision; the timeout is meant to catch runaway
-    # commands.
-    _TIMER_GRACE_SECONDS = 1.0
 
     def __init__(
         self,
@@ -110,14 +124,20 @@ class PersistentBashSession:
         if bwrap_bin is None:
             from . import _DEFAULT_BWRAP_BIN
             bwrap_bin = _DEFAULT_BWRAP_BIN
-        self.cwd = cwd
+        from ..task_path import capture_task_execution_paths, capture_host_task_root
+        self.cwd, self.unreadable_paths, self.readable_paths = capture_task_execution_paths(
+            cwd, unreadable_paths, readable_paths)
+        self._host_task_root = capture_host_task_root(self.cwd)
+        from ._filesystem import capture_frozen_filesystem_view
+        self._filesystem_view = capture_frozen_filesystem_view(self._host_task_root)
         self.bwrap_bin = bwrap_bin
-        self.unreadable_paths = unreadable_paths
-        self.readable_paths = readable_paths
         self.sandbox_required = sandbox_required
-        self.effective_env = effective_env
+        self.effective_env = dict(effective_env) if effective_env is not None else None
         self.allow_login_shell = bool(allow_login_shell)
         self._proc: subprocess.Popen | None = None
+        self._mount_argv: list[str] | None = None
+        self._mask_arguments: list[str] = []
+        self._namespace = None
         # Lock so concurrent .run() calls (should never happen by
         # contract, but defense in depth) at least serialize on the
         # pipe instead of corrupting it.
@@ -125,13 +145,19 @@ class PersistentBashSession:
 
     def start(self) -> None:
         """Launch the long-lived bwrap+bash subprocess. Idempotent."""
+        if self._host_task_root is not None:
+            self._host_task_root.verify()
+        for source in getattr(self._mount_argv, 'resources', ()):
+            source.verify()
         if self._proc is not None and self._proc.poll() is None:
             return
+        self._kill()
         # Late import: __init__.py owns _build_bwrap_argv and imports
         # this class, so the cycle is broken by deferring this lookup
         # until call time (by which point the package is fully loaded).
         from . import _build_bwrap_argv
         from .env_policy import build_bash_argv
+        masks = []
         argv = _build_bwrap_argv(
             cmd="",  # ignored when tail is set
             cwd=self.cwd,
@@ -141,25 +167,45 @@ class PersistentBashSession:
             sandbox_required=self.sandbox_required,
             effective_env=self.effective_env,
             allow_login_shell=self.allow_login_shell,
+            _mask_arguments=masks,
+            _host_task_root=self._host_task_root,
+            _filesystem_view=self._filesystem_view,
             tail=build_bash_argv(
                 None, allow_login_shell=self.allow_login_shell,
             ),
         )
-        self._proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
+        status_read, status_write = os.pipe()
+        try:
+            self._proc = subprocess.Popen(
+                [argv[0], '--info-fd', str(status_write), *argv[1:]],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, bufsize=1,
+                pass_fds=(status_write, *getattr(argv, 'pass_fds', ())),
+            )
+        except BaseException:
+            os.close(status_read)
+            raise
+        finally:
+            os.close(status_write)
+        self._mount_argv = argv
         # Set pipefail once for the lifetime of this bash; subshells
         # inherit shell options.
         try:
             assert self._proc.stdin is not None
-            self._proc.stdin.write("set -o pipefail\n")
+            marker = secrets.token_hex(16)
+            self._proc.stdin.write(f"set -o pipefail; printf '%s\\n' '{marker}'\n")
             self._proc.stdin.flush()
-        except (BrokenPipeError, OSError, AssertionError):
+            status = json.loads(_startup_bytes(status_read))
+            os.close(status_read)
+            status_read = None
+            if _startup_bytes(self._proc.stdout.fileno(), line=True) != (marker + '\n').encode():
+                raise RuntimeError('persistent shell did not confirm namespace readiness')
+            from ._namespace_masks import NamespaceMasks, mask_targets
+            self._namespace = NamespaceMasks(status, mask_targets(masks))
+            self._mask_arguments = masks
+        except BaseException:
+            if status_read is not None:
+                os.close(status_read)
             self._kill()
             raise
 
@@ -168,16 +214,24 @@ class PersistentBashSession:
         cmd: str,
         *,
         cwd: str,
-        timeout: int,
+        timeout: float | None,
+        execution_options: dict | None = None,
     ) -> tuple[str, int | None, bool]:
         """Execute one command. Returns (stdout+stderr, exit_code, timed_out).
 
         Identical return shape to subprocess-based ``_run_in_sandbox``
-        so callers don't need to branch.
+        for submitted commands. Pre-submission exhaustion raises BudgetExhausted.
         """
-        with self._lock:
+        from ..time_budget import BudgetExhausted
+        with self._command_lock(timeout) as acquired:
+            if not acquired:
+                raise BudgetExhausted('persistent command lock exhausted before submission')
+            if execution_options is not None:
+                self._configure(execution_options, timeout=timeout)
             try:
                 self.start()
+            except (subprocess.TimeoutExpired, BudgetExhausted) as error:
+                raise BudgetExhausted('persistent shell startup exhausted before submission') from error
             except Exception as e:
                 return f"ERROR: persistent bash failed to start: {e}", None, False
 
@@ -201,6 +255,8 @@ class PersistentBashSession:
                 f"{clear_tmp}"
                 f"printf '\\n%s %d\\n' '{marker}' \"$__EC\"\n"
             )
+            from ..time_budget import BudgetExhausted, command_timeout
+            timeout = command_timeout(timeout)
             try:
                 assert self._proc is not None and self._proc.stdin is not None
                 self._proc.stdin.write(wrapper)
@@ -219,11 +275,15 @@ class PersistentBashSession:
                 timed_out[0] = True
                 self._kill()
 
-            timer = threading.Timer(
-                timeout + self._TIMER_GRACE_SECONDS, _kill_on_timeout
-            )
-            timer.daemon = True
-            timer.start()
+            try:
+                timeout = command_timeout(timeout)
+            except BudgetExhausted:
+                self._kill()
+                return "", None, True
+            timer = threading.Timer(timeout, _kill_on_timeout) if timeout is not None else None
+            if timer is not None:
+                timer.daemon = True
+                timer.start()
             try:
                 buf: list[str] = []
                 assert self._proc is not None and self._proc.stdout is not None
@@ -232,7 +292,7 @@ class PersistentBashSession:
                     line = stdout.readline()
                     if not line:
                         # EOF — bash died (timeout-kill or other).
-                        self._proc = None
+                        self._kill()
                         if timed_out[0]:
                             return "", None, True
                         return (
@@ -255,9 +315,83 @@ class PersistentBashSession:
                         return "".join(buf), exit_code, False
                     buf.append(line)
             finally:
-                timer.cancel()
+                if timer is not None:
+                    timer.cancel()
+
+    @contextmanager
+    def _command_lock(self, timeout):
+        from ..time_budget import BudgetExhausted, command_time_budget, command_timeout
+        with command_time_budget(0 if timeout is None else timeout):
+            try:
+                remaining = command_timeout()
+            except BudgetExhausted:
+                yield False
+                return
+            acquired = (self._lock.acquire() if remaining is None
+                        else self._lock.acquire(timeout=remaining))
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    self._lock.release()
+
+    def _configure(self, options, *, timeout):
+        """Update owned denial mounts without discarding private state."""
+        from . import _build_bwrap_argv
+        from .env_policy import build_bash_argv
+        from ._namespace_masks import mask_targets
+        masks = []
+        tail = build_bash_argv(None, allow_login_shell=options['allow_login_shell'])
+        argv = _build_bwrap_argv(
+            '', self.cwd, **options,
+            tail=tail, _mask_arguments=masks, _host_task_root=self._host_task_root,
+            _filesystem_view=self._filesystem_view,
+        )
+        fields = ('bwrap_bin', 'unreadable_paths', 'readable_paths',
+                  'effective_env', 'allow_login_shell')
+        if self._mount_argv is not None:
+            def without_masks(arguments, mask_arguments):
+                # The builder places masks before remount-ro and the shell tail.
+                end = len(arguments) - len(tail) - 2
+                start = end - len(mask_arguments)
+                if list(arguments[start:end]) != mask_arguments:
+                    raise RuntimeError('unexpected bwrap mask layout')
+                signature = list(arguments)
+                for index in getattr(arguments, 'descriptor_arguments', ()):
+                    source = os.fstat(int(arguments[index]))
+                    signature[index] = (source.st_dev, source.st_ino)
+                return tuple(signature[:start]) + tuple(signature[end:])
+            if without_masks(argv, masks) != without_masks(self._mount_argv, self._mask_arguments):
+                raise RuntimeError('persistent runtime mounts or environment changed within the session')
+        if self._proc is not None and self._proc.poll() is None:
+            self._namespace.update(mask_targets(masks), timeout=timeout)
+            self._mount_argv = argv
+            self._mask_arguments = masks
+        for field in fields:
+            value = options[field]
+            if field == 'effective_env' and value is not None:
+                value = dict(value)
+            setattr(self, field, value)
+        self.sandbox_required = options['sandbox_required']
+
+    def run_binary(self, cmd, *, cwd, timeout, input_bytes=None,
+                   execution_options=None):
+        """Read and write bytes inside this shell's existing mount namespace."""
+        from ._binary_transport import capture_command, captured_result
+        out, code, timed_out = self.run(
+            capture_command(cmd, input_bytes), cwd=cwd, timeout=timeout,
+            execution_options=execution_options,
+        )
+        if timed_out:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        if code != 0:
+            raise RuntimeError(f'persistent binary transport failed: {out}')
+        return captured_result(cmd, out)
 
     def _kill(self) -> None:
+        if self._namespace is not None:
+            self._namespace.close()
+            self._namespace = None
         if self._proc is None:
             return
         try:

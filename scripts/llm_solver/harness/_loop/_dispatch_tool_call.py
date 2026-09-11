@@ -24,6 +24,7 @@ import html
 import time
 
 from ..action_metadata import action_metadata
+from ..file_changes import apply_observed_metadata, observed_mutation
 from ..guardrails import PASS, Action
 from ..tool_loading import inactive_tool_error
 from ..._shared.classification import is_error_result
@@ -122,6 +123,26 @@ def _record_generated_intervention(
     )
 
 
+def _automatic_verification_not_executed(result, metadata, status, *, budget=None):
+    """Report a refused launch without inventing a failing test result."""
+    metadata["automatic_verification"] = status
+    if budget is not None:
+        metadata["automatic_verification_execution_budget"] = budget
+    combined = (
+        f'<automatic_verification status="{html.escape(status, quote=True)}" '
+        'task_requirement="not_checked">\n'
+        f"Automatic verification did not execute: {html.escape(status)}.\n"
+        f"</automatic_verification>\n\n{result}"
+    )
+    from ..savings import get_ledger
+    get_ledger().record_transform(
+        bucket="guardrail_intervention", layer="harness",
+        mechanism="automatic_verification_not_executed",
+        before=result, after=combined, surface="tool_output", ctx={"status": status},
+    )
+    return combined
+
+
 def _run_automatic_component_verification(
     tc,
     state: "TurnState",
@@ -136,6 +157,7 @@ def _run_automatic_component_verification(
         resolve_component_verification_target,
         verification_runner_unavailable,
         verification_result_passed,
+        verification_tree_matches,
     )
 
     session = state.session
@@ -143,11 +165,20 @@ def _run_automatic_component_verification(
     guards = session._guards
     if not automatic_component_verification_due(guards, cfg):
         return result, 0.0
+    if not verification_tree_matches(guards, session.cwd):
+        return result, 0.0
+    from ..time_budget import command_allowance
+    allowance = command_allowance(getattr(cfg, "tools_run_tests_timeout", 0))
+    if allowance.record["status"] == "exhausted":
+        return _automatic_verification_not_executed(
+            result, metadata, "budget_exhausted", budget=allowance.record,
+        ), 0.0
 
     target = resolve_component_verification_target(
         guards,
         session.cwd,
         ignore_policy=session._ignore_policy,
+        runner=getattr(cfg, "analysis_task_format", "auto"),
     )
     mark_automatic_component_verification_attempted(guards, target)
     if target is None:
@@ -174,9 +205,15 @@ def _run_automatic_component_verification(
 
     auto_cfg = replace(cfg, tools_run_tests_enabled=True)
     auto_arguments = {"path": target.path}
+    from ...language_quirks import load_run_tests_quirk_object
+    if load_run_tests_quirk_object(session.cwd, runner=target.runner).extra_fields.get("component_collection_plugin"):
+        auto_arguments["_component_source"] = list(target.native_sources) or [target.source_path]
     base_cmd_override = observed_component_runner_base_cmd(
-        guards, target.runner
+        guards, target.runner, cwd=session.cwd, cfg=cfg,
     )
+    if (getattr(cfg, "runtime_test_selection", None) or {}).get("status") == "selected":
+        # Preserve the selected command's configuration flags and environment.
+        base_cmd_override = ""
     if base_cmd_override:
         auto_arguments["_base_cmd_override"] = base_cmd_override
     auto_execution_metadata: dict = {}
@@ -214,7 +251,43 @@ def _run_automatic_component_verification(
         tool_call_id=f"{tc.id}:automatic-verification",
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
-    runner_unavailable = verification_runner_unavailable(auto_result)
+    if auto_execution_metadata.get("native_test_report") is not None:
+        from .state_projection import update_parity_from_report
+        report = auto_execution_metadata["native_test_report"]
+        update_parity_from_report(session, report)
+        session._emit("native_test_report", turn_number=state.turn, report=report)
+    if auto_execution_metadata.get("execution_budget") is not None:
+        metadata["automatic_verification_execution_budget"] = auto_execution_metadata["execution_budget"]
+    if auto_execution_metadata.get("executed") is False:
+        status = auto_execution_metadata.get("verification_status") or "not_executed"
+        if status == "budget_exhausted":
+            guards.post_mutation_automatic_verification_attempted = False
+            guards.post_mutation_verification_gate_armed = True
+        return _automatic_verification_not_executed(
+            result, metadata, status,
+            budget=auto_execution_metadata.get("execution_budget"),
+        ), elapsed_ms
+    component = (auto_execution_metadata.get("runner_request") or {}).get("component_selection", {})
+    if component.get("status") == "selected":
+        target = replace(target, display=component["candidates"][0],
+                         source_path=component["source"])
+        guards.post_mutation_automatic_verification_target = target.display
+    elif component.get("status") in {"ambiguous", "no_candidate"}:
+        guards.post_mutation_automatic_verification_unavailable = True
+        metadata.update(automatic_verification="target_unavailable", component_selection=component)
+        return _append_intervention(
+            '<automatic_verification status="target_unavailable" task_requirement="not_checked">\n'
+            'Native collection did not select one component candidate. '
+            'The task requirement could not be checked automatically.\n'
+            f'{auto_result}\n</automatic_verification>\n\n{result}', cfg.post_mutation_verification_gate,
+            mechanism="automatic_component_verification_unavailable",
+            session=session, tool_call_id=tc.id,
+        ), elapsed_ms
+    if component:
+        metadata["component_selection"] = component
+    runner_unavailable = verification_runner_unavailable(
+        auto_result, tc_name="run_tests", execution_metadata=auto_execution_metadata,
+    )
     guards.post_mutation_automatic_verification_unavailable = runner_unavailable
     if not runner_unavailable:
         session._queue_execution_user_turn_injections(
@@ -231,6 +304,8 @@ def _run_automatic_component_verification(
         tc_name="run_tests",
         result=auto_result,
         gate_blocked=False,
+        execution_metadata=auto_execution_metadata,
+        cwd=session.cwd,
     )
     observe_verification(
         guards,
@@ -238,9 +313,10 @@ def _run_automatic_component_verification(
         tc_name="run_tests",
         result=auto_result,
         gate_blocked=False,
+        execution_metadata=auto_execution_metadata,
         tc_args={"path": target.path},
     )
-    passed = verification_result_passed("run_tests", auto_result)
+    passed = verification_result_passed("run_tests", auto_result, auto_execution_metadata)
     if (
         not runner_unavailable
         and not guards.post_mutation_verification_nudge_emitted
@@ -258,6 +334,7 @@ def _run_automatic_component_verification(
         "automatic_verification": (
             "runner_unavailable"
             if runner_unavailable
+            else "selection_unavailable" if component.get("status") == "unavailable"
             else "passed" if passed else "failed"
         ),
         "automatic_verification_runner": target.runner,
@@ -305,6 +382,54 @@ def _tool_call_transform_scope(function):
         with transform_scope(str(getattr(tc, "id", "") or "")):
             return function(tc, *args, **kwargs)
     return wrapped
+
+
+def _observation_owned_paths(session):
+    from pathlib import Path
+    from ..turn_snapshots import _snapshot_owned_paths
+    return _snapshot_owned_paths(Path(session.cwd), session)
+
+
+def _apply_dispatch_effects(tc, state, metadata, execution_metadata, result):
+    """Record observed effects before a tool-error policy can end the turn."""
+    if metadata.get("plan_artifact"):
+        return
+    apply_observed_metadata(metadata, execution_metadata)
+    if (execution_metadata.get("file_changes") or {}).get("status") in {"unavailable", "incomplete"}:
+        state.session._guards.verified_since_mutation = False
+        state.session._guards.formal_verification_passed_since_mutation = False
+    if (state.plan_mode_active or metadata.get("plan_artifact")
+            or not execution_metadata.get("executed", True)
+            or not observed_mutation(execution_metadata)):
+        return
+    session = state.session
+    # A check may create files while leaving the previously edited inputs intact.
+    # Capture that distinction before refreshing their revision records below.
+    from .._guardrails.verification import verification_tree_matches
+    execution_metadata["_verification_inputs_unchanged"] = bool(
+        session._guards.has_mutated
+        and session._guards.verification_file_revisions
+        and verification_tree_matches(session._guards, session.cwd)
+    )
+    state.tool_post["rumination_ladder"](
+        session._guards, state.cfg, tc_name=tc.name, tc_args=tc.arguments,
+        result=result, gate_blocked=False, already_blocked_this_turn=False,
+        execution_metadata=execution_metadata,
+    )
+    state.observers["observe_post_mutation_verification"](
+        session._guards, state.cfg, tc_name=tc.name, tc_args=tc.arguments,
+        result=result, gate_blocked=False, execution_metadata=execution_metadata,
+        source_write_paths=tuple(metadata.get("source_write_paths", ())), cwd=session.cwd,
+    )
+    execution_metadata["_mutation_accounted"] = True
+    if hasattr(session.context, "reset_dedup_counts"):
+        session.context.reset_dedup_counts()
+    if getattr(state.cfg, "turn_snapshots_enabled", False):
+        from ..turn_snapshots import snapshot, snapshot_object_store
+        sha = snapshot(session.cwd, state.turn, session=session)
+        execution_metadata["_file_change_snapshot"] = sha
+        if sha:
+            execution_metadata["_file_change_snapshot_store"] = str(snapshot_object_store(session.cwd, sha))
 
 
 def _tool_action_metadata(tc, session) -> dict:
@@ -528,7 +653,7 @@ def _handle_pre_rewind(tc, decision, state: "TurnState") -> TCOutcome:
 
 
 def _capture_workspace_checkpoint(tc, state: "TurnState", *, executed: bool) -> None:
-    """Capture one host-side workspace checkpoint after an executed call."""
+    """Capture the selected workspace after an executed call."""
     store = getattr(state.session, "_checkpoint_store", None)
     if store is None:
         return
@@ -1243,6 +1368,7 @@ def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) ->
             )
             result = str(raw_call.get("result") or "")
             metadata = action_metadata(name, arguments)
+            apply_observed_metadata(metadata, inner_execution)
             gate_blocked = bool(inner_execution.get("gate_blocked", False))
             index = int(raw_call.get("index") or 0)
             state.session._emit(
@@ -1382,7 +1508,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     gate_intercepted = False
     path_injection_fired = False
     result: str = ""
-    execution_metadata: dict = {}
+    execution_metadata: dict = state.preexecuted_metadata.get(tc.id, {})
     if mutation_decision.action == Action.END:
         state.turn_had_pressure = True
         _emit_gate_block(tc, mutation_decision, state, args_summary)
@@ -1533,8 +1659,15 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata,
+                                  observation_owned_paths=_observation_owned_paths(session),
                                   tool_call_id=tc.id)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+            _apply_dispatch_effects(tc, state, metadata, execution_metadata, result)
+            if execution_metadata.get("native_test_report") is not None:
+                from .state_projection import update_parity_from_report
+                update_parity_from_report(session, execution_metadata["native_test_report"])
+                session._emit("native_test_report", turn_number=turn,
+                              report=execution_metadata["native_test_report"])
             session._queue_execution_user_turn_injections(
                 execution_metadata, tool_call_id=tc.id
             )
@@ -1623,8 +1756,10 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   allow_login_shell=session._allow_login_shell,
                                   rewrite_log=rewrite_log,
                                   execution_metadata=execution_metadata,
+                                  observation_owned_paths=_observation_owned_paths(session),
                                   tool_call_id=tc.id)
                 _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+            _apply_dispatch_effects(tc, state, metadata, execution_metadata, result)
             session._queue_execution_user_turn_injections(
                 execution_metadata, tool_call_id=tc.id
             )
@@ -1647,6 +1782,11 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                 session._observe_test_signal(tc.arguments.get("cmd", ""), result)
             # 6e. error_ladder (WARN / END tiers). Log every error
             # for trace visibility; the ladder decides escalation.
+            if execution_metadata.get("native_test_report") is not None:
+                from .state_projection import update_parity_from_report
+                update_parity_from_report(session, execution_metadata["native_test_report"])
+                session._emit("native_test_report", turn_number=turn,
+                              report=execution_metadata["native_test_report"])
             err_decision = tool_post["error_ladder"](
                 session._guards, cfg, tc_name=tc.name, result=result
             )
@@ -1786,6 +1926,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         tc_name=tc.name, result=result,
         gate_blocked=gate_blocked_flag,
         tc_args=tc.arguments,
+        execution_metadata=execution_metadata, cwd=session.cwd,
     )
     if test_read_decision.action == Action.WARN:
         result = _append_intervention(
@@ -1796,12 +1937,14 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             tool_call_id=tc.id,
         )
 
-    rum_decision = PASS if plan_policy_call else tool_post["rumination_ladder"](
+    mutation_already_accounted = execution_metadata.get("_mutation_accounted")
+    rum_decision = PASS if (plan_policy_call or mutation_already_accounted) else tool_post["rumination_ladder"](
         session._guards, cfg,
         tc_name=tc.name, result=result,
         gate_blocked=gate_blocked_flag,
         already_blocked_this_turn=gate_intercepted,
         tc_args=tc.arguments,
+        execution_metadata=execution_metadata,
         focus_key=focus_key,
         focus_display=focus_display,
     )
@@ -1822,16 +1965,6 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         None,
     )
 
-    # Context-side dedup reset on a successful write/edit. The
-    # guardrail state is reset inside rumination_ladder; this is
-    # the context's own signal (separate concern — stateful
-    # compaction, not thrash control).
-    if (tc.name in MUTATION_TOOLS
-            and not plan_artifact
-            and not is_error_result(result)
-            and hasattr(session.context, "reset_dedup_counts")):
-        session.context.reset_dedup_counts()
-
     # Content-blind "verified since mutation" signal for the
     # done guard.
     if not plan_policy_call:
@@ -1839,6 +1972,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             session._guards, cfg,
             tc_name=tc.name, result=result,
             gate_blocked=gate_blocked_flag,
+            execution_metadata=execution_metadata,
+            tc_args=tc.arguments, cwd=session.cwd,
         )
         observers["observe_test_file_read"](
             session._guards, cfg,
@@ -1847,12 +1982,14 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             tc_args=tc.arguments,
             focus_key=focus_key,
             focus_display=focus_display,
+            execution_metadata=execution_metadata,
         )
         observers["observe_contract_state"](
             session._guards, cfg,
             tc_name=tc.name, result=result,
             gate_blocked=gate_blocked_flag,
             tc_args=tc.arguments,
+            execution_metadata=execution_metadata,
             focus_key=focus_key,
             focus_display=focus_display,
         )
@@ -1862,8 +1999,10 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             tc_name=tc.name,
             result=result,
             gate_blocked=gate_blocked_flag,
+            execution_metadata=execution_metadata,
             tc_args=tc.arguments,
             source_write_paths=tuple(metadata.get("source_write_paths") or ()),
+            cwd=session.cwd,
         )
         result, automatic_verification_ms = (
             _run_automatic_component_verification(
@@ -1924,7 +2063,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     # Invisible workspace snapshot after an EXECUTED source-write turn:
     # records a rewind/branch point for this turn. Gate-blocked calls
     # never executed, so nothing changed on disk — no snapshot.
-    _snapshot_sha = None
+    _snapshot_sha = execution_metadata.get("_file_change_snapshot")
+    _snapshot_store = execution_metadata.get("_file_change_snapshot_store")
     call_executed = (
         not gate_blocked_flag
         and bool(execution_metadata.get("executed", True))
@@ -1933,10 +2073,6 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         # Returning to action resets narration recovery, including tool errors.
         # Blocked completion and calls that never ran do not count as work.
         session._narration_breaches = 0
-    if (getattr(cfg, "turn_snapshots_enabled", False)
-            and metadata.get("source_write_like") and call_executed):
-        from ..turn_snapshots import snapshot as _turn_snapshot
-        _snapshot_sha = _turn_snapshot(session.cwd, turn, session=session)
     session._emit(
         "tool_call",
         tool_call_id=tc.id,
@@ -1955,7 +2091,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             execution_metadata=execution_metadata,
         ),
         **_exec_cell_trace_fields(tc, state, execution_metadata),
-        **({"snapshot_sha": _snapshot_sha} if _snapshot_sha else {}),
+        **({"snapshot_sha": _snapshot_sha, "snapshot_object_store": _snapshot_store}
+           if _snapshot_sha else {}),
         reasoning=_truncate_for_trace(content or "", cfg.trace_reasoning_store_chars),
         gate_blocked=gate_blocked_flag,
         **metadata,
@@ -1969,6 +2106,8 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
         **({"cmd_pre_rewrite": _truncate_for_trace(_pre, cfg.trace_args_summary_chars)} if _pre else {}),
         **({"rewrite_rules": rewrite_log[0].get("rules", [])} if rewrite_log else {}),
     )
+    if call_executed and execution_metadata.get("observation_receipt") is not None:
+        state.observations[tc.id] = execution_metadata["observation_receipt"]
     if call_executed:
         _emit_todos_event(tc, state, execution_metadata)
     if not plan_artifact:

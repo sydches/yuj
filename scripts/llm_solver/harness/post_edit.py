@@ -32,6 +32,7 @@ from __future__ import annotations
 import ast
 import shlex
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,31 @@ def _record_event(
 
 # ── Entry point ──────────────────────────────────────────────────────────
 
+def _task_scoped_checks(function):
+    @wraps(function)
+    def scoped(path, *, cwd, cfg, trigger):
+        if cfg is None or not cfg.post_edit_check_enabled or not cfg.post_edit_checks:
+            return PostEditResult()
+        from .sandbox.env_policy import active_environment, activate_environment
+        from .task_file_runtime import task_file_scope
+        from .task_path import resolve_task_path
+        from .tools import _effective_command_environment
+        environment, login = active_environment()
+        if environment is None:
+            environment, login = _effective_command_environment(cfg, cwd=cwd)
+        from .sandbox.ignore_policy import active_ignore_policy
+        with task_file_scope(cwd, cfg, environment=environment,
+                             allow_login_shell=login,
+                             ignore_policy=active_ignore_policy(cwd)), activate_environment(
+                                 environment, allow_login_shell=login):
+            root = resolve_task_path(cwd, '.')
+            native = resolve_task_path(cwd, path)
+            relative = native.relative_to(root).as_posix()
+            return function(relative, cwd=cwd, cfg=cfg, trigger=trigger)
+    return scoped
+
+
+@_task_scoped_checks
 def run_post_edit_checks(
     path: str, *, cwd: str, cfg: Config | None, trigger: str,
 ) -> PostEditResult:
@@ -185,12 +211,13 @@ def run_post_edit_checks(
     Evaluation order:
       1. Check trigger matches the caller's trigger ("edit" / "write").
       2. Evaluate `when` predicate against {path, ext}; skip if False.
-      3. Run `cmd` inside the bwrap sandbox via tools.bash.
+      3. Run `cmd` through the selected command backend via tools.bash.
       4. Non-zero exit → return PostEditResult(on_fail, tail_text, name).
          Zero exit → record "ok" event, continue to the next check.
 
     Trigger string `"edit|write"` matches both triggers. Unknown
-    triggers never match.
+    triggers never match. Predicates and command substitutions receive a path
+    relative to the native task root, consistently across accepted aliases.
     """
     if cfg is None or not cfg.post_edit_check_enabled:
         return PostEditResult()
@@ -213,7 +240,7 @@ def run_post_edit_checks(
     )
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
-        effective_env, allow_login_shell = _effective_command_environment(cfg)
+        effective_env, allow_login_shell = _effective_command_environment(cfg, cwd=cwd)
     from .sandbox.policy import sandbox_execution_kwargs
 
     for raw_spec in checks:

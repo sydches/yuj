@@ -147,8 +147,8 @@ SALIENCE_SECTION_ORDER = (
 
 SALIENCE_SECTION_LABELS = {
     **COMPOUND_SECTION_LABELS,
-    "next_action_contract": "=== Next Action Contract ===",
-    "salience_pressure": "=== Salience Pressure ===",
+    "next_action_contract": "=== Recorded action ===",
+    "salience_pressure": "=== Recorded activity ===",
 }
 
 

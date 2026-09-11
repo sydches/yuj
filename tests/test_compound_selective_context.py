@@ -274,10 +274,10 @@ def test_salience_pressure_surfaces_no_mutation_test_and_repeats(tmp_path: Path)
     ctx._turn_count = 20
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "=== Salience Pressure ===" in user_text
-    assert "No file-mutation action" in user_text
-    assert "No test/verification-like command" in user_text
-    assert "Newest action repeated 3 consecutive times" in user_text
+    assert "=== Recorded activity ===" in user_text
+    assert "Recorded tool calls in this view: 5" in user_text
+    assert "Recorded outcomes: unknown=5" in user_text
+    assert "Consecutive identical displayed requests: 3" in user_text
 
 
 def test_salience_classifies_double_quoted_bash_actions(tmp_path: Path):
@@ -310,8 +310,8 @@ def test_salience_classifies_double_quoted_bash_actions(tmp_path: Path):
     user_text = ctx.get_messages()[1]["content"]
     assert "No file-mutation action" not in user_text
     assert "No test/verification-like command" not in user_text
-    assert "29 steps since the last file mutation." in user_text
-    assert "28 steps since the last test/verification-like command." in user_text
+    assert "Recorded outcomes: unknown=30" in user_text
+    assert "steps since the last file mutation" not in user_text
     assert "sed -i" in user_text
     assert "python -m pytest tests/test_mod.py" in user_text
 
@@ -339,13 +339,13 @@ def test_salience_pressure_flags_read_search_loop(tmp_path: Path):
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "Recent actions are read/search-only (12/12)." in user_text
-    assert "avoid another broad cat/sed/grep/read" in user_text
-    assert "Calling done now would submit an empty patch" in user_text
-    assert "edit through bash with a short python/perl/sed script" in user_text
+    assert "Recorded tool calls in this view: 12" in user_text
+    assert "avoid another broad cat/sed/grep/read" not in user_text
+    assert "Calling done now would submit an empty patch" not in user_text
+    assert "edit through bash with a short python/perl/sed script" not in user_text
 
 
-def test_salience_hard_read_loop_does_not_invite_reproducer(tmp_path: Path):
+def test_salience_repeated_requests_do_not_require_an_edit(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -368,8 +368,8 @@ def test_salience_hard_read_loop_does_not_invite_reproducer(tmp_path: Path):
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "hard read/search loop before any recorded source mutation" in user_text
-    assert "next move should make a minimal source edit" in user_text
+    assert "Consecutive identical displayed requests: 12" in user_text
+    assert "next move should make a minimal source edit" not in user_text
     assert "tiny reproducer" not in user_text
 
 
@@ -412,9 +412,9 @@ def test_salience_pressure_surfaces_pending_edit_intent(tmp_path: Path):
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "Latest model intent says it is ready to edit" in user_text
+    assert "Latest model intent says it is ready to edit" not in user_text
     assert "changing the helper" in user_text
-    assert "Repeated read/search actions already seen" in user_text
+    assert "Consecutive identical displayed requests: 12" in user_text
 
 
 def test_salience_trace_compresses_recent_read_only_loop(tmp_path: Path):
@@ -476,10 +476,11 @@ def test_salience_suppresses_raw_tool_results_during_repeated_read_loop(tmp_path
     user_text = ctx.get_messages()[1]["content"]
     assert "=== Tool results suppressed ===" in user_text
     assert "FULL_SOURCE_CONTENT_SHOULD_NOT_REPEAT" not in user_text
-    assert "same read/search actions are looping" in user_text
+    assert "requests recur in the retained trace" in user_text
+    assert "does not establish unchanged output or lack of progress" in user_text
 
 
-def test_salience_pressure_surfaces_patch_hygiene_from_mutations_and_diff(tmp_path: Path):
+def test_salience_multiple_paths_do_not_authorize_removing_edits(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -519,13 +520,13 @@ def test_salience_pressure_surfaces_patch_hygiene_from_mutations_and_diff(tmp_pa
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "Mutation targets recorded: pkg/mod.py, pkg/compat.py." in user_text
-    assert "Latest diff paths visible in trace: pkg/mod.py, pkg/compat.py." in user_text
-    assert "Patch hygiene: keep only task-relevant source edits" in user_text
-    assert "mutations without a later verification-like command" in user_text
+    assert "pkg/mod.py" in user_text
+    assert "pkg/compat.py" in user_text
+    assert "Patch hygiene: keep only task-relevant source edits" not in user_text
+    assert "remove setup/interpreter compatibility edits" not in user_text
 
 
-def test_salience_keeps_the_trace_when_it_fits_the_budget(tmp_path: Path):
+def test_salience_keeps_trace_within_the_selected_section_budget(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -540,11 +541,18 @@ def test_salience_keeps_the_trace_when_it_fits_the_budget(tmp_path: Path):
     ctx._turn_count = 80
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "read(path='old_1.py')" in user_text
+    assert "read(path='old_1.py')" not in user_text
     assert "read(path='old_11.py')" in user_text
+    assert user_text.count("→ read(path='old_") == 4
+
+    ctx = _make_salience_context(tmp_path, trace_lines=11)
+    ctx._turn_count = 80
+    user_text = ctx.get_messages()[1]["content"]
+    assert "read(path='old_1.py')" in user_text
+    assert user_text.count("→ read(path='old_") == 11
 
 
-def test_salience_action_contract_frontloads_bash_write_skeleton(tmp_path: Path):
+def test_salience_edit_intent_does_not_supply_an_unobserved_runtime_recipe(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -578,17 +586,18 @@ def test_salience_action_contract_frontloads_bash_write_skeleton(tmp_path: Path)
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "=== Next Action Contract ===" in user_text
-    assert "pending source mutation" in user_text
-    assert "next bash command must write the target source file" in user_text
-    assert "do not use cat, sed -n, grep" in user_text
-    assert "cd /testbed && python - <<'PY'" in user_text
-    assert "os.replace(tmp, path)" in user_text
-    assert "path = Path('pkg/mod.py')" in user_text
+    assert "=== Recorded action ===" in user_text
+    assert "pending source mutation" not in user_text
+    assert "next bash command must write the target source file" not in user_text
+    assert "do not use cat, sed -n, grep" not in user_text
+    assert "python - <<'PY'" not in user_text
+    assert "/testbed" not in user_text
+    assert "os.replace(tmp, path)" not in user_text
+    assert "pkg/mod.py" in user_text
     assert "path.write_text" not in user_text
 
 
-def test_salience_action_contract_recovers_from_failed_bash_write(tmp_path: Path):
+def test_salience_write_error_stays_a_diagnostic_without_retry_orders(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -612,11 +621,11 @@ def test_salience_action_contract_recovers_from_failed_bash_write(tmp_path: Path
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "last source write attempt failed" in user_text
-    assert "no source mutation is recorded" in user_text
+    assert "last source write attempt failed" not in user_text
+    assert "Recorded outcomes: unknown=3" in user_text
     assert "PermissionError" in user_text
-    assert "retry the source edit" in user_text
-    assert "not run verification" in user_text
+    assert "retry the source edit" not in user_text
+    assert "not run verification" not in user_text
     assert "Status: source mutation exists and needs verification" not in user_text
 
 
@@ -653,8 +662,9 @@ def test_salience_uses_trace_source_write_metadata(tmp_path: Path):
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "Status: source mutation exists and needs verification" in user_text
-    assert "patch paths: pkg/mod.py" in user_text
+    assert "Status: source mutation exists and needs verification" not in user_text
+    assert "pkg/mod.py" in user_text
+    assert "Recorded outcomes: unknown=2" in user_text
     assert "read/search loop without a recorded source mutation" not in user_text
     assert "Latest model intent says it is ready to edit" not in user_text
 
@@ -692,7 +702,8 @@ def test_salience_applied_edit_recap_phrase_is_not_edit_intent(tmp_path: Path):
     ctx._turn_count = 30
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "Status: source mutation exists and needs verification" in user_text
+    assert "Status: source mutation exists and needs verification" not in user_text
+    assert "recorded outcome: unknown" in user_text
     assert "Latest model intent says it is ready to edit" not in user_text
     assert "pending source mutation" not in user_text
 
@@ -786,16 +797,16 @@ def test_salience_post_verification_stall_contract(tmp_path: Path):
     ctx._turn_count = 60
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "Status: source mutation has been verified or probed" in user_text
-    assert "latest verification/probe step: 2" in user_text
-    assert "patch paths: pkg/mod.py, sympy/core/basic.py" in user_text
-    assert "repeated post-mutation inspections" in user_text
-    assert "remove unrelated compatibility/setup edits" in user_text
-    assert "call done if the current source patch is intended" in user_text
+    assert "Status: source mutation has been verified or probed" not in user_text
+    assert "pkg/mod.py" in user_text
+    assert "sympy/core/basic.py" in user_text
+    assert "recorded outcome: unknown" in user_text
+    assert "remove unrelated compatibility/setup edits" not in user_text
+    assert "call done if the current source patch is intended" not in user_text
     assert "Latest model intent says it is ready to edit" not in user_text
 
 
-def test_salience_repeated_verification_requires_revision(tmp_path: Path):
+def test_salience_repeated_verification_does_not_require_revision(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -838,14 +849,14 @@ def test_salience_repeated_verification_requires_revision(tmp_path: Path):
     ctx._turn_count = 60
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "source mutation already has repeated verification/probe results" in user_text
-    assert "verification/probe count after mutation: 5" in user_text
-    assert "repeated verification/probe commands" in user_text
-    assert "revise the source patch from the concrete failure" in user_text
-    assert "do not rerun the same verification/probe" in user_text
+    assert "source mutation already has repeated verification/probe results" not in user_text
+    assert "Consecutive identical displayed requests: 5" in user_text
+    assert "AssertionError: concrete failure" in user_text
+    assert "revise the source patch from the concrete failure" not in user_text
+    assert "do not rerun the same verification/probe" not in user_text
 
 
-def test_salience_env_blocker_discourages_setup_only_patch(tmp_path: Path):
+def test_salience_import_error_does_not_establish_environment_cause(tmp_path: Path):
     _write_state(tmp_path, {
         "state": {"current_attempt": "", "last_verify": "", "next_action": ""},
         "trace": [
@@ -880,8 +891,9 @@ def test_salience_env_blocker_discourages_setup_only_patch(tmp_path: Path):
     ctx._turn_count = 60
 
     user_text = ctx.get_messages()[1]["content"]
-    assert "verification blocker looks environmental" in user_text
-    assert "do not patch unrelated compatibility/import files" in user_text
+    assert "verification blocker looks environmental" not in user_text
+    assert "do not patch unrelated compatibility/import files" not in user_text
+    assert "ImportError: cannot import name" in user_text
 
 
 def test_salience_candidate_edit_ignores_exploratory_reasoning(tmp_path: Path):

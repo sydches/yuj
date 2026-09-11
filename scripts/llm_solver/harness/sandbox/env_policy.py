@@ -19,26 +19,40 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 import fnmatch
 import os
+import subprocess
 from types import MappingProxyType
 
 
 CORE_ENVIRONMENT_NAMES: tuple[str, ...] = ("PATH", "HOME", "LANG", "TERM")
-"""Names inherited by ``inherit = "core"`` when present in the host env."""
+"""Names inherited by ``inherit = "core"`` from the execution environment."""
+
+RUNTIME_ENVIRONMENT_NAMES: tuple[str, ...] = (
+    "XDG_CACHE_HOME",
+    "GOROOT", "GOPATH", "GOMODCACHE", "GOCACHE", "GOTOOLCHAIN",
+    "VIRTUAL_ENV", "CONDA_PREFIX", "PYTHONHOME", "PYTHONPATH",
+    "UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR",
+    "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "JAVA_HOME", "NODE_PATH",
+)
+"""Opt-in SDK locations, caches and toolchain selectors; see docs/sandbox.md.
+
+These names define permission, not discovered values or proof of installation.
+Do not inherit option strings, credential/setup payloads or arbitrary SDK-name
+prefixes. Unknown names stay out until their semantics have been reviewed.
+"""
 
 DEFAULT_EXCLUDED_NAME_PARTS: tuple[str, ...] = ("KEY", "SECRET", "TOKEN")
 """Case-insensitive substrings excluded from inherited values by default."""
 
 DEFAULT_FIXED_ENVIRONMENT: Mapping[str, str] = MappingProxyType({
     "FORCE_COLOR": "0",
-    "MPLCONFIGDIR": "/tmp/mpl",
     "NO_COLOR": "1",
     "PAGER": "cat",
     "PYTHONIOENCODING": "utf-8",
     "TERM": "dumb",
 })
-"""Historical deterministic command defaults now owned by ``sandbox.env``."""
+"""Non-interactive terminal defaults owned by ``sandbox.env``."""
 
-_INHERIT_MODES = frozenset({"all", "core", "none"})
+_INHERIT_MODES = frozenset({"all", "core", "runtime", "none"})
 _FILTER_ACTIONS = frozenset({"include", "exclude"})
 _POLICY_KEYS = frozenset({
     "inherit",
@@ -55,6 +69,73 @@ _active_environment: ContextVar[
 
 class EnvironmentPolicyError(ValueError):
     """Raised when an environment policy cannot be applied safely."""
+
+
+_READ_INITIAL_ENVIRONMENT = r'''while IFS= read -r -d '' entry; do
+    printf '%s\0' "$entry"
+done < /proc/self/environ'''
+
+
+def discover_execution_environment(*, sandbox: bool = True, cwd=None,
+                                   timeout=None, image_backend=None) -> dict[str, str]:
+    """Inspect the environment a command inherits at its execution boundary.
+
+    Read the entry process's original environment in the selected namespace
+    and identity, using the named-container guard or bound image builder.
+    Do not read shell profiles or substitute the harness host's environment
+    when the selected container is unavailable. Callers freeze the result for
+    the solve and apply EnvironmentPolicy before giving it to any command.
+    """
+    from . import AMBIENT_CONTAINER, container_mode
+
+    mode = container_mode() if sandbox else None
+    if not sandbox or image_backend is None and mode in (None, AMBIENT_CONTAINER):
+        return dict(os.environ)
+    from ..task_environment import discover_task_environment, TaskEnvironmentUnavailable
+    from ..process_identity import guarded_script_argv, ProcessIdentityError
+    from .._tools._run_in_sandbox import _execute
+    from ..time_budget import command_time_budget, execution_deadline, remaining_before
+    from .container_backend import ContainerBackendError
+    from ..container_binding import bind_container_image
+    try:
+        with command_time_budget(0 if timeout is None else timeout):
+            if image_backend is not None:
+                if mode is not None:
+                    raise EnvironmentPolicyError('image backend conflicts with YUJ_CONTAINER')
+                runtime = image_backend.resolve_runtime(sandbox_required=True)
+                bound = bind_container_image(image_backend, runtime)
+                argv = bound.build_argv(
+                    _READ_INITIAL_ENVIRONMENT, os.getcwd() if cwd is None else cwd,
+                    runtime_bin=runtime, _initial_environment=True,
+                )
+            else:
+                task = discover_task_environment(os.getcwd() if cwd is None else cwd)
+                argv = guarded_script_argv(
+                    ['docker', 'exec', '--workdir', task.working_directory, task.container_id],
+                    # Read procfs with builtins, avoiding shell-added values
+                    # and assumptions about an env utility's location.
+                    _READ_INITIAL_ENVIRONMENT,
+                    task.process_identity,
+                )
+            result = _execute(argv, timeout=remaining_before(execution_deadline()), binary=True)
+            if result.returncode:
+                raise EnvironmentPolicyError('container environment probe failed')
+    except (OSError, subprocess.SubprocessError, TaskEnvironmentUnavailable,
+            ProcessIdentityError, EnvironmentPolicyError, ContainerBackendError):
+        # Errors can contain command output, including environment secrets.
+        raise EnvironmentPolicyError(
+            "cannot inspect the selected container's execution environment"
+        ) from None
+    payload = result.stdout
+    if not isinstance(payload, bytes) or (payload and not payload.endswith(b"\0")):
+        raise EnvironmentPolicyError("invalid container environment response")
+    source: dict[str, str] = {}
+    for entry in payload.split(b"\0")[:-1]:
+        name, separator, value = entry.partition(b"=")
+        if not name or not separator or os.fsdecode(name) in source:
+            raise EnvironmentPolicyError("invalid container environment response")
+        source[os.fsdecode(name)] = os.fsdecode(value)
+    return source
 
 
 def _require_bool(value: object, *, field_name: str) -> bool:
@@ -205,21 +286,25 @@ class EnvironmentPolicy:
     ) -> dict[str, str]:
         """Return a validated, name-sorted environment mapping.
 
-        ``host_environment=None`` snapshots ``os.environ`` at call time.  A
-        caller should retain this result for the session rather than resolving
-        again before every command, so later host-process mutations cannot
-        change a run's command environment.
+        The historical ``host_environment`` argument accepts the inspected
+        execution environment. ``None`` snapshots ``os.environ`` for local
+        callers. Retain the result for the session rather than resolving again
+        before every command, so later mutations cannot change a run's
+        command environment.
         """
         source = _copy_environment(
             os.environ if host_environment is None else host_environment,
-            field_name="host environment",
+            field_name="execution environment",
         )
         if self.inherit == "all":
             effective = dict(source)
-        elif self.inherit == "core":
+        elif self.inherit in {"core", "runtime"}:
+            names = CORE_ENVIRONMENT_NAMES
+            if self.inherit == "runtime":
+                names += RUNTIME_ENVIRONMENT_NAMES
             effective = {
                 name: source[name]
-                for name in CORE_ENVIRONMENT_NAMES
+                for name in names
                 if name in source
             }
         else:

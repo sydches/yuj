@@ -33,10 +33,18 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         # cleanup transform. Filesystem enumeration order varies across
         # byte-identical worktree copies.
         matches = sorted(base.glob(pattern))
+        # An outside directory can contain aliases back into the task.
+        # Its entry names are still outside the permitted discovery scope.
         rel = [
             str(m.relative_to(root))
             for m in matches
             if m.is_file()
+            and m.resolve().is_relative_to(root)
+            and all(
+                parent.resolve().is_relative_to(root)
+                for parent in m.parents
+                if parent.is_relative_to(root)
+            )
             and (
                 policy is None
                 or not policy.is_ignored(m, is_dir=False)

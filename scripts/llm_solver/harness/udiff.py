@@ -244,6 +244,13 @@ def _resolved_target(cwd: Path, path: str) -> Path:
             f"path {path!r} is outside the working directory",
             kind="path_outside_cwd",
         )
+    from .task_path import bound_task_path
+    try:
+        bound = bound_task_path(str(cwd), path)
+        if bound is not None:
+            return bound
+    except (ValueError, OSError) as exc:
+        raise UnifiedDiffApplyError(str(exc), kind="path_outside_cwd") from exc
     target = (cwd / candidate).resolve()
     try:
         target.relative_to(cwd.resolve())

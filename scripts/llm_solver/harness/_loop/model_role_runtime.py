@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ...config import Config
+from ...context_allocation import declared_context
 from ...server.profile_loader import load_profile
 from .model_roles import (
     MAIN_MODEL_ROLE,
@@ -55,6 +56,8 @@ class SessionModelBinding:
             }
         fields = self.resolution.provenance_fields()
         fields["model_target"] = self.resolution.target.label()
+        if getattr(self.config, "context_allocation", None):
+            fields["context_allocation"] = self.config.context_allocation
         return fields
 
 
@@ -75,7 +78,11 @@ class ConsumerRoleClient:
     def trace_fields(self) -> dict[str, object]:
         if self.resolution is None:
             return {"role": MAIN_MODEL_ROLE}
-        return self.resolution.trace_fields()
+        fields = self.resolution.trace_fields()
+        allocation = getattr(getattr(self.client, "cfg", None), "context_allocation", None)
+        if allocation:
+            fields["context_allocation"] = allocation
+        return fields
 
 
 def _stored_attr(owner: Any, name: str, default: Any = None) -> Any:
@@ -89,18 +96,31 @@ def _stored_attr(owner: Any, name: str, default: Any = None) -> Any:
 def _target_config(cfg: Config, resolution: ResolvedModelRole) -> Config:
     """Build a complete endpoint config for one resolved role target."""
     target = resolution.target
-    context_size = int(target.context_size or cfg.context_size)
-    token_budget = int(context_size * cfg.context_fill_ratio)
-    return replace(
+    from ...context_allocation import allocate_context
+    target_cfg = replace(
         cfg,
         model=str(target.model or cfg.model),
         profile_name=target.profile_name,
         base_url=str(target.base_url or cfg.base_url),
         api_key=str(target.api_key or cfg.api_key),
-        context_size=context_size,
-        max_tokens=int(context_size * cfg.max_tokens_fraction),
-        recent_tool_results_chars=int(token_budget * 0.45 * 4),
-        max_output_chars=int(token_budget * 0.40 * 4),
+    )
+    return allocate_context(
+        target_cfg, profile=resolution.profile,
+        declared=target.declared_context_size or target.context_size,
+        source=target.context_source,
+    )
+
+
+def _bind_client_capacity(client: Any) -> None:
+    """Bind a newly constructed role client to its own backend capability."""
+    from ...context_allocation import allocate_context
+    query = getattr(client, "query_server_context", None)
+    try:
+        observed = query() if callable(query) else None
+    except Exception:
+        observed = None
+    client.cfg = allocate_context(
+        client.cfg, observed=observed, profile=getattr(client, "profile", None),
     )
 
 
@@ -129,7 +149,7 @@ def _effective_role_specs(cfg: Config, *, main_profile_name: str) -> dict[str, o
         "profile": main_profile_name,
         "model": getattr(cfg, "advisor_model", "") or cfg.model,
         "endpoint": getattr(cfg, "advisor_endpoint", "") or cfg.base_url,
-        "context_size": cfg.context_size,
+        "context_size": declared_context(cfg),
     }
     return specs
 
@@ -173,7 +193,7 @@ def build_model_role_runtime(
             model=cfg.model,
             base_url=cfg.base_url,
             api_key=cfg.api_key,
-            context_size=cfg.context_size,
+            context_size=declared_context(cfg),
         ),
         role_specs=_effective_role_specs(
             cfg, main_profile_name=main_profile_name
@@ -197,6 +217,7 @@ def build_model_role_runtime(
         role_client = client_factory(
             _target_config(active_cfg, resolution), resolution.profile
         )
+        _bind_client_capacity(role_client)
         session_id = str(getattr(main_client, "_session_id", "") or "")
         if session_id and hasattr(role_client, "set_session_id"):
             role_client.set_session_id(session_id)
@@ -220,11 +241,13 @@ def build_model_role_runtime(
                 model=base_target.model,
                 base_url=base_target.base_url,
                 api_key=base_target.api_key,
-                context_size=base_target.context_size,
+                context_size=base_target.declared_context_size or base_target.context_size,
             ),
         )
         child_cfg = _target_config(active_cfg, resolution)
         child_client = client_factory(child_cfg, resolution.profile)
+        _bind_client_capacity(child_client)
+        child_cfg = child_client.cfg
         parent_session_id = str(
             _stored_attr(parent_client, "_session_id", "") or ""
         )
@@ -272,7 +295,7 @@ def validate_model_role_profiles(
             model=cfg.model,
             base_url=cfg.base_url,
             api_key=cfg.api_key,
-            context_size=cfg.context_size,
+            context_size=declared_context(cfg),
         ),
         role_specs=_effective_role_specs(
             cfg, main_profile_name=main_profile_name
@@ -308,12 +331,16 @@ def consumer_role_client(owner: Any, role: str = "weak") -> ConsumerRoleClient:
         direct_client, "_model_role_router"
     )
     if router is None:
+        from ..request_counting import observe_role_counter
+        observe_role_counter(owner, direct_client, MAIN_MODEL_ROLE)
         return ConsumerRoleClient(direct_client, requested_role=role)
     routed: ResolvedRoleClient = router.client_for(role)
+    from ..request_counting import observe_role_counter
+    observe_role_counter(owner, routed.client, routed.resolution.effective_role)
     return ConsumerRoleClient(
         routed.client,
         requested_role=role,
-        resolution=routed.resolution,
+        resolution=resolution_with_client_context(routed),
     )
 
 

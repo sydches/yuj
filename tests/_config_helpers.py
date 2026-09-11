@@ -96,17 +96,19 @@ def _defaults() -> dict:
             "read relative to it.]"
         ),
         test_read_nudge=(
-            "[HARNESS: ran verification {count} time(s) without reading the "
-            "target test file ({target}). Read the test before more checks.]"
+            "[HARNESS: {count} completed {runner} invocation(s) requested selector {target} ({kind}) "
+            "with unchanged recorded inspection: {coverage}. Inspect relevant assertions or project "
+            "check guidance if it would help diagnosis. This record does not establish understanding "
+            "or per-test execution.]"
         ),
         contract_commit_warn=(
-            "[HARNESS: source file {source} is already in view. Choose a "
-            "concrete next move: mutate a file, read a test file, or run "
+            "[HARNESS: file {source} is already in view. Choose a "
+            "concrete next move: edit a file, inspect a relevant file, or run "
             "verification. Do not continue broad inspection.]"
         ),
         contract_commit_block=(
             "[HARNESS: commit contract active from {source}. This tool call "
-            "was not executed. Allowed next moves: mutate a file, read a test "
+            "was not executed. Allowed next moves: edit a file, inspect a relevant "
             "file, or run verification.]"
         ),
         contract_recovery_block=(

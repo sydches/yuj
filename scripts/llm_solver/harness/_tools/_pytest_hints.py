@@ -9,13 +9,9 @@ _PYTEST_COMMAND_NOT_FOUND_RE = re.compile(
 
 
 def _pytest_path_missing(out: str, exit_code: int | None) -> bool:
-    """True iff pytest just refused because the target path is absent.
+    """Match a pytest-shaped missing-path message with usage-error status.
 
-    pytest exit code 4 is "usage error". The combination of code 4 plus
-    the verbatim ``ERROR: file or directory not found:`` and ``no tests
-    ran`` strings is pytest's own signal that the test path doesn't
-    exist. Triggering off pytest's own output is leakage-clean — no
-    F2P-set knowledge required.
+    Copied output can match; this does not prove which path is absent.
     """
     if exit_code != 4:
         return False
@@ -24,16 +20,12 @@ def _pytest_path_missing(out: str, exit_code: int | None) -> bool:
 
 
 def _pytest_binary_missing(out: str, exit_code: int | None) -> bool:
-    """True iff `python -m pytest` couldn't even start.
+    """Match runner lookup text from a known failed result.
 
-    Distinct from path-missing: this fires when the shell or python
-    interpreter rejects the invocation itself. Two shapes:
-      * exit 127 naming missing ``python`` or ``pytest`` → no test
-        runner on PATH
-      * any exit + ``No module named pytest`` → wrong python (no pytest
-        installed in that interpreter)
-    Both indicate the canonical fix is "use the task's own python".
+    This pattern is not native evidence of executable or module availability.
     """
+    if exit_code in (0, None):
+        return False
     if "No module named pytest" in out:
         return True
     return (

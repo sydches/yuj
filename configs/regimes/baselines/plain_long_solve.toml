@@ -15,6 +15,10 @@
 #   end naturally as context_full rather than receiving a harness summary
 
 [loop]
+# The plain arm permits prose without a narration interrupt.
+reply_mode = "conversation"
+# Override the shared default: the plain arm adds no verification gate.
+post_mutation_verification_gate_after = 0
 max_turns = 250
 max_sessions = 1
 max_transient_retries = 1
@@ -76,8 +80,11 @@ contract_abort_min_turns_since_recovery_arm = 0
 contract_abort_requires_zero_mutation = false
 contract_equivalent_action_classes_enabled = false
 
-# Keep universal bash rewrites off in the plain settings. A later settings
-# file may turn them on explicitly.
+# The plain arm disables command rewrites. A composed treatment must declare
+# whether it includes them; do not enable a companion transformation merely
+# because the stack is called treatment. An explicit transformations table
+# owns the switch. Legacy stacks can select treatment/bash_rewrites.toml
+# after this layer when their declared comparison includes rewrites.
 bash_transforms_universal_enabled = false
 # Keep the pre-flight re-clip backstop off in the plain settings.
 preflight_reclip_enabled = false
@@ -157,6 +164,8 @@ compound_selective_resolved_source_anchor_lines = 0
 compound_selective_resolved_test_anchor_lines = 0
 
 [tools]
+# Override the shared default: the plain arm adds no stale-file guard.
+stale_guard_mode = "off"
 bash_timeout = 120
 grep_timeout = 30
 pretest_timeout = 240

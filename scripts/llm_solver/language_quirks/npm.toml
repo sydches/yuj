@@ -1,0 +1,48 @@
+name = "npm"
+description = "The project's declared package.json test script"
+verification_patterns = ['''(?:^|[\s/'"])(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b''']
+
+[[detection]]
+path = "package.json"
+format = "json"
+field = ["scripts", "test"]
+pattern = '\S'
+
+[runtime]
+executables = ["npm"]
+manager_declaration = "packageManager"
+manager_file = "package.json"
+manager_commands = ["npm", "pnpm", "yarn"]
+probe_args = ["--version"]
+command_args = ["run", "test"]
+environment = {COREPACK_ENABLE_NETWORK = "0", COREPACK_ENABLE_DOWNLOAD_PROMPT = "0"}
+
+[run_tests]
+detection_priority = 5
+detect_files = ["package.json"]
+base_cmd = "npm run test"
+# Test-script argument conventions belong to that script. Never send Jest
+# flags or silently reinterpret a file path as a script-specific argument.
+arg_path_style = "ignored"
+reject_unsupported_filters = true
+component_fallback = "suite"
+status_default = "failed"
+
+[run_tests.status_map]
+0 = "passed"
+
+# Requested CLI grammar only; it does not establish execution or coverage.
+
+[[diagnostic_invocations]]
+family = "npm_script"
+opaque_arguments = true
+prefix = ["npm|pnpm|yarn", "test"]
+flags = []
+value_options = []
+
+[[diagnostic_invocations]]
+family = "npm_script"
+opaque_arguments = true
+prefix = ["npm|pnpm|yarn", "run", "test"]
+flags = []
+value_options = []

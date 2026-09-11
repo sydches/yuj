@@ -6,7 +6,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import ANY, MagicMock, patch, PropertyMock
 
 import openai
 import pytest
@@ -47,7 +47,7 @@ class TestSessionRun:
         assert result.finish_reason == "stop"
         assert client.chat.call_count == 1
 
-    def test_session_duplicate_abort(self):
+    def test_duplicate_calls_do_not_abort_session(self):
         from llm_solver.harness.loop import Session
         cfg = make_config(max_turns=10, duplicate_abort=3)
         client = MagicMock()
@@ -59,7 +59,8 @@ class TestSessionRun:
             session = Session(cfg, client, "sys", "prompt", "/tmp")
             result = session.run()
 
-        assert result.finish_reason == "duplicate_abort"
+        assert result.finish_reason == "max_turns"
+        assert client.chat.call_count == cfg.max_turns
         assert result.done is False
 
     def test_session_context_full(self):
@@ -612,7 +613,7 @@ def test_solve_task_commits_before_propagating_signal_exit(tmp_path):
 
     (tmp_path / "prompt.txt").write_text("fix bug")
     client = MagicMock()
-    cfg = make_config(max_turns=5, max_sessions=1)
+    cfg = make_config(max_turns=5, max_sessions=1, auto_commit=True)
 
     with patch.object(Session, "run", side_effect=SystemExit(143)):
         with patch("llm_solver.harness.loop._auto_commit") as mock_commit:
@@ -620,7 +621,7 @@ def test_solve_task_commits_before_propagating_signal_exit(tmp_path):
                 solve_task(tmp_path, cfg, client)
 
     assert raised.value.code == 143
-    mock_commit.assert_called_once_with(tmp_path, 1, "signal")
+    mock_commit.assert_called_once_with(tmp_path, 1, "signal", enabled=True, file_scope=ANY)
 
 
 def test_solve_task_does_not_retry_a_missing_sandbox_as_a_new_session(tmp_path):
@@ -640,4 +641,4 @@ def test_solve_task_does_not_retry_a_missing_sandbox_as_a_new_session(tmp_path):
 
     assert ok is False
     assert mock_run.call_count == 1
-    mock_commit.assert_called_once_with(tmp_path, 1, "sandbox_unavailable")
+    mock_commit.assert_called_once_with(tmp_path, 1, "sandbox_unavailable", enabled=False, file_scope=ANY)

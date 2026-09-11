@@ -7,11 +7,28 @@
 # patterns as the definition of "verification command" for the run.
 
 name = "cargo"
+non_execution_flags = ["--help", "-h", "--version"]
+non_test_check_flags = ["--no-run"]
 description = "Rust cargo test/check/build invocations"
-
 verification_patterns = [
     '''(?:^|[\s/'"])cargo\s+(?:test|check|build|clippy)\b''',
 ]
+
+[[detection]]
+path = "Cargo.toml"
+format = "toml"
+section = ["package"]
+
+[[detection]]
+path = "Cargo.toml"
+format = "toml"
+section = ["workspace"]
+
+[runtime]
+executables = ["cargo"]
+probe_args = ["--version"]
+command_args = ["test", "--no-fail-fast", "--quiet"]
+environment = {RUSTUP_AUTO_INSTALL = "0"}
 
 [output_control]
 failure_only_flag = ""
@@ -28,11 +45,8 @@ ignored = '''(\d+)\s+ignored'''
 
 [output_parser.per_test]
 # Per-subtest lines: `test <path::name> ... <verdict>` where verdict is
-# ok|FAILED|ignored. Emitted verdicts are preserved as-is (uppercased);
-# consumers that need PASSED/FAILED/ERROR canonical strings will need a
-# verdict-normalization map in parse_structured (not wired yet — pytest
-# already emits canonical literals, so normalization stays deferred until
-# a non-pytest run needs done-parity mode).
+# ok|FAILED|ignored. Map the emitted words to shared internal states here.
+verdict_map = { ok = "PASSED", FAILED = "FAILED", ignored = "SKIPPED" }
 regex = '''^test\s+(?P<test_id>\S+)\s+\.{3}\s+(?P<verdict>ok|FAILED|ignored)'''
 
 # How run_tests should invoke this runner when the repo is detected as
@@ -67,3 +81,11 @@ status_default = "failed"
 [run_tests.status_map]
 0 = "passed"
 101 = "failed"
+
+# Requested CLI grammar only; it does not establish execution or coverage.
+
+[[diagnostic_invocations]]
+family = "cargo"
+prefix = ["cargo", "test"]
+flags = ["--release", "--all", "--workspace", "--lib", "--bins", "--tests", "--all-features", "--no-default-features"]
+value_options = ["-p", "--package", "--test", "--bin", "--features", "--target", "--manifest-path", "-j", "--jobs"]

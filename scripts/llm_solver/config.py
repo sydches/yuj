@@ -231,24 +231,25 @@ class Config:
     resume_last_n_actions: int
     tool_desc: str = "minimal"
     post_mutation_verification_nudge: str = (
-        "[HARNESS: If this change affects executable behavior, after focused "
-        "checks pass, run the changed component's complete existing test file "
-        "or package suite. Before declaring done, run the repository's full "
-        "test suite when feasible. If that is unavailable or impractical, "
-        "state the limitation. Target tests and custom reproducers are not "
-        "sufficient regression coverage.]"
+        "[HARNESS: Verify the change against the task's requirements. Use relevant "
+        "existing project checks when available, and consider broader regression "
+        "checks when warranted. Report what ran and any coverage limits; a passing "
+        "command does not establish the whole task's correctness.]"
     )
     post_mutation_verification_gate: str = (
-        "[HARNESS: Automatic component verification could not identify one "
-        "unambiguous existing target. Run the changed component's complete "
-        "existing test file or package suite with its registered test runner.]"
+        "[HARNESS: Automatic verification did not identify one unambiguous conventional "
+        "component target in the inspected scope. Use the task's requested checks "
+        "and available project guidance. Report missing or ambiguous checks; this "
+        "result does not establish that no suite exists.]"
     )
     done_reject_no_formal_verification: str = (
-        "REJECTED: No passing registered test-runner command since the last "
-        "source change. Run the changed component's complete existing test "
-        "file or package suite. Custom scripts and reproducers do not satisfy "
-        "this requirement."
+        "REJECTED: No passing check recorded for the latest source change. Run a "
+        "relevant check using the task's requirements and available project guidance. "
+        "Registered runners and custom checks both count as execution evidence; "
+        "neither proves full task coverage."
     )
+    # Commit the whole dirty task tree at session boundaries only when requested.
+    auto_commit: bool = False
     # Operator/guardrail rewind of the canonical model-facing conversation
     # together with its shadow-Git workspace checkpoint. Off by default.
     rewind_enabled: bool = False
@@ -261,7 +262,7 @@ class Config:
     narration_redirect: str = ""
     project_docs_enabled: bool = False
     project_doc_names: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md")
-    project_doc_max_bytes: int = 32768
+    project_doc_max_bytes: int = 0
     project_root_markers: tuple[str, ...] = (".git", ".hg", ".sl")
     project_doc_global_dir: str = "~/.config/yuj"
     imports_enabled: bool = True
@@ -277,6 +278,9 @@ class Config:
     # Effective, validated roots fixed by startup discovery. This is not a
     # user knob: it lets read and shell sandboxes expose only loaded skills.
     skills_readable_dirs: tuple[str, ...] = ()
+    # Startup observation, not a user knob or a benchmark-supplied answer.
+    runtime_test_selection: dict[str, object] | None = None
+    context_allocation: dict[str, object] | None = None
     prompt_addendum: str = ""
     variant_name: str = ""
     runtime_mode: str = "measurement"
@@ -323,13 +327,14 @@ class Config:
     # and by the sink-and-surface mechanism in loop.py. Kept in config per
     # the SoD anti-pattern "prompt text in harness code" — harness code
     # should carry no model-facing text directly.
-    done_reject_no_mutation: str = "REJECTED: No code changes since session start. Use the selected file-edit tool to modify the code, then call done."
+    done_reject_no_mutation: str = "REJECTED: No task-file change has been recorded in this session. This does not prove that files are unchanged. Establish the required change through an observed task action before calling done."
     done_reject_no_verify: str = "REJECTED: No successful verification since the last code change. Either run_tests must report status=\"passed\", or a bash command must exit 0 with substantial output (>200 chars). Then call done."
     done_loop_abort_after: int = 5
     done_loop_abort_text: str = "Session ended: {n} consecutive done() rejections. Your current code has been preserved as the final patch."
-    done_reject_parity_no_run: str = "REJECTED: done_require_pretest_parity is on but no structured test run has been observed yet. Run the test suite first."
+    done_reject_parity_no_run: str = "REJECTED: Pretest parity is required, but the latest observed check has no per-test results, or no check has been observed. Obtain results covering the recorded baseline tests."
     done_reject_parity_still_failing: str = "REJECTED: pretest-failing tests not yet passing: {shown}{extra}"
     done_reject_parity_regression: str = "REJECTED: regression — previously-passing tests now failing: {shown}{extra}"
+    done_reject_parity_unverified: str = "REJECTED: Pretest parity remains unverified for previously-passing tests: {shown}{extra}. The latest results omit these tests or do not report a pass or failure. Obtain their results before claiming parity."
     done_reject_parity_streak: str = "REJECTED: pretest parity observed {count} time(s); need {required}. Run tests again to confirm."
     rumination_gate_grace_prefix: str = "[HARNESS: Gate armed. Next call must mutate a file — all else blocked.]"
     pre_mutation_gate: str = "[HARNESS: {turn_number} read-only turns elapsed without a file mutation; the next tool call must use the selected file-edit tool, run a bash command that mutates a source file, or call done(). This call was not executed.]"
@@ -364,11 +369,11 @@ class Config:
     rumination_nudge_only_pre_mutation: bool = False  # When True, suppress nudge entirely after state.has_mutated=True. Equivalent to post_mutation_threshold = infinity.
     rumination_same_target_warn_count: int = 0  # Repeated same-target non-write calls before same-target nudge (0 = disabled).
     rumination_same_target_arm_count: int = 0  # Repeated same-target non-write calls before arming the rumination gate (0 = disabled).
-    test_read_warn_after: int = 0  # Verification runs without reading the target test file before nudging (0 = disabled).
+    test_read_warn_after: int = 0  # Completed runner invocations per selector and inspection state before advice (0 = disabled).
     post_mutation_verification_gate_after: int = 0  # Custom executable checks allowed before one automatic component run for the current source revision (0 = disabled).
     context_inspect_repeat_threshold: int = 0  # Repeated inspect actions before concise/yconcise switch to an exit-inspect obligation (0 = disabled).
-    contract_commit_warn_after: int = 0  # After a source-file read, warn on non-commit actions after N violations (0 = disabled).
-    contract_commit_block_after: int = 0  # After a source-file read, block non-commit actions after N violations (0 = disabled).
+    contract_commit_warn_after: int = 0  # After a file read, warn on broad exploration after N violations (0 = disabled).
+    contract_commit_block_after: int = 0  # After a file read, block broad exploration after N violations (0 = disabled).
     contract_recovery_same_target_threshold: int = 0  # Activate recovery after N same-target non-write actions (0 = disabled).
     contract_recovery_verify_repeat_threshold: int = 0  # Activate recovery after N verify runs against the same target without mutation (0 = disabled).
     contract_invalid_repeat_abort_after: int = 0  # End session after N repeated blocked contract violations with the same target/signature (0 = disabled).
@@ -379,8 +384,8 @@ class Config:
     mutation_repeat_warn_after: int = 0  # Warn when repeating the same successful mutation N times in a row (0 = disabled).
     mutation_repeat_block_after: int = 0  # Block when repeating the same successful mutation N times in a row (0 = disabled).
     mutation_repeat_abort_after: int = 0  # End session after N blocked identical mutation retries (0 = disabled).
-    duplicate_warn_count: int = 0  # append warning text at N identical consecutive calls (0 = disabled)
-    duplicate_warn: str = "[harness: {count} identical tool calls in a row. Change approach.]"
+    duplicate_warn_count: int = 0  # warn after N identical completed observations (0 = disabled)
+    duplicate_warn: str = "[harness: {count} identical completed observations in a row. Review whether another query is needed.]"
     error_abort_threshold: int = 0  # end session after N consecutive errors of any kind (0 = disabled)
     error_same_class_threshold: int = 0  # end session after N errors with the same signature (exit code or first-token error string), regardless of interleaved non-error turns. 0 = disabled. Catches the "model repeats the same wrong fix" pattern that error_abort_threshold misses because intervening mutation calls reset its counter.
     intent_abort_threshold: int = 0  # end session after N consecutive silent intent-gate rejections (0 = disabled)
@@ -409,7 +414,7 @@ class Config:
     )
     tools_run_tests_enabled: bool = False
     # Allow long package setup and collection before a test run times out.
-    tools_run_tests_timeout: int = 240
+    tools_run_tests_timeout: int = 0
     # Failing-assertion source-context auto-extraction (run_tests.py:158).
     # On `failed` / `collection_error` verdicts, parse pytest --tb=short
     # frames and append a snippet of surrounding source so the model
@@ -467,7 +472,7 @@ class Config:
     tools_todos_max_items: int = 20
     tools_background_enabled: bool = False
     tools_background_max_procs: int = 4
-    tools_background_poll_timeout: float = 300.0
+    tools_background_poll_timeout: float = 0.0
     tools_terminal_enabled: bool = False
     tools_terminal_read_timeout: float = 5.0
     tools_terminal_max_lifetime: float = 900.0
@@ -503,7 +508,6 @@ class Config:
     sandbox_env_inherit: str = "core"
     sandbox_env_set: dict[str, str] = field(default_factory=lambda: {
         "FORCE_COLOR": "0",
-        "MPLCONFIGDIR": "/tmp/mpl",
         "NO_COLOR": "1",
         "PAGER": "cat",
         "PYTHONIOENCODING": "utf-8",
@@ -716,10 +720,10 @@ class Config:
     # ── Guardrail internals surfaced from hardcoded values.
     rumination_gate_grace_calls: int = 1       # warned non-write calls allowed before full blocking
     rumination_min_threshold: int = 6          # absolute floor on the derived rumination nudge threshold
-    done_require_mutation: bool = True         # done_guard: accept only after at least one successful mutation
+    done_require_mutation: bool = True         # done_guard: require recorded task-file mutation activity
     done_require_verify: bool = True           # done_guard: accept only after verified_since_mutation flipped
-    done_verified_bash_min_chars: int = 200    # content-blind threshold for "substantial" bash run that counts as verification
-    done_require_pretest_parity: bool = False  # done_guard: accept only when latest test run matches the pretest-failing set now PASSED and no pretest-passing regressed (requires [output_parser])
+    done_verified_bash_min_chars: int = 200    # retired; retained to load historical configurations
+    done_require_pretest_parity: bool = False  # done_guard: require reported passes for both recorded baseline sets (requires [output_parser])
     done_parity_runs_required: int = 1         # number of consecutive parity-green runs required before done accepts (guards against flakiness)
     # ── Adaptive policy controller (config-driven phase switch).
     adaptive_policy_enabled: bool = False

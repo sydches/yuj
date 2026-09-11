@@ -93,15 +93,16 @@ cache_miss_warn_ratio = 0.0            # warn after the first turn below this hi
 [model]
 name = "qwen3-vl-8b"       # model identifier sent to the server; must match --model or alias
 profile_name = "_base"      # exact profile or unique family; _base is the public compatibility profile
-context_size = 40960        # FALLBACK ONLY. The harness queries llama-server's /props at session start and overwrites this with the live n_ctx_per_slot. Used only when /props is unreachable (e.g. tests, dry-run).
+context_size = 40960        # declared allowance; known backend/profile capacities may constrain it, never enlarge it
 context_fill_ratio = 0.95   # Usable prompt wall vs context_size. After normal rendering/halflife, the harness tries one targeted re-clip and then one digest before ending context_full.
 max_tokens_fraction = 0.25  # generation cap as a fraction of context_size. At ctx=65,536 → max_tokens=16,384 (preserves prior default). Scales correctly when context_size changes — a 32k server gets 8k generation cap, a 128k server gets 32k. Replaces the hardcoded max_tokens=16384 which was wrong-shape at any ctx ≠ 65,536.
-tokenizer_id = ""            # optional Hugging Face tokenizer ID or local path; empty uses the character-count estimate. Runtime files set this for exact experiment runs.
+tokenizer_id = "auto"                 # Use the active backend's request counter. Unsupported backends report an estimate. An explicit HF id/path or empty string retains legacy estimation.
 thinking_level = "off"        # off | minimal | low | medium | high | xhigh | max; profile mapping is applied per request
 
 [loop]
-max_turns = 200             # hard cap on tool-call turns per session before forced session end
+max_turns = 200             # maximum loop iterations per session; separate request, token and time controls still apply
 max_sessions = 10           # max session restarts (each session gets fresh context)
+auto_commit = false         # opt in to committing the whole dirty task tree at session boundaries
 plan_mode = "off"           # off | required; required enforces a read-only planning phase before implementation
 plan_mode_max_turns = 15     # model turns allowed for inspection before only the plan write and explicit exit remain available
 # Conversation + workspace rewind. Rewind snapshots are harness-owned and
@@ -125,7 +126,7 @@ stream_rules_enabled = false
 stream_rules_dir = ".harness/stream_rules"
 stream_rules_context_mode = "discard"  # discard | keep; partial assistant text on interrupt
 stream_rules_repeat_gap = 10            # completed logical turns between after-gap injections
-duplicate_abort = 3         # abort session after N identical consecutive tool calls
+duplicate_abort = 3         # end after N matching completed observation batches
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
 retry_backoff = [10]        # seconds between retries (index = attempt number)
 error_nudge_threshold = 3   # inject a "re-read the file" nudge after N consecutive tool errors
@@ -136,10 +137,10 @@ preflight_reclip_enabled = true  # First step of the post-halflife fit gate: re-
 transform_log_mode = "counts"  # counts | debug. Debug also saves complete before/after text beside the savings ledger; it can retain text that later redaction removes.
 pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls after N orientation turns if no mutation has occurred. 0 = disabled (default). Opt in via configs/toggles/orientation-cap-15.toml.
 # Symmetric to error_nudge: after N consecutive non-mutation tool calls,
-# append a strong directive and activate the rumination gate that rejects
-# non-mutation calls until a successful mutation clears it. Also pauses
-# duplicate_abort while armed so the
-# two protections don't fight.
+# queue a strong directive for the next synthetic user turn and activate the
+# rumination gate that rejects
+# non-mutation calls until a successful mutation clears it. Blocked calls
+# carry no completed observation and cannot drive the duplicate limit.
 #
 # Value is a PERCENTAGE of max_turns (e.g. 20 = 20%). Derived to an
 # absolute turn count at session init: threshold = max_turns * N / 100.
@@ -159,11 +160,13 @@ rumination_gate_max_blocks = 5
 rumination_same_target_warn_count = 0
 rumination_same_target_arm_count = 0
 test_read_warn_after = 0
-# After this many post-mutation shell calls that do not invoke a registered
-# test runner, run the mechanically identified component test target once and
+# After this many completed literal runtime/custom executable calls after an edit,
+# run the conventional component test target once and
 # put its bounded result in the current tool output. Run it again only after a
 # later source edit.
-# 0 disables both this automatic run and its first-edit advice.
+# 0 disables the automatic run, its advice and its native-check completion rule.
+# Execution facts reject skipped calls. Timing and target policy remain under audit 051.
+# Provenance and limits: docs/knob_reference/loop.md.
 post_mutation_verification_gate_after = 3
 context_inspect_repeat_threshold = 0
 contract_commit_warn_after = 0
@@ -280,8 +283,8 @@ digest_keep_recent_turns = 8
 digest_compaction_gate_min_mutations = 0  # 0 allows last-resort recovery before any edit; 1+ requires that many completed mutations
 # Append a deterministic ranked file/symbol map to the first task message.
 # Zero keeps the existing prompt byte-for-byte unchanged.  Enabled maps use
-# the configured local tokenizer, active profile estimator, or documented
-# chars/4 fallback as a hard incremental token budget.
+# the active request counter, or an explicit estimate when unavailable, to
+# limit the map's incremental token cost.
 repo_map_tokens = 0
 # auto: reuse a cache while source paths/sizes/mtimes match; always: rebuild;
 # files: content-hash source files before reuse; manual: reuse any valid cache.
@@ -310,7 +313,7 @@ max_state_snapshots = 24
 prompt_version = "llm_hurdle_detector_prompt_v2"
 
 [tools]
-bash_timeout = 120          # seconds before a bash tool call is killed
+bash_timeout = 0            # optional per-call ceiling; zero uses remaining declared run time, or no timer if none is declared
 grep_timeout = 30           # seconds before a grep tool call is killed
 # Optional side-effect-free scratchpad tool. The call remains in raw trace;
 # context projections remove its argument after this many subsequent turns.
@@ -371,7 +374,7 @@ todos_max_items = 20
 # output channel; every live child is terminated when the session ends.
 background_enabled = false
 background_max_procs = 4
-background_poll_timeout = 300  # seconds; caps each bash_poll wait
+background_poll_timeout = 0  # no additional cap; explicit waits share remaining run time
 # One assistant-only pseudo-terminal. Output is drained to a capped local log
 # and returned only by terminal_io; the process never owns the operator TTY.
 terminal_enabled = false
@@ -442,10 +445,10 @@ bwrap_bin = "/usr/bin/bwrap"
 # entries `tools.run_tests.*` for blast-radius and tag metadata.
 [tools.run_tests]
 enabled = false
-# Allow time for large packages to build and for slow test suites to start.
-# A 60-second limit stopped some valid tests before they finished.
-# Keep this value aligned with the default in config.py.
-timeout = 240              # seconds before pytest is killed
+# Optional per-call cap, combined with the remaining solve-invocation budget.
+# Zero adds no separate cap. With no run deadline either, execution has no
+# time-based cutoff. See docs/configuration.md.
+timeout = 0
 # Structured output protocol (default on). When true, run_tests wraps
 # its result in <test_results status="..." exit_code="N">…</test_results>
 # where status is one of {passed, failed, collection_error,
@@ -597,11 +600,15 @@ variant_name = ""          # tag for this experiment variant (appears in provena
 tool_desc = "minimal"      # tool description mode; only "minimal" is shipped
 
 # ---------------------------------------------------------------------------
-# Task-format metadata
+# Runner discovery and output analysis
 # ---------------------------------------------------------------------------
-# Set the default task format. Override it with --task-format.
+# At startup, auto selects analysis metadata from permitted project
+# declarations. Unknown or ambiguous tasks use generic analysis.
+# Executable availability is checked separately before automatic checks.
+# A concrete name is an explicit task-contract request, not an observed fact.
+# Offline analysis CLIs also provide their own --task-format option.
 [analysis]
-task_format = "pytest"     # default task format
+task_format = "auto"       # discover the task runner; unknown tasks use generic analysis
 
 # ---------------------------------------------------------------------------
 # Harness prompt fragments — injected at session boundaries and gates.
@@ -614,10 +621,11 @@ task_format = "pytest"     # default task format
 handoff_max_tokens = 2000  # maximum validated model-written handoff size
 # Repository instruction discovery is an opt-in treatment. When enabled, Yuj
 # reads one non-empty override/default file from the global directory and each
-# directory from the project root to the task cwd, bounded by UTF-8 bytes.
+# directory from the project root to the task cwd. A positive optional byte
+# ceiling rejects oversized chains without truncating instructions.
 project_docs_enabled = false
 project_doc_names = ["AGENTS.md", "CLAUDE.md"]
-project_doc_max_bytes = 32768
+project_doc_max_bytes = 0  # no independent byte ceiling; never truncate required instructions
 project_root_markers = [".git", ".hg", ".sl"]
 project_doc_global_dir = "~/.config/yuj"
 # Arm-file imports existed before this switch, so true preserves that public
@@ -675,15 +683,15 @@ rumination_gate = "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked 
 # command target has been inspected repeatedly without a file mutation.
 rumination_same_target_nudge = "[HARNESS: same target hit {count} times without a file mutation ({target}). Stop rereading it; mutate, verify, or move to a different target.]"
 rumination_outside_cwd_nudge = "[HARNESS: repeated inspection is anchored outside the repo root ({target}). The working directory is already correct; search and read relative to it.]"
-test_read_nudge = "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]"
+test_read_nudge = "[HARNESS: {count} completed {runner} invocation(s) requested selector {target} ({kind}) with unchanged recorded inspection: {coverage}. Inspect relevant assertions or project check guidance if it would help diagnosis. This record does not establish understanding or per-test execution.]"
 
-# Delivered once in the next synthetic user turn after Yuj starts one
-# automatic component run. Empty text disables the advice.
-post_mutation_verification_nudge = "[HARNESS: If this change affects executable behavior, after focused checks pass, run the changed component's complete existing test file or package suite. Before declaring done, run the repository's full test suite when feasible. If that is unavailable or impractical, state the limitation. Target tests and custom reproducers are not sufficient regression coverage.]"
-post_mutation_verification_gate = "[HARNESS: Automatic component verification could not identify one unambiguous existing target. Run the changed component's complete existing test file or package suite with its registered test runner.]"
-done_reject_no_formal_verification = "REJECTED: No passing registered test-runner command since the last source change. Run the changed component's complete existing test file or package suite. Custom scripts and reproducers do not satisfy this requirement."
-contract_commit_warn = "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]"
-contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]"
+# Delivered once in the next synthetic user turn after an available automatic
+# component verification run. Empty text disables the advice.
+post_mutation_verification_nudge = "[HARNESS: Verify the change against the task's requirements. Use relevant existing project checks when available, and consider broader regression checks when warranted. Report what ran and any coverage limits; a passing command does not establish the whole task's correctness.]"
+post_mutation_verification_gate = "[HARNESS: Automatic verification did not identify one unambiguous conventional component target in the inspected scope. Use the task's requested checks and available project guidance. Report missing or ambiguous checks; this result does not establish that no suite exists.]"
+done_reject_no_formal_verification = "REJECTED: No passing check recorded for the latest source change. Run a relevant check using the task's requirements and available project guidance. Registered runners and custom checks both count as execution evidence; neither proves full task coverage."
+contract_commit_warn = "[HARNESS: file {source} is already in view. Choose a concrete next move: edit a file, inspect a relevant file, or run verification. Do not continue broad inspection.]"
+contract_commit_block = "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit a file, inspect a relevant file, or run verification.]"
 contract_recovery_block = "[HARNESS: recovery mode for {reason} ({target}). This tool call was not executed. Allowed next moves: read a concrete file, mutate a file, or run verification.]"
 
 # Appended to read() tool result when the caller's `limit` capped the
@@ -719,7 +727,7 @@ sink_pointer = '<tool_result_meta truncated="true" original_bytes="{chars}" orig
 sink_body_marker = "... [body truncated — full output available via full_path attribute] ..."
 
 # Session-end reason messages. {var} placeholders are filled at runtime.
-resume_duplicate_abort = "Last {n} calls identical: {call}. Change approach."
+resume_duplicate_abort = "Previous session reached its declared repetition limit. Recent request: {call}. Review whether that work needs repeating."
 resume_context_full = "Context {pct}% full. Fresh session."
 resume_max_turns = "Last {n} actions: {actions}. Budget exhausted — finish the most critical work."
 resume_length = "Response truncated. Use shorter responses."
@@ -753,6 +761,12 @@ todos_char_budget = 2000
 backend = "bwrap"                 # none | auto | bwrap | docker | podman
 container_image = ""              # required when Docker or Podman resolves
 container_flags = []              # fail-closed resource/metadata allowlist
+# The task/preparation owner declares any additional private paths in its
+# trusted configuration. Do not infer answer locations from benchmark names
+# or a development machine's directory layout. Default isolation admits only
+# the task and observed runtime resources; these masks further restrict it.
+# Entries support environment/user expansion, globs and optional: for paths
+# whose absence is legitimate. Use a directory entry to hide an entire tree.
 unreadable_paths = []
 
 # Explicit environment for model-command children. Resolution order is:
@@ -760,7 +774,7 @@ unreadable_paths = []
 # -> optional include allowlist. The harness/provider process is unaffected.
 [sandbox.env]
 inherit = "core"                  # all | core | none
-set = { MPLCONFIGDIR = "/tmp/mpl", PAGER = "cat", NO_COLOR = "1", TERM = "dumb", FORCE_COLOR = "0", PYTHONIOENCODING = "utf-8" }
+set = { PAGER = "cat", NO_COLOR = "1", TERM = "dumb", FORCE_COLOR = "0", PYTHONIOENCODING = "utf-8" }
 ignore_default_excludes = false   # inherited names containing KEY/SECRET/TOKEN
 allow_login_shell = false         # profiles/rc files stay disabled by default
 

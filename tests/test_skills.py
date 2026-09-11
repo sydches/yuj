@@ -508,7 +508,8 @@ def test_bwrap_argv_declares_external_skill_directory_read_only(
     )
 
     triples = tuple(zip(argv, argv[1:], argv[2:]))
-    assert ("--ro-bind", str(skill_dir), str(skill_dir)) in triples
+    binding = next(item for item in triples if item[0] == "--ro-bind-fd" and item[2] == str(skill_dir))
+    assert Path("/proc/self/fd", binding[1]).resolve() == skill_dir
     assert ("--bind", str(skill_dir), str(skill_dir)) not in triples
 
 

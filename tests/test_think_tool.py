@@ -224,7 +224,7 @@ def test_think_is_non_mutating_and_its_streak_reuses_rumination_nudge(
 
     done = done_guard(state, cfg, tc_name="done", cwd=str(tmp_path))
     assert done.action == Action.BLOCK
-    assert "No code changes" in done.text
+    assert "No task-file change has been recorded" in done.text
 
     rumination_ladder(
         state,

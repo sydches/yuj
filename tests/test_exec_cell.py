@@ -58,6 +58,43 @@ def _estimated_schema_tokens(schemas: list[dict]) -> int:
     return (len(rendered) + 3) // 4
 
 
+@pytest.mark.parametrize('mismatch', [False, True])
+def test_guarded_cell_preserves_output_and_does_not_dispatch_when_credentials_differ(
+    tmp_path, monkeypatch, native_process_identity, mismatch,
+):
+    import sys
+    from dataclasses import replace
+    from scripts.llm_solver.harness._tools import exec_cell
+    from scripts.llm_solver.harness.process_identity import VERIFIED, guarded_process_argv
+    identity = native_process_identity
+    if mismatch:
+        identity = replace(identity, uids=(identity.uids[0] + 1,) * 4)
+    argv = guarded_process_argv([], [sys.executable, '-u', '-c', exec_cell._CELL_RUNNER], identity)
+    monkeypatch.setattr(exec_cell, '_build_cell_process', lambda **kwargs: (argv, str(tmp_path), None))
+    calls = []
+
+    def dispatch_inner(name, arguments, cfg):
+        calls.append((name, arguments))
+        return 'read-result', {'executed': True}
+
+    source = "from pathlib import Path\nPath('cell-started').touch()\nprint(read('marker'))\n"
+    source += f'print({VERIFIED.decode()!r}, end="")\n'
+    result = exec_cell.execute_cell(
+        source, cwd=str(tmp_path), cfg=make_config(tools_exec_cell_enabled=True),
+        inner_dispatch=dispatch_inner, unreadable_paths=(), readable_paths=(),
+        effective_env={}, allow_login_shell=False,
+    )
+    if mismatch:
+        assert not calls and not (tmp_path / 'cell-started').exists()
+        assert result.exit_status is None
+        assert 'ERROR:' in result.output
+    else:
+        assert calls == [('read', {'path': 'marker', 'offset': 0, 'limit': 0})]
+        assert result.exit_status == 0 and not result.timed_out
+        assert result.output == 'read-result\n' + VERIFIED.decode()
+        assert result.combined_output_bytes == len(b'read-result\n' + VERIFIED)
+
+
 def test_exec_cell_config_defaults_overlay_and_validation(tmp_path: Path):
     defaults = load_config()
     assert defaults.tools_exec_cell_enabled is False

@@ -67,10 +67,12 @@ def test_build_bwrap_argv_rejects_ambient(monkeypatch, tmp_path):
 
 
 def test_build_bwrap_argv_docker_exec(monkeypatch, tmp_path):
+    _known_container_mount(monkeypatch, tmp_path)
     monkeypatch.setenv("YUJ_CONTAINER", "yuj-task-xyz")
     argv = _build_bwrap_argv("echo hi", str(tmp_path), "/usr/bin/bwrap")
     assert argv[:3] == ["docker", "exec", "--workdir"]
-    assert "yuj-task-xyz" in argv
+    assert "a" * 64 in argv
+    assert "yuj-task-xyz" not in argv
     assert "/usr/bin/env" in argv
     assert "-i" in argv
     assert argv[-7:] == [
@@ -103,8 +105,12 @@ def test_build_bwrap_argv_legacy_bwrap(monkeypatch, tmp_path):
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
     argv = _build_bwrap_argv("echo hi", str(tmp_path), "/usr/bin/bwrap")
     assert argv[0] == "/usr/bin/bwrap"
-    assert "--ro-bind" in argv
-    assert str(tmp_path) in argv  # cwd binding
+    assert "--ro-bind-fd" in argv
+    assert any(
+        flag == "--bind-fd" and argv[index + 2] == str(tmp_path)
+        and int(argv[index + 1]) in argv.pass_fds
+        for index, flag in enumerate(argv)
+    )
 
 
 # ----- _run_in_sandbox dispatch — the actual fix -----
@@ -117,8 +123,50 @@ def test_build_bwrap_argv_legacy_bwrap(monkeypatch, tmp_path):
 NONEXISTENT_BWRAP = "/this/path/does/not/exist/bwrap"
 
 
+def _known_container_mount(monkeypatch, tmp_path):
+    from scripts.llm_solver.harness import task_environment
+    environment = task_environment.TaskEnvironment(str(tmp_path), "/workspace", ("/workspace",),
+                                                   container_id='a' * 64)
+    monkeypatch.setattr(task_environment, "discover_task_environment", lambda cwd, **kwargs: environment)
+
+
+@pytest.mark.parametrize("probe_failure", ["nonzero", "missing", "timeout"])
+def test_ambient_isolation_failure_never_executes_command(monkeypatch, tmp_path, probe_failure):
+    import subprocess
+
+    runner = importlib.import_module("scripts.llm_solver.harness._tools._run_in_sandbox")
+    monkeypatch.setenv("YUJ_CONTAINER", "ambient")
+    monkeypatch.delenv("YUJ_AMBIENT_UNSHARE_NET", raising=False)
+    monkeypatch.setattr(runner, "_AMBIENT_UNSHARE_PROBED", False)
+    monkeypatch.setattr(runner, "_AMBIENT_UNSHARE_AVAILABLE", False)
+    calls = []
+
+    def fail_probe(argv, **kwargs):
+        calls.append(argv)
+        assert Path(argv[0]).is_absolute()
+        assert Path(argv[0]).name == "unshare"
+        assert argv[1] == "-n"
+        assert Path(argv[2]).name == "setpriv"
+        assert argv[-1] == "/bin/true"
+        if probe_failure == "missing":
+            raise FileNotFoundError("unshare")
+        if probe_failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, 5)
+        return SimpleNamespace(returncode=1, stderr="Operation not permitted")
+
+    monkeypatch.setattr(runner.subprocess, "run", fail_probe)
+    from scripts.llm_solver.harness.time_budget import BudgetExhausted
+    error = BudgetExhausted if probe_failure == "timeout" else SandboxUnavailableError
+    with pytest.raises(error):
+        _run_in_sandbox("touch should-not-exist", cwd=str(tmp_path), timeout=10,
+                        sandbox=True, bwrap_bin=NONEXISTENT_BWRAP)
+    assert len(calls) == 1
+    assert not (tmp_path / "should-not-exist").exists()
+
+
 def test_missing_legacy_container_raises_typed_unavailable(monkeypatch, tmp_path):
     """A vanished docker-exec target is infrastructure, not tool output."""
+    _known_container_mount(monkeypatch, tmp_path)
     runner_module = importlib.import_module(
         "scripts.llm_solver.harness._tools._run_in_sandbox"
     )
@@ -148,12 +196,13 @@ def test_missing_legacy_container_raises_typed_unavailable(monkeypatch, tmp_path
 
     assert calls[0][0][:2] == ["docker", "exec"]
     assert calls[1][0] == [
-        "docker", "inspect", "--format", "{{.State.Running}}", "gone",
+        "docker", "inspect", "--format", "{{.State.Running}}", "a" * 64,
     ]
 
 
 def test_live_legacy_container_preserves_normal_nonzero(monkeypatch, tmp_path):
     """A command failure inside a live sandbox still belongs to the model."""
+    _known_container_mount(monkeypatch, tmp_path)
     runner_module = importlib.import_module(
         "scripts.llm_solver.harness._tools._run_in_sandbox"
     )
@@ -178,6 +227,7 @@ def test_ambient_mode_bypasses_missing_bwrap(monkeypatch, tmp_path):
     """The bug we just fixed: in ambient mode, missing bwrap binary
     should NOT raise even with sandbox_required=True."""
     monkeypatch.setenv("YUJ_CONTAINER", "ambient")
+    monkeypatch.setenv("YUJ_AMBIENT_UNSHARE_NET", "0")
     out, rc, timed_out = _run_in_sandbox(
         "echo hello-from-ambient", cwd=str(tmp_path), timeout=10,
         sandbox=True, bwrap_bin=NONEXISTENT_BWRAP, sandbox_required=True,
@@ -190,6 +240,7 @@ def test_ambient_mode_bypasses_missing_bwrap(monkeypatch, tmp_path):
 def test_ambient_mode_can_write_to_cwd(monkeypatch, tmp_path):
     """Ambient mode runs in cwd directly — verify shell semantics work."""
     monkeypatch.setenv("YUJ_CONTAINER", "ambient")
+    monkeypatch.setenv("YUJ_AMBIENT_UNSHARE_NET", "0")
     out, rc, _ = _run_in_sandbox(
         "echo content > test.txt && cat test.txt",
         cwd=str(tmp_path), timeout=10,

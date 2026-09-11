@@ -309,7 +309,8 @@ def test_toml_overlay_refreshes_guardrail_derived_thresholds(tmp_path):
 
     assert session._guards.rumination_nudge_threshold == 0
     assert session._guards.rumination_arm_threshold == 0
-    assert session._guards.recent_calls.maxlen == 1
+    # Retain enough observations to distinguish a first observation from a repeat.
+    assert session._guards.recent_calls.maxlen >= 2
 
     res = executors.apply(session, _payload(candidate))
 

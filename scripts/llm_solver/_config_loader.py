@@ -224,11 +224,9 @@ def _extract_config_fields(d: dict) -> dict:
         # solver startup (see __main__.py). The 0 here is a placeholder so
         # the dataclass is fully populated; __main__ replaces it.
         "max_tokens": 0,
-        # HF tokenizer id (e.g. "Qwen/Qwen3-30B-A3B-Instruct-2507") or a
-        # local directory path. When set, Session loads the tokenizer
-        # once and uses it for exact token counts in
-        # _maybe_compact_messages. Empty string falls back to chars_div_4.
-        "tokenizer_id": d.get("model", {}).get("tokenizer_id", ""),
+        # The transport counts its prepared request. Explicit local artifacts
+        # and the empty-string opt-out remain legacy estimates.
+        "tokenizer_id": d.get("model", {}).get("tokenizer_id", "auto"),
         "thinking_level": d.get("model", {}).get("thinking_level", "off"),
         "model_roles": _mapping_copy(
             d.get("models", {}).get("roles", {}),
@@ -250,6 +248,7 @@ def _extract_config_fields(d: dict) -> dict:
         ),
         "max_turns": _require(d, "loop", "max_turns"),
         "max_sessions": _require(d, "loop", "max_sessions"),
+        "auto_commit": d.get("loop", {}).get("auto_commit", False),
         "rewind_enabled": d.get("loop", {}).get("rewind_enabled", False),
         "rewind_max_per_session": d.get("loop", {}).get(
             "rewind_max_per_session", 1
@@ -327,7 +326,7 @@ def _extract_config_fields(d: dict) -> dict:
             path="tools.active_default",
         ),
         "tools_run_tests_enabled": d.get("tools", {}).get("run_tests", {}).get("enabled", False),
-        "tools_run_tests_timeout": d.get("tools", {}).get("run_tests", {}).get("timeout", 240),
+        "tools_run_tests_timeout": d.get("tools", {}).get("run_tests", {}).get("timeout", 0),
         "tools_run_tests_structured_output": (
             False
             if transformations is not None
@@ -413,7 +412,7 @@ def _extract_config_fields(d: dict) -> dict:
             "background_max_procs", 4
         ),
         "tools_background_poll_timeout": d.get("tools", {}).get(
-            "background_poll_timeout", 300.0
+            "background_poll_timeout", 0.0
         ),
         "tools_terminal_enabled": d.get("tools", {}).get(
             "terminal_enabled", False
@@ -626,9 +625,9 @@ def _extract_config_fields(d: dict) -> dict:
         "adaptive_control_disallow_repeat_intervention": d.get("adaptive_control", {}).get("disallow_repeat_intervention", True),
         "adaptive_control_watch_window_turns": d.get("adaptive_control", {}).get("watch_window_turns", 5),
         "adaptive_control_multi_intervention_enabled": d.get("adaptive_control", {}).get("multi_intervention_enabled", False),
-        "adaptive_control_max_interventions_per_attempt": d.get("adaptive_control", {}).get("max_interventions_per_attempt", 1),
-        "adaptive_control_max_interventions_per_hurdle_episode": d.get("adaptive_control", {}).get("max_interventions_per_hurdle_episode", 1),
-        "adaptive_control_max_distinct_hurdle_episodes_per_attempt": d.get("adaptive_control", {}).get("max_distinct_hurdle_episodes_per_attempt", 1),
+        "adaptive_control_max_interventions_per_attempt": d.get("adaptive_control", {}).get("max_interventions_per_attempt", d.get("adaptive_control", {}).get("max_interventions", 1)),
+        "adaptive_control_max_interventions_per_hurdle_episode": d.get("adaptive_control", {}).get("max_interventions_per_hurdle_episode", d.get("adaptive_control", {}).get("max_same_signal_interventions", 1)),
+        "adaptive_control_max_distinct_hurdle_episodes_per_attempt": d.get("adaptive_control", {}).get("max_distinct_hurdle_episodes_per_attempt", d.get("adaptive_control", {}).get("max_interventions", 1)),
         "adaptive_control_cooldown_after_apply_slots": d.get("adaptive_control", {}).get(
             "cooldown_after_apply_slots",
             d.get("adaptive_control", {}).get("watch_window_turns", 5),
@@ -735,6 +734,14 @@ def _extract_config_fields(d: dict) -> dict:
         "compaction_hook": d.get("context", {}).get("compaction_hook", ""),
         "checkpoint_keep_recent_tokens": d.get("context", {}).get("checkpoint_keep_recent_tokens", 0),
         "checkpoint_max_summary_tokens": d.get("context", {}).get("checkpoint_max_summary_tokens", 4000),
+        "halflife_context_limit_tokens": d.get("context", {}).get("halflife_context_limit_tokens", 0),
+        "halflife_no_decay_ratio": d.get("context", {}).get("halflife_no_decay_ratio", 0.50),
+        "halflife_verbatim_tool_results": d.get("context", {}).get("halflife_verbatim_tool_results", 4),
+        "halflife_cap_7_chars": d.get("context", {}).get("halflife_cap_7_chars", 4096),
+        "halflife_cap_15_chars": d.get("context", {}).get("halflife_cap_15_chars", 2048),
+        "halflife_cap_31_chars": d.get("context", {}).get("halflife_cap_31_chars", 1024),
+        "halflife_cap_63_chars": d.get("context", {}).get("halflife_cap_63_chars", 512),
+        "halflife_cap_older_chars": d.get("context", {}).get("halflife_cap_older_chars", 256),
         "handoff_summary_enabled": d.get("loop", {}).get("handoff_summary_enabled", False),
         "handoff_max_tokens": d.get("prompts", {}).get("handoff_max_tokens", 2000),
         "edit_strict_match": d.get("tools", {}).get("edit_strict_match", True),
@@ -822,7 +829,7 @@ def _extract_config_fields(d: dict) -> dict:
             path="prompts.project_doc_names",
         ),
         "project_doc_max_bytes": d.get("prompts", {}).get(
-            "project_doc_max_bytes", 32768
+            "project_doc_max_bytes", 0
         ),
         "project_root_markers": _string_tuple(
             d.get("prompts", {}).get(
@@ -894,37 +901,37 @@ def _extract_config_fields(d: dict) -> dict:
             "prompts", {}
         ).get(
             "test_read_nudge",
-            "[HARNESS: ran verification {count} time(s) without reading the target test file ({target}). Read the test before more checks.]",
+            "[HARNESS: {count} completed {runner} invocation(s) requested selector {target} ({kind}) with unchanged recorded inspection: {coverage}. Inspect relevant assertions or project check guidance if it would help diagnosis. This record does not establish understanding or per-test execution.]",
         ),
         "post_mutation_verification_nudge": d.get(
             "prompts", {}
         ).get(
             "post_mutation_verification_nudge",
-            "[HARNESS: If this change affects executable behavior, after focused checks pass, run the changed component's complete existing test file or package suite. Before declaring done, run the repository's full test suite when feasible. If that is unavailable or impractical, state the limitation. Target tests and custom reproducers are not sufficient regression coverage.]",
+            "[HARNESS: Verify the change against the task's requirements. Use relevant existing project checks when available, and consider broader regression checks when warranted. Report what ran and any coverage limits; a passing command does not establish the whole task's correctness.]",
         ),
         "post_mutation_verification_gate": d.get(
             "prompts", {}
         ).get(
             "post_mutation_verification_gate",
-            "[HARNESS: Automatic component verification could not identify one unambiguous existing target. Run the changed component's complete existing test file or package suite with its registered test runner.]",
+            "[HARNESS: Automatic verification did not identify one unambiguous conventional component target in the inspected scope. Use the task's requested checks and available project guidance. Report missing or ambiguous checks; this result does not establish that no suite exists.]",
         ),
         "done_reject_no_formal_verification": d.get(
             "prompts", {}
         ).get(
             "done_reject_no_formal_verification",
-            "REJECTED: No passing registered test-runner command since the last source change. Run the changed component's complete existing test file or package suite. Custom scripts and reproducers do not satisfy this requirement.",
+            "REJECTED: No passing check recorded for the latest source change. Run a relevant check using the task's requirements and available project guidance. Registered runners and custom checks both count as execution evidence; neither proves full task coverage.",
         ),
         "contract_commit_warn": d.get(
             "prompts", {}
         ).get(
             "contract_commit_warn",
-            "[HARNESS: source file {source} is already in view. Choose a concrete next move: mutate a file, read a test file, or run verification. Do not continue broad inspection.]",
+            "[HARNESS: file {source} is already in view. Choose a concrete next move: edit a file, inspect a relevant file, or run verification. Do not continue broad inspection.]",
         ),
         "contract_commit_block": d.get(
             "prompts", {}
         ).get(
             "contract_commit_block",
-            "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: mutate a file, read a test file, or run verification.]",
+            "[HARNESS: commit contract active from {source}. This tool call was not executed. Allowed next moves: edit a file, inspect a relevant file, or run verification.]",
         ),
         "contract_recovery_block": d.get(
             "prompts", {}
@@ -1035,6 +1042,8 @@ def _validate_coupling(
             "config error: server.provider must be 'openai-compatible' or "
             "'anthropic'."
         )
+    if not isinstance(cfg.auto_commit, bool):
+        raise ValueError("config error: loop.auto_commit must be a boolean.")
     for field_name, value in (
         ("loop.max_turns", cfg.max_turns),
         ("loop.max_sessions", cfg.max_sessions),

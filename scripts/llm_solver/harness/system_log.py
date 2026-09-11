@@ -222,18 +222,18 @@ def observe_tool_result(session, tc_id: str, tool_name: str,
                         quirk_hit: bool, turn: int) -> None:
     """Post-dispatch observation hook for one tool result.
 
-    Always records provenance. When a local tokenizer is bound and the
+    Always records provenance. When a request counter is bound and the
     result is large, additionally emits:
 
-      - ``density_blowout`` — real token count exceeds TWICE the chars/4
+      - ``density_blowout`` — measured or estimated count exceeds TWICE the chars/4
         estimate (the pre-flight projection would undercount this
         message by >2x), even when everything still fits;
       - ``oversized_result`` — a single result larger than half the
         context window, even when the projection still fits.
 
-    Without a tokenizer the real per-message count is unknowable here;
-    the turn-level density check at the pre-flight gate (run_step.py)
-    still covers the no-tokenizer arms.
+    An isolated tool result may be unrenderable without its preceding call.
+    The request counter identifies fallback estimates in its trace. The
+    pre-flight gate also counts the complete history before generation.
     """
     shape = record_result_provenance(session, tc_id, tool_name, arguments,
                                      quirk_hit=quirk_hit)

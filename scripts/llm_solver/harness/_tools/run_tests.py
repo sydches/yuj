@@ -1,20 +1,25 @@
 """run_tests tool: invoke the project's test runner with a structured envelope."""
 import re
+import hashlib
 import shlex
+from dataclasses import replace
 from pathlib import Path
 
 from ...config import Config
 from ...language_quirks import load_language_advice, load_run_tests_quirk_object
 from ..injections import UserTurnInjection
+from ..time_budget import budgeted_test_execution, command_timeout
 from ._common import ToolExecutionText, _resolve, _tool_advice, _xml_attr
 from ._pytest_hints import _pytest_binary_missing, _pytest_path_missing
 
 
+@budgeted_test_execution
 def run_tests(
     path: str = "",
     k: str = "",
     last_failed: bool = False,
     base_cmd_override: str = "",
+    component_source: str | list[str] = "",
     *,
     cwd: str,
     cfg: Config,
@@ -56,42 +61,122 @@ def run_tests(
     """
     if not getattr(cfg, "tools_run_tests_enabled", False):
         return "ERROR: run_tests tool is disabled (tools.run_tests.enabled=false)"
-    # Path-traversal guard: same `_resolve` containment as read/edit/
-    # write/list_definitions. An absolute or `..`-bearing path is
-    # silently re-rooted at cwd so it can't escape. We pass the
-    # already-relative form down to the selected runner.
+    # Use the file tools' selected task view for containment and aliases.
+    # The runner receives a path relative to its native task root.
     if path:
         try:
             safe = _resolve(cwd, path)
         except Exception as e:
             return f"ERROR: run_tests path resolution failed: {e}"
-        # Convert back to a cwd-relative string for the argv. _resolve
-        # returns an absolute Path; we want the form pytest expects.
         try:
-            path = str(safe.resolve().relative_to(Path(cwd).resolve()))
+            from ..task_path import resolve_task_path
+            path = str(safe.resolve().relative_to(resolve_task_path(cwd, '.')))
         except ValueError:
-            # safe lands outside cwd (shouldn't happen — _resolve strips
-            # leading / and ./ — defensive).
             return (
                 f"ERROR: run_tests path {path!r} resolves outside cwd; "
                 "use a path inside the working directory."
             )
-    # Resolve the right invocation by inspecting the cwd. Each runner's
-    # template — base command, env-activate prefix, arg styles — lives
-    # in scripts/llm_solver/language_quirks/<runner>.toml under
-    # [run_tests]. detect_runner() picks the first matching runner by
-    # descriptor detection_priority; add a TOML descriptor to support a
-    # new language without touching this tool.
-    quirk = load_run_tests_quirk_object(cwd)
+    # Startup records the permitted project evidence and observed runtime.
+    # Descriptors own command arguments; unavailable or ambiguous discovery
+    # does not authorize a guessed interpreter or runner.
+    runner = getattr(cfg, "analysis_task_format", "auto")
+    quirk = load_run_tests_quirk_object(cwd, runner="generic" if runner in ("", "auto") else runner)
+    selection = getattr(cfg, "runtime_test_selection", None)
+    refresh = None
+    from ..task_path import active_task_host_root
+    task_root = active_task_host_root(cwd) or str(Path(cwd).resolve())
+    if (selection is not None and selection.get("declaration_inputs") is not None
+            and selection.get("task_root", task_root) == task_root):
+        from ..runtime_discovery import selection_inputs
+        from ..tools import _bash_unreadable_paths
+        previous_inputs = selection["declaration_inputs"]
+        current_inputs = selection_inputs(Path(cwd), previous_inputs, _bash_unreadable_paths(cwd, cfg))
+        if current_inputs != previous_inputs:
+            refresh = {"previous": dict(selection)}
+    if (selection is None and runner in ("", "auto")) or refresh is not None:
+        from ..runtime_discovery import discover_runtime
+        from ..sandbox.env_policy import active_environment
+        from ..tools import _effective_command_environment, _bash_unreadable_paths
+        env, _login = active_environment()
+        if env is None:
+            env, _login = _effective_command_environment(cfg, cwd=cwd)
+        requested = "auto" if selection is None or selection.get("request_source") == "project_declarations" else runner
+        report = discover_runtime(Path(cwd), replace(cfg, analysis_task_format=requested), effective_env=env,
+                                  unreadable_paths=_bash_unreadable_paths(cwd, cfg), selection_only=True)
+        fresh = report["runner_selection"]
+        if refresh is not None:
+            refresh.update(current=dict(fresh), probes=report["probes"])
+            # Config owns a copy; startup provenance retains the old observation.
+            task_root = selection.get("task_root")
+            selection.clear()
+            selection.update(fresh)
+            if task_root is not None:
+                selection["task_root"] = task_root
+        else:
+            selection = fresh
+    if selection is not None:
+        from ..task_path import active_task_host_root
+        chosen = selection.get("selected", {})
+        task_root = active_task_host_root(cwd) or str(Path(cwd).resolve())
+        root_matches = selection.get("task_root", task_root) == task_root
+        if selection.get("status") == "selected" and root_matches:
+            from ...language_quirks import load_run_tests_quirk_for_runner
+            quirk = replace(load_run_tests_quirk_for_runner(chosen["runner"]),
+                            base_cmd=chosen["base_cmd"], env_activate_prefix="")
+        else:
+            quirk = replace(quirk, base_cmd="")
+    command_timeout()  # Discovery may return unresolved after consuming the allowance.
+    if not quirk.base_cmd:
+        status = "selection_unresolved" if selection is not None else "runner_unavailable"
+        body = ("No unambiguous usable test runner was established. Review the "
+                "observed project checks and environments, then use bash with the "
+                "project's documented verification command.")
+        if getattr(cfg, "tools_run_tests_structured_output", True):
+            body = (f'<test_results status="{status}" runner="{_xml_attr(quirk.runner)}">'
+                    f'\n{body}\n</test_results>')
+        else:
+            body = "ERROR: " + body
+        return ToolExecutionText(body, exit_status=None, executed=False, verification_status=status,
+                                 runner_request={"selection_refresh": refresh} if refresh else None)
+    if quirk.extra_fields.get("reject_unsupported_filters") and (path or k or last_failed):
+        return "ERROR: the declared test script has no supported filter contract. Run its full suite or use bash with the project's documented arguments."
     parts: list[str] = [base_cmd_override or quirk.base_cmd]
     if last_failed and quirk.arg_last_failed:
         parts.append(quirk.arg_last_failed)
     if k and quirk.arg_k_template:
         parts.append(quirk.arg_k_template.format(expr=shlex.quote(k)))
     if path and quirk.arg_path_style == "positional":
-        parts.append(shlex.quote(path))
+        parts.append(shlex.quote(quirk.extra_fields.get("arg_path_prefix", "") + path))
     cmd = quirk.env_activate_prefix + " ".join(parts)
-    timeout = int(getattr(cfg, "tools_run_tests_timeout", 60))
+    request = {
+        "family": "" if base_cmd_override else quirk.runner,
+        "basis": ("custom_command" if base_cmd_override else
+                  "runtime_selection" if selection else "explicit_configuration"),
+        "targets": [path] if path and quirk.arg_path_style == "positional" and not base_cmd_override else [],
+        "target_status": ("unknown" if base_cmd_override else
+                          "recorded" if path and quirk.arg_path_style == "positional" else "unspecified"),
+        "command_sha256": hashlib.sha256(cmd.encode()).hexdigest(),
+    }
+    if refresh is not None:
+        request["selection_refresh"] = refresh
+    if base_cmd_override:
+        from ..runner_invocations import runner_request_record
+        parsed = runner_request_record(cmd)
+        if parsed.get('family') or parsed.get('requests'):
+            request = {**parsed, "command_sha256": request["command_sha256"]}
+
+    from ..runner_invocations import bind_runner_workspace
+    request = bind_runner_workspace(
+        request, cmd, cwd, sandbox=cfg.sandbox_bash,
+        backend=getattr(cfg, "sandbox_backend", "bwrap"),
+    )
+
+    def execution_result(*args, **kwargs):
+        return ToolExecutionText(*args, runner_request=request, **kwargs)
+
+    timeout = command_timeout()
+    timeout_message = (f"ERROR: command timed out after {timeout:g}s" if timeout is not None
+                       else "ERROR: command timed out")
     # Function-local import: tests patch `harness.tools._run_in_sandbox`
     # via mock.patch.object — looking the symbol up via the public
     # `tools` module here makes that patch intercept this call.
@@ -105,32 +190,47 @@ def run_tests(
     from .._tool_filters import output_cleanup_enabled
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
-        effective_env, allow_login_shell = _effective_command_environment(cfg)
+        effective_env, allow_login_shell = _effective_command_environment(cfg, cwd=cwd)
     from ..sandbox.policy import sandbox_execution_kwargs
-
-    out, exit_code, timed_out = _run_in_sandbox(
-        cmd, cwd=cwd, timeout=timeout,
-        bwrap_bin=cfg.bwrap_bin,
-        unreadable_paths=_bash_unreadable_paths(cwd, cfg),
-        readable_paths=_bash_readable_paths(cfg),
-        effective_env=effective_env,
-        allow_login_shell=allow_login_shell,
-        normalize_output=output_cleanup_enabled(cfg),
-        **sandbox_execution_kwargs(cfg),
-    )
+    if selection and selection.get("status") == "selected":
+        effective_env = {**effective_env, **selection["selected"].get("environment", {})}
+    from ..component_selection import component_selection
+    with component_selection(cwd, component_source, quirk, effective_env) as (selected_env, component):
+        out, exit_code, timed_out = _run_in_sandbox(
+            cmd, cwd=cwd, timeout=timeout,
+            bwrap_bin=cfg.bwrap_bin,
+            **sandbox_execution_kwargs(cfg),
+            unreadable_paths=_bash_unreadable_paths(cwd, cfg),
+            readable_paths=_bash_readable_paths(cfg),
+            effective_env=selected_env,
+            allow_login_shell=allow_login_shell,
+            normalize_output=output_cleanup_enabled(cfg),
+        )
+    if component_source:
+        request["component_selection"] = component
     user_turn_injections: list[UserTurnInjection] = []
+    status = _verification_status(quirk, out, exit_code, timed_out)
+    if base_cmd_override:
+        from ..shell_verification import shell_verification_status
+        attributed = shell_verification_status(cmd, exit_code, timed_out)
+        if attributed not in {'passed', 'failed', 'timed_out'}:
+            status = attributed
+    if (component_source and component.get("status") != "selected"
+            and status in {"passed", "no_tests_collected"}):
+        status = "selection_" + component.get("status", "unavailable")
 
     if not getattr(cfg, "tools_run_tests_structured_output", True):
         # Legacy bash-string contract. Mirror bash() exactly so existing
         # callers see no change.
         if timed_out:
-            return ToolExecutionText(
-                f"ERROR: command timed out after {timeout}s",
+            return execution_result(
+                timeout_message,
                 exit_status=None,
                 timed_out=True,
+                verification_status=status,
             )
         if exit_code is None:
-            return ToolExecutionText(out, exit_status=None)
+            return execution_result(out, exit_status=None, verification_status=status)
         if exit_code != 0:
             out += f"\n[exit code: {exit_code}]"
         if quirk.runner == "pytest":
@@ -150,15 +250,16 @@ def run_tests(
                     tool_name="run_tests", runner=quirk.runner,
                     exit_code=exit_code,
                 ))
-        return ToolExecutionText(
+        return execution_result(
             out,
             exit_status=exit_code,
+            verification_status=status,
             user_turn_injections=user_turn_injections,
         )
 
     if timed_out:
         status = "timed_out"
-        body = f"ERROR: command timed out after {timeout}s"
+        body = timeout_message
         ec_attr = ""
     elif exit_code is None:
         # Non-timeout exception inside _run_in_sandbox; `out` already
@@ -167,18 +268,6 @@ def run_tests(
         body = out
         ec_attr = ""
     else:
-        # Every runner descriptor owns its exit-code vocabulary.
-        runner_unavailable = exit_code in {126, 127} or (
-            quirk.runner == "pytest"
-            and _pytest_binary_missing(out, exit_code)
-        )
-        status = (
-            "runner_unavailable"
-            if runner_unavailable
-            else quirk.status_map.get(
-                exit_code, quirk.status_default or f"error_{exit_code}"
-            )
-        )
         body = out if out else "(no output)"
         ec_attr = f' exit_code="{exit_code}"'
         # pytest-specific recovery hints: only meaningful when pytest is
@@ -233,15 +322,29 @@ def run_tests(
     # the trace can't tell which runner ran without re-detecting from
     # cwd contents, and a re-run on a repo that gained a Cargo.toml
     # silently flips the output shape.
-    return ToolExecutionText(
+    return execution_result(
         (
             f'<test_results status="{status}"{ec_attr} '
             f'runner="{quirk.runner}">\n{body}\n</test_results>'
         ),
         exit_status=exit_code,
         timed_out=timed_out,
+        verification_status=status,
         user_turn_injections=user_turn_injections,
     )
+
+
+def _verification_status(quirk, output: str, exit_code: int | None, timed_out: bool) -> str:
+    """Derive the tool-owned status once, independently of its rendering."""
+    if timed_out:
+        return "timed_out"
+    if exit_code is None:
+        return "error"
+    if exit_code in {126, 127} or (
+        quirk.runner == "pytest" and _pytest_binary_missing(output, exit_code)
+    ):
+        return "runner_unavailable"
+    return quirk.status_map.get(exit_code, quirk.status_default or f"error_{exit_code}")
 
 
 _PYTEST_FAIL_FRAME_RE = re.compile(

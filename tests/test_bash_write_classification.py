@@ -142,9 +142,12 @@ def test_test_write_is_workspace_but_not_source_mutation():
     assert classification.source_write_paths == ()
 
 
-def test_testbed_path_is_normalized_to_workspace_relative():
+def test_discovered_path_is_normalized_to_workspace_relative(monkeypatch, tmp_path):
+    from scripts.llm_solver.harness import task_environment
+    environment = task_environment.TaskEnvironment(str(tmp_path), "/workspace", ("/workspace",))
+    monkeypatch.setattr(task_environment, "_ACTIVE", type(task_environment._ACTIVE)("test_task", default=environment))
     classification = classify_bash_write(
-        "sed -i 's/a/b/' /testbed/src/app.py"
+        "sed -i 's/a/b/' /workspace/src/app.py"
     )
 
     assert classification.workspace_write_like is True

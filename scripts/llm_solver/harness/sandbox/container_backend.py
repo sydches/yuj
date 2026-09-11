@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import os
+import math
 from pathlib import Path
 import re
 import shlex
@@ -209,6 +210,7 @@ def _container_mask_argv(
         return []
     bwrap_args, _, _ = _expand_unreadable_paths(
         unreadable_paths, sandbox_required=sandbox_required,
+        base_dir=str(cwd), refresh=True,
     )
     physical_cwd = cwd.resolve()
     files: list[Path] = []
@@ -300,6 +302,7 @@ def _build_container_argv(
     runtime_bin: str | None = None,
     uid: int | None = None,
     gid: int | None = None,
+    _initial_environment: bool = False,
 ) -> list[str]:
     """Build the isolated ``docker/podman run`` argv for one command.
 
@@ -314,6 +317,7 @@ def _build_container_argv(
     image_name = _validate_image(image)
     flags = normalize_container_flags(container_flags)
     required = _require_bool(sandbox_required, name="sandbox_required")
+    _require_bool(_initial_environment, name='initial environment probe')
     login_shell = _require_bool(
         allow_login_shell, name="sandbox.env.allow_login_shell",
     )
@@ -353,14 +357,15 @@ def _build_container_argv(
         "--workdir", str(workdir),
         "--mount", workdir_mount,
         "--tmpfs", "/tmp:rw,nosuid,nodev",
-        # Override image ENTRYPOINT as well as CMD.  The entrypoint clears all
-        # image ENV values before it execs bash with the resolved policy.
-        "--entrypoint", "/usr/bin/env",
+        # Override image ENTRYPOINT/CMD. Normal commands clear image ENV;
+        # acquisition observes it first, with the same isolation and identity.
+        "--entrypoint", "/bin/bash" if _initial_environment else "/usr/bin/env",
     ]
 
     readable_mounts: list[Path] = []
     for raw_path in readable_paths:
-        path = Path(raw_path).resolve(strict=True)
+        from ..task_path import captured_host_path
+        path = Path(captured_host_path(cwd, raw_path)).resolve(strict=True)
         if not path.is_dir():
             raise ContainerConfigurationError(
                 f"sandbox readable path is not a directory: {path}"
@@ -392,6 +397,10 @@ def _build_container_argv(
         sandbox_required=required,
     ))
     argv.append(image_name)
+    if _initial_environment:
+        probe = build_bash_argv(cmd, executable='/bin/bash')[1:]
+        argv.extend([*probe[:-2], '-p', *probe[-2:]])
+        return argv
     argv.extend(("-i", "--"))
     argv.extend(f"{name}={value}" for name, value in explicit_env.items())
     argv.extend(build_bash_argv(
@@ -404,20 +413,23 @@ def inspect_container_image_digest(
     runtime_bin: str,
     image: str,
     *,
-    timeout: int = 15,
+    timeout: float | None = None,
 ) -> str:
     """Return the local immutable image ID as normalized ``sha256:<hex>``."""
     if not isinstance(runtime_bin, str) or not runtime_bin or "\x00" in runtime_bin:
         raise ContainerConfigurationError("container runtime path is invalid")
     image_name = _validate_image(image)
-    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+    if timeout is not None and (isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or timeout <= 0):
         raise ContainerConfigurationError("image inspect timeout must be positive")
+    from ..time_budget import execution_deadline, remaining_before
     try:
         result = subprocess.run(
             [runtime_bin, "image", "inspect", "--format={{.Id}}", image_name],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=remaining_before(execution_deadline(), timeout),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ContainerBackendError(
@@ -452,8 +464,10 @@ class ContainerBackend:
         object.__setattr__(self, "flags", normalize_container_flags(self.flags))
 
     def resolve_runtime(self, *, sandbox_required: bool = True) -> str | None:
+        from ..container_binding import has_bound_container_image
+        required = _require_bool(sandbox_required, name='sandbox_required')
         return resolve_container_runtime(
-            self.runtime, sandbox_required=sandbox_required,
+            self.runtime, sandbox_required=(required or has_bound_container_image()),
         )
 
     def build_argv(
@@ -471,7 +485,7 @@ class ContainerBackend:
             **kwargs,
         )
 
-    def image_digest(self, runtime_bin: str, *, timeout: int = 15) -> str:
+    def image_digest(self, runtime_bin: str, *, timeout: float | None = None) -> str:
         return inspect_container_image_digest(
             runtime_bin, self.image, timeout=timeout,
         )

@@ -159,11 +159,11 @@ class TestParseInjection:
             parse_injection(text, source_path="bad.md")
 
 
-# ── LEAKAGE_RULES guard ─────────────────────────────────────────────────
+# ── General guidance identifiers ────────────────────────────────────────
 
-class TestLeakageGuard:
+class TestGuidanceIdentifiers:
 
-    def test_task_id_in_body_rejected(self):
+    def test_body_identifier_is_not_a_benchmark_admission_decision(self):
         text = (
             '+++\n'
             'name = "bad"\n'
@@ -171,10 +171,9 @@ class TestLeakageGuard:
             '+++\n'
             'See pypa__packaging.013f3b03 for the fix pattern.\n'
         )
-        with pytest.raises(ValueError, match="task-id"):
-            parse_injection(text, source_path="x.md")
+        assert "pypa__packaging" in parse_injection(text, source_path="x.md").body
 
-    def test_task_id_in_keyword_rejected(self):
+    def test_keyword_identifier_is_preserved(self):
         text = (
             '+++\n'
             'name = "bad"\n'
@@ -183,8 +182,7 @@ class TestLeakageGuard:
             '+++\n'
             'body\n'
         )
-        with pytest.raises(ValueError, match="task-id"):
-            parse_injection(text, source_path="x.md")
+        assert parse_injection(text, source_path="x.md").keywords == ("django__django",)
 
     def test_framework_name_alone_accepted(self):
         text = (

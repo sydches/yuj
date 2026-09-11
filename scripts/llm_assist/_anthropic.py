@@ -18,6 +18,7 @@ from ._auth import (
     ProviderAuthError,
     classify_provider_response,
 )
+from ..llm_solver.server.request_controls import bound_completion_budget
 from ..llm_solver.server._streaming import StreamRuleInterrupt
 from ._native_stream import read_anthropic_stream
 
@@ -522,20 +523,48 @@ class AnthropicClient(LlamaClient):
             headers["X-Api-Key"] = credential.token
         return headers
 
-    def _call_api(
-        self, payload: dict, *, record_transcript: bool = True
-    ):
+    def get_request_token_counter(self):
+        if getattr(self._call_api, "__func__", None) is not AnthropicClient._call_api:
+            return None
+        if getattr(self.cfg, "tokenizer_id", "auto") != "auto":
+            return None
+        if self._backend_token_counter is None:
+            from ._anthropic_counting import AnthropicTokenCounter
+            self._backend_token_counter = AnthropicTokenCounter(self)
+        return self._backend_token_counter
+
+    def prepare_anthropic_request(self, payload: dict) -> dict:
+        native = _to_anthropic_payload(
+            payload, subscription=self._auth is not None
+            and self._auth.binding.auth_method == "subscription",
+        )
+        if getattr(self, "_narration_streaming", False) or self._stream_observer is not None:
+            native["stream"] = True
+        return native
+
+    def _call_api(self, payload: dict, *, record_transcript: bool = True):
+        native = self.prepare_anthropic_request(payload)
+        counter = self.get_request_token_counter()
+        counted = counter.count_payload(native) if counter is not None else None
+        count_record = dict(counter.last) if counter is not None else {}
+        if counter is not None:
+            count_payload = lambda request: counted
+        elif self._request_token_counter is not None:
+            count_payload = lambda request: self._request_token_counter(
+                payload.get("messages", []), tools=payload.get("tools", []),
+            )
+        else:
+            count_payload = None
+        native = bound_completion_budget(native, self.cfg.context_size, payload_counter=count_payload)
+        recorded = {**payload, "max_tokens": native["max_tokens"]}
         # Keep successful and interrupted responses replayable by the core.
         n = 0
         if record_transcript:
             self._transcript_call_n += 1
             n = self._transcript_call_n
-            self._write_transcript(
-                f"turn {n:03d} input",
-                json.dumps(payload, default=str),
-            )
+            self._write_transcript(f"turn {n:03d} input", json.dumps(recorded, default=str))
         try:
-            resp = self._call_anthropic_api(payload)
+            resp = self._call_anthropic_api(native, prepared=True)
         except StreamRuleInterrupt as e:
             if record_transcript:
                 self._write_transcript(f"turn {n:03d} output", e.model_dump_json())
@@ -557,50 +586,26 @@ class AnthropicClient(LlamaClient):
             self._write_transcript(
                 f"turn {n:03d} output", resp.model_dump_json()
             )
+        if count_record:
+            counter.observe_usage(resp, count_record)
         return resp
 
-    def _call_anthropic_api(self, payload: dict) -> _CompatResponse:
+    def _call_anthropic_api(self, payload: dict, *, prepared: bool = False) -> _CompatResponse:
         """Call Anthropic Messages and adapt the response to the OpenAI SDK shape."""
         subscription = (
             self._auth is not None
             and self._auth.binding.auth_method == "subscription"
         )
-        anthropic_payload = _to_anthropic_payload(
-            payload, subscription=subscription
-        )
+        anthropic_payload = payload if prepared else self.prepare_anthropic_request(payload)
         streaming = bool(getattr(self, "_narration_streaming", False)
                          or self._stream_observer is not None)
         self._last_call_streamed = streaming
         if streaming:
             anthropic_payload["stream"] = True
-        headers = self._headers()
-        try:
-            request = {
-                "headers": headers,
-                "timeout": (self.cfg.timeout_connect, self.cfg.timeout_read),
-            }
-            if streaming:
-                request["stream"] = True
-            if subscription:
-                request["data"] = _serialize_subscription_body(
-                    anthropic_payload
-                )
-            else:
-                request["json"] = anthropic_payload
-            resp = self._http.post(
-                f"{self.cfg.base_url.rstrip('/')}/messages",
-                **request,
-            )
-        except Exception as exc:
-            if self._auth is not None:
-                raise AuthProtocolError(
-                    "claude", "model request transport failed"
-                ) from exc
-            raise
-        if self._auth is None:
-            resp.raise_for_status()
-        else:
-            classify_provider_response("claude", resp)
+        resp = self._post_anthropic(
+            "/messages", anthropic_payload, read_timeout=self.cfg.timeout_read,
+            **({"stream": True} if streaming else {}),
+        )
         try:
             raw = (read_anthropic_stream(resp, self._stream_observer)
                    if streaming else resp.json())
@@ -613,6 +618,30 @@ class AnthropicClient(LlamaClient):
                 ) from exc
             raise
         return _anthropic_to_openai_response(raw, subscription=subscription)
+
+    def _post_anthropic(self, path: str, payload: dict, *, read_timeout: float,
+                        connect_timeout: float | None = None, **options):
+        subscription = self._auth is not None and self._auth.binding.auth_method == "subscription"
+        request = {
+            "headers": self._headers(),
+            "timeout": (self.cfg.timeout_connect if connect_timeout is None else connect_timeout, read_timeout),
+            **options,
+        }
+        if subscription:
+            request["data"] = _serialize_subscription_body(payload)
+        else:
+            request["json"] = payload
+        try:
+            resp = self._http.post(self.cfg.base_url.rstrip('/') + path, **request)
+        except Exception as exc:
+            if self._auth is not None:
+                raise AuthProtocolError("claude", "model request transport failed") from exc
+            raise
+        if self._auth is None:
+            resp.raise_for_status()
+        else:
+            classify_provider_response("claude", resp)
+        return resp
 
     def health_check(self) -> list[str]:
         resp = self._http.get(

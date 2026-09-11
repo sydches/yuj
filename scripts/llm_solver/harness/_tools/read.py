@@ -1,5 +1,6 @@
 """read tool: return file contents with line numbers + optional reminders."""
 from ...config import Config
+from ..inspection_evidence import InspectedText
 from .._tool_filters import output_cleanup_enabled
 from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _path_hint, _require_external_readable, _resolve_read
@@ -62,18 +63,22 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
                 ),
             )
         policy = active_ignore_policy(cwd)
-        if policy is not None and (
-            target == policy.root or policy.root in target.parents
-        ):
+        if policy is not None and policy.contains(target):
             policy.require_visible(target, is_dir=target.is_dir())
         if target.is_dir():
             return (
                 f"ERROR: {path} is a directory — "
                 f"use glob to list contents."
             )
+        data = target.read_bytes()
+
+        def inspected(text, body, count, total):
+            return InspectedText(text, path=target, data=data, body=body,
+                                 start=offset + 1, count=count, total=total)
+
         cleanup_enabled = cfg is None or output_cleanup_enabled(cfg)
         if not cleanup_enabled:
-            raw_verbatim = target.read_bytes().decode(
+            raw_verbatim = data.decode(
                 "utf-8",
                 errors="replace",
             )
@@ -81,8 +86,9 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
             selected_lines = raw_lines[offset:] if offset > 0 else raw_lines
             if limit > 0:
                 selected_lines = selected_lines[:limit]
-            return "".join(selected_lines)
-        raw_full = target.read_text()
+            body = "".join(selected_lines)
+            return inspected(body, body, len(selected_lines), len(raw_lines))
+        raw_full = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         all_lines = raw_full.splitlines()
         total = len(all_lines)
         if offset > 0:
@@ -121,23 +127,25 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
             ctx={"path": path, "start_line": start},
         )
         if cfg is None:
-            return body
+            return inspected(body, body, returned, total)
         if total == 0:
             tail = cfg.read_empty_reminder.format(path=path)
             result = body + ("\n" if body else "") + tail
-            return _record_read_reminder("empty", path, body, result)
+            return inspected(_record_read_reminder("empty", path, body, result),
+                             body, returned, total)
         if offset >= total and offset > 0:
             tail = cfg.read_offset_past_eof_reminder.format(
                 offset=offset, total=total, path=path)
-            return _record_read_reminder(
+            return inspected(_record_read_reminder(
                 "offset_past_eof", path, body, tail,
-            )
+            ), body, returned, total)
         if truncated:
             tail = cfg.read_truncated_reminder.format(
                 returned_lines=returned, path=path)
             result = body + "\n" + tail
-            return _record_read_reminder("truncated", path, body, result)
-        return body
+            return inspected(_record_read_reminder("truncated", path, body, result),
+                             body, returned, total)
+        return inspected(body, body, returned, total)
     except FileNotFoundError:
         return f"ERROR: file not found: {path}" + _path_hint(cwd, path)
     except UnicodeDecodeError:

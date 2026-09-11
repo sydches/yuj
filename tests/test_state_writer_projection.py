@@ -267,7 +267,7 @@ class TestProjectEvidence:
 
 
 class TestProjectImperativeProcess:
-    def test_optional_process_block_is_content_blind_and_imperative(self):
+    def test_optional_process_block_keeps_advice_separate_from_requirements(self):
         events = [
             {"event": "tool_call", "session_number": 1, "turn_number": 0,
              "tool_name": "bash", "args_summary": "cmd='sed -n 1,40p src/app.py'",
@@ -282,7 +282,8 @@ class TestProjectImperativeProcess:
         assert out["meta"]["schema_version"] == 2
         assert out["process"]["phase"] == "candidate_edit_pending"
         assert out["process"]["pending_edit_step"] == 2
-        assert out["process"]["required_next_action"] == "apply the pending source edit"
+        assert out["process"]["required_next_action"] == ""
+        assert "If the proposed edit is supported" in out["process"]["suggested_next_action"]
         assert out["process"]["target_paths"] == ["src/app.py"]
 
     def test_failed_bash_write_is_not_successful_mutation(self):
@@ -292,7 +293,7 @@ class TestProjectImperativeProcess:
              "result_summary": "source"},
             {"event": "tool_call", "session_number": 1, "turn_number": 1,
              "tool_name": "bash",
-             "args_summary": "cmd=\"python - <<'PY'\nfrom pathlib import Path\nPath('src/app.py').write_text('x')\nPY\"",
+             "args_summary": 'cmd="python - <<\'PY\'\\nfrom pathlib import Path\\nPath(\'src/app.py\').write_text(\'x\')\\nPY"',
              "result_summary": "PermissionError: denied\n[exit code: 1]",
              "reasoning": "The fix is to change old to new in src/app.py."},
         ]
@@ -301,10 +302,8 @@ class TestProjectImperativeProcess:
         assert out["process"]["phase"] == "mutation_attempt_failed"
         assert out["process"]["last_mutation_step"] is None
         assert out["process"]["last_failed_mutation_step"] == 2
-        assert (
-            out["process"]["required_next_action"]
-            == "retry the source edit with a write method that succeeds"
-        )
+        assert out["process"]["required_next_action"] == ""
+        assert "inspect the recorded failure" in out["process"]["suggested_next_action"]
 
     def test_successful_bash_write_counts_as_mutation(self):
         events = [
@@ -436,7 +435,7 @@ class TestProjectImperativeProcess:
         assert out["process"]["phase"] == "post_mutation_unverified"
         assert out["process"]["pending_edit_step"] is None
 
-    def test_truncated_python_command_counts_as_verification(self):
+    def test_truncated_python_command_does_not_establish_verification(self):
         events = [
             {"event": "tool_call", "session_number": 1, "turn_number": 0,
              "tool_name": "bash",
@@ -451,8 +450,8 @@ class TestProjectImperativeProcess:
         ]
         out = project(events, max_result_chars=_CAP, imperative_projection=True)
 
-        assert out["process"]["phase"] == "post_verification"
-        assert out["process"]["last_verification_step"] == 2
+        assert out["process"]["phase"] == "post_mutation_unverified"
+        assert out["process"]["last_verification_step"] is None
 
     def test_go_and_rust_file_tokens_are_recognized_as_target_paths(self):
         """_FILE_TOKEN_RE now reuses bash_write_classification's superset of
@@ -485,6 +484,7 @@ class TestProjectImperativeProcess:
                  "reasoning": "The fix is to change old to new in src/app.py."},
                 {"event": "tool_call", "session_number": 1, "turn_number": 1,
                  "tool_name": "bash", "args_summary": f"cmd='{verify_cmd}'",
+                 "verification_status": "passed",
                  "result_summary": "ok"},
             ]
             out = project(events, max_result_chars=_CAP, imperative_projection=True)

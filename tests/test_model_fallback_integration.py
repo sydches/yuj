@@ -21,7 +21,7 @@ from scripts.llm_solver.harness._loop.model_role_runtime import (
 from scripts.llm_solver.harness.context import FullTranscript
 from scripts.llm_solver.harness.loop import Session, solve_task
 from scripts.llm_solver.server.profile_loader import load_profile
-from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
+from scripts.llm_solver.server.types import ContextBudgetExceeded, ToolCall, TurnResult, Usage
 
 
 FIXTURE_PROFILES = Path(__file__).parent / "fixtures" / "model_role_profiles"
@@ -192,6 +192,46 @@ def test_runtime_fallback_reasons_are_stable_and_failure_specific(
     assert _fallback_reason(RuntimeError(detail), default) == expected
 
 
+@pytest.mark.parametrize("recovery", ["success", "no_change", "still_exhausted"])
+def test_local_exhaustion_uses_context_recovery_without_transient_retries(tmp_path, recovery):
+    cfg = _cfg(model_fallback_chain={"main": [], "weak": [], "editor": []})
+    exhausted = ContextBudgetExceeded(cfg.context_size, {
+        "prompt_tokens": cfg.context_size, "count_basis": "backend_input_tokens",
+        "count_precision": "backend_reported", "request_sha256": "fixture-request",
+    })
+    responses = [exhausted, _turn() if recovery == "success" else exhausted]
+    main = _FakeClient(cfg, load_profile("_base", FIXTURE_PROFILES), responses)
+    runtime, clients = _runtime(cfg, main, {})
+    session = _session(tmp_path, cfg, main, runtime)
+    forced = []
+
+    def compact(target, messages, **kwargs):
+        if kwargs.get("force"):
+            forced.append(True)
+            if recovery != "no_change":
+                target._compaction_count = getattr(target, "_compaction_count", 0) + 1
+        return messages
+
+    with patch("scripts.llm_solver.harness._loop.chat_io.maybe_compact_messages", side_effect=compact), \
+         patch("scripts.llm_solver.harness._loop.chat_io.time.sleep") as sleep:
+        result = session._chat_with_retry(0)
+    assert forced == [True]
+    sleep.assert_not_called()
+    assert not clients
+    if recovery == "success":
+        assert result == _turn()
+        assert main.chat_calls == 2
+    else:
+        assert result is None
+        assert session._last_chat_error_reason == "context_full"
+        assert main.chat_calls == (1 if recovery == "no_change" else 2)
+    errors = [event for event in session._trace_events if event.get("event") == "api_error"]
+    assert errors[0]["error_kind"] == "context_overflow"
+    assert errors[0]["generation_sent"] is False
+    assert errors[0]["http_status"] is None
+    assert errors[0]["request_token_count"] == exhausted.count_record
+
+
 def test_retry_exhaustion_atomically_rebinds_profile_context_and_estimator(
     tmp_path: Path,
 ):
@@ -274,7 +314,34 @@ def test_too_small_fallback_is_traced_and_next_target_gets_fresh_budget(
         "transient_exhausted",
         "context_window_exceeded",
     ]
-    assert session.cfg.context_size == 16_384
+    assert session.cfg.context_size == 8192
+    assert session.cfg.context_allocation["declared_context"] == 8192
+    assert session.cfg.context_allocation["observed_capacity"] == 16_384
+
+
+def test_spare_fallback_capacity_does_not_admit_a_prompt_beyond_permission(tmp_path):
+    cfg = _cfg(max_transient_retries=0, model_fallback_chain={"main": [f"editor@{EDITOR_ENDPOINT}"]})
+    main = _FakeClient(cfg, load_profile("_base", FIXTURE_PROFILES), [_connection_error()])
+    runtime, clients = _runtime(cfg, main, {"editor": [_turn()]})
+    session = _session(tmp_path, cfg, main, runtime, task="x" * (cfg.context_size * 4))
+    assert session._chat_with_retry(1) is None
+    assert session.client is main
+    assert clients[0].chat_calls == 0
+    assert clients[0].cfg.context_allocation["observed_capacity"] == 16384
+    assert clients[0].cfg.context_size == cfg.context_size
+
+
+def test_unknown_live_capacity_keeps_declared_and_profile_bounds(tmp_path, monkeypatch):
+    cfg = _cfg(max_transient_retries=0)
+    main = _FakeClient(cfg, load_profile("_base", FIXTURE_PROFILES), [_connection_error()])
+    runtime, clients = _runtime(cfg, main, {"weak": [_turn()]})
+    monkeypatch.setattr(_FakeClient, "query_server_context", lambda self: None)
+    session = _session(tmp_path, cfg, main, runtime)
+    assert session._chat_with_retry(1) is not None
+    assert session.cfg.context_size == 4096
+    assert session.cfg.context_allocation["declared_context"] == 8192
+    assert session.cfg.context_allocation["observed_capacity"] is None
+    assert session.cfg.context_allocation["profile_capacity"] == 4096
 
 
 def test_no_fitting_fallback_aborts_without_rebinding_the_session(tmp_path: Path):

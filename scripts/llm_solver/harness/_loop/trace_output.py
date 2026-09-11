@@ -12,12 +12,8 @@ import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from ..time_budget import BudgetExhausted
 
-from ..._shared.classification import (
-    classify_outcome,
-    derive_envelope_status,
-    is_gate_blocked,
-)
 
 if TYPE_CHECKING:
     from ..loop import Session
@@ -71,8 +67,34 @@ def build_tool_call_trace_fields(
         **result_fields,
     }
     execution_sha = str((execution_metadata or {}).get("output_sha256") or "")
+    if (execution_metadata or {}).get("file_changes") is not None:
+        fields["file_changes"] = execution_metadata["file_changes"]
     if execution_sha:
         fields["execution_output_sha256"] = execution_sha
+    verification_status = (execution_metadata or {}).get("verification_status")
+    if verification_status:
+        fields["verification_status"] = verification_status
+    evidence = (execution_metadata or {}).get("verification_evidence")
+    if evidence is not None:
+        fields["verification_evidence"] = evidence
+    runner_request = (execution_metadata or {}).get("runner_request")
+    if runner_request is not None:
+        fields["runner_request"] = runner_request
+    shell_submission = (execution_metadata or {}).get("shell_submission")
+    if shell_submission is not None:
+        fields["shell_submission"] = shell_submission
+    execution_budget = (execution_metadata or {}).get("execution_budget")
+    if execution_budget is not None:
+        fields["execution_budget"] = execution_budget
+    observation = (execution_metadata or {}).get("observation_receipt")
+    if observation is not None:
+        fields["observation_receipt"] = observation
+    inspection = (execution_metadata or {}).get("inspection_evidence")
+    if inspection is not None:
+        fields["inspection_evidence"] = inspection
+    execution = (execution_metadata or {}).get("execution_observation")
+    if execution is not None:
+        fields["execution_observation"] = execution
     return fields
 
 
@@ -103,58 +125,11 @@ def _result_fields(session: "Session", result: str, turn: int) -> dict[str, Any]
 
 
 def _outcome_fields(
-    *,
-    tool_name: str,
-    result: str,
-    gate_blocked: bool,
+    *, tool_name: str, result: str, gate_blocked: bool,
     execution_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if gate_blocked or is_gate_blocked(result):
-        return {
-            "outcome": "blocked",
-            "pass_fail": "fail",
-            "exit_status": None,
-            "error_class": "harness_gate",
-        }
-    status, error_kind = derive_envelope_status(result)
-    # A result-stage security block happens after the handler and therefore
-    # may retain a successful raw exit status.  The admitted error envelope
-    # is authoritative for the model-visible outcome.
-    if error_kind == "security_block":
-        return {
-            "outcome": "error",
-            "pass_fail": "fail",
-            "exit_status": None,
-            "error_class": "security_block",
-        }
-    execution_metadata = execution_metadata or {}
-    if execution_metadata.get("timed_out"):
-        return {
-            "outcome": "error",
-            "pass_fail": "fail",
-            "exit_status": None,
-            "error_class": "timeout",
-        }
-    if execution_metadata.get("exit_status_known"):
-        exit_status = execution_metadata.get("exit_status")
-        if exit_status is not None:
-            passed = int(exit_status) == 0
-            return {
-                "outcome": "ok" if passed else "error",
-                "pass_fail": "pass" if passed else "fail",
-                "exit_status": int(exit_status),
-                "error_class": "" if passed else "nonzero_exit",
-            }
-    pass_fail = "pass" if classify_outcome(result) == "OK" else "fail"
-    exit_status = _exit_status(result)
-    if exit_status is None and tool_name in {"bash", "run_tests"} and pass_fail == "pass":
-        exit_status = 0
-    return {
-        "outcome": status,
-        "pass_fail": pass_fail,
-        "exit_status": exit_status,
-        "error_class": error_kind or "",
-    }
+    from ..execution_outcome import recorded_outcome
+    return recorded_outcome(execution_metadata, gate_blocked=gate_blocked)
 
 
 def _trace_result_cap(session: "Session") -> int:
@@ -196,29 +171,18 @@ def _read_retained_text(session: "Session", rel_path: str) -> str | None:
     if not rel_path:
         return None
     try:
-        path = (Path(session.cwd) / rel_path).resolve()
-        return path.read_bytes().decode("utf-8", errors="replace")
-    except OSError:
+        from ..retained_output import output_file_scope
+        from ..task_path import resolve_task_path
+        with output_file_scope(session):
+            path = resolve_task_path(session.cwd, rel_path)
+            return path.read_bytes().decode("utf-8", errors="replace")
+    except (OSError, ValueError, BudgetExhausted):
         return None
 
 
 def _sink_trace_output(session: "Session", result: str, turn: int) -> str:
-    try:
-        session._sink_counter += 1
-        sink_dir = Path(session.cwd) / ".tool_output"
-        sink_dir.mkdir(parents=True, exist_ok=True)
-        sink_name = (
-            f"{session._session_number}_{session._sink_counter:04d}"
-            f"_t{turn}_trace.log"
-        )
-        sink_path = sink_dir / sink_name
-        sink_path.write_bytes(result.encode("utf-8", errors="replace"))
-        return str(sink_path.relative_to(session.cwd))
-    except OSError as exc:
-        log.debug("trace output sink failed: %s", exc)
-    except ValueError:
-        log.debug("trace output sink path escaped cwd")
-    return ""
+    from ..retained_output import save_output
+    return save_output(session, result, turn, trace=True)
 
 
 def _safe_relative_path(session: "Session", raw_path: str) -> str:
@@ -228,10 +192,13 @@ def _safe_relative_path(session: "Session", raw_path: str) -> str:
     if rel.is_absolute() or ".." in rel.parts:
         return ""
     try:
-        cwd = Path(session.cwd).resolve()
-        abs_path = (cwd / rel).resolve()
-        safe_rel = abs_path.relative_to(cwd)
-    except (OSError, ValueError):
+        from ..retained_output import output_file_scope
+        from ..task_path import resolve_task_path
+        with output_file_scope(session):
+            cwd = resolve_task_path(session.cwd, '.')
+            abs_path = resolve_task_path(cwd, raw_path)
+            safe_rel = abs_path.relative_to(cwd)
+    except (OSError, ValueError, BudgetExhausted):
         return ""
     return str(safe_rel)
 

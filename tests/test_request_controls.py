@@ -470,6 +470,22 @@ def test_completion_estimate_counts_tools_and_recounts_changed_messages():
     assert bound_completion_budget(continued, 2000)["max_tokens"] < second["max_tokens"]
 
 
+@pytest.mark.parametrize("basis,precision,recorded", [
+    ("character_estimate", "estimate", 100),
+    ("backend_input_tokens_unverified", "unverified", 100),
+    ("backend_input_tokens", "estimate", 100),
+    ("backend_input_tokens", "backend_reported", 99),
+])
+def test_local_exhaustion_requires_matching_reliable_count(basis, precision, recorded):
+    from scripts.llm_solver.server.request_controls import bound_completion_budget
+    payload = {"messages": [{"role": "user", "content": "task"}], "max_tokens": 10}
+    record = {"count_basis": basis, "count_precision": precision, "prompt_tokens": recorded}
+    # These records cannot prove local exhaustion. Numerical estimate policy
+    # remains a separate contract; do not assert that the result fits.
+    bound_completion_budget(payload, 100, payload_counter=lambda request: 100, count_record=record)
+    assert payload["max_tokens"] == 10
+
+
 @pytest.mark.parametrize("with_profile", [False, True])
 def test_wire_budget_bounds_main_and_side_requests(tmp_path, with_profile):
     from pathlib import Path

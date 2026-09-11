@@ -7,6 +7,18 @@ isolation.
 from __future__ import annotations
 
 
+def format_outcome(item) -> str:
+    """Keep recorded check and execution distinctions beside their text."""
+    if not isinstance(item, dict):
+        return ""
+    fields = {"kind": item.get("check_kind") or item.get("kind"),
+              "status": item.get("verification_status"),
+              "verdict": item.get("verdict") or item.get("pass_fail"),
+              "execution": item.get("outcome"), "exit": item.get("exit_status")}
+    labels = [f"{key}={value}" for key, value in fields.items() if value is not None and value != ""]
+    return " [" + ", ".join(labels) + "]" if labels else ""
+
+
 def format_state(state) -> str:
     if not state:
         return ""
@@ -57,7 +69,7 @@ def format_trace(trace, max_entries: int, trace_stub_chars: int) -> str:
             if len(result) > trace_stub_chars
             else result
         )
-        lines.append(f"{step} | {action} | {stub_result} | {nxt}")
+        lines.append(f"{step} | {action}{format_outcome(entry)} | {stub_result} | {nxt}")
     return "\n".join(lines)
 
 
@@ -69,7 +81,7 @@ def format_list(items, max_items: int) -> str:
     for x in tail:
         if isinstance(x, dict):
             # Structured evidence entry (DRY schema).
-            lines.append(f"step {x['step']}: {x['action']} → {x.get('result', '')}")
+            lines.append(f"step {x['step']}: {x['action']}{format_outcome(x)} → {x.get('result', '')}")
         else:
             lines.append(str(x))
     return "\n".join(lines)

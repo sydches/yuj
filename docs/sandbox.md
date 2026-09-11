@@ -69,16 +69,19 @@ execution.
 With the normal strict settings:
 
 - The model can write in the current project directory.
-- The model can read the rest of the host file system.
-- The model cannot write to the rest of the host file system.
+- The model can read admitted system files and runtime components discovered
+  from the task's environment. Other task directories and the host home are
+  outside that view.
+- Admitted external runtime and resource directories are read-only.
 - The model shell has no network access.
-- Each shell call gets a new `/tmp`.
+- The execution namespace has private `/tmp` and home storage.
 - The shell can use `/proc` and `/dev` inside their own namespaces.
 - A temporary file system covers `.git/hooks` in the project.
-- Yuj mounts the Docker socket when that socket exists on the host.
+- The host Docker socket is not mounted.
 
-The Docker socket can give a model command access to the Docker service. Do
-not expose the socket when the task must not use Docker.
+Yuj obtains runtime paths from permitted environment facts and installed
+metadata. An unavailable or ambiguous runtime stays unresolved. This discovery
+does not repair the task's dependencies.
 
 When you enable Agent Skills, Yuj adds validated external skill directories
 to the read-only set. `read` can open their `SKILL.md` files and resources, and
@@ -154,7 +157,7 @@ No selected sandbox degrades to host execution. A missing binary, unusable
 namespace, missing local image, or failed container inspection stops startup.
 Only `backend = "none"` enables host execution.
 
-The read-only host view can still contain private files. Hide selected paths
+Admitted task and resource directories may contain private files. Hide selected paths
 with `[sandbox].unreadable_paths`:
 
 ```toml

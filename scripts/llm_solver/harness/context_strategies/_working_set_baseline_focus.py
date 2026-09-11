@@ -1,7 +1,6 @@
 """Focus + path-selection helpers for WorkingSetBaselineContext."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._working_set_baseline_helpers import (
@@ -101,18 +100,12 @@ def is_repo_file_candidate(ctx: "WorkingSetBaselineContext", path: str) -> bool:
         return False
     if path.endswith("/"):
         return False
-    candidate = Path(path)
-    if candidate.is_absolute():
-        try:
-            candidate.relative_to(ctx._cwd)
-        except ValueError:
-            return False
-    else:
-        candidate = (ctx._cwd / candidate).resolve(strict=False)
+    from ..task_path import resolve_task_path
     try:
+        candidate = resolve_task_path(ctx._cwd, path)
         if candidate.exists():
             return candidate.is_file()
-    except OSError:
+    except (OSError, ValueError, RuntimeError):
         return False
     name = candidate.name
     return bool(name) and "." in name and not name.startswith(".")

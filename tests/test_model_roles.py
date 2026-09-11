@@ -227,7 +227,9 @@ def test_role_keyed_fallback_chain_resolves_profiles_and_contexts_at_startup():
     assert weak_transition is not None
     assert weak_transition.to_resolution.profile.name == "editor"
     assert weak_transition.to_resolution.target.model == "editor-fallback-model"
-    assert weak_transition.to_resolution.target.context_size == 16384
+    assert weak_transition.to_resolution.target.context_size == 8192
+    assert weak_transition.to_resolution.target.declared_context_size == 8192
+    assert weak_transition.to_resolution.profile.context_capacity == 16384
 
 
 def test_failing_fake_client_switches_only_after_retry_budget_is_exhausted():

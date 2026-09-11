@@ -1,7 +1,9 @@
 # Paper configurations
 
-Use these files to reproduce the four primary Qwen3.6 pressure comparisons in
-the paper. A normal coding session does not need them.
+Use these recipes to inspect the setup of the four primary Qwen3.6 pressure
+comparisons or to run a new comparison. A normal coding session does not need
+them. Current runtime and shared settings include later fixes; exact historical
+reproduction requires the code and settings identities in the source records.
 
 The public result table contains ten comparisons. This guide gives the complete
 harness file order for four of them. The

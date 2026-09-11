@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from scripts.llm_solver.harness._loop._driver_setup import (
     load_system_prompt_and_provenance,
 )
@@ -37,7 +39,7 @@ def test_arm_import_switch_order_allowed_roots_and_final_hash(tmp_path: Path) ->
     )
 
     assert prompt.startswith("PROFILE\n\nARM START\nARM IMPORT")
-    assert prompt.endswith("ARM END\n\nHEADER")
+    assert prompt.split("\n\nTask environment (observed at startup):\n")[0].endswith("ARM END\n\nHEADER")
     assert "HOST SECRET" not in prompt
     assert 'status="outside_allowed_dirs"' in prompt
     assert provenance["system_prompt_sha256"] == hashlib.sha256(
@@ -74,18 +76,18 @@ def test_project_imports_expand_before_utf8_cap_and_count_bytes(tmp_path: Path) 
         project_doc_max_bytes=7,
     )
 
-    prompt, _provenance, _contract, metadata = (
-        load_system_prompt_and_provenance(
-            cfg, _client(), work, None, None, None, None,
-        )
+    with pytest.raises(ValueError, match="instruction.*byte.*ceiling"):
+        load_system_prompt_and_provenance(cfg, _client(), work, None, None, None, None)
+    from dataclasses import replace
+    prompt, _provenance, _contract, metadata = load_system_prompt_and_provenance(
+        replace(cfg, project_doc_max_bytes=11), _client(), work, None, None, None, None,
     )
 
-    assert "ééé" in prompt
-    assert "éééé" not in prompt
+    assert "ééééé" in prompt
     assert metadata.project_instruction_bytes == len("@shared.md\n")
     assert metadata.project_instruction_imported_bytes == len(shared.read_bytes())
-    assert metadata.project_instruction_resolved_bytes == 6
-    assert metadata.project_instructions_truncated is True
+    assert metadata.project_instruction_resolved_bytes == 11
+    assert metadata.project_instructions_truncated is False
     project_source = metadata.prompt_import_tree[0]
     assert project_source["source"] == "AGENTS.md"
     assert project_source["imports"][0]["path"] == "shared.md"
@@ -206,6 +208,11 @@ def test_session_start_aggregates_safe_import_tree_without_state_projection(
         "injection",
     ]
     assert all(entry["imports"] for entry in start["prompt_import_tree"])
+    loaded_rule = start["prompt_import_tree"][-1]
+    assert loaded_rule["rule_name"] == "hint"
+    assert loaded_rule["admission_status"] == "unverified"
+    assert len(loaded_rule["source_sha256"]) == 64
+    assert len(loaded_rule["resolved_rule_sha256"]) == 64
     assert str(tmp_path) not in json.dumps(start["prompt_import_tree"])
     state = json.loads((work / ".solver" / "state.json").read_text())
     assert "prompt_import_tree" not in json.dumps(state)

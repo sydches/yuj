@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import json
 import re
 import sys
@@ -86,6 +87,64 @@ def test_run_tests_admission_uses_detected_runner_command(tmp_path):
 
 # ── Handler: gating ──────────────────────────────────────────────────────
 
+@pytest.mark.parametrize("structured", [True, False])
+def test_unknown_repository_does_not_execute_invented_runner(tmp_path, structured):
+    cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="auto",
+                      tools_run_tests_structured_output=structured)
+    with patch.object(tools_mod, "_run_in_sandbox") as execute:
+        out = run_tests(cwd=str(tmp_path), cfg=cfg)
+    execute.assert_not_called()
+    assert out.exit_status is None
+    assert not out.user_turn_injections
+    assert "documented verification command" in out
+    if structured:
+        assert _parse_envelope(out)["status"] == "selection_unresolved"
+    else:
+        assert out.startswith("ERROR:")
+
+
+def test_discovered_runner_is_retained_after_markers_change(tmp_path):
+    from llm_solver.harness._loop._driver_setup import resolve_task_format
+
+    (tmp_path / "go.mod").write_text("module example.com/task\n")
+    cfg = resolve_task_format(
+        make_config(tools_run_tests_enabled=True, analysis_task_format="auto"), tmp_path,
+    )
+    (tmp_path / "go.mod").unlink()
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    captured = {}
+    with _patch_sandbox(captured, text="ok example.com/task"):
+        out = run_tests(cwd=str(tmp_path), cfg=cfg)
+    assert captured["cmd"].startswith("go test")
+    assert _parse_envelope(out)["runner"] == "go"
+    with patch.object(tools_mod, "_filter_bash_output", return_value=out) as filter_output:
+        tools_mod.admit_tool_output("run_tests", out, arguments={}, cfg=cfg, cwd=tmp_path)
+    assert filter_output.call_args.args[1].startswith("go test")
+
+
+def test_explicit_runner_wins_over_repository_marker(tmp_path):
+    (tmp_path / "Cargo.toml").write_text("[package]\n")
+    cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="go")
+    captured = {}
+    with _patch_sandbox(captured, text="ok"):
+        out = run_tests(cwd=str(tmp_path), cfg=cfg)
+    assert captured["cmd"].startswith("go test")
+    assert _parse_envelope(out)["runner"] == "go"
+
+
+def test_failed_discovery_uses_generic_without_execution(tmp_path):
+    from llm_solver.harness._loop._driver_setup import resolve_task_format
+
+    with patch("llm_solver.language_quirks._discovery.inspect_runner_candidates", side_effect=OSError("unreadable")):
+        cfg = resolve_task_format(
+            make_config(tools_run_tests_enabled=True, analysis_task_format="auto"), tmp_path,
+        )
+    with patch.object(tools_mod, "_run_in_sandbox") as execute:
+        out = run_tests(cwd=str(tmp_path), cfg=cfg)
+    execute.assert_not_called()
+    assert _parse_envelope(out)["status"] == "runner_unavailable"
+
+
 class TestRunTestsGating:
 
     def test_disabled_returns_error(self, tmp_path):
@@ -95,7 +154,7 @@ class TestRunTestsGating:
         assert "tools.run_tests.enabled" in out
 
     def test_enabled_invokes_pytest_with_deterministic_flags(self, tmp_path):
-        cfg = make_config(tools_run_tests_enabled=True)
+        cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest")
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text="1 passed in 0.01s"):
             out = run_tests(path="tests/foo.py", cwd=str(tmp_path), cfg=cfg)
@@ -109,7 +168,7 @@ class TestRunTestsGating:
     def test_internal_base_command_override_reuses_resolved_interpreter(
         self, tmp_path,
     ):
-        cfg = make_config(tools_run_tests_enabled=True)
+        cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest")
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text="1 passed"):
             run_tests(
@@ -126,7 +185,7 @@ class TestRunTestsGating:
         )
 
     def test_enabled_with_k_expression(self, tmp_path):
-        cfg = make_config(tools_run_tests_enabled=True)
+        cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest")
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text=""):
             run_tests(
@@ -137,7 +196,7 @@ class TestRunTestsGating:
         assert "test_login or test_logout" in captured["cmd"]
 
     def test_enabled_with_last_failed_flag(self, tmp_path):
-        cfg = make_config(tools_run_tests_enabled=True)
+        cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest")
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text=""):
             run_tests(last_failed=True, cwd=str(tmp_path), cfg=cfg)
@@ -145,12 +204,13 @@ class TestRunTestsGating:
 
     def test_timeout_propagates_from_config(self, tmp_path):
         cfg = make_config(
+            analysis_task_format="pytest",
             tools_run_tests_enabled=True, tools_run_tests_timeout=42,
         )
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text=""):
             run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert captured["timeout"] == 42
+        assert 0 < captured["timeout"] <= 42
 
 
 # ── Output protocol: structured envelope ─────────────────────────────────
@@ -180,6 +240,7 @@ class TestStructuredOutput:
     @pytest.fixture
     def cfg(self):
         return make_config(
+            analysis_task_format="pytest",
             tools_run_tests_enabled=True,
             tools_run_tests_structured_output=True,
         )
@@ -288,7 +349,7 @@ class TestStructuredOutput:
         assert parsed["status"] == "failed"
         assert "lastfailed cache" not in parsed["body"]
 
-    def test_envelope_carries_runner_pytest_when_no_marker(self, cfg, tmp_path):
+    def test_envelope_carries_explicit_runner_without_a_marker(self, cfg, tmp_path):
         # Runner identity goes in the envelope so trace replay knows
         # which language_quirks
         # template fired, without re-detecting from cwd contents.
@@ -298,6 +359,7 @@ class TestStructuredOutput:
         assert parsed["runner"] == "pytest"
 
     def test_envelope_carries_runner_cargo_when_cargo_toml_present(self, cfg, tmp_path):
+        cfg = replace(cfg, analysis_task_format="auto")
         # F3: a Cargo.toml in cwd flips detection to cargo. The runner
         # attr must reflect that, otherwise the trace silently shows
         # the same output shape regardless of what actually ran.
@@ -336,14 +398,14 @@ class TestStructuredOutput:
         # `python3 -m pytest` avoids relying on the optional `python`
         # alias while still avoiding bare `pytest`, which is not stable
         # across the sandboxed eval images.
-        cfg = make_config(tools_run_tests_enabled=True)
+        cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest")
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text="1 passed"):
             run_tests(path="tests/", cwd=str(tmp_path), cfg=cfg)
         assert "python3 -m pytest" in captured["cmd"]
 
     def test_pytest_uses_current_task_environment(self, tmp_path):
-        cfg = make_config(tools_run_tests_enabled=True)
+        cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest")
         captured: dict = {}
         with _patch_sandbox(captured, exit_code=0, text="1 passed"):
             run_tests(path="tests/", cwd=str(tmp_path), cfg=cfg)
@@ -377,6 +439,7 @@ class TestStructuredOutput:
     # ── Multilingual status mapping ───────────────────────────────────────
 
     def test_cargo_panic_exit_101_maps_to_failed_not_error_101(self, cfg, tmp_path):
+        cfg = replace(cfg, analysis_task_format="auto")
         # cargo test's libtest harness exits 101 (a Rust panic code) when
         # any test fails. This once fell through to run_tests.py's
         # pytest-only _PYTEST_STATUS map and surfaced as the misleading
@@ -401,6 +464,7 @@ class TestStructuredOutput:
         assert parsed["runner"] == "pytest"
 
     def test_go_nonzero_exit_maps_to_failed_not_pytest_vocabulary(self, cfg, tmp_path):
+        cfg = replace(cfg, analysis_task_format="auto")
         # Go's `go test` has no analogue to pytest's exit 2/4/5; any
         # nonzero should read as plain "failed", never "collection_error"
         # or "usage_error".
@@ -412,6 +476,7 @@ class TestStructuredOutput:
         assert parsed["runner"] == "go"
 
     def test_pytest_binary_missing_hint_does_not_fire_for_cargo(self, cfg, tmp_path):
+        cfg = replace(cfg, analysis_task_format="auto")
         # Python recovery advice must not fire against a cargo runner's
         # output, even if the raw text resembles a missing-command trigger.
         (tmp_path / "Cargo.toml").write_text("[package]\nname = 'foo'\n")
@@ -430,10 +495,10 @@ class TestStructuredOutput:
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
         assert _parse_envelope(out)["status"] == "runner_unavailable"
         advice = _advice_text(out)
-        assert "could not start in the current environment" in advice
-        assert "existing Python environment" in advice
-        assert "Conda" in advice
-        assert "uv" in advice
+        assert "output contains a Python runner lookup error" in advice
+        assert "observed runtime facts" in advice
+        assert "available, permitted runtime" in advice
+        assert "Conda" not in advice and "uv" not in advice
         assert "could not start" not in out
 
     def test_binary_missing_hint_fires_on_no_module_pytest(self, cfg, tmp_path):
@@ -444,10 +509,10 @@ class TestStructuredOutput:
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
         assert _parse_envelope(out)["status"] == "runner_unavailable"
         advice = _advice_text(out)
-        assert "could not start in the current environment" in advice
-        assert "existing Python environment" in advice
-        assert "Conda" in advice
-        assert "uv" in advice
+        assert "output contains a Python runner lookup error" in advice
+        assert "observed runtime facts" in advice
+        assert "available, permitted runtime" in advice
+        assert "Conda" not in advice and "uv" not in advice
         assert "could not start" not in out
 
     def test_path_missing_hint_still_fires(self, cfg, tmp_path):
@@ -459,12 +524,14 @@ class TestStructuredOutput:
                             text=("ERROR: file or directory not found: "
                                   "tests/missing.py\nno tests ran in 0.00s")):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert "test path does not exist" in _advice_text(out)
+        assert "pytest missing-path message" in _advice_text(out)
+        assert "observed task layout" in _advice_text(out)
         assert "test path does not exist" not in out
         assert "could not start" not in out
 
     def test_legacy_string_contract_when_structured_disabled(self, tmp_path):
         cfg = make_config(
+            analysis_task_format="pytest",
             tools_run_tests_enabled=True,
             tools_run_tests_structured_output=False,
         )
@@ -477,13 +544,16 @@ class TestStructuredOutput:
 
     def test_legacy_string_contract_timeout_path(self, tmp_path):
         cfg = make_config(
+            analysis_task_format="pytest",
             tools_run_tests_enabled=True,
             tools_run_tests_structured_output=False,
             tools_run_tests_timeout=7,
         )
         with _patch_sandbox({}, timed_out=True):
             out = run_tests(cwd=str(tmp_path), cfg=cfg)
-        assert out == "ERROR: command timed out after 7s"
+        prefix = "ERROR: command timed out after "
+        assert out.startswith(prefix)
+        assert 0 < float(out.removeprefix(prefix).removesuffix("s")) <= 7
 
 
 @pytest.mark.parametrize(
@@ -631,7 +701,7 @@ def test_dispatch_exports_advice_without_changing_tool_result(tmp_path):
     assert "cannot import `numpy`" not in output
     records = metadata["user_turn_injections"]
     assert len(records) == 1
-    assert "cannot import `numpy`" in records[0].text
+    assert "missing-module message naming `numpy`" in records[0].text
     assert records[0].mechanism == "python_env_missing_hint"
 
 
@@ -728,6 +798,7 @@ def test_run_tests_advice_is_accounted(
     mechanism,
 ):
     cfg = make_config(
+        analysis_task_format="pytest",
         tools_run_tests_enabled=True,
         tools_run_tests_structured_output=structured,
     )
@@ -838,7 +909,8 @@ class TestBashStillWorks:
                 sandbox=False, bwrap_bin="/nonexistent",
             )
         advice = _advice_text(out)
-        assert f"cannot import `{module}`" in advice
+        assert f"missing-module message naming `{module}`" in advice
+        assert "cannot import" not in advice
         assert f"ModuleNotFoundError: No module named '{module}'" in out
         assert "command and module path" in advice
         assert "optional dependency" in advice
@@ -866,10 +938,10 @@ class TestBashStillWorks:
                 sandbox=False, bwrap_bin="/nonexistent",
             )
         advice = _advice_text(out)
-        assert "Python package installation failed" in advice
+        assert "dependency-resolution or connection error" in advice
         assert "project's dependency files" in advice
-        assert "pip" in advice
-        assert "uv" in advice
-        assert "Conda" in advice
+        assert "observed runtime facts" in advice
+        assert "uv" not in advice
+        assert "Conda" not in advice
         assert "local cache" in advice
         assert "[HARNESS:" not in out

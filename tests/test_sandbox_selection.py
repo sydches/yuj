@@ -173,7 +173,7 @@ def test_auto_uses_the_first_operational_installed_backend(
     monkeypatch.setattr(
         "scripts.llm_solver.harness.sandbox.container_backend."
         "ContainerBackend.image_digest",
-        lambda self, runtime_bin: "sha256:" + ("a" * 64),
+        lambda self, runtime_bin, **kwargs: "sha256:" + ("a" * 64),
     )
 
     resolution = preflight_sandbox(cfg, capabilities=capabilities)
@@ -200,7 +200,7 @@ def test_auto_reports_all_operational_failures_without_none_fallback(
     monkeypatch.setattr(
         "scripts.llm_solver.harness.sandbox.container_backend."
         "ContainerBackend.image_digest",
-        lambda self, runtime_bin: (_ for _ in ()).throw(
+        lambda self, runtime_bin, **kwargs: (_ for _ in ()).throw(
             ContainerBackendError("runtime unavailable")
         ),
     )

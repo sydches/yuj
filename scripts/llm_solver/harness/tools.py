@@ -61,6 +61,9 @@ from .tool_specs import (
 )
 from .checkpoint_rewind import unavailable_tool_result
 from .process_manager import AdmittedProcessOutput, ProcessManagerError
+from .task_file_runtime import file_scoped_dispatch
+from .file_changes import observed_dispatch
+from .time_budget import budgeted_test_dispatch
 from .security_scan import (
     SecurityScanOutcome,
     SecurityScanner,
@@ -78,6 +81,7 @@ from .sandbox.env_policy import (
     EnvironmentPolicy,
     activate_environment,
     active_environment,
+    discover_execution_environment,
 )
 from .savings import transformation_scoped
 
@@ -131,7 +135,7 @@ def _dispatch_bash(args, cwd, cfg):
         return "ERROR: background process manager is unavailable"
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
-        effective_env, allow_login_shell = _effective_command_environment(cfg)
+        effective_env, allow_login_shell = _effective_command_environment(cfg, cwd=cwd)
     from .sandbox.policy import sandbox_execution_kwargs
 
     return bash(
@@ -146,7 +150,7 @@ def _dispatch_bash(args, cwd, cfg):
     )
 
 
-def _effective_command_environment(cfg: Config) -> tuple[dict[str, str], bool]:
+def _effective_command_environment(cfg: Config, *, cwd=None) -> tuple[dict[str, str], bool]:
     """Resolve one Config's command-only environment.
 
     ``Session`` and the outer driver retain this result for their lifetime.
@@ -164,7 +168,16 @@ def _effective_command_environment(cfg: Config) -> tuple[dict[str, str], bool]:
             cfg, "sandbox_env_allow_login_shell", False
         ),
     )
-    return policy.resolve(), policy.allow_login_shell
+    selection = {}
+    if cfg.sandbox_bash and cfg.sandbox_backend == 'container' and policy.inherit != 'none':
+        from .sandbox.container_backend import ContainerBackend
+        selection['image_backend'] = ContainerBackend(
+            cfg.sandbox_container_runtime, cfg.sandbox_container_image,
+            tuple(cfg.sandbox_container_flags or ()))
+    source = {} if policy.inherit == "none" else discover_execution_environment(
+        sandbox=cfg.sandbox_bash, cwd=cwd, timeout=cfg.bash_timeout, **selection,
+    )
+    return policy.resolve(source), policy.allow_login_shell
 
 
 def _dispatch_write_todos(args, _cwd, cfg):
@@ -193,7 +206,7 @@ def _dispatch_get_function_details(args, cwd, cfg):
 def _dispatch_exec_cell(args, cwd, cfg):
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
-        effective_env, allow_login_shell = _effective_command_environment(cfg)
+        effective_env, allow_login_shell = _effective_command_environment(cfg, cwd=cwd)
     inherited = dict(_ACTIVE_DISPATCH_OPTIONS.get() or {})
     inner_call_count = 0
 
@@ -317,6 +330,7 @@ _DISPATCH = {
         k=args.get("k", ""),
         last_failed=bool(args.get("last_failed", False)),
         base_cmd_override=args.get("_base_cmd_override", ""),
+        component_source=args.get("_component_source", ""),
         cwd=cwd, cfg=cfg,
     ),
     "list_definitions": lambda args, cwd, cfg: list_definitions(
@@ -428,7 +442,9 @@ def admit_tool_output(
             result = condense_output(result, cmd, output_control)
     elif name == "run_tests" and filter_shell_output and cwd is not None:
         from ..language_quirks import load_run_tests_quirk_object
-        quirk = load_run_tests_quirk_object(cwd)
+        quirk = load_run_tests_quirk_object(
+            cwd, runner=getattr(cfg, "analysis_task_format", "auto"),
+        )
         runner_cmd = quirk.env_activate_prefix + quirk.base_cmd
         result = _filter_bash_output(result, runner_cmd, cfg)
         if output_control is not None:
@@ -512,6 +528,9 @@ def admit_tool_output(
 
 
 @transformation_scoped
+@budgeted_test_dispatch
+@file_scoped_dispatch
+@observed_dispatch
 def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              output_control=None, universal_rewrites=None,
              forbidden_rules=None, redirect_rules=None, redactions=None,
@@ -544,6 +563,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     in ``active_tools``.
     """
     reg = tool_registry or build_tool_registry()
+    native_test_report = None
     handler = reg.handlers.get(name)
     if handler is None:
         return f"ERROR: unknown tool '{name}'"
@@ -756,7 +776,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     else:
         if effective_env is None:
             effective_env, resolved_login_shell = (
-                _effective_command_environment(cfg)
+                _effective_command_environment(cfg, cwd=cwd)
             )
         else:
             resolved_login_shell = bool(
@@ -764,10 +784,17 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 if allow_login_shell is None
                 else allow_login_shell
             )
+        from contextlib import nullcontext
+        from .test_report import capture_test_report
+        report_scope = (capture_test_report(
+            cwd, cfg, effective_env,
+            command=str(arguments.get("cmd", "")) if name == "bash" else None,
+        ) if name in {"bash", "run_tests"} else nullcontext(None))
         with (
             activate_ignore_policy(ignore_policy),
+            report_scope as report_capture,
             activate_environment(
-                effective_env,
+                report_capture.environment if report_capture is not None else effective_env,
                 allow_login_shell=resolved_login_shell,
             ),
         ):
@@ -788,6 +815,10 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 })
                 try:
                     result = handler(arguments, cwd, cfg)
+                    if report_capture is not None:
+                        report_capture.finish(getattr(result, "exit_status", None),
+                                              getattr(result, "timed_out", False))
+                        native_test_report = report_capture.record
                 finally:
                     _ACTIVE_DISPATCH_OPTIONS.reset(dispatch_token)
             except ProcessManagerError as e:
@@ -798,7 +829,19 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     already_admitted = isinstance(result, AdmittedProcessOutput)
     applied_operations = tuple(getattr(result, "applied_operations", ()))
     raw_exit_status = getattr(result, "exit_status", None)
+    raw_exit_status_known = hasattr(result, "exit_status")
     raw_timed_out = bool(getattr(result, "timed_out", False))
+    raw_verification_status = getattr(result, "verification_status", "")
+    raw_verification_evidence = getattr(result, "verification_evidence", None)
+    raw_runner_request = getattr(result, "runner_request", None)
+    raw_shell_submission = getattr(result, "shell_submission", None)
+    raw_execution_budget = getattr(result, "execution_budget", None)
+    raw_observation = getattr(result, "observation_receipt", None)
+    raw_inspection = getattr(result, "inspection_evidence", None)
+    inspection_body = getattr(result, "inspection_body", "")
+    if getattr(result, "executed", None) is False:
+        executed = False
+    raw_security_blocked_stage = getattr(result, "security_blocked_stage", "")
     raw_user_turn_injections = tuple(
         getattr(result, "user_turn_injections", ()) or ()
     )
@@ -854,7 +897,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                     cwd, read_path,
                     readonly_roots=tuple(getattr(cfg, "skills_readable_dirs", ()) or ()),
                 )
-                if Path(cwd).resolve() in candidate.parents:
+                from .task_path import resolve_task_path
+                if resolve_task_path(cwd, '.') in candidate.parents:
                     stale_guard.observe_read(str(candidate))
             elif succeeded and name in {
                 "write", "edit", "notebook_edit", "structural_edit",
@@ -898,15 +942,46 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         )
 
     if execution_metadata is not None:
+        from .repeated_observations import read_observation
+        from .tool_specs import PARALLEL_READ_SAFE_TOOL_NAMES
+        if executed and not result_scan.blocked and not raw_security_blocked_stage:
+            if raw_observation is not None:
+                execution_metadata["observation_receipt"] = raw_observation
+            elif name in PARALLEL_READ_SAFE_TOOL_NAMES and handler is _DISPATCH.get(name):
+                execution_metadata["observation_receipt"] = read_observation(result_before_security_scan)
         execution_metadata["executed"] = executed
+        if (executed and raw_exit_status_known and type(raw_exit_status) is int
+                and not raw_timed_out and not result_scan.blocked
+                and not raw_security_blocked_stage and raw_shell_submission):
+            execution_metadata["execution_observation"] = {
+                "kind": "captured_execution_observation", "binding": raw_shell_submission,
+                "exit_status": raw_exit_status,
+                "captured_result_sha256": hashlib.sha256(
+                    str(result_before_security_scan).encode("utf-8", errors="replace")).hexdigest(),
+                "verification_status": raw_verification_status or "unknown",
+            }
         if callable(exec_cell_metadata):
             execution_metadata["exec_cell"] = exec_cell_metadata()
         if applied_operations:
             execution_metadata["applied_operations"] = applied_operations
-        if hasattr(result, "exit_status"):
+        if raw_exit_status_known:
             execution_metadata["exit_status_known"] = True
-            execution_metadata["exit_status"] = getattr(result, "exit_status")
-            execution_metadata["timed_out"] = bool(getattr(result, "timed_out", False))
+            execution_metadata["exit_status"] = raw_exit_status
+            execution_metadata["timed_out"] = raw_timed_out
+        if raw_verification_status:
+            execution_metadata["verification_status"] = raw_verification_status
+        if raw_verification_evidence is not None:
+            execution_metadata["verification_evidence"] = raw_verification_evidence
+        if raw_runner_request is not None:
+            execution_metadata["runner_request"] = raw_runner_request
+        if native_test_report is not None and not result_scan.blocked and not raw_security_blocked_stage:
+            execution_metadata["native_test_report"] = native_test_report
+        if raw_shell_submission is not None:
+            execution_metadata["shell_submission"] = raw_shell_submission
+        if raw_execution_budget is not None:
+            execution_metadata["execution_budget"] = raw_execution_budget
+        if raw_security_blocked_stage:
+            execution_metadata["security_blocked_stage"] = raw_security_blocked_stage
         if raw_user_turn_injections and not result_scan.blocked:
             execution_metadata["user_turn_injections"] = list(
                 raw_user_turn_injections
@@ -942,6 +1017,11 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             cwd=cwd,
         )
     if execution_metadata is not None:
+        if raw_inspection and executed and not result_scan.blocked and not raw_security_blocked_stage:
+            from .inspection_evidence import admitted_inspection
+            execution_metadata["inspection_evidence"] = admitted_inspection(
+                raw_inspection, inspection_body, result,
+            )
         execution_metadata["output_sha256"] = hashlib.sha256(
             result.encode("utf-8", errors="replace")
         ).hexdigest()

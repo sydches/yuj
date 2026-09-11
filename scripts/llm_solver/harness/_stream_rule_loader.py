@@ -284,8 +284,10 @@ def load_stream_rules(
     allowed_root: Path | None = None,
 ) -> LoadedStreamRules:
     """Load every ``*.md`` rule in deterministic filename order."""
-    directory = Path(dir_path)
-    root = Path(allowed_root).resolve(strict=False) if allowed_root else None
+    from .task_path import TaskPath
+    directory = dir_path if isinstance(dir_path, TaskPath) else Path(dir_path)
+    root = (allowed_root if isinstance(allowed_root, TaskPath) else Path(allowed_root)
+            ).resolve(strict=False) if allowed_root else None
     if root is not None:
         try:
             directory.resolve(strict=False).relative_to(root)

@@ -10,6 +10,7 @@ from typing import Sequence
 
 from .._shared.checkpoints import collect_pending as _collect_pending
 from .._shared.paths import expand_user_path
+from .._shared.task_artifacts import CHECKPOINT_NAME, METRICS_NAME
 from .. import __version__ as harness_version
 from ..config import Config, dump_config
 from .prompt_imports import DEFAULT_IMPORT_MAX_DEPTH, process_imports
@@ -39,8 +40,11 @@ class ResolvedPromptSource:
 
 
 def _safe_source_label(path: Path, roots: Sequence[Path]) -> str:
+    from .task_path import TaskPath
     resolved = path.resolve(strict=False)
     for root in roots:
+        if isinstance(root, TaskPath) and not isinstance(resolved, TaskPath):
+            continue
         resolved_root = root.resolve(strict=False)
         try:
             return resolved.relative_to(resolved_root).as_posix() or "."
@@ -157,7 +161,7 @@ def build_system_prompt(
     )
 
 
-def write_checkpoint(repo_dir: Path, model: str, status: str) -> None:
+def write_checkpoint(repo_dir: Path, model: str, status: str, *, overwrite: bool = True) -> None:
     """Write checkpoint.json compatible with collect_patches.sh and solve_bare.py."""
     checkpoint = {
         "status": status,
@@ -165,7 +169,8 @@ def write_checkpoint(repo_dir: Path, model: str, status: str) -> None:
         "solver": "llm_solver",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    (repo_dir / "checkpoint.json").write_text(json.dumps(checkpoint, indent=2) + "\n")
+    with (repo_dir / CHECKPOINT_NAME).open("w" if overwrite else "x") as output:
+        output.write(json.dumps(checkpoint, indent=2) + "\n")
 
 
 def collect_provenance(
@@ -345,7 +350,8 @@ def collect_provenance(
     return prov
 
 
-def write_run_metrics(repo_dir: Path, metrics: dict, provenance: dict) -> None:
+def write_run_metrics(repo_dir: Path, metrics: dict, provenance: dict, *, overwrite: bool = True) -> None:
     """Write metrics.json with cost/efficiency metrics and provenance."""
     data = {"metrics": metrics, "provenance": provenance}
-    (repo_dir / "metrics.json").write_text(json.dumps(data, indent=2) + "\n")
+    with (repo_dir / METRICS_NAME).open("w" if overwrite else "x") as output:
+        output.write(json.dumps(data, indent=2) + "\n")

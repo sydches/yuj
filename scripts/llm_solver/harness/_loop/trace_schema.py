@@ -39,7 +39,16 @@ class TraceEventSpec:
     optional_fields: frozenset[str] = frozenset()
 
 
-TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
+TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (TraceEventSpec("completed_observation_notice", frozenset({"policy", "prior_turn", "current_turn", "progress", "delivery"})),
+    TraceEventSpec("runtime_briefing_admission", frozenset({
+        "optional_facts_kept", "omitted_observations", "context_allocation_tokens", "request_token_count",
+    })),
+    TraceEventSpec("request_token_count", frozenset({
+        "count_basis", "prompt_tokens", "request_sha256", "counting_calls", "counting_seconds",
+    })),
+    TraceEventSpec("request_token_count_usage", frozenset({
+        "count_basis", "prompt_tokens", "request_sha256", "reported_prompt_tokens", "count_delta",
+    })),
     TraceEventSpec("narration_limit", frozenset({
         "session_number", "turn_number", "attempt", "action",
         "prompt_tokens", "completion_tokens", "prompt_tokens_known",
@@ -59,7 +68,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "project_instructions_truncated", "prompt_import_tree",
             "ignore_file_names", "stream_rule_files",
             "tool_lazy_loading_enabled", "tool_active_limit", "registered_tools",
-            "active_tools", "resume_mode",
+            "active_tools", "resume_mode", "task_environment",
+            "task_identity", "instance_id", "attempt_id",
             "loaded_skills",
             "sandbox_selected", "sandbox_resolved", "sandbox_engaged",
             "sandbox_explicit_unsandboxed",
@@ -97,7 +107,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "role",
             "hook",
             "hook_outcome",
-        }),
+        }), frozenset({"checkpoint_validation_reason"}),
     ),
     TraceEventSpec(
         "handoff",
@@ -186,9 +196,9 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
         frozenset({
-            "parent_tool_call_id", "cell_inner_index", "cell_source",
-            "combined_output_chars", "combined_output_bytes",
-            "inner_call_count",
+            "parent_tool_call_id", "cell_inner_index", "cell_source", "shell_submission",
+            "combined_output_chars", "combined_output_bytes", "inspection_evidence",
+            "inner_call_count", "runner_request", "execution_budget", "observation_receipt", "automatic_verification_execution_budget", "outcome_version", "execution_observation",
         }),
     ),
     TraceEventSpec(
@@ -285,7 +295,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
         "stream_rule_triggered",
         frozenset({
             "session_number", "turn_number", "rule", "scope", "offset",
-        }),
+        }), frozenset({"narration_measurement"}),
     ),
     TraceEventSpec(
         "stream_rule_injection",
@@ -399,6 +409,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "sandbox_backend_executable",
         }),
     ),
+    TraceEventSpec("duplicate_observation_check", frozenset({"session_number", "turn_number", "action", "eligible", "count", "abort_limit", "warn_limit", "pending_work"}), frozenset({"interventions_allowed", "quiet_through_turn"})),
     TraceEventSpec("guardrail_init", frozenset({"session_number"})),
     TraceEventSpec("trace_corrupt", frozenset({"session_number", "kind"})),
     TraceEventSpec("pretest_run", frozenset({"session_number"})),
@@ -467,7 +478,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (
             "session_number", "turn_number", "tool", "rule", "decision",
         }),
     ),
-    # API errors include the HTTP detail in the trace.
+    TraceEventSpec("hold_gate", frozenset({"status", "elapsed_seconds", "allocation"})),
     TraceEventSpec(
         "api_error",
         frozenset({"session_number", "turn_number", "error_type", "detail"}),

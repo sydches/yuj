@@ -254,7 +254,7 @@ def test_image_digest_is_inspected_locally_and_normalized(monkeypatch) -> None:
         "/usr/bin/docker", "image", "inspect",
         "--format={{.Id}}", "local/image:tag",
     ]
-    assert calls[0][1]["timeout"] == 15
+    assert calls[0][1]["timeout"] is None
 
 
 @pytest.mark.parametrize(

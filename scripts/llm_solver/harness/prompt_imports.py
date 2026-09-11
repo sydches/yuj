@@ -7,16 +7,14 @@ prompt assembly plus trace emission.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import glob
-import os
 from pathlib import Path
+from .task_path import TaskPath, native_requested_path
 import re
 from typing import Sequence
 
 
 DEFAULT_IMPORT_MAX_DEPTH = 5
 MARKDOWN_SUFFIXES = frozenset({".md", ".markdown"})
-_GLOB_META = frozenset("*?[")
 _IMPORT_LINE_RE = re.compile(
     r"^(?P<indent> {0,3})@(?P<path>\S+)[ \t]*$"
 )
@@ -74,40 +72,7 @@ class _Expansion:
     loaded_bytes: int
 
 
-class _UnreadableMatcher:
-    """Resolve sandbox unreadable patterns once, before any prompt read."""
-
-    def __init__(self, base_dir: Path, patterns: Sequence[str]) -> None:
-        blocked: set[Path] = set()
-        for original in patterns:
-            pattern = str(original)
-            if pattern.startswith("optional:"):
-                pattern = pattern[len("optional:"):]
-            expanded = os.path.expandvars(os.path.expanduser(pattern))
-            candidate = Path(expanded)
-            if not candidate.is_absolute():
-                candidate = base_dir / candidate
-            candidate_text = str(candidate)
-            if any(character in candidate_text for character in _GLOB_META):
-                blocked.update(
-                    Path(match).resolve(strict=False)
-                    for match in glob.glob(
-                        candidate_text,
-                        recursive=True,
-                        include_hidden=True,
-                    )
-                )
-            else:
-                blocked.add(candidate.resolve(strict=False))
-        self._blocked = tuple(sorted(blocked, key=str))
-
-    def blocks(self, path: Path) -> bool:
-        resolved = path.resolve(strict=False)
-        return any(
-            resolved == blocked or blocked in resolved.parents
-            for blocked in self._blocked
-        )
-
+from ._prompt_unreadable import _UnreadableMatcher
 
 class _ImportProcessor:
     def __init__(
@@ -197,12 +162,22 @@ class _ImportProcessor:
         stack: tuple[Path, ...],
     ) -> tuple[str, ImportTreeNode, tuple[str, ...], int]:
         try:
-            requested_path = Path(request).expanduser()
+            requested_path = (
+                native_requested_path(current_dir, request)
+                if isinstance(current_dir, TaskPath) else Path(request).expanduser()
+            )
             candidate = (
                 requested_path
-                if requested_path.is_absolute()
+                if isinstance(requested_path, TaskPath) or requested_path.is_absolute()
                 else current_dir / requested_path
             ).resolve(strict=False)
+            if not isinstance(candidate, TaskPath):
+                for root in self.allowed_dirs:
+                    if isinstance(root, TaskPath):
+                        native = native_requested_path(root, str(candidate))
+                        if native.path.is_relative_to(root.path):
+                            candidate = native.resolve()
+                            break
         except (OSError, RuntimeError, ValueError):
             node = self._error_node(
                 request=request,
@@ -217,7 +192,7 @@ class _ImportProcessor:
         if containing_root is None:
             safe_request = (
                 _request_fallback(request)
-                if requested_path.is_absolute()
+                if request.startswith(('/', '~'))
                 else request
             )
             node = self._error_node(
@@ -230,7 +205,7 @@ class _ImportProcessor:
             return _error_comment(node), node, (), 0
 
         display_path = candidate.relative_to(containing_root).as_posix() or "."
-        safe_request = display_path if requested_path.is_absolute() else request
+        safe_request = display_path if request.startswith('/') else request
         if candidate.suffix.lower() not in MARKDOWN_SUFFIXES:
             node = self._error_node(
                 request=safe_request,
@@ -356,12 +331,12 @@ def process_imports(
     if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 0:
         raise ValueError("imports_max_depth must be a non-negative integer")
 
-    resolved_base = Path(base_dir).expanduser().resolve()
+    resolved_base = base_dir.resolve() if isinstance(base_dir, TaskPath) else Path(base_dir).expanduser().resolve()
     if not resolved_base.is_dir():
         raise ValueError(f"prompt import base is not a directory: {base_dir}")
     roots: list[Path] = []
     for raw_root in allowed_dirs:
-        root = Path(raw_root).expanduser().resolve(strict=False)
+        root = raw_root.resolve() if isinstance(raw_root, TaskPath) else Path(raw_root).expanduser().resolve(strict=False)
         if not root.is_dir():
             raise ValueError(f"allowed import directory is not a directory: {raw_root}")
         if root not in roots:
@@ -373,7 +348,7 @@ def process_imports(
     source = "<inline>"
     stack: tuple[Path, ...] = ()
     if source_path is not None:
-        resolved_source = Path(source_path).expanduser().resolve(strict=False)
+        resolved_source = source_path.resolve() if isinstance(source_path, TaskPath) else Path(source_path).expanduser().resolve(strict=False)
         source = _display_path(resolved_source, roots)
         stack = (resolved_source,)
 

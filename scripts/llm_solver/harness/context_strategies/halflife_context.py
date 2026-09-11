@@ -3,11 +3,13 @@
 The mode keeps full transcript behavior while the prompt is cheap. Once the
 estimated full prompt crosses the activation threshold, it preserves causal
 message order but replaces older tool-result payloads with bounded head/tail
-views. Full raw output remains in the trace/transcript artifacts.
+views. The undecayed append log remains in memory; model retrieval is unverified.
 """
 from __future__ import annotations
 
 import copy
+import json
+import math
 from collections.abc import Callable
 
 from ..context import ContextManager, chars_div_4
@@ -48,7 +50,8 @@ class HalfLifeContext(ContextManager):
     ):
         super().__init__(token_estimator)
         self._messages: list[dict] = []
-        self._context_limit_tokens = int(context_limit_tokens or context_size or 0)
+        self._context_limit_tokens = int(context_limit_tokens or 0)
+        self._initial_context_size = int(context_size or 0)
         self._activation_ratio = max(0.0, float(activation_ratio))
         self._verbatim_tool_results = max(0, int(verbatim_tool_results))
         self._cap_7_chars = max(0, int(cap_7_chars))
@@ -61,6 +64,17 @@ class HalfLifeContext(ContextManager):
         self._decay_render_count = 0
         self._msg_cache: list[dict] | None = None
         self._tok_cache: int | None = None
+        self._retention_request = None
+        self._retention_binding = None
+        self._retention_inputs = None
+        self._retention_count_evidence: dict = {}
+
+    def set_retention_request(self, provider) -> None:
+        """Bind current counter, allocation and tools; None selects legacy policy."""
+        self._retention_request = provider
+        self._retention_binding = None
+        self._retention_inputs = None
+        self._invalidate()
 
     def add_system(self, content: str) -> None:
         self._messages.append({"role": "system", "content": content})
@@ -92,13 +106,24 @@ class HalfLifeContext(ContextManager):
         self._invalidate()
 
     def get_messages(self) -> list[dict]:
+        if self._retention_request is not None:
+            counter, cfg, tools = self._retention_request()
+            allowance = self._request_allowance(cfg)
+            binding = (id(counter), id(cfg), allowance,
+                       getattr(cfg, "model", None), getattr(cfg, "base_url", None),
+                       json.dumps(tools, sort_keys=True))
+            self._retention_inputs = (counter, allowance, tools)
+            if binding != self._retention_binding:
+                self._retention_binding = binding
+                self._invalidate()
         if self._msg_cache is None:
             self._msg_cache = self._build_messages()
         return self._msg_cache
 
     def estimate_tokens(self) -> int:
+        messages = self.get_messages()
         if self._tok_cache is None:
-            self._tok_cache = self._token_estimator(self.get_messages())
+            self._tok_cache = self._token_estimator(messages)
         return self._tok_cache
 
     def message_count(self) -> int:
@@ -128,13 +153,45 @@ class HalfLifeContext(ContextManager):
         self._tok_cache = None
 
     def _decay_active(self, messages: list[dict]) -> tuple[bool, int, int]:
-        if self._context_limit_tokens <= 0:
+        self._retention_count_evidence = {}
+        reference = self._context_limit_tokens or self._initial_context_size
+        if self._retention_inputs is not None:
+            counter, allowance, tools = self._retention_inputs
+            if counter is None or allowance is None or allowance <= 0:
+                return False, 0, 0
+            reference = min(self._context_limit_tokens or allowance, allowance)
+            try:
+                count = counter.count(messages, tools=tools)
+            except Exception:
+                return False, 0, 0
+            evidence = getattr(counter, "last", None)
+            if not (type(count) is int and count >= 0 and isinstance(evidence, dict)
+                    and evidence.get("count_basis") == "backend_input_tokens"
+                    and evidence.get("count_precision") == "backend_reported"
+                    and type(evidence.get("prompt_tokens")) is int
+                    and evidence["prompt_tokens"] == count):
+                return False, 0, 0
+            self._retention_count_evidence = dict(evidence)
+        else:
+            count = None
+        if reference <= 0:
             return False, 0, 0
-        threshold = int(self._context_limit_tokens * self._activation_ratio)
-        if threshold <= 0:
-            return True, self._token_estimator(messages), threshold
-        full_tokens = self._token_estimator(messages)
+        threshold = int(reference * self._activation_ratio)
+        full_tokens = self._token_estimator(messages) if count is None else count
         return full_tokens >= threshold, full_tokens, threshold
+
+    @staticmethod
+    def _request_allowance(cfg) -> int | None:
+        """Use effective context permission, prompt policy and response reserve."""
+        context = getattr(cfg, "context_size", None)
+        output = getattr(cfg, "max_tokens", None)
+        ratio = getattr(cfg, "context_fill_ratio", None)
+        if (type(context) is not int or context <= 0
+                or type(output) is not int or output < 0
+                or type(ratio) not in (int, float)
+                or not math.isfinite(ratio) or ratio < 0):
+            return None
+        return max(0, min(int(context * min(ratio, 1)), context - output))
 
     def _cap_for_age(self, age: int) -> tuple[str, int | None]:
         if age < self._verbatim_tool_results:
@@ -177,7 +234,7 @@ class HalfLifeContext(ContextManager):
         omitted = len(content) - cap
         marker = (
             f"[halflife: omitted {omitted} chars from older tool result; "
-            f"age={age}; tier={tier}; full output remains in trace/transcript artifacts]"
+            f"age={age}; tier={tier}; retrieval unverified]"
         )
         decayed = self._fit_head_tail(content, cap, marker)
         return decayed, max(0, len(content) - len(decayed))
@@ -248,6 +305,10 @@ class HalfLifeContext(ContextManager):
                     "full_tokens_est": full_tokens,
                     "activation_threshold_tokens": threshold,
                     "context_limit_tokens": self._context_limit_tokens,
+                    "effective_prompt_allowance": (
+                        self._retention_inputs[1] if self._retention_inputs else None
+                    ),
+                    "activation_count_evidence": self._retention_count_evidence,
                     "first_decay_turn": self._first_decay_turn,
                     "decay_render_count": self._decay_render_count,
                     "tool_result_count": len(tool_indices),

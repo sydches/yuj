@@ -1,9 +1,9 @@
 """Side-effect-free local startup preflight for assistant commands."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Callable, Mapping, Sequence
 
 from ..llm_solver._shared.paths import project_root
@@ -23,8 +23,9 @@ from ..llm_solver.harness._loop.session_io import _load_bash_transforms
 from ..llm_solver.harness._tool_filters import output_cleanup_enabled
 from ..llm_solver.harness.context_strategies import resolve_context_class
 from ..llm_solver.harness.schemas import get_tool_schemas
-from ..llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
-from ..llm_solver.harness.skills import discover_skills
+from ..llm_solver.harness.task_file_runtime import load_task_ignore_policy, task_file_scope
+from ..llm_solver.harness.container_binding import container_image_scope
+from ..llm_solver.harness.startup_files import discover_task_skills
 from ..llm_solver.harness.tools import _effective_command_environment
 from ..llm_solver.models import resolve_model
 from ..llm_solver.runtime_resources import validate_runtime_resources
@@ -63,6 +64,7 @@ class StartupPreflightReport:
     network_contacted: bool = False
 
 
+@container_image_scope()
 def preflight_assistant_startup(
     *,
     config_paths: Sequence[Path],
@@ -81,7 +83,9 @@ def preflight_assistant_startup(
     if not target.is_dir():
         raise NotADirectoryError(f"Yuj task cwd is not a directory: {target}")
     if system_prompt_file is not None:
-        system_prompt_file = Path(system_prompt_file).expanduser().resolve()
+        # Preserve the requested spelling so the shared source reader can
+        # resolve an in-task symlink inside the selected view.
+        system_prompt_file = Path(system_prompt_file).expanduser().absolute()
 
     overrides: dict[str, object] = {
         "runtime_mode": "assistant",
@@ -123,12 +127,11 @@ def preflight_assistant_startup(
             if schema.get("function", {}).get("name") in tool_allowlist
         ]
     tool_surface = build_tool_surface(cfg, local_client, tool_schemas)
-    _effective_command_environment(cfg)
+    resolved_env, allow_login_shell = _effective_command_environment(cfg, cwd=target)
+    effective_env = MappingProxyType(resolved_env)
 
-    ignore_policy = load_ignore_policy(
-        target,
-        enabled=getattr(cfg, "state_ignore_file_enabled", True),
-        file_names=getattr(cfg, "state_ignore_file_names", (".yujignore",)),
+    ignore_policy = load_task_ignore_policy(
+        target, cfg, environment=effective_env, allow_login_shell=allow_login_shell,
     )
     unreadable_paths = tuple(
         dict.fromkeys((
@@ -136,14 +139,12 @@ def preflight_assistant_startup(
             *ignore_policy.sandbox_unreadable_paths(),
         ))
     )
-    skill_catalog = discover_skills(
-        target,
-        enabled=getattr(cfg, "skills_enabled", False),
-        skills_dirs=getattr(cfg, "skills_dirs", ()),
-        skill_paths=getattr(cfg, "skill_paths", ()),
-        root_markers=cfg.project_root_markers,
+    skill_catalog = discover_task_skills(
+        target, cfg, environment=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
         unreadable_paths=unreadable_paths,
     )
+    cfg = replace(cfg, skills_readable_dirs=skill_catalog.readable_dirs)
     _, _, _, prompt_metadata = load_system_prompt_and_provenance(
         cfg,
         local_client,
@@ -154,21 +155,31 @@ def preflight_assistant_startup(
         context_class,
         unreadable_paths=unreadable_paths,
         skill_catalog=skill_catalog,
+        effective_env=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
     )
     injections, _ = load_session_injections(
         cfg,
         target,
         unreadable_paths=unreadable_paths,
+        effective_env=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
     )
     injections, _, injection_blocked = scan_session_injections(cfg, injections)
-    stream_rules, _ = load_session_stream_rules(cfg, target)
+    stream_rules, _ = load_session_stream_rules(
+        cfg, target, unreadable_paths=unreadable_paths,
+        effective_env=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
+    )
     stream_rules, _, stream_blocked = scan_session_stream_rules(cfg, stream_rules)
     if prompt_metadata.security_blocked or injection_blocked or stream_blocked:
         raise RuntimeError(
             "security scan blocked local instruction content before model startup"
         )
 
-    cfg = resolve_task_format(cfg, target)
+    with task_file_scope(target, cfg, environment=effective_env,
+                         allow_login_shell=allow_login_shell, ignore_policy=ignore_policy):
+        cfg = resolve_task_format(cfg, target, unreadable_paths=unreadable_paths)
     transforms = _load_bash_transforms(cfg)
     missing_transforms = [
         name
@@ -197,7 +208,19 @@ def preflight_assistant_startup(
             "required bash rule resources did not load: "
             + ", ".join(missing_transforms)
         )
-    environment = compute_runtime_envelope_fields(cfg, target)
+    with task_file_scope(target, cfg, environment=effective_env,
+                         allow_login_shell=allow_login_shell, ignore_policy=ignore_policy):
+        environment = compute_runtime_envelope_fields(cfg, target)
+    if (
+        getattr(cfg, "sandbox_required", False)
+        and cfg.sandbox_bash
+        and not environment["sandbox_engaged"]
+    ):
+        raise RuntimeError(
+            "sandbox_required=true but the configured sandbox did not pass "
+            "local startup preflight"
+        )
+
     return StartupPreflightReport(
         resource_origin=resources.origin,
         root_resource_count=resources.root_resource_count,

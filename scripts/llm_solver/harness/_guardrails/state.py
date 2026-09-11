@@ -85,7 +85,7 @@ class GuardrailSpec:
 
 GUARDRAIL_SPECS: tuple[GuardrailSpec, ...] = (
     GuardrailSpec("intent_gate", "turn_pre_dispatch"),
-    GuardrailSpec("duplicate_guard", "turn_pre_dispatch"),
+    GuardrailSpec("duplicate_guard", "turn_post_dispatch"),
     GuardrailSpec("loop_detect", "turn_pre_dispatch"),
     GuardrailSpec("done_guard", "tool_pre_dispatch"),
     GuardrailSpec("mutation_repeat_guard", "tool_pre_dispatch"),
@@ -109,6 +109,7 @@ def guardrail_order_for_phase(phase: str) -> tuple[str, ...]:
 
 
 TURN_PRE_DISPATCH_ORDER = guardrail_order_for_phase("turn_pre_dispatch")
+TURN_POST_DISPATCH_ORDER = guardrail_order_for_phase("turn_post_dispatch")
 TOOL_PRE_DISPATCH_ORDER = guardrail_order_for_phase("tool_pre_dispatch")
 TOOL_POST_DISPATCH_ORDER = guardrail_order_for_phase("tool_post_dispatch")
 OBSERVER_ORDER = guardrail_order_for_phase("observers")
@@ -122,6 +123,7 @@ class GuardrailRegistry:
     tool_pre_dispatch: dict[str, Callable[..., Decision]]
     tool_post_dispatch: dict[str, Callable[..., Decision]]
     observers: dict[str, Callable[..., None]]
+    turn_post_dispatch: dict[str, Callable[..., Decision]] = field(default_factory=dict)
 
 
 # ─── Shared state ─────────────────────────────────────────────────────────
@@ -136,11 +138,14 @@ class GuardrailState:
     turn loop's responsibility clear: it orchestrates, the guardrails
     own their own state.
     """
-    # default_factory uses maxlen=1 (not 0) so a direct GuardrailState()
+    # Two observations are needed to establish any repetition. A direct GuardrailState()
     # construction in tests still produces a usable deque. The real
     # deque is replaced wholesale by init_guardrail_state(cfg) with
     # capacity for both the warning and abort thresholds.
-    recent_calls: deque = field(default_factory=lambda: deque(maxlen=1))
+    recent_calls: deque = field(default_factory=lambda: deque(maxlen=2))
+    duplicate_evidence: dict = field(default_factory=dict)
+    duplicate_last_turn: int = -1
+    intent_evidence: dict = field(default_factory=dict)
     consecutive_errors: dict[str, int] = field(default_factory=dict)
     same_class_error_signature: str = ""
     same_class_error_count: int = 0
@@ -162,6 +167,8 @@ class GuardrailState:
     gate_block_count: int = 0
     has_mutated: bool = False
     verified_since_mutation: bool = False
+    # Verification belongs to the observed edits, not a restored baseline.
+    verification_file_revisions: dict[str, str] = field(default_factory=dict)
     # Total done blocks in the session. Used by the done-loop failsafe:
     # after N blocks the session ends regardless of cause (parity flake,
     # novel verify-path drift, model genuinely misreading the gate). Bounds
@@ -180,18 +187,20 @@ class GuardrailState:
     rumination_nudge_threshold_post_mutation: int = 0
     rumination_arm_threshold: int = 0
 
-    # Pretest parity (done_guard ground truth — filled at session 1 start
-    # by the harness parsing pretest output through the task format's
-    # [output_parser]. Empty sets = pretest not parseable; done_guard
-    # falls back to heuristic preconditions in that case).
+    # Pretest parity (native-report comparison, filled at session 1 start).
+    # Baseline seeding retains the configured output-parser gate. Empty sets
+    # mean no established baseline; the remaining done_guard checks still apply.
     pretest_failing_tests: set[str] = field(default_factory=set)
     pretest_passing_tests: set[str] = field(default_factory=set)
     latest_test_parsed: dict[str, str] = field(default_factory=dict)
     green_parity_streak: int = 0
+    last_test_report_invocation: str = ""
     test_file_reads: set[str] = field(default_factory=set)
     test_runs_without_test_read: int = 0
     last_test_target: str = ""
     test_read_nudge_target: str = ""
+    inspected_files: dict[str, dict] = field(default_factory=dict)
+    test_target_observations: dict[tuple, dict] = field(default_factory=dict)
     post_mutation_verification_nudge_emitted: bool = False
     post_mutation_non_test_bash_count: int = 0
     post_mutation_verification_gate_armed: bool = False
@@ -201,6 +210,7 @@ class GuardrailState:
     post_mutation_automatic_verification_target: str = ""
     post_mutation_observed_runtime_family: str = ""
     post_mutation_observed_runtime_executable: str = ""
+    post_mutation_observed_runtime_binding: dict = field(default_factory=dict)
     post_mutation_automatic_verification_unavailable: bool = False
 
     # Regression observability (independent of pretest-parity mode).
@@ -267,9 +277,9 @@ def init_guardrail_state(cfg: Any) -> GuardrailState:
         arm = max(nudge, int(cfg.max_turns * arm_pct / 100))
     # Deque max length must tolerate duplicate_abort=0 (guardrail disabled).
     # A disabled abort must not prevent a warning-only guard retaining
-    # its full window. Keep at least one slot when both thresholds are zero.
+    # its full window. Keep two slots to distinguish a first observation from a repeat.
     # (the guardrail function will short-circuit on its enabled flag).
-    deque_len = max(1, cfg.duplicate_abort, getattr(cfg, "duplicate_warn_count", 0))
+    deque_len = max(2, cfg.duplicate_abort, getattr(cfg, "duplicate_warn_count", 0))
     return GuardrailState(
         recent_calls=deque(maxlen=deque_len),
         rumination_nudge_threshold=nudge,

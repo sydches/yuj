@@ -43,8 +43,9 @@ def _make_session(
     """Build a stub Session with just enough state for the compaction path."""
     sess = Session.__new__(Session)
     cfg_kwargs = {
+        "model": "fixture",
         "base_url": "http://localhost:8080/v1",
-        "context_size": 40960,
+        "context_size": server_ctx_value or 40960,
         "context_fill_ratio": 0.95,
         "max_tokens_fraction": 0.25,
         "digest_compaction_safety_margin": 0.0,
@@ -56,7 +57,7 @@ def _make_session(
     }
     cfg_kwargs.update(cfg_extra or {})
     sess.cfg = SimpleNamespace(**cfg_kwargs)
-    sess.client = SimpleNamespace()
+    sess.client = SimpleNamespace(query_server_context=lambda: server_ctx_value or None)
     sess._trace_path = cwd / ".trace.jsonl"
     sess._trace_events = trace_events
     sess._compacted = False

@@ -1,9 +1,8 @@
-"""Content-blind metadata for model tool actions.
+"""Argument-based predictions for model tool actions.
 
-These helpers inspect the model's own tool arguments, not task output.  They
-exist because the human-readable ``args_summary`` is intentionally short, while
-the state-backed salience projector needs to know whether a tool call was a
-source mutation rather than another read of the same file.
+These helpers inspect tool arguments, not execution effects. After an observed
+dispatch, file_changes replaces the write flags and paths with native entry
+changes and retains the original flags under predicted_* names.
 """
 from __future__ import annotations
 

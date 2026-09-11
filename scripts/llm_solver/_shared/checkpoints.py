@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .task_artifacts import CHECKPOINT_NAME, PROMPT_NAME
+
 
 def collect_pending(run_dir: Path | str) -> list[Path]:
     """Return task repo directories that still need work, in sorted order.
@@ -29,9 +31,9 @@ def collect_pending(run_dir: Path | str) -> list[Path]:
     for repo_dir in sorted(repos_dir.iterdir()):
         if not repo_dir.is_dir():
             continue
-        if not (repo_dir / "prompt.txt").exists():
+        if not (repo_dir / PROMPT_NAME).exists():
             continue
-        checkpoint = repo_dir / "checkpoint.json"
+        checkpoint = repo_dir / CHECKPOINT_NAME
         if checkpoint.exists():
             try:
                 data = json.loads(checkpoint.read_text())

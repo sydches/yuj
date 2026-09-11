@@ -15,6 +15,41 @@ log = logging.getLogger(__name__)
 _NEWLINE = "\n"
 
 
+def validate_state_destination(state_path: Path, trace_path: Path, cfg) -> None:
+    """Do not adopt an inferred output path based on its filename or schema."""
+    import json
+    from ..state_writer import project
+
+    if not state_path.parent.is_symlink() and not state_path.is_symlink():
+        if not state_path.exists():
+            return
+        try:
+            if not state_path.is_file():
+                raise ValueError("state output is not a regular file")
+            prior = json.loads(state_path.read_text())
+            count = prior.get("meta", {}).get("event_count")
+            events = [json.loads(line) for line in trace_path.read_text().splitlines() if line.strip()]
+            if type(count) is int and 0 <= count <= len(events):
+                for prefix in (events[:count], events):
+                    expected = project(
+                        prefix, max_result_chars=cfg.max_output_chars,
+                        imperative_projection="process" in prior,
+                        think_keep_turns=cfg.tools_think_keep_turns,
+                    )
+                    # Live state can omit trace-only bookkeeping events.
+                    # Compare every content field, not that mirror's row count.
+                    expected["meta"]["event_count"] = count
+                    if prior == expected:
+                        return
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass
+    raise ValueError(
+        f"Refusing to replace existing state output {state_path}: it is not a "
+        "regular projection of the selected trace. Preserve or move that file, "
+        "or choose a separate artifact directory."
+    )
+
+
 def refresh_state(session: "Session") -> None:
     """Rebuild .solver/state.json from the in-memory trace event list.
 
@@ -40,19 +75,10 @@ def sink_to_disk(session: "Session", raw: str, turn: int) -> str:
     or empty string on failure (sink is best-effort; never blocks
     the loop).
     """
-    session._sink_counter += 1
-    try:
-        sink_dir = Path(session.cwd) / ".tool_output"
-        sink_dir.mkdir(parents=True, exist_ok=True)
-        sink_name = f"{session._session_number}_{session._sink_counter:04d}_t{turn}.log"
-        sink_path = sink_dir / sink_name
-        # write_bytes skips the codec-negotiation layer that write_text
-        # runs on every call; raw is already-decoded subprocess output.
-        sink_path.write_bytes(raw.encode("utf-8", errors="replace"))
-    except OSError as e:
-        log.debug("Sink write failed: %s", e)
+    from ..retained_output import save_output
+    rel = save_output(session, raw, turn)
+    if not rel:
         return ""
-    rel = sink_path.relative_to(session.cwd)
     return session.cfg.sink_pointer.format(
         path=rel,
         chars=len(raw),
@@ -70,7 +96,8 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
          result with "digest\\n[raw output: <path>, <chars>, <lines>]".
          Preserves the full raw output on disk so the model can read
          it via the existing `read` tool; projects a compact digest
-         into the context window.
+         into the context window. If saving fails or yields no pointer,
+         preserve the supplied result without a second sink attempt.
 
       2. Sink-only (when result > sink_threshold_chars and step 1
          did not fire): write raw to same location, replace body
@@ -95,14 +122,17 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
             from ...bash_quirks import parse_structured, render_digest
             parsed = parse_structured(result, session.output_parser)
             digest = render_digest(parsed)
-            # Even when the digest is empty (unparseable), the parsed
-            # dict still carries whatever per-test records matched.
-            # Update the parity-streak state from the parsed record.
+            # Display parsing remains diagnostic. Only private runner reports
+            # may update completion parity.
             update_parity_from_parsed(session, parsed)
             if digest:
                 before_projection = result
                 pointer_line = sink_to_disk(session, result, turn)
-                result = digest + ("\n" + pointer_line if pointer_line else "")
+                if not pointer_line:
+                    # A short digest cannot replace diagnostics whose saved
+                    # copy is unavailable. Preserve this stage's input.
+                    return result
+                result = digest + "\n" + pointer_line
                 projected = True
                 # Exact raw-vs-digest transformation record.
                 from ..savings import get_ledger
@@ -129,7 +159,7 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
             # prompt literal in harness code).
             before_sink = result
             head = before_sink[:cfg.sink_head_bytes]
-            tail = before_sink[-cfg.sink_tail_bytes:]
+            tail = before_sink[-cfg.sink_tail_bytes:] if cfg.sink_tail_bytes > 0 else ""
             result = (
                 f"{head}\n{cfg.sink_body_marker}\n{tail}\n"
                 f"{pointer_line}"
@@ -151,7 +181,17 @@ def project_and_sink(session: "Session", tc_name: str, cmd: str, result: str, tu
     return result
 
 
-def update_parity_from_parsed(session: "Session", parsed: dict) -> None:
+def update_parity_from_report(session: "Session", report: dict) -> None:
+    """Consume a private completed report once, never a model-visible marker."""
+    invocation = report.get("invocation")
+    if not invocation or invocation == session._guards.last_test_report_invocation:
+        return
+    session._guards.last_test_report_invocation = invocation
+    parsed = report if report.get("status") == "available" else {"tests": {}}
+    update_parity_from_parsed(session, parsed, native=True)
+
+
+def update_parity_from_parsed(session: "Session", parsed: dict, *, native=False) -> None:
     """Process a parsed test run: regression detection + parity update.
 
     Regression detection runs unconditionally (observability only —
@@ -161,12 +201,24 @@ def update_parity_from_parsed(session: "Session", parsed: dict) -> None:
     ``regression`` is written for post-hoc analysis.
 
     Parity update runs only when ``cfg.done_require_pretest_parity``
-    is set AND the pretest baseline was captured. Checks whether
-    every pretest-failing test is now PASSED and no pretest-passing
-    test has regressed; increments green_parity_streak on match.
+    is set, a native report is supplied and the baseline was captured. Checks whether
+    every test in both baseline sets is now observed passing; increments
+    green_parity_streak on match. Missing results do not establish parity.
     """
     tests = parsed.get("tests") or {}
-    if not tests:
+    parity_enabled = getattr(session.cfg, "done_require_pretest_parity", False)
+    baseline = (
+        session._guards.pretest_failing_tests | session._guards.pretest_passing_tests
+    ) if parity_enabled else set()
+    if baseline and native:
+        session._guards.latest_test_parsed = dict(tests)
+        passed_now = {t for t, v in tests.items() if v in ("PASSED", "PASS")}
+        if baseline.issubset(passed_now):
+            session._guards.green_parity_streak += 1
+        else:
+            session._guards.green_parity_streak = 0
+    # Keep display-based regression observations separate from report identities.
+    if native or not tests:
         return
 
     # ── Regression observability (always on when we have a parse) ──
@@ -189,24 +241,8 @@ def update_parity_from_parsed(session: "Session", parsed: dict) -> None:
                 tests_regressed=sorted(regressed)[:20],
                 n_regressed=len(regressed),
                 mutations_between=mutations_between,
+                evidence_source="diagnostic_text",
             )
     # Update prior-state trackers for the next call.
     session._guards.prev_test_parsed = dict(tests)
     session._guards.mutation_count_at_prev_test = session._guards.mutation_count
-
-    # ── Pretest-parity update (opt-in) ─────────────────────────────
-    if not getattr(session.cfg, "done_require_pretest_parity", False):
-        return
-    if not session._guards.pretest_failing_tests:
-        return
-    session._guards.latest_test_parsed = dict(tests)
-    passed_now = {t for t, v in tests.items() if v in ("PASSED", "PASS")}
-    targets_hit = session._guards.pretest_failing_tests.issubset(passed_now)
-    regressed_parity = any(
-        tests.get(t) not in (None, "PASSED", "PASS")
-        for t in session._guards.pretest_passing_tests
-    )
-    if targets_hit and not regressed_parity:
-        session._guards.green_parity_streak += 1
-    else:
-        session._guards.green_parity_streak = 0

@@ -25,6 +25,7 @@ from llm_solver.harness._guardrails.state import (
     TOOL_POST_DISPATCH_ORDER,
     TOOL_PRE_DISPATCH_ORDER,
     TURN_PRE_DISPATCH_ORDER,
+    TURN_POST_DISPATCH_ORDER,
     guardrail_order_for_phase,
 )
 from llm_solver.harness.guardrails import build_guardrail_registry
@@ -33,6 +34,11 @@ from llm_solver.harness.guardrails import build_guardrail_registry
 def test_turn_pre_tuple_matches_registered_keys():
     reg = build_guardrail_registry()
     assert set(reg.turn_pre_dispatch.keys()) == set(TURN_PRE_DISPATCH_ORDER)
+
+
+def test_turn_post_tuple_matches_registered_keys():
+    reg = build_guardrail_registry()
+    assert set(reg.turn_post_dispatch) == set(TURN_POST_DISPATCH_ORDER)
 
 
 def test_tool_pre_tuple_matches_registered_keys():
@@ -68,6 +74,10 @@ def _subscript_base_name(node: ast.AST) -> str:
 
 def _literal_subscript_names(path: Path, base_name: str) -> tuple[str, ...]:
     tree = ast.parse(path.read_text())
+    if path.name == "_dispatch_tool_call.py":
+        # Early effect accounting is separate from the ordered guard phases.
+        tree.body = [node for node in tree.body if not (
+            isinstance(node, ast.FunctionDef) and node.name == "_apply_dispatch_effects")]
     found: list[tuple[int, int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Subscript):
@@ -94,6 +104,7 @@ def test_run_loop_guardrail_call_order_matches_specs():
     )
 
     assert _literal_subscript_names(run_step, "turn_pre") == TURN_PRE_DISPATCH_ORDER
+    assert _literal_subscript_names(run_step, "turn_post") == TURN_POST_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "tool_pre") == TOOL_PRE_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "tool_post") == TOOL_POST_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "observers") == OBSERVER_ORDER

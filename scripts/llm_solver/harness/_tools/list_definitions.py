@@ -44,8 +44,8 @@ def list_definitions(
     you know the line.
 
     Path resolution and outside-cwd protection mirror read(). Other
-    languages (.js / .ts / .go / .rs / .java) return a clear "(language
-    not supported)" message rather than a parse error.
+    languages use installed structural grammars on this file only, with
+    explicit unsupported-language and unavailable-backend errors.
 
     Disabled by ``cfg.tools_list_definitions_enabled`` — a disabled
     call returns ERROR rather than silently succeeding so accidental
@@ -75,6 +75,9 @@ def list_definitions(
         abs_path = _resolve(cwd, path)
     except ValueError as e:
         return _list_definitions_error(path, "path_outside_cwd", str(e))
+    from ..structural_index import _UnreadableMatcher
+    if _UnreadableMatcher(_resolve(cwd, '.'), cfg.unreadable_paths or ()).blocks(abs_path):
+        return _list_definitions_error(path, "not_found", f"file not found: {path}")
     policy = active_ignore_policy(cwd)
     if policy is not None and policy.is_ignored(
         abs_path, is_dir=abs_path.is_dir()
@@ -93,11 +96,8 @@ def list_definitions(
     # so accept them on the same path. `.pyx` (Cython) is NOT included
     # — `cdef`/`cpdef` are not valid Python and `ast.parse` rejects them.
     if suffix not in (".py", ".pyi"):
-        return _list_definitions_error(
-            path, "unsupported_suffix",
-            f"list_definitions does not support {suffix!r} files yet. "
-            "Currently supports: .py, .pyi. Use read() for unsupported types.",
-        )
+        from ._single_file_symbols import list_file_symbols
+        return list_file_symbols(abs_path, path, cfg)
     try:
         text = abs_path.read_text(errors="replace")
     except OSError as e:
@@ -129,7 +129,9 @@ def _structural_index(root: Path, cfg: Config):
         unreadable = tuple(dict.fromkeys(
             (*unreadable, *policy.sandbox_unreadable_paths())
         ))
-    key = (str(root.resolve()), unreadable)
+    from ..task_path import TaskPath
+    key = (str(root.resolve()), unreadable,
+           id(root.files) if isinstance(root, TaskPath) else None)
     existing = _STRUCTURAL_INDEX_REGISTRY.get(key)
     if existing is not None:
         _STRUCTURAL_INDEX_REGISTRY.move_to_end(key)
@@ -148,9 +150,9 @@ def _clear_structural_index_registry() -> None:
 
 
 def _repository_opening(page_result, *, path: str, shown: int,
-                        char_limited: bool) -> str:
+                        char_limited: bool, mode: str = "repository") -> str:
     return (
-        f'<list_definitions status="ok" mode="repository" '
+        f'<list_definitions status="ok" mode="{mode}" '
         f'path="{_xml_attr(path)}" total="{page_result.total}" '
         f'available="{page_result.available}" shown="{shown}" '
         f'page="{page_result.page}" next_page="{page_result.next_page}" '
@@ -163,13 +165,15 @@ def _repository_opening(page_result, *, path: str, shown: int,
     )
 
 
-def _render_repository_page(page_result, *, path: str, max_chars: int) -> str:
+def _render_repository_page(page_result, *, path: str, max_chars: int,
+                            mode: str = "repository") -> str:
     """Render whole escaped rows without leaving the public output budget."""
     from ..structural_index import format_rows
 
     closing = "</list_definitions>"
     provisional = _repository_opening(
         page_result, path=path, shown=len(page_result.rows), char_limited=False,
+        mode=mode,
     )
     body_budget = max(0, max_chars - len(provisional) - len(closing) - 2)
     formatted = format_rows(page_result.rows, max_output_chars=body_budget)
@@ -185,6 +189,7 @@ def _render_repository_page(page_result, *, path: str, max_chars: int) -> str:
             path=path,
             shown=len(escaped_rows),
             char_limited=char_limited,
+            mode=mode,
         )
         body = "\n".join(escaped_rows)
         result = opening + "\n" + body + "\n" + closing

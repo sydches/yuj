@@ -17,13 +17,16 @@ Schema (target of the projection, consumed by SolverStateContext):
       "todos":     [{"description": str, "status": str}, ...],
       "trace":     [{"step": int, "session": int, "turn": int, "reasoning": str,
                      "action": str, "result": str, "next": str,
-                     "gate_blocked": bool, "write_like": bool,
+                     "gate_blocked": bool, "verification_status": str,
+                     "path_binding": "recorded"|"unknown", "check_kind": str,
+                     "write_like": bool,
                      "source_write_like": bool,
                      "source_write_paths": [str, ...]}, ...],
       "gates":     [{"event": "stream_rule_triggered"|"stream_rule_injection",
                       "session": int, "turn": int, ...}, ...],
       "evidence":  [{"step": int, "action": str, "result": str,
-                     "verdict": "OK"|"FAIL", "gate_blocked": bool}, ...],
+                     "verdict": "OK"|"FAIL"|"UNKNOWN", "gate_blocked": bool,
+                     "kind": str}, ...],
       "inference": [],
       "tools":     {"lazy_loading_enabled": bool,
                      "active_limit": int|null,
@@ -41,8 +44,9 @@ summary lines, or any other task-specific output shape). The only markers
 it reads are harness-generated wire format: the `ERROR:` wrapper emitted
 by `tools.py` on exception, the `[exit code: N]` suffix appended by
 `bash()` on non-zero exit, and the `[harness gate]` prefix on gate-blocked
-results. A harness that derived intelligence from task output would be
-cheating the benchmark — moving capability from the model into the loop.
+results. Permitted task observations can support useful harness assistance
+when their source and task binding are established. This projection does not
+derive new task-format diagnostics from result text.
 
 Rewind is a structural exception to the otherwise linear projection. The raw
 event list is never changed. Both the model-tool exploration collapse and the
@@ -51,8 +55,8 @@ field sets select the matching `last_rewind` metadata. Either form selects an
 earlier persistent turn prefix in this derived view, and a model-tool row may
 also retain its supplied goal/report.
 
-Evidence population is filtered to bash calls because bash is the
-subprocess execution surface where exit-code verdicts originate. Read,
+Evidence population includes bash and run_tests calls, excluding blocked
+requests and recorded unavailable or unresolved runners. Read,
 write, edit, glob, grep return harness I/O status ("wrote N bytes",
 "file not found"), not gate verdicts on task state. The filter is
 structural (which tool was invoked), not content-based. The verdict
@@ -60,9 +64,16 @@ field is derived from the content-blind `classify_outcome`, which reads
 only the harness's own exit-code marker and error wrapper — never
 task output format.
 
+Evidence kind distinguishes a command result, custom probe, check attempt and
+recorded completed test check. Only recorded passed/failed check status can
+advance the process verification phase; it does not establish task completion.
+Path classification binds each row to its session's recorded environment.
+It never consults the caller's live task mapping during replay.
+
 Tool result text in the projection comes from `output_snippet` when present,
 falling back to legacy `result_summary`. Verdicts prefer explicit `pass_fail`
-telemetry so bounded snippets do not need to preserve tail exit markers. The
+telemetry so bounded snippets do not need to preserve tail exit markers. Native
+unknown check outcomes remain unknown; only legacy rows use text fallback. The
 `reasoning` field is the model's pre-tool assistant text for that turn. All
 trace entries within a single (session, turn) share the same reasoning;
 renderers that care about deduplication group by turn.
@@ -99,6 +110,7 @@ from pathlib import Path
 import orjson as _orjson
 
 from .._shared.classification import classify_outcome, is_gate_blocked
+from .file_changes import observed_mutation
 from .bash_write_classification import (
     STATE_WRITER_MUTATION_PREFIXES,
     _SOURCE_EXT_RE,
@@ -107,9 +119,8 @@ from .bash_write_classification import (
 )
 from .thoughts import thought_is_expired
 
-# Per-entry cap for the `action` column. `action` is `tool(args_summary)`;
-# args are already bounded by loop.py's _summarize_args, so this is a
-# safety net, never hit in practice.
+# Display cap for the arguments in `action = tool(args_summary)`. Long
+# arguments can reach it; action identity comes from the full-call hash.
 _MAX_ACTION_CHARS = 120
 
 # Evidence result cap — tighter than the full trace result cap because
@@ -128,15 +139,11 @@ _READ_ONLY_PREFIX_RE = re.compile(
     r"^(?:cd\s+\S+\s+&&\s+|env\s+[^;&|]+\s+)*"
     r"(?:cat|sed\s+-n|grep|rg|find|ls|head|tail|wc)\b"
 )
-_VERIFICATION_RE = re.compile(
-    r"\b(?:pytest|py\.test|python3?\s+-m\s+pytest|unittest|"
-    r"python3?\s+-c|python3?\s+-\s*<<|"
-    r"tox|nox|make\s+test|cargo\s+test|go\s+test|npm\s+test|"
-    # Additive: jest/vitest (mirrors language_quirks/jest.toml
-    # verification_patterns) and ctest/pnpm-test/yarn-test (ctest mirrors
-    # language_quirks/ctest.toml).
-    r"jest|vitest|npx\s+jest|ctest|pnpm\s+test|yarn\s+test)\b"
+from ._shell_patterns import (
+    CHECK_COMMAND_RE as _VERIFICATION_RE, TEST_COMMAND_RE,
+    command_from_summary, matches_command,
 )
+from .task_environment import recorded_task_environment
 _CANDIDATE_INTENT_RE = re.compile(
     r"\b(?:change|edit|fix|implement|modify|patch|replace|rewrite|"
     r"apply|ready to apply|the fix is|fix is to|use .+ instead of)\b",
@@ -177,7 +184,7 @@ _APPLIED_EDIT_RE = re.compile(
 # (via _SOURCE_EXT_RE) so state projection recognizes go/rs/js/ts/etc. source
 # paths, not just the Python-only short list this used to hardcode.
 _FILE_TOKEN_RE = re.compile(
-    r"(?<![\w/.-])(?:/testbed/)?[A-Za-z0-9_./+-]+\."
+    r"(?<![\w/.-])[A-Za-z0-9_./+-]+\."
     rf"(?:{_SOURCE_EXT_RE})\b"
 )
 
@@ -335,12 +342,19 @@ def _extract_quoted_arg(action: str, name: str) -> str:
 
 
 def _action_cmd(item: dict) -> str:
+    if "_recorded_command" in item:
+        return item["_recorded_command"]
     return _extract_quoted_arg(str(item.get("action") or ""), "cmd")
 
 
 def _is_mutation_item(item: dict) -> bool:
+    if "_mutation_like" in item:
+        return item["_mutation_like"]
     if item.get("plan_artifact") is True:
         return False
+    observed = observed_mutation(item)
+    if observed is not None:
+        return observed
     if item.get("source_write_like") is True:
         raw_paths = item.get("source_write_paths") or []
         if not raw_paths or any(
@@ -355,8 +369,13 @@ def _is_mutation_item(item: dict) -> bool:
 
 
 def _mutation_failed(item: dict) -> bool:
+    if observed_mutation(item) is True:
+        return False
     if item.get("gate_blocked") is True:
         return True
+    if item.get("outcome_version") == "native_execution_v1":
+        return (item.get("outcome") not in {"completed", "ok"}
+                or item.get("exit_status") not in (None, 0))
     verdict = str(item.get("pass_fail") or "").strip().lower()
     if verdict:
         return verdict != "pass"
@@ -368,17 +387,60 @@ def _is_successful_mutation_item(item: dict) -> bool:
 
 
 def _is_read_only_item(item: dict) -> bool:
+    if "_read_only" in item:
+        return item["_read_only"]
     action = str(item.get("action") or "")
     if action.startswith(("read(", "grep(", "glob(", "list_files(")):
         return True
     cmd = _action_cmd(item).strip()
-    return bool(cmd and _READ_ONLY_PREFIX_RE.search(cmd))
+    # A leading read does not make a later check in the same call a read.
+    return bool(cmd and _READ_ONLY_PREFIX_RE.search(cmd)
+                and not matches_command(cmd, _VERIFICATION_RE, allow_partial=True))
+
+
+def _is_check_item(item: dict) -> bool:
+    """Recognize a recorded request for context, not completed verification."""
+    if _verification_unavailable(item):
+        return False
+    if _is_mutation_item(item) or _is_read_only_item(item):
+        return False
+    cmd = _action_cmd(item)
+    action = str(item.get("action") or "")
+    return matches_command(cmd, _VERIFICATION_RE, allow_partial=True) or action.startswith("run_tests(")
 
 
 def _is_verification_item(item: dict) -> bool:
-    cmd = _action_cmd(item)
-    action = str(item.get("action") or "")
-    return bool(cmd and _VERIFICATION_RE.search(cmd)) or action.startswith("run_tests(")
+    """A completed test check needs the producer's recorded execution status."""
+    return (
+        not _verification_unavailable(item)
+        and not _is_mutation_item(item)
+        and item.get("verification_status") in {"passed", "failed"}
+    )
+
+
+def _check_kind(item: dict) -> str:
+    if _verification_unavailable(item):
+        return "unavailable"
+    if _is_verification_item(item):
+        return "completed_test_check"
+    command = _action_cmd(item)
+    if str(item.get("verification_status") or "").startswith("custom_") or (
+        _is_check_item(item) and command
+        and not matches_command(command, TEST_COMMAND_RE)
+    ):
+        return "custom_probe"
+    return "check_attempt" if _is_check_item(item) else "command_result"
+
+
+def _verification_unavailable(item: dict) -> bool:
+    """Honor recorded refusal facts before treating a request as a check.
+
+    Absence of these facts does not establish execution or coverage; legacy
+    command recognition and other verification states retain their own limits.
+    """
+    return bool(item.get("gate_blocked")) or item.get("verification_status") in {
+        "selection_unresolved", "runner_unavailable",
+    }
 
 
 def _is_candidate_edit_reasoning(reasoning: str) -> bool:
@@ -403,12 +465,8 @@ def _compact_text(text: str, limit: int) -> str:
 
 
 def _normalize_path(path: str) -> str:
-    path = path.strip().strip("'\"")
-    if path.startswith("/testbed/"):
-        path = path[len("/testbed/"):]
-    if path.startswith("./"):
-        path = path[2:]
-    return path
+    from .bash_write_classification import normalize_trace_path
+    return normalize_trace_path(path)
 
 
 def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
@@ -416,6 +474,11 @@ def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
     scan_start = max(0, (pending_idx or len(trace) - 1) - 16)
     scan_end = (pending_idx + 1) if pending_idx is not None else len(trace)
     for item in trace[scan_start:scan_end]:
+        if "_target_paths" in item:
+            for path in item["_target_paths"]:
+                if path not in paths:
+                    paths.append(path)
+            continue
         for raw_path in item.get("source_write_paths") or []:
             if not is_workspace_path(str(raw_path)):
                 continue
@@ -468,35 +531,48 @@ def _project_process(trace: list[dict]) -> dict:
     last_verify_idx = verify_indices[-1] if verify_indices else None
     recent = trace[-16:]
     read_count = sum(1 for item in recent if _is_read_only_item(item))
-    recent_mutations = sum(1 for item in recent if _is_successful_mutation_item(item))
-    read_loop = len(recent) >= 8 and read_count >= max(8, len(recent) - 2) and recent_mutations == 0
 
     if (
         last_failed_mutation_idx is not None
         and (last_mutation_idx is None or last_failed_mutation_idx > last_mutation_idx)
     ):
         phase = "mutation_attempt_failed"
-        required = "retry the source edit with a write method that succeeds"
+        suggested = "If the task requires this edit, inspect the recorded failure and choose a permitted retry."
     elif last_mutation_idx is None and pending_idx is not None:
         phase = "candidate_edit_pending"
-        required = "apply the pending source edit"
+        suggested = "If the proposed edit is supported by the task and evidence, apply it; otherwise continue the needed investigation."
     elif last_mutation_idx is None:
         phase = "pre_mutation_discovery"
-        required = "read only for a new narrow fact; otherwise make a source edit or name the blocker"
+        suggested = "Use the task requirements and available evidence to choose further inspection, a change, or a completion report."
     elif last_verify_idx is None or last_verify_idx < last_mutation_idx:
         phase = "post_mutation_unverified"
-        required = "run targeted verification for the current diff"
+        suggested = "If the task requires checks for this change, run those checks and report their scope and outcome."
     else:
         phase = "post_verification"
-        required = "use the latest verification result to refine the patch or call done"
+        suggested = (
+            "inspect the recorded check outcome and coverage; "
+            "a completed check alone does not establish task completion"
+        )
 
+    read_counts = Counter()
+    read_labels = {}
+    for item in trace:
+        identity = str(item.get("action_sha256") or "")
+        if not identity or not _is_read_only_item(item):
+            continue
+        read_counts[identity] += 1
+        read_labels.setdefault(
+            identity, str(item.get("_display_action", item.get("action")) or "")
+        )
     read_hotspots = []
-    for action, count in Counter(
-        str(item.get("action") or "") for item in trace if _is_read_only_item(item)
-    ).most_common(3):
+    for identity, count in read_counts.most_common(3):
         if count < 3:
             continue
-        read_hotspots.append({"action": _compact_text(action, 160), "count": count})
+        read_hotspots.append({
+            "action": _compact_text(read_labels[identity], 160),
+            "action_sha256": identity,
+            "count": count,
+        })
 
     return {
         "steps": steps,
@@ -522,9 +598,18 @@ def _project_process(trace: list[dict]) -> dict:
         ),
         "pending_edit_reasoning": pending_reasoning,
         "target_paths": _target_paths(trace, pending_idx),
-        "read_loop": read_loop,
+        # Legacy key remains explicitly unknown. Request frequency does not
+        # establish repeated information or lack of task progress.
+        "read_loop": None,
+        "read_activity": {
+            "window_entries": len(recent),
+            "read_like_requests": read_count,
+            "basis": "recorded_request_syntax",
+            "progress": "unassessed",
+        },
         "read_hotspots": read_hotspots,
-        "required_next_action": required,
+        "required_next_action": "",
+        "suggested_next_action": suggested,
     }
 
 
@@ -552,6 +637,8 @@ def project(
     state: dict = {}
     todos: list[dict] = []
     trace: list[dict] = []
+    process_trace: list[dict] = []
+    session_environments: dict = {}
     gates: list[dict] = []
     evidence: list[dict] = []
     current_session = _last_session(logical_events)
@@ -568,14 +655,14 @@ def project(
     step = 0
     for ev in logical_events:
         et = ev.get("event")
+        if et == "session_start":
+            session_environments[ev.get("session_number")] = ev.get("task_environment")
         if et == "tool_call":
             step += 1
             tool = ev.get("tool_name") or "?"
             args = _truncate(ev.get("args_summary") or "", _MAX_ACTION_CHARS)
-            result = _truncate(
-                ev.get("output_snippet") or ev.get("result_summary") or "",
-                max_result_chars,
-            )
+            recorded_result = ev.get("output_snippet") or ev.get("result_summary") or ""
+            result = _truncate(recorded_result, max_result_chars)
             reasoning = ev.get("reasoning") or ""
             if (
                 tool == "think"
@@ -594,16 +681,18 @@ def project(
             # fallback to wire-format detection for old traces that lack
             # it. Recognising the harness-generated gate marker is not
             # task parsing — the harness wrote it.
-            blocked = ev.get("gate_blocked", is_gate_blocked(result))
+            blocked = ev.get("gate_blocked", is_gate_blocked(recorded_result))
             projected_step = {
                 "step": step,
                 "session": ev.get("session_number"),
                 "turn": ev.get("turn_number"),
                 "reasoning": reasoning,
                 "action": action,
+                "action_sha256": str(ev.get("action_sha256") or ""),
                 "result": result,
                 "next": "",
                 "gate_blocked": blocked,
+                "verification_status": str(ev.get("verification_status") or ""),
                 "write_like": bool(ev.get("write_like")),
                 "source_write_like": bool(ev.get("source_write_like")),
                 "source_write_paths": list(ev.get("source_write_paths") or []),
@@ -612,31 +701,60 @@ def project(
                 "output_sha256": str(ev.get("output_sha256") or ""),
                 "output_full_path": str(ev.get("output_full_path") or ""),
             }
+            # Preserve tool-owned outcome evidence before rendering advice.
+            # Missing legacy evidence stays unknown; never infer it from text.
+            if "file_changes" in ev:
+                projected_step["file_changes"] = ev["file_changes"]
+                projected_step["executed"] = ev.get("executed", True)
+            if ev.get("outcome_version") == "native_execution_v1":
+                for key in ("outcome_version", "outcome", "exit_status", "error_class"):
+                    projected_step[key] = ev.get(key)
             if ev.get("parent_tool_call_id"):
                 projected_step["parent_tool_call_id"] = str(
                     ev["parent_tool_call_id"]
                 )
             if ev.get("cell_inner_index") is not None:
                 projected_step["cell_inner_index"] = ev["cell_inner_index"]
+            # Classify the recorded action before display clipping. These
+            # private rows never expand the model-visible action/result limits.
+            recorded_args = str(ev.get("args_summary") or "")
+            if tool == "think" and not args:
+                recorded_args = ""
+            process_step = {
+                **projected_step, "action": f"{tool}({recorded_args})",
+                "_display_action": action, "result": recorded_result,
+                "_recorded_command": (
+                    command_from_summary(recorded_args) if tool == "bash" else ""
+                ),
+            }
+            record = session_environments.get(ev.get("session_number"))
+            with recorded_task_environment(record) as binding:
+                process_step["_mutation_like"] = _is_mutation_item(process_step)
+                process_step["_read_only"] = _is_read_only_item(process_step)
+                process_step["_target_paths"] = _target_paths([process_step], None)
+            projected_step["path_binding"] = "recorded" if binding is not None else "unknown"
+            projected_step["check_kind"] = _check_kind(process_step)
+            process_trace.append(process_step)
             trace.append(projected_step)
             state["current_attempt"] = action
-            # Evidence: every bash or run_tests call that actually ran (not
-            # gate-blocked) is a verification attempt. The verdict comes from
-            # the content-blind classify_outcome, which reads only the
-            # harness's own exit-code marker / ERROR: wrapper / envelope
-            # status — no task-format parsing.
+            # Preserve eligible bash and run_tests outcomes. A request known
+            # to be blocked or to lack a runner is not check evidence.
+            # Presence in this index does not establish task coverage.
+            # Native verdicts retain explicit uncertainty. Only legacy rows
+            # use classify_outcome on retained harness-style output markers.
             #
             # bash is the subprocess boundary; run_tests emits its own
             # `<test_results status="passed|failed">` envelope (also harness-
             # generated) and is the canonical gate when language_quirks
             # registers a runner. Other tools are harness I/O, not gate
             # verdicts on task state.
-            if tool in ("bash", "run_tests") and not blocked:
+            if tool in ("bash", "run_tests") and not _verification_unavailable(projected_step):
                 pass_fail = str(ev.get("pass_fail") or "").strip().lower()
                 verdict = (
                     "OK" if pass_fail == "pass"
                     else "FAIL" if pass_fail == "fail"
-                    else classify_outcome(result)
+                    else "UNKNOWN" if ev.get("outcome_version") == "native_execution_v1"
+                    else classify_outcome(recorded_result)
                 )
                 evidence.append({
                     "step": step,
@@ -644,6 +762,11 @@ def project(
                     "result": _truncate(result, _MAX_EVIDENCE_CHARS),
                     "verdict": verdict,
                     "gate_blocked": False,
+                    "kind": projected_step["check_kind"],
+                    "verification_status": projected_step["verification_status"],
+                    **({key: projected_step[key] for key in
+                        ("outcome_version", "outcome", "exit_status", "error_class")}
+                       if "outcome_version" in projected_step else {}),
                 })
         elif et == "session_end":
             fr = ev.get("finish_reason") or "?"
@@ -797,7 +920,7 @@ def project(
         "inference": [],
     }
     if imperative_projection:
-        projected["process"] = _project_process(trace)
+        projected["process"] = _project_process(process_trace)
     return projected
 
 
@@ -845,6 +968,22 @@ def project_from_trace(
     )
 
 
+def _write_state(state_path: Path, state: dict) -> None:
+    """Atomically replace an explicit output using an exclusively created temp."""
+    from tempfile import NamedTemporaryFile
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=state_path.parent, prefix=state_path.name + ".",
+                            suffix=".tmp", delete=False) as saved:
+        temporary = Path(saved.name)
+        try:
+            saved.write(_orjson.dumps(state, option=_orjson.OPT_INDENT_2))
+            saved.close()
+            temporary.replace(state_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def write_state_from_events(
     events: list[dict],
     state_path: Path,
@@ -867,14 +1006,7 @@ def write_state_from_events(
         imperative_projection=imperative_projection,
         think_keep_turns=think_keep_turns,
     )
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
-    # orjson with OPT_INDENT_2 ⇒ same on-disk shape as the prior
-    # `json.dump(..., indent=2)`. Bytes-mode write skips the text
-    # encode pass; the file is consumed by readers that handle
-    # both text and bytes (state.json is JSON, encoding-stable).
-    tmp.write_bytes(_orjson.dumps(state, option=_orjson.OPT_INDENT_2))
-    tmp.replace(state_path)
+    _write_state(state_path, state)
 
 
 def write_state_from_trace(
@@ -900,10 +1032,7 @@ def write_state_from_trace(
         imperative_projection=imperative_projection,
         think_keep_turns=think_keep_turns,
     )
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
-    tmp.write_bytes(_orjson.dumps(state, option=_orjson.OPT_INDENT_2))
-    tmp.replace(state_path)
+    _write_state(state_path, state)
 
 
 def _truncate(s: str, n: int) -> str:

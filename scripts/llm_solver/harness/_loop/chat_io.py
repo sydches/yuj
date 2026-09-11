@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import openai
 
 from ...server._streaming import StreamRuleInterrupt
-from ...server.types import TurnResult, Usage
+from ...server.types import ContextBudgetExceeded, TurnResult, Usage
 from ..stream_rules import NarrationBudget, inject_interrupt_fragments
 from .compaction import CompactionOverflowError, maybe_compact_messages
 from .length_continuation import continue_length_response
@@ -88,7 +88,7 @@ def _chat_with_length_continuation(
     def call_model(request):
         try:
             response = client._call_raw_profile_request(request)
-        except StreamRuleInterrupt as exc:
+        except (StreamRuleInterrupt, ContextBudgetExceeded) as exc:
             exc.prior_usages = tuple(usages)
             exc.request_messages = request.get("messages", [])
             raise
@@ -131,6 +131,8 @@ def _chat_with_length_continuation(
 
 def _fallback_reason(exc: Exception, default: str | None) -> str | None:
     """Classify only failures that are safe to move to another local model."""
+    if isinstance(exc, ContextBudgetExceeded):
+        return "context_overflow"
     detail = str(exc).lower()
     context_markers = (
         "context size",
@@ -201,6 +203,9 @@ def _emit_api_error(session: "Session", turn: int, exc: Exception, *, kind: str)
             error_kind=kind,
             http_status=getattr(exc, "status_code", None),
             detail=str(exc)[:_API_ERROR_DETAIL_CHARS],
+            **({"request_token_count": exc.count_record,
+                "context_size": exc.context_size, "generation_sent": False}
+               if isinstance(exc, ContextBudgetExceeded) else {}),
         )
     except Exception:  # pragma: no cover — tracing must not mask the error
         log.exception("failed to emit api_error trace event")
@@ -237,7 +242,8 @@ def _record_narration_usage(session, outgoing, exc, turn, attempt, *, tool_requi
         completion_tokens_known=completion_known,
     )
     usages = [*getattr(exc, "prior_usages", ()), charged]
-    session._abandoned_chat_usage = _aggregate_usage(usages)
+    session._abandoned_chat_usage = _aggregate_usage(
+        ([session._abandoned_chat_usage] if session._abandoned_chat_usage is not None else []) + usages)
     session._narration_usage_estimated = (
         getattr(session, "_narration_usage_estimated", False)
         or not prompt_known or not completion_known
@@ -282,6 +288,9 @@ def chat_with_retry(session: "Session", turn: int):
                     if getattr(cfg, "reply_mode", "conversation") == "autonomous"
                     else None
                 )
+                text_counter_factory = getattr(type(session.client), "get_text_token_counter", None)
+                if narration is not None and callable(text_counter_factory):
+                    narration.text_counter = text_counter_factory(session.client)
                 recovering = narration is not None and getattr(session, "_narration_breaches", 0) > 0
                 length_continue_max = 0 if recovering else _length_continue_max(cfg)
                 if runtime is not None:
@@ -309,11 +318,14 @@ def chat_with_retry(session: "Session", turn: int):
                             narration.observe(delta)
                         if runtime is not None:
                             runtime.observe(delta, turn=turn)
+                    if narration is not None:
+                        observe.prepare_request = narration.prepare_request
                     session.client._stream_observer = observe
                 prior_streaming = getattr(session.client, "_narration_streaming", False)
                 counter_supported = "_request_token_counter" in client_state
                 prior_counter = client_state.get("_request_token_counter")
-                if counter_supported and getattr(session, "_tokenizer", None) is not None:
+                if (counter_supported and getattr(session, "_tokenizer", None) is not None
+                        and not hasattr(session._tokenizer, "count_payload")):
                     session.client._request_token_counter = session._tokenizer.count
                 prior_required = getattr(session.client, "_narration_tool_required", False)
                 session.client._narration_tool_required = tool_required = recovering and session._narration_breaches > 1
@@ -451,7 +463,11 @@ def chat_with_retry(session: "Session", turn: int):
                     restart_with_fallback = True
                     break
                 return None
-            except openai.BadRequestError as exc:
+            except (openai.BadRequestError, ContextBudgetExceeded) as exc:
+                prior = list(getattr(exc, "prior_usages", ()))
+                if prior:
+                    session._abandoned_chat_usage = _aggregate_usage(
+                        ([session._abandoned_chat_usage] if session._abandoned_chat_usage is not None else []) + prior)
                 reason = _fallback_reason(exc, None)
                 if reason == "context_overflow":
                     _emit_api_error(session, turn, exc, kind=reason)
@@ -468,7 +484,7 @@ def chat_with_retry(session: "Session", turn: int):
                             )
                         except CompactionOverflowError as recovery_error:
                             log.warning(
-                                "Wire overflow recovery cannot fit on turn %d: %s",
+                                "Context overflow recovery cannot fit on turn %d: %s",
                                 turn,
                                 recovery_error,
                             )
@@ -476,7 +492,7 @@ def chat_with_retry(session: "Session", turn: int):
                             getattr(session, "_compaction_count", 0)
                         ) > count_before:
                             log.info(
-                                "Wire context overflow on turn %d recovered by "
+                                "Context overflow on turn %d recovered by "
                                 "compaction; retrying the same client once",
                                 turn,
                             )

@@ -23,7 +23,7 @@ def test_canonical_project_doc_defaults_load() -> None:
 
     assert cfg.project_docs_enabled is False
     assert cfg.project_doc_names == ("AGENTS.md", "CLAUDE.md")
-    assert cfg.project_doc_max_bytes == 32768
+    assert cfg.project_doc_max_bytes == 0
     assert cfg.project_root_markers == (".git", ".hg", ".sl")
     assert cfg.project_doc_global_dir == "~/.config/yuj"
     assert cfg.imports_enabled is True
@@ -73,7 +73,11 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
             disabled, client, work, arm, None, None, None,
         )
     )
-    assert prompt == "PROFILE\n\nARM\n\nHEADER"
+    base_prompt, facts = prompt.split("\n\nTask environment (observed at startup):\n")
+    assert base_prompt == "PROFILE\n\nARM\n\nHEADER"
+    assert json.loads(facts.splitlines()[0]) == {"working_directory": str(work)}
+    assert "Configured analysis runner (availability and project suitability are not established): generic" in facts
+    assert metadata.task_environment_chars == len(prompt) - len(base_prompt)
     assert metadata.trace_fields() == {
         "project_instruction_files": [],
         "project_instruction_bytes": 0,
@@ -109,7 +113,7 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
         '<project-instructions path="AGENTS.md">\n'
         "PROJECT\n</project-instructions>"
     )
-    assert prompt == (
+    assert prompt.split("\n\nTask environment (observed at startup):\n")[0] == (
         f"PROFILE\n\nARM\n\n{global_block}\n\n{project_block}\n\nHEADER"
     )
     assert provenance["system_prompt_sha256"] == hashlib.sha256(
@@ -175,7 +179,16 @@ def test_solve_task_traces_project_docs_and_costs_resolved_blocks(
     assert start["project_instruction_imported_bytes"] == 0
     assert start["project_instruction_resolved_bytes"] == len("TASK RULE")
     assert start["project_instructions_truncated"] is False
-    assert str(tmp_path) not in json.dumps(start)
+    # The native environment record deliberately carries the observed root.
+    # Project instruction metadata and every other field still use safe paths.
+    assert start["task_environment"] == {
+        "host_root": str(work.resolve()),
+        "working_directory": str(work.resolve()),
+        "aliases": [],
+    }
+    assert str(tmp_path) not in json.dumps({
+        key: value for key, value in start.items() if key != "task_environment"
+    })
 
     ledger = [
         json.loads(line)

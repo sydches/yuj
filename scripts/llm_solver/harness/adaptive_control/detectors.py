@@ -14,37 +14,10 @@ from pathlib import Path
 from .rules import build_registry, load_rule_catalog, retired_noop
 
 DETECTOR_VERSION = "zero_detector_v0"
-NAIVE_RED_VERSION = "naive_red_v0"
+NAIVE_RED_VERSION = "diagnostic_observations_v1"
 
 _NO_FIRE = "no_fire"
 
-NAIVE_RED_ARGS_TOKENS = (
-    "diff ",
-    "git diff",
-    "git status",
-    "sed -n",
-    "grep",
-    "rg ",
-    "python",
-    "pytest",
-    "py.test",
-    "runtests.py",
-    "manage.py test",
-    "pylint",
-    "tox",
-    "unittest",
-    "/tmp/test",
-)
-NAIVE_RED_RESULT_TOKENS = (
-    "traceback",
-    "[exit code: 1",
-    "failed",
-    "failure",
-    "error",
-    "loop detected",
-    "permission denied",
-    "no module named",
-)
 
 
 def _truthy(value) -> bool:
@@ -64,8 +37,24 @@ def _turn_number(item: dict) -> int | None:
     return turn if turn >= 0 else None
 
 
-def is_naive_red_turn(item: dict) -> bool:
-    """Broad Stage-1 red-turn membership, not hurdle detection."""
+def is_naive_red_turn(item: dict, *, version: str = NAIVE_RED_VERSION) -> bool:
+    """Select diagnostic observations, never test or hurdle evidence.
+
+    Current sampling includes every named tool observation and projected slot.
+    The historical lexical selection is available only by its explicit version.
+    """
+    if version == "naive_red_v0":
+        return _legacy_naive_red_turn(item)
+    if version != NAIVE_RED_VERSION:
+        raise ValueError("unknown diagnostic selection version: " + version)
+    if item.get("event", "tool_call") != "tool_call":
+        return False
+    return bool(item.get("tool_name") or item.get("op_kind"))
+
+
+def _legacy_naive_red_turn(item: dict) -> bool:
+    from ...language_quirks import _load_runner_quirk_dict
+    legacy = _load_runner_quirk_dict("diagnostics")["legacy_naive_red_v0"]
     if item.get("event", "tool_call") != "tool_call":
         return False
 
@@ -91,20 +80,20 @@ def is_naive_red_turn(item: dict) -> bool:
         return True
     if "git" in args and "status" in args:
         return True
-    if any(token in args for token in NAIVE_RED_ARGS_TOKENS):
+    if any(token in args for token in legacy["args_tokens"]):
         return True
-    if any(token in result for token in NAIVE_RED_RESULT_TOKENS):
+    if any(token in result for token in legacy["result_tokens"]):
         return True
     return False
 
 
-def naive_red_turns(items) -> set[int]:
+def naive_red_turns(items, *, version: str = NAIVE_RED_VERSION) -> set[int]:
     """Return the Stage-1 red-turn set. This does not decide hurdle status."""
     if items is None:
         return set()
     turns: set[int] = set()
     for item in items:
-        if not isinstance(item, dict) or not is_naive_red_turn(item):
+        if not isinstance(item, dict) or not is_naive_red_turn(item, version=version):
             continue
         turn = _turn_number(item)
         if turn is not None:

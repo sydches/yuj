@@ -107,6 +107,7 @@ class LlamaClient:
         # behavior while exposing SSE deltas to the owning harness layer.
         self._stream_observer = None
         self._request_token_counter = None
+        self._backend_token_counter = None
         self._last_call_streamed = False
         self._image_inputs: tuple[ImageInput, ...] = ()
         self._image_target_correction: str | None = None
@@ -273,10 +274,27 @@ class LlamaClient:
         and are classified by chat_with_retry's _TRANSIENT_ERRORS
         tuple. See server/_streaming.py for the assembly contract.
         """
+        payload = request_controls.bound_output_allowance(payload, self.cfg.max_tokens)
+        streaming = _streaming_enabled() or getattr(self, "_narration_streaming", False)
+        if streaming:
+            payload = {**payload, "stream": True,
+                       "stream_options": {"include_usage": True}}
+        counter = self.get_request_token_counter()
+        counted = counter.count_payload(payload) if counter is not None else None
+        count_record = dict(counter.last) if counter is not None else {}
         payload = request_controls.bound_completion_budget(
             payload, self.cfg.context_size,
             token_counter=self._request_token_counter,
+            payload_counter=(lambda request: counted) if counter is not None else None,
+            count_record=count_record,
         )
+        if streaming:
+            prepare_observer = getattr(self._stream_observer, "prepare_request", None)
+            if callable(prepare_observer):
+                prepare_observer(
+                    completion_tokens=payload.get("max_tokens"),
+                    model=payload.get("model"),
+                )
         n = 0
         if record_transcript:
             self._transcript_call_n += 1
@@ -285,15 +303,13 @@ class LlamaClient:
                 f"turn {n:03d} input",
                 json.dumps(payload, default=str),
             )
-        if _streaming_enabled() or getattr(self, "_narration_streaming", False):
+        if streaming:
             self._last_call_streamed = True
             stream_payload = dict(payload)
-            stream_payload["stream"] = True
             # include_usage on the final chunk gives us prompt_tokens
             # / completion_tokens — same fields the non-stream usage
             # block carries. Required for the harness's
             # _last_actual_prompt_tokens signal.
-            stream_payload["stream_options"] = {"include_usage": True}
             try:
                 stream = self.client.chat.completions.create(**stream_payload)
                 resp = assemble_stream(
@@ -317,6 +333,8 @@ class LlamaClient:
                 raise
             if record_transcript:
                 self._write_transcript(f"turn {n:03d} output", resp.model_dump_json())
+            if count_record:
+                counter.observe_usage(resp, count_record)
             return resp
         self._last_call_streamed = False
         try:
@@ -333,7 +351,38 @@ class LlamaClient:
             body = json.dumps(resp, default=str)
         if record_transcript:
             self._write_transcript(f"turn {n:03d} output", body)
+        if count_record:
+            counter.observe_usage(resp, count_record)
         return resp
+
+    def get_request_token_counter(self):
+        """Return this transport's counter when automatic counting is selected."""
+        if getattr(self._call_api, "__func__", None) is not LlamaClient._call_api:
+            # A replacement transport must declare its own counting contract.
+            return None
+        if getattr(self.cfg, "tokenizer_id", "auto") != "auto":
+            return None
+        if self._backend_token_counter is None:
+            from .token_counting import BackendTokenCounter
+            self._backend_token_counter = BackendTokenCounter(self)
+        return self._backend_token_counter
+
+    def prepare_chat_request(self, messages: list[dict], tools: list[dict]) -> dict:
+        """One preparation path shared by canonical counting and generation."""
+        if self.profile is not None:
+            return self._prepare_profile_chat_request(messages, tools)
+        return self._attach_request_controls({
+            "model": self.cfg.model, "messages": self._messages_with_image_inputs(messages), "tools": tools,
+            "tool_choice": "auto", "max_tokens": self.cfg.max_tokens,
+        }, side_request=False)
+
+    def get_text_token_counter(self):
+        """Return an attempt-local counter only for the declared llama route."""
+        counter = self.get_request_token_counter()
+        if counter is not None and counter.supported:
+            from .token_counting import TextTokenCounter
+            return TextTokenCounter(counter)
+        return None
 
     def complete_side_request(self, payload: dict) -> SideRequestResult:
         """Send one harness-owned no-tool completion without a solver turn.
@@ -424,7 +473,7 @@ class LlamaClient:
 
     def _server_root(self) -> str:
         """Return the HTTP root for llama-compatible side endpoints."""
-        base = self.cfg.base_url.rstrip("/")
+        base = str(self.client.base_url).rstrip("/")
         if base.endswith("/v1"):
             base = base[:-3]
         return base.rstrip("/")
@@ -438,23 +487,26 @@ class LlamaClient:
         sampling facts when the server reports them. Callers hash the returned
         body and store it once per run.
         """
-        import requests
+        import httpx
 
         root = self._server_root()
         snapshot: dict = {
-            "base_url": self.cfg.base_url,
+            "base_url": str(self.client.base_url),
             "root_url": root,
             "endpoints": {},
         }
         for endpoint in ("/props", "/slots", "/v1/models"):
             record: dict
             try:
-                resp = requests.get(f"{root}{endpoint}", timeout=5)
+                resp = self.client.get(
+                    f"{root}{endpoint}", cast_to=httpx.Response,
+                    options={"timeout": self.cfg.timeout_connect, "max_retries": 0},
+                )
                 record = {
-                    "ok": bool(resp.ok),
+                    "ok": resp.is_success,
                     "status_code": resp.status_code,
                 }
-                if resp.ok:
+                if resp.is_success:
                     try:
                         record["json"] = resp.json()
                     except Exception as e:
@@ -465,13 +517,17 @@ class LlamaClient:
             except Exception as e:
                 record = {
                     "ok": False,
-                    "error": f"{type(e).__name__}: {e}",
+                    "error": type(e).__name__,
                 }
+                if isinstance(getattr(e, "status_code", None), int):
+                    record["status_code"] = e.status_code
             snapshot["endpoints"][endpoint] = record
 
-        if any(r.get("ok") for r in snapshot["endpoints"].values()):
-            return snapshot
-        return {}
+        snapshot["capture_status"] = (
+            "available" if any("json" in r for r in snapshot["endpoints"].values())
+            else "unavailable"
+        )
+        return snapshot
 
     def query_server_context(self) -> int | None:
         """Query the server's effective n_ctx. Returns None if unavailable.
@@ -481,6 +537,7 @@ class LlamaClient:
         when it started.
         """
         import requests
+        from ..context_allocation import capacity
 
         base = self._server_root()
         for endpoint in ("/props", "/slots"):
@@ -490,14 +547,15 @@ class LlamaClient:
                     continue
                 data = resp.json()
                 if endpoint == "/props":
-                    n_ctx = data.get("default_generation_settings", {}).get("n_ctx")
-                    if n_ctx:
-                        return int(n_ctx)
+                    settings = data.get("default_generation_settings", {})
+                    n_ctx = capacity(data.get("n_ctx_per_slot")) or capacity(settings.get("n_ctx"))
+                    if n_ctx is not None:
+                        return n_ctx
                 elif endpoint == "/slots":
                     if isinstance(data, list) and data:
-                        n_ctx = data[0].get("n_ctx")
-                        if n_ctx:
-                            return int(n_ctx)
+                        limits = [capacity(slot.get("n_ctx")) for slot in data]
+                        if all(limit is not None for limit in limits):
+                            return min(limits)
             except Exception:
                 continue
         return None
@@ -519,7 +577,7 @@ class LlamaClient:
         self, messages: list[dict], tools: list[dict], turn: int
     ):
         """Profile-driven chat: denormalize → HTTP → normalize → TurnResult."""
-        request = self._prepare_profile_chat_request(messages, tools)
+        request = self.prepare_chat_request(messages, tools)
         raw_response = self._call_raw_profile_request(request)
         normalized = self.profile.normalize(dict(raw_response))
         return self._turn_result_from_normalized(
@@ -682,13 +740,7 @@ class LlamaClient:
         """Legacy chat without profile — ad-hoc quirk handling."""
         from .types import TurnResult
 
-        payload = self._attach_request_controls({
-            "model": self.cfg.model,
-            "messages": self._messages_with_image_inputs(messages),
-            "tools": tools,
-            "tool_choice": "auto",
-            "max_tokens": self.cfg.max_tokens,
-        }, side_request=False)
+        payload = self.prepare_chat_request(messages, tools)
         resp = self._call_api(payload)
         return self._legacy_turn_result_from_response(resp, turn)
 

@@ -35,6 +35,7 @@ from ..llm_solver.harness.sandbox.policy import (
     bind_sandbox_resolution,
     preflight_sandbox,
 )
+from ..llm_solver.harness.task_environment import task_environment_scope
 from ..llm_solver.harness.worktree_runtime import (
     WorktreeRuntimeError,
     create_session_worktree,
@@ -522,6 +523,7 @@ def run_session(
     return success, finish_reason
 
 
+@task_environment_scope
 def rewind_session(
     store: SessionStore,
     record: SessionRecord,
@@ -641,12 +643,27 @@ def rewind_session(
         shadow_dir=checkpoint_shadow_dir,
         excludes=cfg.tools_file_checkpoints_exclude,
     )
-    commit = checkpoint_store.checkpoint_for_turn(turn)
-    if commit != snapshot.checkpoint_commit:
-        raise RuntimeError(
-            "conversation snapshot and workspace checkpoint do not match"
+    from ..llm_solver.harness.time_budget import command_time_budget
+    from ..llm_solver.harness.tools import _effective_command_environment
+    from ..llm_solver.harness.task_file_runtime import load_task_ignore_policy
+    cfg = replace(cfg, unreadable_paths=tuple(dict.fromkeys((
+        *cfg.unreadable_paths, str(artifact_dir), *checkpoint_store.sandbox_unreadable_paths,
+    ))))
+    with command_time_budget(cfg.bash_timeout):
+        commit = checkpoint_store.checkpoint_for_turn(turn)
+        if commit != snapshot.checkpoint_commit:
+            raise RuntimeError(
+                "conversation snapshot and workspace checkpoint do not match"
+            )
+        environment, allow_login_shell = _effective_command_environment(cfg, cwd=workspace)
+        ignore_policy = load_task_ignore_policy(
+            workspace, cfg, environment=environment, allow_login_shell=allow_login_shell,
         )
-    restored = checkpoint_store.restore_checkpoint(turn)
+        checkpoint_store.bind_task_access(
+            cfg, environment=environment, allow_login_shell=allow_login_shell,
+            ignore_policy=ignore_policy,
+        )
+        restored = checkpoint_store.restore_checkpoint(turn)
     rewind_id = uuid.uuid4().hex
     event = {
         "session_number": target_session,
@@ -1634,31 +1651,11 @@ def _load_profile(cfg):
 
 
 def _apply_effective_context(cfg, client):
-    server_ctx = client.query_server_context()
-    if server_ctx:
-        effective_ctx = min(cfg.context_size, server_ctx) if cfg.context_size > 0 else server_ctx
-        if effective_ctx != cfg.context_size:
-            cfg = replace(cfg, context_size=effective_ctx)
-
-    token_budget = int(cfg.context_size * cfg.context_fill_ratio)
-    derived_recent = int(token_budget * 0.45 * 4)
-    derived_output = int(token_budget * 0.40 * 4)
-    if derived_recent != cfg.recent_tool_results_chars or derived_output != cfg.max_output_chars:
-        cfg = replace(
-            cfg,
-            recent_tool_results_chars=derived_recent,
-            max_output_chars=derived_output,
-        )
-
-    # The config loader leaves max_tokens=0 as a placeholder; the
-    # measurement entrypoint (scripts.llm_solver.__main__) derives the real
-    # value after server-context resolution. The assistant path must do the
-    # same or every request goes out with max_tokens=0 and dies at one
-    # generated token (finish_reason=length).
-    derived_max_tokens = int(cfg.context_size * cfg.max_tokens_fraction)
-    if derived_max_tokens != cfg.max_tokens:
-        cfg = replace(cfg, max_tokens=derived_max_tokens)
-    return cfg
+    from ..llm_solver.context_allocation import allocate_context
+    return allocate_context(
+        cfg, observed=client.query_server_context(),
+        profile=getattr(client, "profile", None),
+    )
 
 
 def _status_from_result(success: bool, finish_reason: str | None) -> str:

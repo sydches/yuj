@@ -269,6 +269,7 @@ def test_init_cli_prints_exact_pending_proposal_and_changes_no_file(
     work = tmp_path / "work"
     work.mkdir()
     subprocess.run(["git", "init", "-q", str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "core.excludesFile", "/dev/null"], check=True)
     proposal = "# Project instructions\n\nRun `pytest -q` before submitting.\n"
 
     def fake_run_session(store_obj, record, *, resume):

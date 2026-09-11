@@ -34,14 +34,17 @@ Schema (enforced at load time; missing required key raises loudly):
     repeat     bool               — optional per-rule repeat override
     fire_once  bool               — legacy inverse of repeat
 
-Fragment content must apply to any task. Do not put a task ID in a
-fragment. The loader checks task IDs, and reviewers check the rest.
+The caller selects guidance sources under the task's permission policy.
+Benchmark-specific admission belongs to the external benchmark owner.
+Loaded-rule hashes record content identity, not permission to supply it;
+identifier spelling is not a general admission rule.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -54,11 +57,6 @@ from .prompt_imports import DEFAULT_IMPORT_MAX_DEPTH, process_imports
 
 _FRONTMATTER_FENCE = "+++"
 log = logging.getLogger(__name__)
-
-# Reject task IDs that use the ``<org>__<repo>`` marker. The pattern allows
-# ordinary project and framework names because general tool hints may use them.
-_TASK_ID_PATTERN = re.compile(r"\b[A-Za-z][\w.-]*__[A-Za-z][\w.-]*\b")
-
 
 @dataclass(frozen=True)
 class Injection:
@@ -234,37 +232,11 @@ def parse_injection(text: str, *, source_path: str) -> Injection:
         fire_once = fm.get("fire_once", True)
         if "fire_once" in fm:
             repeat = not fire_once
-    _assert_task_agnostic(body, keywords, source_path=source_path)
     return Injection(
         name=name, trigger=trigger, keywords=keywords,
         fire_once=fire_once, body=body, source_path=source_path,
         paths=paths, repeat=repeat,
     )
-
-
-def _assert_task_agnostic(
-    body: str, keywords: tuple[str, ...], *, source_path: str,
-) -> None:
-    """Reject content that names a specific task ID.
-
-    Check the fragment body and each keyword for the ``<org>__<repo>``
-    marker. Run this check while loading so invalid text does not reach
-    the conversation.
-    """
-    body_hit = _TASK_ID_PATTERN.search(body)
-    if body_hit:
-        raise ValueError(
-            f"{source_path}: injection body contains task-id pattern "
-            f"{body_hit.group()!r} (LEAKAGE_RULES: content must be "
-            f"task-agnostic — no <org>__<repo> markers)"
-        )
-    for kw in keywords:
-        kw_hit = _TASK_ID_PATTERN.search(kw)
-        if kw_hit:
-            raise ValueError(
-                f"{source_path}: keyword {kw!r} contains task-id pattern "
-                f"(LEAKAGE_RULES: keywords must be task-agnostic)"
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +290,21 @@ def load_injections_with_metadata(
             tree = processed.trace_tree()
             imported_bytes = processed.imported_bytes
         injection = parse_injection(text, source_path=source)
+        # Bind the effective parsed rule independently of its storage location.
+        # Include defaults and expanded imports, but do not imply authorization.
+        resolved_rule = {
+            "schema": "injection-rule-v1",
+            "name": injection.name,
+            "trigger": injection.trigger,
+            "keywords": injection.keywords,
+            "paths": injection.paths,
+            "repeat": injection.repeat,
+            "fire_once": injection.fire_once,
+            "body": injection.body,
+        }
+        resolved_bytes = json.dumps(
+            resolved_rule, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("utf-8")
         injections.append(injection)
         armed_triggers = []
         if injection.paths:
@@ -337,6 +324,11 @@ def load_injections_with_metadata(
                 "owner": "injection",
                 "source": source,
                 "source_bytes": len(raw),
+                "source_sha256": hashlib.sha256(raw).hexdigest(),
+                "rule_name": injection.name,
+                "resolved_rule_schema": "injection-rule-v1",
+                "resolved_rule_sha256": hashlib.sha256(resolved_bytes).hexdigest(),
+                "admission_status": "unverified",
                 "imported_bytes": imported_bytes,
                 "imports": tree,
             }
@@ -452,9 +444,10 @@ def _normalize_tool_target(raw_path: str, *, cwd: str) -> _PathTarget | None:
     if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
         return None
     from ._tools._common import _resolve
+    from .task_path import TaskPath, native_requested_path
     try:
         resolved = _resolve(cwd, raw_path)
-        cwd_resolved = Path(cwd).resolve()
+        cwd_resolved = _resolve(cwd, '.')
         canonical = resolved.relative_to(cwd_resolved).as_posix()
     except (OSError, ValueError):
         return None
@@ -466,8 +459,10 @@ def _normalize_tool_target(raw_path: str, *, cwd: str) -> _PathTarget | None:
     # symlink alias enter the durable trace by accident.
     lexical = canonical
     try:
-        cwd_lexical = Path(os.path.abspath(cwd))
-        supplied = Path(raw_path)
+        cwd_lexical = (cwd_resolved.path if isinstance(cwd_resolved, TaskPath)
+                       else Path(os.path.abspath(cwd)))
+        supplied = (native_requested_path(cwd_resolved, raw_path, expand=False).path
+                    if isinstance(cwd_resolved, TaskPath) else PurePosixPath(raw_path))
         supplied_abs = Path(os.path.abspath(
             supplied if supplied.is_absolute() else cwd_lexical / supplied
         ))

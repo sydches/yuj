@@ -4,9 +4,9 @@ Three modes, dispatched by the ``YUJ_CONTAINER`` env var (set by an
 external launcher, never by the harness):
 
   - ``YUJ_CONTAINER`` unset → **bwrap mode** (legacy default).
-    Bubblewrap mount namespace with ``--ro-bind / /``, ``--unshare-net``,
-    and a writable ``cwd``. Host files outside ``cwd`` remain readable
-    unless ``unreadable_paths`` masks them.
+    Bubblewrap starts with an empty filesystem and mounts the task,
+    Linux runtime files and discovered installed runtime components.
+    Other host files and host sockets are absent.
 
   - ``YUJ_CONTAINER=ambient`` → **ambient container mode**.
     The harness itself is already running inside a container that
@@ -18,11 +18,10 @@ external launcher, never by the harness):
 
   - ``YUJ_CONTAINER=<container_id>`` → **docker-exec container mode**.
     Each bash call becomes ``docker exec <container_id>``. The container
-    is started by the launcher (per task) from the FB testbed image,
-    with ``--network none``, ``--read-only``, ``--user $UID``, and only
-    ``cwd`` bind-mounted at ``/testbed``. Host paths outside cwd are
-    invisible inside the container. Same image fb-eval uses, so solve
-    and eval converge on one Python environment.
+    is started by the launcher. Task setup inspects its bind mounts and
+    working directory to find the container alias for the host task.
+    Shell and filesystem tools share that mapping. The launcher owns
+    image selection, mount restrictions, user and network policy.
 
 Only :func:`_build_bwrap_argv` knows which mode is in effect — the
 rest of the harness (``tools.py``, ``loop.py``, ``config.py``) treats
@@ -42,7 +41,8 @@ concern while preserving the import surface ``harness.sandbox``:
   - ``_unreadable.py``  — glob-pattern → mask-args expansion
   - ``_persistent.py``  — long-lived bwrap+bash subprocess
   - this file           — dispatch (``container_mode``,
-    ``_build_bwrap_argv``), docker-sock resolution, public re-exports
+    ``_build_bwrap_argv``), public re-exports
+  - ``_filesystem.py``  — startup-fixed runtime component mounts
 
 See ``docs/serving_overlay.md`` for the server setup.
 """
@@ -75,7 +75,6 @@ from ._unreadable import (  # noqa: F401
 )
 from ._persistent import (  # noqa: F401
     _PERSISTENT_MARKER_PREFIX,
-    _persistent_local,
     PersistentBashSession,
     get_persistent_runner,
     set_persistent_runner,
@@ -107,36 +106,6 @@ def container_mode() -> str | None:
     return v if v else None
 
 
-_DOCKER_SOCK_CACHE: tuple[bool, str | None] = (False, None)
-
-
-def _resolve_docker_sock() -> str | None:
-    """Return the canonical path to the host's docker socket, or None.
-
-    Most modern Linux distros ship /var/run as a symlink to /run, so the
-    "real" socket lives at /run/docker.sock. Binding through the symlink
-    (/var/run/docker.sock) fails under bwrap because the symlink target
-    resolution happens after the bind is attempted, so the mount source
-    reads as missing. Resolving here avoids that whole class of failure.
-
-    Memoized for the process lifetime: the socket path is stable once
-    the daemon is up, and _build_bwrap_argv runs per-bash-call, so the
-    uncached version costs one stat syscall per tool invocation for no
-    benefit.
-    """
-    global _DOCKER_SOCK_CACHE
-    cached, value = _DOCKER_SOCK_CACHE
-    if cached:
-        return value
-    for candidate in ("/run/docker.sock", "/var/run/docker.sock"):
-        p = Path(candidate)
-        if p.exists():
-            _DOCKER_SOCK_CACHE = (True, str(p.resolve()))
-            return _DOCKER_SOCK_CACHE[1]
-    _DOCKER_SOCK_CACHE = (True, None)
-    return None
-
-
 def _build_bwrap_argv(
     cmd: str, cwd: str, bwrap_bin: str = _DEFAULT_BWRAP_BIN,
     *, unreadable_paths: tuple[str, ...] = (),
@@ -145,40 +114,25 @@ def _build_bwrap_argv(
     tail: list[str] | None = None,
     effective_env: Mapping[str, str] | None = None,
     allow_login_shell: bool = False,
+    _mask_arguments: list[str] | None = None,
+    _combine_task_output: bool = False,
+    _host_task_root=None,
+    _filesystem_view=None,
 ) -> list[str]:
     """Build the argv that runs `cmd` for the model's bash tool.
 
     Dispatches on ``YUJ_CONTAINER``:
 
     When set, returns a ``docker exec`` argv targeting that container.
-    The launcher started the container with ``-v $cwd:/testbed``, so
-    inside the container ``/testbed`` is the same bytes as ``cwd`` on
-    the host. ``cwd`` (the parameter) is unused in this branch — docker
-    uses ``--workdir /testbed`` and host paths outside cwd are not
-    visible inside the container. ``env -i`` applies the same explicit
+    The task's inspected bind mount supplies ``--workdir``. The host
+    ``cwd`` and its container alias refer to the same task bytes.
+    Missing or ambiguous mappings refuse execution. ``env -i`` applies the same explicit
     command environment as every other backend before bash starts.
 
-    When unset, returns the legacy bwrap argv (preserved below).
-
-    bwrap-mode shape (unchanged from the pre-container era):
-      - Entire host filesystem bound read-only at /
-      - Fresh /tmp as tmpfs (isolated per call, no state leaks across
-        tool invocations). Mounted BEFORE the cwd bind so a cwd that
-        happens to live under /tmp (e.g. in tests) isn't wiped by the
-        tmpfs mount.
-      - cwd bound writable at its real path (matched source/target) so
-        that any `docker run -v $PWD:/testbed` inside the sandbox still
-        resolves correctly — the docker daemon lives on the host and
-        reads HOST paths for bind mounts, so the sandbox view's $PWD
-        must equal the host path. Avoid remapping cwd to /work or
-        anything else; docker would then fail to find the source dir.
-      - /proc and /dev for a working process view.
-      - Docker socket bound in if present (resolved to the canonical
-        /run path — /var/run is typically a symlink). Needed for
-        pretest.sh which execs `docker run`.
-      - --die-with-parent so the sandbox tears down instantly if the
-        harness exits.
-      - --chdir to the cwd so $PWD resolves correctly to the task dir.
+    When unset, builds the startup-fixed Linux filesystem view. Only the
+    task is bound writable. Runtime components and declared resources are
+    read-only; home and temporary storage are private. The host Docker socket
+    is not exposed. Privileged preparation runs outside this command boundary.
 
     The result is passed to subprocess.run as an argv list (no shell).
     The final non-login `bash` runs the model's shell command inside the
@@ -203,71 +157,45 @@ def _build_bwrap_argv(
             "_run_in_sandbox instead."
         )
     if mode is not None:
+        from ..task_environment import discover_task_environment
+        task_environment = discover_task_environment(cwd)
+        if not task_environment.container_id:
+            from ..task_environment import TaskEnvironmentUnavailable
+            raise TaskEnvironmentUnavailable('selected container has no inspected identity')
         shell_argv = build_bash_argv(
             cmd, allow_login_shell=allow_login_shell,
         ) if tail is None else list(tail)
-        return [
+        from ..process_identity import guarded_process_argv
+        return guarded_process_argv([
             "docker", "exec",
-            "--workdir", "/testbed",
-            mode,
-            *build_clean_exec_argv(shell_argv, command_env),
-        ]
+            "--workdir", task_environment.working_directory,
+            task_environment.container_id,
+        ], build_clean_exec_argv(shell_argv, command_env), task_environment.process_identity,
+            combine_output=_combine_task_output)
 
+    from ._filesystem import filesystem_view, build_filesystem_argv, BoundTaskArgv, resolve_filesystem_view
+    from ..task_path import active_task_files, capture_host_task_root
+    files = active_task_files(cwd)
+    if _host_task_root is None:
+        _host_task_root = getattr(files, '_host_task_root', None)
+    if _filesystem_view is None:
+        _filesystem_view = getattr(files, '_filesystem_view', None)
+    _filesystem_view = resolve_filesystem_view(_filesystem_view)
+    view = (_filesystem_view if _filesystem_view is not None
+            else filesystem_view(cwd, command_env, readable_paths, unreadable_paths))
+    if _host_task_root is None:
+        _host_task_root = view.task_root or capture_host_task_root(view.cwd)
+    command_env = {**command_env, **dict(view.runtime_bindings)}
+    cwd = view.cwd
+    filesystem_args = build_filesystem_argv(view, task_root=_host_task_root)
     argv = [
         bwrap_bin,
-        "--ro-bind", "/", "/",
-        "--tmpfs", "/tmp",
-        "--bind", cwd, cwd,
-        "--proc", "/proc",
-        "--dev", "/dev",
-        # New network namespace with only loopback. Without this the model's
-        # bash can pip-install or curl pre-mask source from PyPI/GitHub:
-        #   pip install pkg==<task_commit>          → recovers gold impl
-        #   curl raw.githubusercontent.com/<sha>/.. → recovers F2P test file
-        # bypassing every mask in the benchmark. Docker socket is a UNIX
-        # socket (/run/docker.sock), unaffected — pretest containers still
-        # work because the docker daemon itself lives on the host with
-        # network access.
-        "--unshare-net",
-        # Defense-in-depth namespacing. Conservative substitute for
-        # Codex Tier A2 (in-process seccomp filter denying ptrace /
-        # process_vm_readv / io_uring) — getting the same threat-class
-        # coverage from kernel namespaces without taking on a libseccomp
-        # dependency or shipping a BPF filter blob.
-        #
-        # --unshare-pid: fresh PID namespace. ptrace and process_vm_*
-        #   syscalls require the target PID to be visible to the caller;
-        #   in a separate PID-ns the sandboxed process cannot see (much
-        #   less attack) any process outside the sandbox. Bwrap
-        #   transparently launches an init shim as PID 1 in the new ns,
-        #   so semantics are normal.
-        # --unshare-ipc: fresh System-V IPC namespace. Blocks shared-
-        #   memory / message-queue / semaphore tricks for cross-
-        #   sandbox or sandbox-to-host data transfer.
-        # --unshare-uts: fresh UTS namespace. Hostname/domainname
-        #   isolation. Mostly determinism (model can't read the host's
-        #   real hostname) rather than security.
-        # --unshare-cgroup: fresh cgroup namespace. Blocks cgroup-escape
-        #   tricks (rare, but cheap to close).
-        #
-        # NOT added: --unshare-user. User-namespacing changes the UID
-        # mapping inside the sandbox and breaks tools that expect to
-        # run as the actual UID (notably docker socket access for
-        # pretest.sh). High blast radius for marginal additional
-        # security beyond what unshare-pid already provides.
-        "--unshare-pid",
-        "--unshare-ipc",
-        "--unshare-uts",
-        "--unshare-cgroup",
-        "--die-with-parent",
-        "--chdir", cwd,
-        # The command environment is explicit and deterministic. The host
-        # client keeps its own environment; only sandbox children are cleared.
+        *filesystem_args,
+        "--unshare-net", "--unshare-pid", "--unshare-ipc",
+        "--unshare-uts", "--unshare-cgroup", "--cap-drop", "ALL",
+        "--die-with-parent", "--chdir", cwd,
         *build_bwrap_env_argv(command_env),
     ]
-    sock = _resolve_docker_sock()
-    if sock is not None:
-        argv += ["--bind", sock, sock]
     # Protect cwd/.git/hooks against arbitrary writes. The cwd is a git checkout
     # of the masked repo. Without this guard, the model could write
     # `.git/hooks/pre-commit` (or post-commit, post-update, etc.) and
@@ -288,33 +216,17 @@ def _build_bwrap_argv(
     git_hooks = Path(cwd) / ".git" / "hooks"
     if git_hooks.is_dir():
         argv += ["--tmpfs", str(git_hooks)]
-    # The host root is already read-only, but explicit skill binds make the
-    # startup-fixed read set visible in the sandbox argv and preserve that
-    # boundary if the broad root bind is ever narrowed. Project-local skills
-    # stay under the writable cwd mount; only disjoint external roots belong
-    # here.
-    cwd_path = Path(cwd).resolve(strict=False)
-    bound_readable: list[Path] = []
-    for raw_path in readable_paths:
-        path = Path(raw_path).resolve(strict=True)
-        if not path.is_dir():
-            raise RuntimeError(f"sandbox readable path is not a directory: {path}")
-        if (
-            path == cwd_path
-            or cwd_path in path.parents
-            or path in cwd_path.parents
-            or any(path == kept or kept in path.parents for kept in bound_readable)
-        ):
-            continue
-        bound_readable.append(path)
-        argv += ["--ro-bind", str(path), str(path)]
     # Apply unreadable masks after all readable mounts so a protected child
     # remains hidden even when its parent is a configured skill directory.
     if unreadable_paths:
         mask_args, _, _ = _expand_unreadable_paths(
-            tuple(unreadable_paths), sandbox_required=sandbox_required,
+            tuple(unreadable_paths), sandbox_required=sandbox_required, refresh=True,
+            base_dir=cwd,
         )
         argv += mask_args
+        if _mask_arguments is not None:
+            _mask_arguments.extend(mask_args)
+    argv += ["--remount-ro", "/"]
     # `set -o pipefail` so an upstream failure in `cmd1 | cmd2` is not
     # silently swallowed by a downstream `head`/`tail`/`grep`/etc. exiting
     # zero. Default bash returns the LAST command's exit code, which made
@@ -333,4 +245,5 @@ def _build_bwrap_argv(
         )
     else:
         argv += list(tail)
-    return argv
+    return BoundTaskArgv(argv, _host_task_root, filesystem_args.resources,
+                         (index + 1 for index in filesystem_args.descriptor_arguments))

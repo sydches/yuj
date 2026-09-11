@@ -4,13 +4,24 @@
 # via npm/yarn/pnpm script invocations.
 
 name = "jest"
+non_execution_flags = ["--help", "-h", "--version", "--listTests", "--showConfig"]
 description = "jest / mocha / vitest / npm test invocations"
-
 verification_patterns = [
     '''(?:^|[\s/'"])(?:jest|mocha|vitest)\b''',
     '''(?:^|[\s/'"])(?:npm|yarn|pnpm)\s+(?:run\s+)?test\b''',
-    '''(?:^|[\s/'"])npx\s+(?:jest|mocha|vitest)\b''',
+    '''(?:^|[\s/'"])npx\s+(?:--no-install\s+)?(?:jest|mocha|vitest)\b''',
 ]
+
+[[detection]]
+path = "package.json"
+format = "json"
+section = ["jest"]
+exclude_field = ["scripts", "test"]
+
+[runtime]
+executables = ["npx"]
+probe_args = ["--no-install", "jest", "--version"]
+command_args = ["--no-install", "jest", "--reporters=default"]
 
 [output_control]
 failure_only_flag = ""
@@ -26,17 +37,14 @@ failed = '''(\d+)\s+failed'''
 skipped = '''(\d+)\s+skipped'''
 
 [output_parser.per_test]
-# Covers both the default (✓/✕) and CI-style (PASS/FAIL) reporters. Verdict
-# emitted as-is (✓/✕/PASS/FAIL); see cargo.toml for the same normalization
-# caveat — consumers that need canonical PASSED/FAILED strings await a
-# normalization map in parse_structured.
+# Map default and CI reporter words to shared internal states.
+verdict_map = { "✓" = "PASSED", "✕" = "FAILED", PASS = "PASSED", FAIL = "FAILED" }
 regex = '''^\s*(?P<verdict>✓|✕|PASS|FAIL)\s+(?P<test_id>\S[^\(]*?)(?:\s+\(\d+\s*ms\))?$'''
 
 # How run_tests should invoke this runner when the repo is detected as
-# JavaScript/TypeScript (package.json present in cwd). `npx --no-install`
-# avoids accidentally pulling jest from the network mid-task. We default
-# to jest because it's the most common SWE-bench-style runner; users on
-# vitest/mocha can override via `npm test` once that's wired through.
+# an explicit Jest configuration without a declared package test script.
+# `npx --no-install` avoids pulling Jest from the network. Declared package
+# scripts use their own descriptor and retain their chosen runner and hooks.
 [run_tests]
 detection_priority = 3
 env_activate_prefix = ""
@@ -63,3 +71,29 @@ status_default = "failed"
 [run_tests.status_map]
 0 = "passed"
 1 = "failed"
+
+# Requested CLI grammar only; it does not establish execution or coverage.
+
+[[diagnostic_invocations]]
+family = "jest"
+prefix = ["jest"]
+flags = ["--runInBand", "--watch", "--help", "--version"]
+value_options = ["-t", "--testNamePattern", "--config", "--maxWorkers"]
+
+[[diagnostic_invocations]]
+family = "jest"
+prefix = ["npx", "jest"]
+flags = ["--runInBand", "--watch", "--help", "--version"]
+value_options = ["-t", "--testNamePattern", "--config", "--maxWorkers"]
+
+[[diagnostic_invocations]]
+family = "jest"
+prefix = ["npx", "--no-install", "jest"]
+flags = ["--runInBand", "--watch", "--help", "--version"]
+value_options = ["-t", "--testNamePattern", "--config", "--maxWorkers"]
+
+[[diagnostic_invocations]]
+family = "vitest"
+prefix = ["vitest", "run"]
+flags = ["--help", "--version"]
+value_options = ["-t", "--testNamePattern", "--config"]

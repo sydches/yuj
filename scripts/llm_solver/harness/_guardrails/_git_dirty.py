@@ -1,8 +1,4 @@
-"""Disk-state helper for the done gate.
-
-Extracted from ``checks_pre.py`` so that file stays under the 500-line
-project size cap.
-"""
+"""Legacy Git-dirt query; not task-change evidence for the done gate."""
 from __future__ import annotations
 
 import subprocess
@@ -13,8 +9,7 @@ from ..plan_mode import PLAN_FILE
 def cwd_has_uncommitted_changes(cwd: str | None) -> bool:
     """Return True iff ``cwd`` is a git repo with uncommitted changes.
 
-    ``done_guard`` uses this when a bash command may have changed a file
-    without updating ``state.has_mutated``. Run ``git status --porcelain``
+    This legacy helper does not establish session activity. Run ``git status --porcelain``
     against the current HEAD while excluding the model-authored plan artifact,
     which is phase control rather than implementation. Return False for a
     non-Git directory, missing Git, a timeout, or any other error.

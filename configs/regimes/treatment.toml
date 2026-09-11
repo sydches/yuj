@@ -6,7 +6,9 @@ max_sessions = 1
 max_transient_retries = 1
 retry_backoff = [10]
 min_turns_before_context = 2
-# Quiet start: nothing arms before turn 10.
+# Delay the specified guards and trace-net detection through turn 10.
+# Other guards and active stop/resume watches retain their own rules.
+# Development provenance and limits: docs/knob_reference/loop.md.
 guardrails_arm_after_turn = 10
 
 require_intent = false
@@ -213,6 +215,9 @@ ledger_path = "adaptive_control_ledger.jsonl"
 detector_backend = "trace_nets"
 lookup_table_path = "configs/treatment/medicine_ladder.v1.tsv"
 baseline_config_paths = ["configs/regimes/baselines/plain_long_solve.toml"]
+# Declared episode/timing policy and development provenance:
+# docs/knob_reference/adaptive_control.md. The detector resolves episode
+# allowances with legacy caps; cooldown spaces applies, not detector calls.
 max_distinct_hurdle_episodes_per_attempt = 3
 disallow_repeat_intervention = true
 cooldown_after_apply_slots = 3
@@ -221,6 +226,7 @@ delivery = "user_turn"
 
 [llm_hurdle_detector]
 enabled = true
+# Ordinary monitoring cadence; an active watch bypasses it.
 cadence_turns = 3
 # This key belongs in [llm_hurdle_detector]; the runtime does not read it
 # from [llm_hurdle_detector.trace_nets].
@@ -228,4 +234,6 @@ atlas_dictionary_path = "configs/treatment/hurdle_dictionary.trace_nets.v1.tsv"
 
 [llm_hurdle_detector.trace_nets]
 # One universal reread gap is used for every task and benchmark.
+# Seven is a declared development-derived policy, not validated task rhythm.
+# Origin, historical overlays and limits: docs/knob_reference/adaptive_control.md.
 reread_min_gap = 7

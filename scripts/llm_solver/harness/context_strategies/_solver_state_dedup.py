@@ -1,12 +1,8 @@
-"""Two-tier dedup logic for SolverStateContext.add_tool_result.
-
-Pulled into a free function so the class method becomes a thin
-record-and-mutate sequence.
-"""
+"""Render exact repeated text against full results retained in the same view."""
 from __future__ import annotations
 
 import json
-from collections import deque
+from collections import Counter
 
 from ._solver_state_helpers import _dedup_message
 
@@ -14,71 +10,71 @@ from ._solver_state_helpers import _dedup_message
 _DEDUP_EXEMPT = frozenset({"read"})
 
 
-def apply_dedup(
-    content: str,
-    *,
-    tool_name: str,
-    cmd_signature: str,
-    recent_tool_results: deque,
-    dedup_counts: dict[int, int],
-    dedup_epoch: int,
-    turn_count: int,
-) -> tuple[str, bool, str]:
-    """Run tier-1 (cmd-signature) and tier-2 (byte-identical) dedup.
+def apply_dedup(content, *, tool_name, cmd_signature, anchors, dedup_epoch):
+    """Compare supplied text only; never infer execution, outcomes or progress."""
+    if tool_name in _DEDUP_EXEMPT:
+        return content, "", ""
+    matches = [row for row in anchors
+               if row.get("_epoch") == dedup_epoch and row.get("content") == content]
+    if not matches:
+        return content, "", ""
+    command_matches = [row for row in matches
+                       if cmd_signature and row.get("_cmd_sig") == cmd_signature]
+    source = (command_matches or matches)[0]
+    reference = source["tool_call_id"]
+    rewritten = _dedup_message(reference)
+    # Both values are measured in the rolling policy's character units.
+    if len(rewritten) >= len(content):
+        return content, "", ""
+    return rewritten, ("tier1_cmd_signature" if command_matches
+                       else "tier2_byte_identical"), reference
 
-    Mutates ``dedup_counts`` in place when a tier fires. Returns
-    (possibly-rewritten content, dedup_fired, dedup_tier).
 
-    Tier 1 — command-signature dedup (bash only): catches pipe
-      variations like `cat file` vs `cat file | head -100` that
-      produce different output but read the same data.
-    Tier 2 — content dedup (all tools): catches byte-identical
-      output from any tool.
-    Both tiers share the same dedup_counts escalation state and
-    reset on successful write/edit (epoch bump).
+def render_recent_results(recent_tool_results, char_budget, dedup_epoch):
+    """Select newest first, keeping every reference's full source in this view.
 
-    Exempt: `read` tool (compound context shows stubs — the model
-    genuinely needs to re-read files before editing).
+    Raw entries are never replaced. Only already selected, uncompressed results
+    can become anchors; reference chains and references to evicted rows cannot
+    arise. The existing newest-result exemption remains a separate policy.
     """
-    # Tier 1: command-signature dedup for bash
-    if cmd_signature and tool_name not in _DEDUP_EXEMPT and len(content) > 200:
-        for i, existing in enumerate(recent_tool_results):
-            if existing.get("_epoch") != dedup_epoch:
-                continue
-            if existing.get("_cmd_sig") == cmd_signature:
-                turn_ref = turn_count - (len(recent_tool_results) - i)
-                sig_key = hash(("cmd", cmd_signature))
-                dedup_counts[sig_key] = dedup_counts.get(sig_key, 0) + 1
-                count = dedup_counts[sig_key]
-                try:
-                    cmd = json.loads(cmd_signature).get("cmd", cmd_signature)
-                except (ValueError, TypeError):
-                    cmd = cmd_signature
-                rewritten = _dedup_message(cmd, existing["content"], count, turn_ref)
-                return rewritten, True, "tier1_cmd_signature"
-
-    # Tier 2: byte-identical content dedup (all non-exempt tools)
-    if tool_name not in _DEDUP_EXEMPT:
-        for i, existing in enumerate(recent_tool_results):
-            if existing.get("_epoch") != dedup_epoch:
-                continue
-            if existing["content"] == content and len(content) > 200:
-                turn_ref = turn_count - (len(recent_tool_results) - i)
-                content_key = hash(content)
-                dedup_counts[content_key] = dedup_counts.get(content_key, 0) + 1
-                count = dedup_counts[content_key]
-                if count >= 2:
-                    rewritten = (
-                        f"ERROR: BLOCKED — identical output {count + 1} times (see turn {turn_ref}).\n"
-                        f"REASON: Re-running will not produce new information.\n"
-                        f"ACTION REQUIRED: You MUST change your approach — "
-                        f"edit code, read a different file, or try a different command."
-                    )
-                else:
-                    rewritten = (
-                        f"WARNING: Same output as turn {turn_ref}.\n"
-                        f"Re-running will not help — change your approach."
-                    )
-                return rewritten, True, "tier2_byte_identical"
-
-    return content, False, ""
+    ids = Counter(row.get("tool_call_id") for row in recent_tool_results
+                  if isinstance(row.get("tool_call_id"), str))
+    anchors, parts, references = [], [], []
+    chars_used = 0
+    for row in reversed(recent_tool_results):
+        content = row.get("content") or ""
+        call_id = row.get("tool_call_id")
+        identifiable = isinstance(call_id, str) and bool(call_id) and ids[call_id] == 1
+        epoch_matches = row.get("_epoch") == dedup_epoch
+        rendered, tier, reference = content, "", ""
+        if identifiable and epoch_matches:
+            rendered, tier, reference = apply_dedup(
+                content, tool_name=row.get("_tool_name", ""),
+                cmd_signature=row.get("_cmd_sig", ""), anchors=anchors,
+                dedup_epoch=dedup_epoch,
+            )
+        label = ("Tool call " + json.dumps(call_id, ensure_ascii=True)
+                 if isinstance(call_id, str) and call_id else "Tool result (call ID unavailable)")
+        part = label + "\n" + rendered
+        cost = len(part) + (len("\n---\n") if parts else 0)
+        if parts and chars_used + cost > char_budget:
+            break
+        parts.append(part)
+        chars_used += cost
+        if identifiable and epoch_matches and not tier:
+            anchors.append(row)
+        if tier:
+            references.append({
+                "tool_call_id": call_id, "reference_tool_call_id": reference,
+                "mechanism": tier, "tool_name": row.get("_tool_name", ""),
+                "reference_scope": "same_render_full_result",
+                "comparison": "supplied_text_equality", "dedup_epoch": dedup_epoch,
+                "input_chars": len(content), "output_chars": len(rendered),
+            })
+    while len(recent_tool_results) > len(parts):
+        recent_tool_results.popleft()
+    if not parts:
+        return "", references
+    label = (f"=== Tool results (last {len(parts)}, newest last) ==="
+             if len(parts) > 1 else "=== Tool result from your last action ===")
+    return label + "\n" + "\n---\n".join(reversed(parts)), references

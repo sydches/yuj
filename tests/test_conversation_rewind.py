@@ -388,6 +388,7 @@ def test_assistant_rewind_command_restores_tree_and_stages_exact_resume(
         "rewind_max_per_session = 1\n\n"
         "[tools]\n"
         "file_checkpoints_enabled = true\n"
+        "[sandbox]\nbackend = 'none'\n"
     )
     assist_home = tmp_path / "assist-home"
     monkeypatch.setenv("HARNESS_ASSIST_HOME", str(assist_home))

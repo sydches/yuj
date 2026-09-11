@@ -83,10 +83,10 @@ def _resolve(cwd: str, path: str) -> Path:
 
 
 def _path_hint(cwd: str, path: str) -> str:
-    """Suggest a corrected path when a file-not-found error occurs.
+    """Suggest an existing path after a file-not-found error.
 
-    Catches the `.seaborn/X` → `seaborn/X` pattern where the model
-    confuses `.solver/` (hidden dir) with the package directory.
+    Strip leading dot and slash characters, then suggest the resulting
+    cwd-relative path only when it exists.
     """
     stripped = path.lstrip("./")
     if stripped != path:

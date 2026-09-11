@@ -12,8 +12,10 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 from collections import deque
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,17 +23,7 @@ from typing import Any
 from ..._shared.paths import project_root
 
 BRANCH_BUNDLE_VERSION = "branch_bundle_v1"
-SNAPSHOT_METHOD = "copytree_repo_snapshot_v1"
-
-_IGNORE_DIRS = {
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".tox",
-    ".nox",
-}
-
+SNAPSHOT_METHOD = "task_view_copy_snapshot_v1"
 
 def _root() -> Path:
     return project_root()
@@ -111,7 +103,13 @@ def _config_paths(session) -> tuple[Path, ...]:
 
 
 def branch_point_id(source_run_id: str, instance_id: str, slot: int,
-                    signal_id: str, detector_version: str, scout_policy_id: str) -> str:
+                    signal_id: str, detector_version: str, scout_policy_id: str,
+                    *, attempt_id: str = "") -> str:
+    if attempt_id:
+        raw = json.dumps(["attempt_v2", source_run_id, instance_id, attempt_id,
+                          int(slot), signal_id, detector_version, scout_policy_id])
+        return hashlib.sha256(raw.encode()).hexdigest()[:24]
+    # Keep the historical helper usable when inspecting old bundle identities.
     raw = "|".join([
         source_run_id,
         instance_id,
@@ -123,13 +121,68 @@ def branch_point_id(source_run_id: str, instance_id: str, slot: int,
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def _ignore(_dir: str, names: list[str]) -> set[str]:
-    return {n for n in names if n in _IGNORE_DIRS or n.endswith(".pyc")}
+def _copy_tree(src: Path, dst: Path, *, exclusions: list[dict] | None, scope: str) -> None:
+    from ..task_path import TaskPath
+    if isinstance(src, TaskPath):
+        _copy_native_tree(src, dst, exclusions=exclusions, scope=scope)
+        return
+    # Names do not establish that permitted task state is disposable.
+    shutil.copytree(src, dst)
 
 
-def _copy_repo_snapshot(src: Path, dst: Path) -> str:
-    shutil.copytree(src, dst, ignore=_ignore)
+def _copy_native_tree(src, dst, *, exclusions, scope):
+    """Retain copytree's dereference policy, using only admitted native reads."""
+    from ..task_path import TaskPath, resolve_task_path
+    from ..time_budget import execution_deadline, remaining_before
+    root = TaskPath(src.files, src.files.root)
+
+    def copy(source, destination, ancestors):
+        remaining_before(execution_deadline())
+        source = resolve_task_path(root, str(source))
+        metadata = source.stat()
+        if stat.S_ISDIR(metadata.st_mode):
+            identity = (metadata.st_dev, metadata.st_ino)
+            if identity in ancestors:
+                raise ValueError('recursive directory in task snapshot')
+            destination.mkdir()
+            children = sorted(source.iterdir(), key=lambda item: item.name)
+            for child in children:
+                target = destination / child.name
+                copy(child, target, ancestors | {identity})
+        elif stat.S_ISREG(metadata.st_mode):
+            destination.write_bytes(source.read_bytes())
+        else:
+            raise ValueError('unsupported entry type in task snapshot')
+        destination.chmod(stat.S_IMODE(metadata.st_mode))
+        os.utime(destination, ns=(destination.stat().st_atime_ns, metadata.st_mtime_ns))
+
+    copy(src, dst, frozenset())
+
+
+def _copy_repo_snapshot(src: Path, dst: Path, *, exclusions: list[dict] | None = None) -> str:
+    from ..task_path import resolve_task_path
+    src = resolve_task_path(src, '.')
+    _copy_tree(src, dst, exclusions=exclusions, scope="repo_snapshot")
     return _tree_digest(dst)
+
+
+def _capture_task_trees(session, repo_dir, destination, exclusions):
+    from ..task_file_runtime import task_file_scope
+    from ..task_path import resolve_task_path
+    cfg = session.cfg
+    scope = (task_file_scope(
+        repo_dir, cfg, environment=getattr(session, '_effective_env', None),
+        allow_login_shell=getattr(session, '_allow_login_shell', None),
+        ignore_policy=getattr(session, '_ignore_policy', None),
+    ) if getattr(cfg, 'sandbox_bash', False) else nullcontext())
+    with scope:
+        digest = _copy_repo_snapshot(repo_dir, destination / 'repo_snapshot', exclusions=exclusions)
+        sunk = resolve_task_path(repo_dir, '.tool_output')
+        if sunk.is_dir():
+            _copy_tree(sunk, destination / 'sunk_outputs', exclusions=exclusions, scope='sunk_outputs')
+        else:
+            (destination / 'sunk_outputs').mkdir()
+        return digest
 
 
 def _prefix_events(session, branch_slot: int) -> list[dict]:
@@ -205,8 +258,12 @@ def maybe_capture(session, decision, turn: int, boundary_type: str) -> dict[str,
     source_run_id = _source_run_id(session, cfg)
     detector_version = str(getattr(cfg, "adaptive_control_detector_version", "") or "")
     scout_policy_id = str(getattr(cfg, "adaptive_control_policy_version", "") or "")
+    attempt_id = str(getattr(session, "attempt_id", "") or "")
+    if not attempt_id or not instance_id:
+        return {"status": "blocked", "path": "", "branch_point_id": "",
+                "reason": "task_or_attempt_identity_missing"}
     bpid = branch_point_id(source_run_id, instance_id, int(turn), signal_id,
-                           detector_version, scout_policy_id)
+                           detector_version, scout_policy_id, attempt_id=attempt_id)
     seen = getattr(session, "_adaptive_control_branch_bundle_ids", set())
     limit = max(1, int(getattr(cfg, "adaptive_control_branch_bundle_max_per_attempt", 1) or 1))
     if bpid in seen:
@@ -215,7 +272,10 @@ def maybe_capture(session, decision, turn: int, boundary_type: str) -> dict[str,
         return {"status": "blocked", "path": "", "branch_point_id": bpid, "reason": "bundle_cap_reached"}
 
     bundle = Path(root_raw).expanduser().resolve() / bpid
-    repo_dir = Path(getattr(session, "cwd", "")).resolve()
+    from ..task_path import active_task_host_root
+    task_cwd = getattr(session, "cwd", "")
+    captured_root = active_task_host_root(task_cwd)
+    repo_dir = Path(captured_root) if captured_root is not None else Path(task_cwd).resolve()
     if repo_dir == bundle or str(bundle).startswith(str(repo_dir) + os.sep):
         return {"status": "blocked", "path": str(bundle), "branch_point_id": bpid,
                 "reason": "bundle_root_inside_repo"}
@@ -233,7 +293,8 @@ def maybe_capture(session, decision, turn: int, boundary_type: str) -> dict[str,
         prefix = _prefix_events(session, int(turn))
         _write_text_jsonl(tmp / "prefix.trace.jsonl", prefix)
         _write_json(tmp / "context_messages.json", session.context.get_messages())
-        worktree_digest = _copy_repo_snapshot(repo_dir, tmp / "repo_snapshot")
+        exclusions: list[dict] = []
+        worktree_digest = _capture_task_trees(session, repo_dir, tmp, exclusions)
         _write_json(tmp / "guard_state.json", _jsonable(getattr(session, "_guards", {})))
         _write_json(tmp / "runtime_state.json", {
             "session_number": getattr(session, "_session_number", ""),
@@ -254,11 +315,13 @@ def maybe_capture(session, decision, turn: int, boundary_type: str) -> dict[str,
             shutil.copy2(state_path, tmp / "solver_state.json")
         else:
             _write_json(tmp / "solver_state.json", {})
-        sunk = repo_dir / ".tool_output"
-        if sunk.is_dir():
-            shutil.copytree(sunk, tmp / "sunk_outputs", ignore=_ignore)
-        else:
-            (tmp / "sunk_outputs").mkdir()
+        exclusions_name = "snapshot_exclusions.json"
+        _write_json(tmp / exclusions_name, {
+            "version": 1,
+            "policy": "preserve_permitted_entries_v1",
+            "retention_status": "unverified",
+            "exclusions": sorted(exclusions, key=lambda row: (row["scope"], row["path"])),
+        })
         baseline_paths = _config_paths(session)
         copied = _copy_configs(tmp / "configs", baseline_paths)
         baseline_hashes = {str(p): _sha256_file(p) for p in baseline_paths if p.is_file()}
@@ -267,6 +330,11 @@ def maybe_capture(session, decision, turn: int, boundary_type: str) -> dict[str,
             "source_run_id": source_run_id,
             "source_run_dir": _source_run_dir(session, cfg),
             "instance_id": instance_id,
+            "attempt_id": attempt_id,
+            "branch_identity_version": "attempt_v2",
+            "task_identity": _jsonable(getattr(session, "task_identity", None)),
+            "snapshot_retention_status": "unverified",
+            "snapshot_exclusions_path": exclusions_name,
             "branch_point_id": bpid,
             "branch_slot": int(turn),
             "online_signal_id": signal_id,

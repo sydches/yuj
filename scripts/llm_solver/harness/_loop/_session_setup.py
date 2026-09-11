@@ -47,6 +47,11 @@ def build_context_manager(
     initial: str,
     session_num: int,
     token_estimator,
+    *,
+    artifact_dir: Path | None = None,
+    effective_env=None,
+    allow_login_shell=None,
+    ignore_policy=None,
 ) -> ContextManager | None:
     """Instantiate the selected context class with introspection-driven kwargs.
 
@@ -85,12 +90,18 @@ def build_context_manager(
         cfg.tools_think_keep_turns,
         session_number=session_num,
     )
+    ctx.configure_artifact_directory(
+        artifact_dir if artifact_dir is not None else repo_dir,
+    )
     # Session 2+: pre-populate the rolling tool-result window
     # with files modified in prior sessions so the model doesn't
     # edit from stale memory.  Only SolverStateContext subclasses
     # (stateful, compound) have this method; others skip silently.
     if session_num > 1 and hasattr(ctx, "prepopulate_from_trace"):
-        n_files = ctx.prepopulate_from_trace()
+        from ..task_file_runtime import task_file_scope
+        with task_file_scope(repo_dir, cfg, environment=effective_env,
+                             allow_login_shell=allow_login_shell, ignore_policy=ignore_policy):
+            n_files = ctx.prepopulate_from_trace()
         if n_files:
             log.info("Pre-populated rolling window with %d file(s) from prior sessions", n_files)
     return ctx

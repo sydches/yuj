@@ -17,7 +17,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Mapping, Sequence
 
 from ._tools._common import _resolve
@@ -158,9 +158,14 @@ def build_lsp_sandbox_argv(
     container_flags: tuple[str, ...] = (),
     effective_env: Mapping[str, str] | None = None,
     allow_login_shell: bool = False,
+    _host_task_root=None,
+    _filesystem_view=None,
 ) -> list[str]:
     """Run a stdio server under the same no-network policy as model bash."""
     from .sandbox import AMBIENT_CONTAINER, _build_bwrap_argv, container_mode
+    from .task_path import active_task_host_root
+
+    cwd = active_task_host_root(cwd) or cwd
 
     command = tuple(command)
     command_text = shlex.join(command)
@@ -192,6 +197,8 @@ def build_lsp_sandbox_argv(
             or backend.resolve_runtime(sandbox_required=True)
         )
         assert runtime_bin is not None
+        from .container_binding import bind_container_image
+        backend = bind_container_image(backend, runtime_bin)
         return backend.build_argv(
             command_text,
             cwd,
@@ -205,11 +212,11 @@ def build_lsp_sandbox_argv(
     if sandbox_backend != "bwrap":
         raise LspSupportError(f"unknown sandbox backend {sandbox_backend!r}")
     if container_mode() == AMBIENT_CONTAINER:
-        from ._tools._run_in_sandbox import _probe_ambient_unshare_net
+        from ._tools._run_in_sandbox import _ambient_network_prefix
 
-        prefix = ["unshare", "-n"] if _probe_ambient_unshare_net() else []
+        prefix = _ambient_network_prefix()
         return [*prefix, *explicit(list(command))]
-    return _build_bwrap_argv(
+    argv = _build_bwrap_argv(
         command_text, cwd, bwrap_bin,
         unreadable_paths=unreadable_paths,
         readable_paths=readable_paths,
@@ -217,7 +224,13 @@ def build_lsp_sandbox_argv(
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
         tail=list(command),
+        _host_task_root=_host_task_root,
+        _filesystem_view=_filesystem_view,
     )
+    if argv[:2] == ['docker', 'exec']:
+        # The LSP client writes requests to this process throughout its life.
+        argv.insert(2, '-i')
+    return argv
 
 
 def _read_rpc_message(stream) -> dict[str, object] | None:
@@ -246,13 +259,14 @@ def _read_rpc_message(stream) -> dict[str, object] | None:
 
 
 class _RpcClient:
-    def __init__(self, process, *, request_timeout_s: float) -> None:
+    def __init__(self, process, *, request_timeout_s: float, process_verification=None) -> None:
         if process.stdin is None or process.stdout is None:
             raise LspSupportError("LSP process needs stdin and stdout pipes")
         self.process = process
         self.stdin = process.stdin
         self.stdout = process.stdout
         self.request_timeout_s = request_timeout_s
+        self._process_verification = process_verification
         self._messages: queue.Queue[object] = queue.Queue()
         self._write_lock = threading.Lock()
         self._next_id = 1
@@ -264,6 +278,8 @@ class _RpcClient:
 
     def _read_loop(self) -> None:
         try:
+            if self._process_verification is not None:
+                self._process_verification.read(self.stdout)
             while True:
                 message = _read_rpc_message(self.stdout)
                 if message is None:
@@ -395,6 +411,7 @@ class LspManager:
         tool_enabled: bool = False, event_sink: EventSink | None = None,
         warning_sink: WarningSink | None = None,
         popen_factory: Callable[..., object] = subprocess.Popen,
+        task_files=None,
     ) -> None:
         if diagnostics_timeout_s < 0:
             raise ValueError("lsp diagnostics timeout must be >= 0")
@@ -407,7 +424,10 @@ class LspManager:
             threshold = int(min_severity)
             if threshold not in _SEVERITY_NAME:
                 raise ValueError("LSP severity must be 1 through 4")
-        self.cwd = Path(cwd).resolve()
+        from .task_path import active_task_files, active_task_host_root
+        self._host_alias = os.path.abspath(cwd)
+        self._task_files = task_files if task_files is not None else active_task_files(cwd)
+        self.cwd = Path(active_task_host_root(cwd) or Path(cwd).resolve())
         self.servers = tuple(servers)
         self.argv_builder = argv_builder
         self.diagnostics_timeout_s = float(diagnostics_timeout_s)
@@ -417,6 +437,7 @@ class LspManager:
         self.event_sink = event_sink
         self.warning_sink = warning_sink
         self.popen_factory = popen_factory
+        self._client_process_id = os.getpid()
         self._states: dict[tuple[str, Path], _ServerState] = {}
         self._unavailable: set[tuple[str, Path]] = set()
         self._warned: set[str] = set()
@@ -435,9 +456,33 @@ class LspManager:
         allow_login_shell: bool = False,
         **kwargs,
     ) -> "LspManager":
-        cwd_text = str(Path(cwd).resolve())
+        effective_env = dict(effective_env) if effective_env is not None else None
+        from .sandbox import container_mode
+        selected_mode = container_mode() if sandbox else None
+        from .task_path import capture_task_execution_paths
+        cwd_text, unreadable_paths, readable_paths = capture_task_execution_paths(
+            cwd, unreadable_paths, readable_paths)
+        from .task_file_runtime import TaskFileExecution, make_task_files
+        files = make_task_files(
+            cwd_text, TaskFileExecution(
+                sandbox_bash=sandbox, sandbox_backend=sandbox_backend,
+                bwrap_bin=bwrap_bin, sandbox_container_runtime=container_runtime,
+                sandbox_container_image=container_image,
+                sandbox_container_flags=tuple(container_flags),
+            ),
+            environment=effective_env, allow_login_shell=allow_login_shell,
+            unreadable_paths=unreadable_paths, readable_paths=readable_paths,
+            persistent=False,
+        )
+        host_task_root = files._host_task_root
+        filesystem_view = files._filesystem_view
 
         def argv_builder(spec: LspServerSpec, _root: Path) -> list[str]:
+            if (container_mode() if sandbox else None) != selected_mode:
+                from .task_environment import TaskEnvironmentUnavailable
+                raise TaskEnvironmentUnavailable('task execution selection changed after manager binding')
+            if host_task_root is not None:
+                host_task_root.verify()
             return build_lsp_sandbox_argv(
                 spec.command, cwd=cwd_text, bwrap_bin=bwrap_bin,
                 unreadable_paths=unreadable_paths,
@@ -451,9 +496,24 @@ class LspManager:
                 container_flags=container_flags,
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,
+                _host_task_root=host_task_root,
+                _filesystem_view=filesystem_view,
             )
 
-        return cls(cwd=cwd_text, servers=servers, argv_builder=argv_builder, **kwargs)
+        if sandbox and sandbox_backend == 'container':
+            from .container_binding import container_image_scope
+            argv_builder = container_image_scope(files._container_image_binding)(argv_builder)
+        elif files._task_environment is not None:
+            from .task_environment import use_task_environment
+            argv_builder = use_task_environment(files._task_environment)(argv_builder)
+
+        manager = cls(cwd=cwd_text, servers=servers, argv_builder=argv_builder,
+                      task_files=files, **kwargs)
+        manager._host_alias = os.path.abspath(cwd)
+        if sandbox:
+            # A host PID has no established meaning in the server namespace.
+            manager._client_process_id = None
+        return manager
 
     def _emit(self, report: DiagnosticsReport) -> None:
         if self.event_sink is not None:
@@ -473,23 +533,44 @@ class LspManager:
             self.warning_sink(message)
 
     def _path(self, path: str) -> tuple[Path, str]:
-        target = _resolve(str(self.cwd), path)
-        relative = target.relative_to(self.cwd).as_posix()
+        from .task_path import TaskPath, activate_task_files
+        if self._task_files is not None:
+            value = PurePosixPath(path)
+            if value.is_absolute():
+                for root in (self._task_files.root, PurePosixPath(self._host_alias),
+                             PurePosixPath(self.cwd)):
+                    if value.is_relative_to(root):
+                        value = value.relative_to(root)
+                        break
+                else:
+                    raise ValueError('absolute path is outside the selected task view')
+            target = TaskPath(self._task_files, self._task_files.root / value).resolve()
+        else:
+            with activate_task_files(None, host_root=self.cwd):
+                target = _resolve(str(self.cwd), path)
+        relative = target.relative_to(self._task_root()).as_posix()
         return target, relative
+
+    def _task_root(self):
+        from .task_path import TaskPath
+        if self._task_files is not None:
+            return TaskPath(self._task_files, self._task_files.root).resolve()
+        return self.cwd
 
     def _select(self, target: Path) -> LspServerSpec | None:
         suffix = target.suffix.lower()
         return next((spec for spec in self.servers if suffix in spec.extensions), None)
 
     def _root(self, target: Path, spec: LspServerSpec) -> Path:
+        task_root = self._task_root()
         current = target.parent
         while True:
             if any((current / marker).exists() for marker in spec.root_markers):
                 return current
-            if current == self.cwd:
-                return self.cwd
-            if self.cwd not in current.parents:
-                return self.cwd
+            if current == task_root:
+                return task_root
+            if task_root not in current.parents:
+                return task_root
             current = current.parent
 
     def _start(self, spec: LspServerSpec, root: Path) -> _ServerState | None:
@@ -497,14 +578,21 @@ class LspManager:
         if key in self._unavailable:
             return None
         try:
+            from .process_identity import ProcessVerification
+            argv = self.argv_builder(spec, root)
+            verification = ProcessVerification(argv)
             process = self.popen_factory(
-                list(self.argv_builder(spec, root)), cwd=str(self.cwd),
+                list(argv), cwd=str(self.cwd),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, start_new_session=True,
+                **({'pass_fds': argv.pass_fds} if getattr(argv, 'pass_fds', ()) else {}),
             )
-            rpc = _RpcClient(process, request_timeout_s=max(1.0, self.diagnostics_timeout_s))
+            rpc = _RpcClient(process, request_timeout_s=max(1.0, self.diagnostics_timeout_s),
+                             process_verification=verification)
+            from .task_path import TaskPath
             rpc.request("initialize", {
-                "processId": os.getpid(), "rootUri": root.as_uri(),
+                "processId": None if isinstance(root, TaskPath) else self._client_process_id,
+                "rootUri": root.as_uri(),
                 "capabilities": {"textDocument": {"publishDiagnostics": {}}},
                 "workspaceFolders": [{"uri": root.as_uri(), "name": root.name}],
                 "initializationOptions": dict(spec.initialization),
@@ -594,6 +682,7 @@ class LspManager:
 
     def query(
         self, kind: str, *, path: str, line: int = 0, character: int = 0,
+        ignore_policy=None,
     ) -> LspQueryResult:
         """Run ``definition``, ``references``, or document ``symbols``."""
         if not self.tool_enabled:
@@ -603,6 +692,8 @@ class LspManager:
         if line < 0 or character < 0:
             raise LspSupportError("line and character must be >= 0")
         target, relative = self._path(path)
+        if ignore_policy is not None:
+            ignore_policy.require_visible(target, is_dir=target.is_dir())
         spec = self._select(target)
         if spec is None:
             return LspQueryResult(kind, relative, "", "unmatched")

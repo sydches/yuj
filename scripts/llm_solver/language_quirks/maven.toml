@@ -1,0 +1,13 @@
+# Recognize manually invoked Maven tests without guessing an automatic runner.
+name = "maven"
+description = "Explicit Maven test invocations"
+recognition_only = true
+verification_patterns = ['''(?:^|[\s/'"])mvn\s+test\b''']
+
+# Requested CLI grammar only; it does not establish execution or coverage.
+
+[[diagnostic_invocations]]
+family = "maven"
+prefix = ["mvn", "test"]
+flags = ["-q", "-B", "--batch-mode"]
+value_options = ["-f", "--file", "-pl", "--projects"]

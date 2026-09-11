@@ -249,7 +249,8 @@ class AdvisorRuntime:
                 "advisor client does not support isolated tool side requests"
             )
         messages = [
-            {"role": "system", "content": advisor_system_prompt(self._session)},
+            {"role": "system", "content": advisor_system_prompt(
+                self._session, ignore_policy=self._ignore_policy)},
             {
                 "role": "user",
                 "content": (

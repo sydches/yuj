@@ -1442,7 +1442,8 @@ background_poll_timeout = 300
 The model can then call `bash` with `background = true`. Yuj returns a
 session-local `proc_id` at once and exposes `bash_poll` and `bash_kill`.
 `background_max_procs` limits live children. `background_poll_timeout` limits
-one poll, even when the model asks to wait longer.
+one poll, even when the model asks to wait longer. The default `0` adds no
+separate poll ceiling. Explicit waits also respect the remaining run time.
 
 The command uses the selected command boundary. A selected sandbox applies its
 workspace and network limits. An explicit `sandbox.backend = "none"` runs it as
@@ -1788,9 +1789,14 @@ counts. `metrics.json` reports the token-weighted run ratio.
 
 ### Count tokens
 
-The checked-in `config.toml` leaves `[model].tokenizer_id` empty. Yuj then
-estimates one token for every four characters, which avoids a model-specific
-download during normal use.
+The checked-in `config.toml` sets `[model].tokenizer_id = "auto"`. Yuj asks
+the active backend to count the prepared request when that backend supports
+counting. Unsupported or unavailable counting is recorded as an estimate.
+Automatic counting does not download a model-specific tokenizer.
+
+Set an explicit tokenizer ID or local path to select that tokenizer. An empty
+value selects the legacy character estimate. Backend capacity may reduce a
+declared context allowance; it does not enlarge that allowance.
 
 Released paper runtime files set the tokenizer for each reported model. Apply
 the files in the

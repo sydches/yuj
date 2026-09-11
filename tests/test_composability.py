@@ -273,6 +273,7 @@ passed = "(\\d+)\\s+ok"
 failed = "(\\d+)\\s+fail"
 
 [output_parser.per_test]
+verdict_map = { OK = "PASSED", FAIL = "FAILED" }
 regex = "^(?P<verdict>OK|FAIL)\\s+(?P<test_id>\\S+)"
 '''.strip()
 

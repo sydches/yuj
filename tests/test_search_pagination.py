@@ -5,12 +5,31 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
 from _config_helpers import make_config
 from llm_solver.harness.tools import glob_files, grep_files
+
+
+def test_glob_does_not_enumerate_outside_symlink_targets(tmp_path):
+    root = tmp_path / "task"
+    root.mkdir()
+    outside = tmp_path / "private"
+    outside.mkdir()
+    (outside / "answer.py").write_text("private")
+    (root / "source.py").write_text("local")
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    (root / "alias.py").symlink_to(outside / "answer.py")
+    (root / "local.py").symlink_to(root / "source.py")
+    assert glob_files("escape/*.py", cwd=str(root)) == "No files found."
+    result = glob_files("*.py", cwd=str(root))
+    assert "alias.py" not in result
+    assert "local.py" in result
+    assert "source.py" in result
 
 
 def _parse_envelope(text: str) -> dict:
@@ -24,6 +43,69 @@ def _parse_envelope(text: str) -> dict:
     for match in re.finditer(r'(\w+)="([^"]*)"', m.group(1)):
         attrs[match.group(1)] = match.group(2)
     return attrs
+
+
+@pytest.mark.parametrize("pagination", [False, True])
+@pytest.mark.parametrize("workspace_alias", [False, True])
+def test_glob_containment_preserves_aliases_and_page_counts(
+    tmp_path, pagination, workspace_alias,
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "unrelated"
+    outside.mkdir()
+    (outside / "private-result.txt").write_text("outside")
+    (root / "source.txt").write_text("inside")
+    (root / "local.txt").symlink_to("source.txt")
+    (root / "chain.txt").symlink_to("local.txt")
+    (root / "escape-file.txt").symlink_to(outside / "private-result.txt")
+    (root / "escape-chain.txt").symlink_to("escape-file.txt")
+    (root / "src").mkdir()
+    (root / "src" / "keep.txt").write_text("inside directory")
+    (outside / "private-alias.txt").symlink_to(root / "source.txt")
+    (outside / "private-dir").symlink_to(root / "src", target_is_directory=True)
+    (root / "link").symlink_to("src", target_is_directory=True)
+    (root / "escape").symlink_to(outside, target_is_directory=True)
+    workspace = tmp_path / "workspace" if workspace_alias else root
+    if workspace_alias:
+        workspace.symlink_to(root, target_is_directory=True)
+    cfg = make_config(
+        search_pagination_enabled=pagination,
+        glob_max_matches_per_page=1,
+    )
+
+    def check_pages(pattern, expected, path="."):
+        for page in range(1, max(1, len(expected)) + 1):
+            result = glob_files(
+                pattern, path, cwd=str(workspace), cfg=cfg, page=page,
+            )
+            assert "private-result" not in result
+            assert "private-alias" not in result
+            assert "private-dir" not in result
+            assert "escape-file" not in result
+            assert "escape-chain" not in result
+            if pagination:
+                attrs = _parse_envelope(result)
+                assert int(attrs["total"]) == len(expected)
+                assert int(attrs["shown"]) == int(bool(expected))
+                assert int(attrs["next_page"]) == (
+                    page + 1 if page < len(expected) else 0
+                )
+                assert "\n".join(result.splitlines()[1:-1]) == "\n".join(
+                    expected[page - 1:page]
+                )
+            else:
+                assert result == ("\n".join(expected) or "No files found.")
+                break
+
+    check_pages("*.txt", ["chain.txt", "local.txt", "source.txt"])
+    check_pages("*/*.txt", ["link/keep.txt", "src/keep.txt"])
+    check_pages("*.txt", ["src/keep.txt"], path="link")
+    check_pages("escape/*.txt", [])
+    check_pages("escape/*/*.txt", [])
+    refused = glob_files("*.txt", "escape", cwd=str(workspace), cfg=cfg)
+    assert refused.startswith("ERROR: path escapes cwd:")
+    assert "private-result" not in refused
 
 
 class TestGlobPagination:
@@ -109,7 +191,7 @@ class TestGlobPagination:
         real_root = tmp_path / "real"
         real_root.mkdir()
         (real_root / "a.py").write_text("")
-        linked_root = tmp_path / "txscreen_a00_repo"
+        linked_root = tmp_path / "linked_workspace"
         linked_root.symlink_to(real_root, target_is_directory=True)
 
         result = glob_files("*.py", cwd=str(linked_root), cfg=make_config())
@@ -177,7 +259,7 @@ class TestGrepPagination:
         real_root = tmp_path / "real"
         real_root.mkdir()
         (real_root / "a.py").write_text("needle\n")
-        linked_root = tmp_path / "txscreen_a00_repo"
+        linked_root = tmp_path / "linked_workspace"
         linked_root.symlink_to(real_root, target_is_directory=True)
 
         result = grep_files("needle", cwd=str(linked_root), cfg=make_config())

@@ -37,7 +37,7 @@ def _cfg(**overrides):
         (
             "from pathlib import Path\n"
             "p = Path.home() / '.yuj_exec_cell_escape'\n"
-            "try:\n p.write_text('escape')\n"
+            "try:\n p.write_text('escape')\n print(p.read_text())\n"
             "except Exception as exc:\n print(type(exc).__name__, exc)",
             "home",
         ),
@@ -59,20 +59,28 @@ def _cfg(**overrides):
 )
 @requires_bwrap
 def test_exec_cell_blocks_docs_sandbox_escape_attempts(
-    tmp_path: Path, source: str, target_kind: str,
+    tmp_path: Path, source: str, target_kind: str, monkeypatch,
 ):
+    home = tmp_path / "private-home"
+    home.mkdir()
+    task = tmp_path / "task"
+    task.mkdir()
+    monkeypatch.setenv("HOME", str(home))
     targets = {
         "home": Path.home() / ".yuj_exec_cell_escape",
-        "relative": (tmp_path / "../../../../../yuj_exec_cell_relative_escape").resolve(),
+        "relative": (task / "../../../../../yuj_exec_cell_relative_escape").resolve(),
         "absolute": Path("/usr/local/lib/yuj_exec_cell_escape"),
     }
     target = targets[target_kind]
     if target.exists():
-        target.unlink()
+        pytest.skip("host fixture target already exists")
     result = dispatch(
-        "exec_cell", {"source": source}, cwd=str(tmp_path), cfg=_cfg()
+        "exec_cell", {"source": source}, cwd=str(task), cfg=_cfg()
     )
-    assert "read-only" in result.lower() or "Read-only" in result
+    if target_kind == "home":
+        assert "escape" in result
+    else:
+        assert "read-only" in result.lower()
     assert not target.exists()
 
 

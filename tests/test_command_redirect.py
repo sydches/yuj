@@ -505,8 +505,8 @@ def test_session_uses_profile_filtered_tools_and_traces_redirect(tmp_path):
     assert redirect["turn_number"] == 0
     assert redirect["rule"] == "read_file"
     assert redirect["tool"] == "read"
-    assert call["outcome"] == "error"
-    assert call["error_class"] == "redirect_rule"
+    assert call["outcome"] == "not_executed"
+    assert call["error_class"] == ""
 
     from scripts.llm_solver.harness._loop.trace_schema import (
         TRACE_EVENT_REQUIRED_FIELDS,

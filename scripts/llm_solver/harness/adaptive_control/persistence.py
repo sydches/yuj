@@ -4,7 +4,7 @@ The controller may stop at an application or escalation and resume in a
 new session. Preserve the episode machine and pending watch so the new
 segment continues the same attempt.
 
-Save: called by ``executors.stop_for_resume`` at the stop.
+Save: called after the detector records the requested apply and its watch.
 Load: called lazily by ``episode.machine()`` on first touch in a new
 session when the state file exists.
 
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from ..._shared.telemetry_paths import ensure_telemetry_dir, telemetry_dir
@@ -35,10 +37,21 @@ def save_state(session) -> bool:
     }
     try:
         tdir = ensure_telemetry_dir(Path(getattr(session, "cwd", ".")))
-        (tdir / STATE_NAME).write_text(json.dumps(payload, indent=1))
+        with tempfile.NamedTemporaryFile(mode="w", dir=tdir, delete=False) as pending:
+            temporary = Path(pending.name)
+            pending.write(json.dumps(payload, indent=1))
+            pending.flush()
+            os.fsync(pending.fileno())
+        temporary.replace(tdir / STATE_NAME)
         return True
     except Exception:
         return False
+    finally:
+        if "temporary" in locals():
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def load_state(session) -> bool:
@@ -72,8 +85,9 @@ def load_state(session) -> bool:
             interventions_total=int(md.get("interventions_total", 0)),
             episodes_opened=int(md.get("episodes_opened", 0)),
             # cooldown/window turns are session-local; rebased below
-            cooldown_until=-1,
-            last_intervention_slot=0,
+            cooldown_until=max(-1, int(md.get("cooldown_until", -1))
+                               - int(md.get("last_intervention_slot", 0)) - 1),
+            last_intervention_slot=-1,
             exhausted_slot=int(md.get("exhausted_slot", -1)),
             current=current,
             episodes=episodes,
@@ -82,11 +96,14 @@ def load_state(session) -> bool:
 
     w = payload.get("pending_watch")
     if w:
-        span = max(1, int(w.get("watch_window_end", 5)) - int(w.get("watch_window_start", 0)))
+        span = max(-1, int(w.get("watch_window_end", -1)) - int(w.get("watch_window_start", 0)))
         w = dict(w)
         # rebase: the knob rides in at resume; watch the segment's first turns
         w["watch_window_start"] = 0
         w["watch_window_end"] = span
+        max_turns = getattr(getattr(session, "cfg", None), "max_turns", None)
+        if max_turns is not None:
+            w["watch_window_end"] = min(span, int(max_turns) - 1)
         setattr(session, "_llm_detector_pending_watch", w)
     return True
 

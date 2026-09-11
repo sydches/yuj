@@ -12,9 +12,9 @@ cannot see. The turn→sha map lives in the telemetry dir beside the trace,
 outside the model's world. Invisibility is a leak-class requirement, not a
 nicety because the model may read its own ``git log``.
 
-Under ``YUJ_CONTAINER``, run Git inside the container and keep the private
-index in ``/tmp``. Otherwise, run Git on the host and keep the private index
-in the telemetry directory.
+Bound task views capture native files into a separate private Git store and
+record its location alongside the SHA. Use ``snapshot_object_store`` to locate
+objects. Older local snapshots retain their repository object location.
 
 Failure policy: snapshots are telemetry, never load-bearing for the solve.
 Any failure logs once per session and returns None; the run continues.
@@ -26,13 +26,19 @@ import gzip
 import json
 import logging
 import os
+import shlex
 import subprocess
 import uuid
 from dataclasses import dataclass
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 from .._shared.telemetry_paths import ensure_telemetry_dir, telemetry_dir
+from .._shared.task_artifacts import TASK_ARTIFACT_NAMES
+from .snapshot_files import capture_native_snapshot, snapshot_object_store, legacy_container_snapshot_files
+from .task_path import active_task_files, activate_task_files
+from .time_budget import execution_deadline, remaining_before
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +46,6 @@ MAP_NAME = "turn_snapshots.tsv"
 REWIND_SNAPSHOT_DIR = "rewind_snapshots"
 REWIND_PENDING_NAME = "rewind_pending.json"
 _REWIND_SNAPSHOT_VERSION = 1
-_CONTAINER_INDEX = "/tmp/.yuj_snapshot_index"
 # Container repositories may have a different owner. ``safe.directory`` lets
 # Git use them. ``commit-tree`` also needs the temporary identity below.
 _SNAPSHOT_SH = (
@@ -48,8 +53,8 @@ _SNAPSHOT_SH = (
     "export GIT_INDEX_FILE={index} "
     "GIT_AUTHOR_NAME=yuj GIT_AUTHOR_EMAIL=yuj@local "
     "GIT_COMMITTER_NAME=yuj GIT_COMMITTER_EMAIL=yuj@local; "
-    "git add -A -- ':!.tool_output' ':!.solver' ':!prompt.txt' "
-    "':!checkpoint.json' ':!metrics.json' >/dev/null 2>&1; "
+    "git rm -r --cached --ignore-unmatch -- {owned_paths} >/dev/null 2>&1 && "
+    "git add -A -- {exclusions} >/dev/null 2>&1 && "
     "tree=$(git write-tree 2>/dev/null) && "
     "echo 'yuj turn snapshot' | git commit-tree $tree -p HEAD 2>/dev/null"
 )
@@ -59,20 +64,49 @@ def _container_id() -> str:
     return os.environ.get("YUJ_CONTAINER", "") or ""
 
 
+def _snapshot_owned_paths(repo_dir: Path, session) -> tuple[str, ...]:
+    """Locate registered artifacts using the session's actual output directory.
+
+    Missing location metadata does not establish ownership of task-root files.
+    Resolve directory aliases before comparing locations. Append registered
+    filenames afterward, so file symlinks remain lexical Git entries.
+    """
+    workspace = Path(repo_dir).resolve()
+    owner = getattr(session, "_artifact_dir", None)
+    paths = [".tool_output", ".solver"]
+    if owner is None:
+        return tuple(paths)
+    artifact_dir = Path(owner).resolve()
+    try:
+        relative = artifact_dir.relative_to(workspace)
+    except ValueError:
+        return tuple(paths)
+    paths.extend((relative / name).as_posix() for name in TASK_ARTIFACT_NAMES)
+    return tuple(paths)
+
+
 def _run(repo_dir: Path, script: str) -> str:
-    """Run a git shell snippet in the right place; return stdout."""
-    cid = _container_id()
-    if cid:
-        argv = ["docker", "exec", "--workdir", "/testbed", cid, "bash", "-c", script]
-        cwd = None
-    else:
-        argv = ["bash", "-c", script]
-        cwd = str(repo_dir)
-    out = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=60)
+    """Run the intentionally local legacy Git path."""
+    out = subprocess.run(['bash', '-c', script], cwd=str(repo_dir),
+                         capture_output=True, text=True,
+                         timeout=remaining_before(execution_deadline()))
     return (out.stdout or "").strip()
 
 
-def ensure_snapshot_setup(repo_dir: Path) -> None:
+def _snapshot_access(repo_dir, session):
+    cfg = getattr(session, 'cfg', None)
+    if cfg is None:
+        if active_task_files(str(repo_dir)) is None and _container_id() not in ('', 'ambient'):
+            return activate_task_files(legacy_container_snapshot_files(repo_dir), host_root=repo_dir)
+        return nullcontext()
+    from .task_file_runtime import task_file_scope
+    return task_file_scope(str(repo_dir), cfg,
+        environment=getattr(session, '_effective_env', None),
+        allow_login_shell=getattr(session, '_allow_login_shell', None),
+        ignore_policy=getattr(session, '_ignore_policy', None))
+
+
+def ensure_snapshot_setup(repo_dir: Path, session=None) -> None:
     """One-time per session: keep dangling snapshot objects alive.
 
     ``gc.auto 0`` stops background gc from pruning ref-less commits. Safe to
@@ -80,32 +114,60 @@ def ensure_snapshot_setup(repo_dir: Path) -> None:
     and log its single warning).
     """
     try:
-        _run(Path(repo_dir), "git config gc.auto 0")
+        with _snapshot_access(repo_dir, session):
+            if active_task_files(str(repo_dir)) is None:
+                _run(Path(repo_dir), "git config gc.auto 0")
     except Exception:
         pass
 
 
 def snapshot(repo_dir: Path, turn: int, session=None) -> str | None:
+    """Capture through the session's task view, including calls outside run()."""
+    try:
+        with _snapshot_access(repo_dir, session):
+            return _snapshot(repo_dir, turn, session)
+    except Exception as error:
+        if session is not None and not getattr(session, '_snapshot_warned', False):
+            session._snapshot_warned = True
+            log.warning('turn snapshot failed (disabled for session): %s', error)
+        return None
+
+
+def _snapshot(repo_dir: Path, turn: int, session=None) -> str | None:
     """Record an invisible workspace snapshot; return its sha (or None).
 
     Appends ``turn<TAB>sha`` to the telemetry map on success. The private
-    index persists across calls (container /tmp or telemetry dir), so after
-    the first snapshot each subsequent one stages only the delta.
+    index stays in harness-owned storage. Bound task views also keep objects
+    there; intentional local calls retain the older repository object store.
     """
     repo_dir = Path(repo_dir)
     try:
-        if _container_id():
-            index = _CONTAINER_INDEX
-            workdir = "/testbed"
+        files = active_task_files(str(repo_dir))
+        if files is not None:
+            sha = capture_native_snapshot(repo_dir, turn, files=files,
+                owned_paths=_snapshot_owned_paths(repo_dir, session))
         else:
             index = str(ensure_telemetry_dir(repo_dir) / ".snapshot_index")
             workdir = str(repo_dir)
-        sha = _run(repo_dir, _SNAPSHOT_SH.format(index=index, workdir=workdir))
+        if files is None:
+            prefix = subprocess.run(
+                ["git", "rev-parse", "--show-prefix"], cwd=str(repo_dir),
+                capture_output=True, text=True, check=True,
+                timeout=remaining_before(execution_deadline()),
+            ).stdout.removesuffix("\n")
+            owned_paths = tuple(prefix + path for path in _snapshot_owned_paths(repo_dir, session))
+            sha = _run(repo_dir, _SNAPSHOT_SH.format(
+                index=shlex.quote(index),
+                workdir=shlex.quote(workdir),
+                owned_paths=shlex.join(f":(top,literal){path}" for path in owned_paths),
+                exclusions=shlex.join(f":(top,literal,exclude){path}" for path in owned_paths),
+            ))
         if not sha or len(sha) < 7:
             raise RuntimeError(f"no sha (got {sha!r})")
         ensure_telemetry_dir(repo_dir)
         with open(telemetry_dir(repo_dir) / MAP_NAME, "a") as f:
             f.write(f"{int(turn)}\t{sha}\n")
+        snapshot_object_store(repo_dir, sha)
         return sha
     except Exception as e:  # noqa: BLE001 — telemetry must never kill the run
         if session is not None and not getattr(session, "_snapshot_warned", False):
@@ -401,6 +463,7 @@ def _build_context_from_snapshot(session, snapshot: ConversationSnapshot):
         snapshot.original_prompt,
         1,
         estimator,
+        artifact_dir=getattr(session, "_artifact_dir", None),
     )
     if context is None:
         raise ConversationRewindError("context mode cannot be rebuilt for rewind")
@@ -520,18 +583,21 @@ def rewind_to(session, turn_number: int, *, reason: str = "operator") -> dict[st
     }
     from .state_writer import active_events
     from .stale_guard import StaleFileGuard
+    from .adaptive_control.observation_notice import restore_observation_notices
 
+    restored_events = active_events([
+        *session._trace_events,
+        {"event": "rewind", **event},
+    ])
     stale_guard = StaleFileGuard.from_trace(
         cwd=session.cwd,
         mode=getattr(session.cfg, "tools_stale_guard_mode", "warn"),
-        events=active_events([
-            *session._trace_events,
-            {"event": "rewind", **event},
-        ]),
+        events=restored_events,
         event_sink=getattr(session._stale_guard, "event_sink", None),
     )
     session._emit("rewind", **event)
     session._stale_guard = stale_guard
+    restore_observation_notices(session, restored_events)
     return event
 
 
@@ -640,6 +706,7 @@ def apply_pending_rewind_resume(session) -> ConversationSnapshot | None:
 __all__ = [
     "ensure_snapshot_setup",
     "snapshot",
+    "snapshot_object_store",
     "read_map",
     "sha_at_or_before",
     "MAP_NAME",

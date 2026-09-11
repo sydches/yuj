@@ -34,8 +34,6 @@ CHECKPOINT_MESSAGE_PREFIX = (
     "The conversation history before this point was compacted into the "
     "following summary:"
 )
-CHECKPOINT_TOOL_RESULT_CHARS = 2_000
-CHECKPOINT_HARD_MAX_TOKENS = 4_000
 
 _SUMMARY_SYSTEM_PROMPT = """\
 You write a structured checkpoint for a software-engineering conversation.
@@ -311,17 +309,19 @@ def serialize_checkpoint_head(
     stop_message_index: int,
     start_turn: int = 0,
     turn_number_offset: int = 0,
-    tool_result_chars: int = CHECKPOINT_TOOL_RESULT_CHARS,
+    tool_result_chars: int | None = None,
 ) -> str:
     """Serialize raw pruned turns, skipping any synthetic checkpoint message.
 
     ``start_turn`` lets a later checkpoint begin with the prior
     ``first_kept_turn``.  Callers must pass the retained raw source messages;
     the function never expands or paraphrases ``previous_summary``.
+    Keep tool results complete unless the caller explicitly supplies a display
+    cap. The producing client's request controls own its capacity check.
     """
     if stop_message_index < 0 or stop_message_index > len(messages):
         raise ValueError("stop_message_index is outside the message list")
-    if tool_result_chars <= 0:
+    if tool_result_chars is not None and tool_result_chars <= 0:
         raise ValueError("tool_result_chars must be positive")
 
     materialized = [dict(message) for message in messages]
@@ -343,7 +343,8 @@ def serialize_checkpoint_head(
                 rendered.append(_render_tool_call(tool_call))
         elif role == "tool" and include_turn:
             content = _message_text(message.get("content"))
-            clipped = _truncate_tool_result(content, tool_result_chars)
+            clipped = (_truncate_tool_result(content, tool_result_chars)
+                       if tool_result_chars is not None else content)
             tool_call_id = str(message.get("tool_call_id") or "")
             id_line = f"tool_call_id={tool_call_id}\n" if tool_call_id else ""
             rendered.append(f"[Tool result]\n{id_line}{clipped}".rstrip())
@@ -408,14 +409,15 @@ def build_mechanical_appendix(
 
 
 def summary_token_limit(*, reserve_tokens: int, configured_max_tokens: int) -> int:
-    """Return ``min(80% of reserve, configured cap, 4k)``."""
+    """Use the declared producing-model cap if receiving space remains.
+
+    Receiving-model reserve is only a feasibility check, not a conversion to
+    producing-model output tokens. The producer adapter bounds its prepared
+    request, and the receiver must still recount the generated candidate.
+    """
     if reserve_tokens <= 0 or configured_max_tokens <= 0:
         return 0
-    eighty_percent = int(reserve_tokens * 0.8)
-    return max(
-        0,
-        min(eighty_percent, configured_max_tokens, CHECKPOINT_HARD_MAX_TOKENS),
-    )
+    return configured_max_tokens
 
 
 def build_checkpoint_request(
@@ -665,8 +667,14 @@ def generate_checkpoint(
         )
 
     try:
+        # Count the receiving prompt's known content in its final layout.
+        # The summary is still unknown; its token boundaries and the producing
+        # model's output units need not match this count. Keep final validation.
+        known_checkpoint = make_checkpoint_message(f"\n\n{appendix.render()}")
         fixed_tokens = count_messages(
-            tuple(cut.prefix) + tuple(cut.tail), tokenizer, tools=tools
+            tuple(cut.prefix) + (known_checkpoint,) + tuple(cut.tail),
+            tokenizer,
+            tools=tools,
         )
         reserve_tokens = budget - fixed_tokens
         request_max_tokens = summary_token_limit(
@@ -763,10 +771,10 @@ def loop_guard_forces_digest(
     *,
     keep_recent_turns: int,
 ) -> bool:
-    """Return true after two consecutive nearby compactions.
+    """Historical turn-gap predicate, unused by the live path since 8.0.118.
 
-    The caller persists the resulting method override for the remainder of
-    the run.  This helper is pure so replay and tests use identical math.
+    Retained for offline analysis and compatibility. A turn gap does not
+    measure whether either checkpoint recovered enough useful space.
     """
     if keep_recent_turns < 0:
         raise ValueError("keep_recent_turns must be non-negative")

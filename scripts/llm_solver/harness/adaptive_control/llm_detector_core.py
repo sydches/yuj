@@ -325,7 +325,7 @@ Decision discipline:
   the trace also shows the live issue behavior remains reproduced and no tracked
   source edit exists.
 - Explain rejected families explicitly. For example, a /tmp helper script is not
-  patch_assembly when it writes tracked /testbed source and the final diff keeps
+  patch_assembly when it writes tracked task source and the final diff keeps
   that source change.
 - If you cannot fill these rationale fields clearly, return "uncertain".
 

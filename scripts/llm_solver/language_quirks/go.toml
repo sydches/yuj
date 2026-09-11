@@ -4,11 +4,23 @@
 # produces a pass/fail verdict on task correctness.
 
 name = "go"
+non_execution_flags = ["--help", "-h", "-n", "-list"]
+non_test_check_flags = ["-c"]
 description = "Go test/build/vet invocations"
-
 verification_patterns = [
     '''(?:^|[\s/'"])go\s+(?:test|build|vet)\b''',
 ]
+
+[[detection]]
+path = "go.mod"
+format = "text"
+pattern = '(?m)^\s*module\s+\S+'
+
+[runtime]
+executables = ["go"]
+probe_args = ["version"]
+command_args = ["test"]
+environment = {GOTOOLCHAIN = "local"}
 
 [output_control]
 failure_only_flag = "-v"
@@ -26,8 +38,8 @@ failed_marker = "--- FAIL"
 [output_parser.per_test]
 # --- PASS: TestFoo/subtest (0.01s)
 # --- FAIL: TestBar (0.02s)
-# Verdict captured as PASS/FAIL; matches the pytest-style canonical set
-# for FAILED via the render_digest checks that accept PASS-prefix/FAIL-prefix.
+# This descriptor maps Go's words to the shared internal states.
+verdict_map = { PASS = "PASSED", FAIL = "FAILED" }
 regex = '''^---\s+(?P<verdict>PASS|FAIL)(?:\s*:\s*)(?P<test_id>\S+)'''
 
 # How run_tests should invoke this runner when the repo is detected as
@@ -38,10 +50,10 @@ detection_priority = 2
 env_activate_prefix = ""
 base_cmd = "go test"
 detect_files = ["go.mod", "go.sum"]
-# Go takes a package path positionally (default ./...) and -run for the
-# name regex filter. If the model passes neither path nor k, we add
-# ./... so the whole module is exercised.
+# Go takes a package path positionally and -run for the name regex filter.
+# Without a path, Go checks the current package.
 arg_path_style = "positional"
+arg_path_prefix = "./"
 arg_k_template = "-run {expr}"
 arg_last_failed = ""              # no built-in equivalent
 component_test_names = ["{stem}_test.go"]
@@ -57,3 +69,11 @@ status_default = "failed"
 
 [run_tests.status_map]
 0 = "passed"
+
+# Requested CLI grammar only; it does not establish execution or coverage.
+
+[[diagnostic_invocations]]
+family = "go"
+prefix = ["go", "test"]
+flags = ["-v", "-race", "-short", "-failfast", "-json"]
+value_options = ["-run", "-bench", "-timeout", "-count", "-parallel", "-p", "-coverprofile", "-list"]

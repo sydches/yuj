@@ -1,21 +1,12 @@
 """Sandbox escape-attempt regression tests.
 
-docs/sandbox.md declares the bwrap mount namespace load-bearing for
-the experimental setup: the model cannot write outside the task's
-cwd. That guarantee is enforced by argv construction in
-``harness/sandbox.py::_build_bwrap_argv``. A regression here silently
-breaks the security boundary.
-
-docs/sandbox.md has a manual verification checklist — three ``touch``
-commands that must return "Read-only file system". This test
-automates the same checklist.
+The model may write the task and private temporary/home storage. Writes must
+not reach unrelated host files. System runtime mounts remain read-only.
 
 Skipped when bwrap is not operational on the test host.
 """
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 
 import pytest
@@ -41,22 +32,20 @@ def _assert_ro_error(result: str, attempt_description: str) -> None:
     )
 
 
-def test_sandbox_blocks_home_write(tmp_path: Path):
-    """Writing to the user's home directory is blocked by bwrap."""
-    home = os.path.expanduser("~")
-    target = f"{home}/.yuj_escape_test_marker"
-    # Sanity: if a prior failed test dropped a marker, clean it here via host.
-    if os.path.exists(target):
-        os.remove(target)
+def test_sandbox_home_write_stays_private(tmp_path: Path):
+    """A useful home cache write has no effect on the host home."""
+    home = tmp_path / "home"
+    home.mkdir()
+    task = tmp_path / "task"
+    task.mkdir()
     result = bash(
-        f"touch {target} 2>&1",
-        cwd=str(tmp_path),
+        'echo private > "$HOME/marker" && cat "$HOME/marker"',
+        cwd=str(task),
         timeout=10,
+        effective_env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
     )
-    _assert_ro_error(result, f"touch {target}")
-    assert not os.path.exists(target), (
-        f"ESCAPE: sandbox allowed write to {target} — bwrap argv construction regressed"
-    )
+    assert "private" in result
+    assert not (home / "marker").exists()
 
 
 def test_sandbox_blocks_parent_dir_write(tmp_path: Path):

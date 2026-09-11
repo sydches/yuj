@@ -352,7 +352,7 @@ class TestRuminationSameTarget:
 
 class TestTestReadGuard:
 
-    def test_warns_when_running_tests_without_reading_test_file(self):
+    def test_command_and_result_strings_do_not_establish_execution(self):
         from llm_solver.harness.guardrails import test_read_ladder, init_guardrail_state
 
         cfg = make_config(test_read_warn_after=1, test_read_nudge="read {target} after {count}")
@@ -365,9 +365,9 @@ class TestTestReadGuard:
             gate_blocked=False,
             tc_args={"cmd": "pytest -q tests/test_app.py"},
         )
-        assert decision.text == "read tests/test_app.py after 1"
+        assert decision.action.value == "pass"
 
-    def test_resets_after_test_file_is_read(self):
+    def test_read_request_without_content_receipt_does_not_establish_inspection(self):
         from llm_solver.harness.guardrails import (
             test_read_ladder,
             observe_test_file_read,
@@ -385,7 +385,7 @@ class TestTestReadGuard:
             gate_blocked=False,
             tc_args={"cmd": "pytest -q tests/test_app.py"},
         )
-        assert first.text == "read tests/test_app.py after 1"
+        assert first.action.value == "pass"
 
         observe_test_file_read(
             state,
@@ -407,3 +407,4 @@ class TestTestReadGuard:
             tc_args={"cmd": "pytest -q tests/test_app.py"},
         )
         assert second.action.value == "pass"
+        assert state.inspected_files == {}

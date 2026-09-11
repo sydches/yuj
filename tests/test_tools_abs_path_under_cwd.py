@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import pytest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -38,19 +39,14 @@ def test_abs_path_under_cwd_nested_subdir():
         assert "class ITRS" in resolved.read_text()
 
 
-def test_abs_path_outside_cwd_is_rerooted():
-    """Sandbox containment: abs path NOT under cwd is re-rooted, never escapes.
-
-    Re-rooting maps ``/etc/passwd`` to ``<cwd>/etc/passwd`` which will not
-    exist (safe) — preserves the perimeter that was the original purpose of
-    the ``lstrip('/')`` behavior.
-    """
+def test_abs_path_outside_cwd_is_refused_even_with_a_local_collision():
     with tempfile.TemporaryDirectory() as cwd:
-        resolved = _resolve(cwd, "/etc/passwd")
-        # Must be under cwd (re-rooted)
-        resolved.relative_to(Path(cwd).resolve())
-        # And won't exist (safe)
-        assert not resolved.exists()
+        collision = Path(cwd) / 'etc/passwd'
+        collision.parent.mkdir()
+        collision.write_text('different task file')
+        with pytest.raises(ValueError, match='escapes cwd'):
+            _resolve(cwd, '/etc/passwd')
+        assert collision.read_text() == 'different task file'
 
 
 def test_dotdot_escape_still_refused():
@@ -59,6 +55,25 @@ def test_dotdot_escape_still_refused():
     with tempfile.TemporaryDirectory() as cwd:
         with _pytest.raises(ValueError, match="escapes cwd"):
             _resolve(cwd, "../../../etc/passwd")
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("read", {"path": "/outside/file.txt"}),
+    ("write", {"path": "/outside/file.txt", "content": "REPLACED"}),
+    ("edit", {"path": "/outside/file.txt", "old_str": "TASK COLLISION", "new_str": "REPLACED"}),
+    ("apply_patch", {"patch": "*** Begin Patch\n*** Update File: /outside/file.txt\n@@\n-TASK COLLISION\n+REPLACED\n*** End Patch"}),
+])
+def test_dispatch_refuses_outside_name_without_touching_collision(tmp_path, tool, args):
+    from _config_helpers import make_config
+    from scripts.llm_solver.harness.tools import dispatch
+
+    collision = tmp_path / "outside/file.txt"
+    collision.parent.mkdir()
+    collision.write_text("TASK COLLISION\n")
+    result = dispatch(tool, args, cwd=str(tmp_path), cfg=make_config(sandbox_bash=False))
+    assert "ERROR" in result
+    assert "TASK COLLISION" not in result
+    assert collision.read_text() == "TASK COLLISION\n"
 
 
 def test_relative_path_unchanged():

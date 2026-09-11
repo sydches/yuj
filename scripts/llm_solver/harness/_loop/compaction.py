@@ -258,9 +258,9 @@ def preflight_reclip_oversized(
     messages stay intact — assistant messages carry tool_calls
     structure the server round-trips.
 
-    Token counts use the bound local tokenizer when available (exact),
-    chars/4 otherwise — the same accounting the pre-flight gate itself
-    uses. Persisting goes through ContextManager.replace_all_messages()
+    Token counts use the bound request counter when available. Isolated
+    messages may require an estimate when the backend rejects incomplete chat
+    history. Persisting goes through ContextManager.replace_all_messages()
     so strategy caches invalidate; strategies that cannot replace opt
     out and the caller falls through to the legacy session end.
 
@@ -411,19 +411,32 @@ def preflight_reclip_oversized(
     }
 
 
-def _recount_tokens(msgs: list[dict], tokenizer, tools: list[dict] | None = None) -> int:
+def _recount_tokens(msgs: list[dict], tokenizer, tools: list[dict] | None = None,
+                    *, evidence: dict | None = None) -> int:
     """Recount tokens via the same path that produced est_pt.
 
-    Uses the bound tokenizer when available (exact, matches server —
-    pass the session's tool schemas so the count includes the tool
+    Uses the bound counter when available; optional evidence records its
+    current authority. Pass the session's tool schemas to include the tool
     catalog the request carries), falls back to chars_div_4 estimate
     otherwise. Returns 0 on any unexpected failure — caller should
     treat 0 as "cannot recount" and skip the overflow guard rather
     than raise spuriously.
     """
+    if evidence is not None:
+        evidence.clear()
+        evidence.update(count_basis="character_estimate", count_precision="estimate", reported=False)
     if tokenizer is not None:
         try:
-            return int(tokenizer.count(msgs, tools=tools))
+            count = tokenizer.count(msgs, tools=tools)
+            if type(count) is not int or count < 0:
+                raise ValueError("request count must be a nonnegative integer")
+            if evidence is not None:
+                from ..request_counting import has_reported_count
+                record = getattr(tokenizer, "last", None) or {}
+                evidence.update(count_basis=record.get("count_basis", "unknown"),
+                                count_precision=record.get("count_precision", "unverified"),
+                                reported=has_reported_count(tokenizer, count))
+            return count
         except Exception as e:
             log.warning("recount via tokenizer failed (%s); falling back to chars/4", e)
     try:
@@ -434,52 +447,41 @@ def _recount_tokens(msgs: list[dict], tokenizer, tools: list[dict] | None = None
 
 
 def get_server_ctx(session: "Session") -> int:
-    """Lazy-fetch the running llama-server's n_ctx from its /props endpoint
-    AND sync cfg.context_size to it on first success.
-
-    After this returns a non-zero value the first time, cfg.context_size
-    is rewritten so the fill_ratio gate measures against the live
-    server window instead of a stale config knob.
-
-    Returns 0 if the server doesn't expose /props or the request fails;
-    callers fall back to cfg.context_size in that case.
-    """
-    if getattr(session, "_server_ctx_cache", None) is not None:
-        return session._server_ctx_cache
-    session._server_ctx_cache = 0
-    base = (getattr(session.cfg, "base_url", "") or "").rstrip("/")
-    if not base:
-        return 0
-    # base_url is typically http://host:port/v1 — /props sits at the root.
-    if base.endswith("/v1"):
-        root = base[:-3]
+    """Return the active model's effective allowance, retaining its sources."""
+    from ...context_allocation import allocate_context, declared_context
+    cfg = session.cfg
+    client = session.client
+    binding = (id(client), cfg.model, cfg.base_url, declared_context(cfg))
+    prior_binding = getattr(session, "_server_ctx_binding", None)
+    cached = getattr(session, "_server_ctx_cache", None)
+    if prior_binding == binding and cached is not None:
+        return cached
+    record = getattr(cfg, "context_allocation", None) or {}
+    matching = record.get("model") == cfg.model and record.get("base_url") == cfg.base_url
+    if matching and (prior_binding is None or prior_binding == binding):
+        observed = record.get("observed_capacity")
     else:
-        root = base
-    try:
-        import urllib.request
-        req = urllib.request.Request(root + "/props")
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        for k in ("n_ctx_per_slot", "n_ctx", "default_generation_settings"):
-            v = payload.get(k)
-            if isinstance(v, dict):
-                v = v.get("n_ctx") or v.get("n_ctx_per_slot")
-            if isinstance(v, int) and v > 0:
-                session._server_ctx_cache = v
-                if not session._server_ctx_synced:
-                    log.info(
-                        "server_ctx (from /props): %d  (cfg.context_size was %d, syncing)",
-                        v, getattr(session.cfg, "context_size", 0) or 0,
-                    )
-                    try:
-                        object.__setattr__(session.cfg, "context_size", v)
-                    except Exception:
-                        session.cfg.context_size = v  # type: ignore[attr-defined]
-                    session._server_ctx_synced = True
-                return v
-    except Exception as e:
-        log.warning("server /props query failed (%s); falling back to cfg.context_size", e)
-    return 0
+        query = getattr(client, "query_server_context", None)
+        try:
+            observed = query() if callable(query) else None
+        except Exception as exc:
+            log.warning("Context capability unavailable: %s", exc)
+            observed = None
+    session.cfg = allocate_context(
+        cfg, observed=observed, profile=getattr(client, "profile", None),
+    )
+    client.cfg = session.cfg
+    if hasattr(session, "_plan_mode"):
+        session._plan_mode.cfg = session.cfg
+    session._server_ctx_cache = session.cfg.context_size
+    session._server_ctx_binding = binding
+    session._server_ctx_synced = True
+    if prior_binding is not None and prior_binding[:3] != binding[:3]:
+        from ..request_counting import bind_session_counter
+        bind_session_counter(session, reset_observations=True)
+    if hasattr(session, "_emit"):
+        session._emit("context_allocation", **session.cfg.context_allocation)
+    return session._server_ctx_cache
 
 
 def maybe_compact_messages(
@@ -511,6 +513,10 @@ def maybe_compact_messages(
     ``force`` bypasses only the local fill estimate after a server rejection;
     the mutation gate and explicit no-compaction setting still apply.
     """
+    from ..time_budget import BudgetExhausted, remaining_run_seconds
+    if remaining_run_seconds() == 0:
+        log.info("compaction skipped: declared run time is exhausted")
+        return messages
     cfg = session.cfg
     configured_method = str(getattr(cfg, "compaction_method", "digest"))
     protected_correction = _protected_correction_text(session)
@@ -528,10 +534,7 @@ def maybe_compact_messages(
         requested_method = "digest"
         hook_reference, hook = "", None
     else:
-        requested_method = str(
-            getattr(session, "_compaction_method_override", "")
-            or configured_method
-        )
+        requested_method = configured_method
         hook_reference, hook = _session_compaction_hook(session)
     if (
         requested_method == "checkpoint"
@@ -542,6 +545,7 @@ def maybe_compact_messages(
     # Route through the bound method so test mocks patching
     # `Session._get_server_ctx` continue to intercept this call site.
     ctx_size = session._get_server_ctx() or int(getattr(cfg, "context_size", 0) or 0)
+    cfg = session.cfg
     if ctx_size <= 0:
         return messages
     fill_ratio = float(getattr(cfg, "context_fill_ratio", 0.95))
@@ -552,18 +556,9 @@ def maybe_compact_messages(
     # A negative safety margin is the existing explicit no-compaction setting.
     if force and safety_margin < 0:
         return messages
-    # Cheap-estimate fast path. The exact tokenize via
-    # local_tokenizer.count() renders the model's chat template +
-    # tokenizes the entire ~25k-token message list — measured
-    # 10–50 ms per call on this host, hot per turn. Most turns are
-    # far below the compaction budget; running the exact count just
-    # to confirm "still under threshold" is wasted work.
-    #
-    # Strategy: cheap chars/4 estimate first. With a 10% safety
-    # margin (chars/4 underestimates non-English text), if the
-    # cheap estimate is well under budget the exact count would be
-    # too — skip it. Only when we're within the margin do we pay
-    # for the exact count to make a sound compaction decision.
+    # Retain the historical shortcut only for explicit estimate-only runs.
+    # A character estimate cannot prove that the backend's count is small.
+    tokenizer = getattr(session, "_tokenizer", None)
     try:
         from ..context import chars_div_4
         cheap_est = int(chars_div_4(messages))
@@ -572,34 +567,36 @@ def maybe_compact_messages(
     projected_pt = int(projected_tokens or 0)
     if (
         not force
+        and tokenizer is None
         and projected_pt <= budget
         and cheap_est is not None
         and cheap_est * 1.10 < budget
     ):
-        # Comfortably under budget; no compaction needed and no
-        # need to pay for exact tokenization on this turn.
+        # Below budget according to this run's selected estimate.
         return messages
 
-    # Pre-flight exact count of the about-to-send messages. The
-    # local tokenizer matches the server's tokenizer (same vocab
-    # as the GGUF) and renders the model's chat template, so this
-    # is the same count the server will produce. When the
-    # tokenizer is unset, fall back to chars_div_4 (the historical
-    # behavior).
-    tokenizer = getattr(session, "_tokenizer", None)
+    # Count the prepared request. Unsupported backends and explicit local
+    # artifacts remain identified estimates rather than claims of exactness.
     from ..plan_mode import effective_model_tool_schemas
     tool_schemas = effective_model_tool_schemas(session)
     if tokenizer is not None:
         try:
-            measured_pt = int(tokenizer.count(messages, tools=tool_schemas))
+            measured_pt = tokenizer.count(messages, tools=tool_schemas)
+            if type(measured_pt) is not int or measured_pt < 0:
+                raise ValueError("request count must be a nonnegative integer")
         except Exception as e:
-            log.warning("local tokenizer count failed (%s); skipping compaction check", e)
+            log.warning("request count failed (%s); skipping compaction check", e)
             return messages
     elif cheap_est is not None:
         measured_pt = cheap_est
     else:
         return messages
-    est_pt = max(measured_pt, projected_pt)
+    from ..request_counting import has_reported_count
+    authoritative = has_reported_count(tokenizer, measured_pt)
+    if not force and getattr(cfg, "tokenizer_id", "") == "auto" and not authoritative:
+        log.info("compaction skipped: current automatic request count is unverified")
+        return messages
+    est_pt = measured_pt if authoritative else max(measured_pt, projected_pt)
     if not force and est_pt <= budget:
         return messages
     mutation_count = sum(1 for ev in session._trace_events
@@ -610,6 +607,7 @@ def maybe_compact_messages(
         return messages
 
     compaction_fallback = ""
+    checkpoint_validation_reason = ""
     compaction_role_fields: dict[str, object] = {"role": "main"}
     first_kept_turn = _latest_assistant_turn(
         messages, getattr(session, "_compaction_turn", 0)
@@ -762,8 +760,13 @@ def maybe_compact_messages(
 
         routed = consumer_role_client(session, "weak")
         compaction_role_fields = routed.trace_fields()
+        checkpoint_budget_exhausted = False
 
         def _call_checkpoint(payload: dict) -> str:
+            nonlocal checkpoint_budget_exhausted
+            if remaining_run_seconds() == 0:
+                checkpoint_budget_exhausted = True
+                raise BudgetExhausted("checkpoint time budget is exhausted")
             side_result = routed.client.complete_side_request(payload)
             record_role_usage(session, routed, side_result.usage)
             return side_result.content
@@ -786,6 +789,10 @@ def maybe_compact_messages(
             ),
             tokens_before=est_pt,
         )
+        if checkpoint_budget_exhausted or remaining_run_seconds() == 0:
+            log.info("checkpoint replacement skipped: declared run time is exhausted")
+            return messages
+        checkpoint_validation_reason = checkpoint.reason
         if checkpoint.valid and checkpoint.compacted_messages is not None:
             new_messages = [dict(message) for message in checkpoint.compacted_messages]
             first_kept_turn = int(checkpoint.first_kept_turn or 0)
@@ -840,7 +847,7 @@ def maybe_compact_messages(
             return messages
 
         trigger = (
-            f"the server rejected the prompt at its {ctx_size}-token context window"
+            f"context recovery was requested for the {ctx_size}-token context window"
             if force
             else (
                 f"prompt crossed {threshold:.2f} of the server context window "
@@ -884,13 +891,13 @@ def maybe_compact_messages(
     # ── Overflow guard ─────────────────────────────────────────────
     # A retained tail can still exceed budget. Recount; if over, truncate
     # retained tool messages while preserving assistant structure, then
-    # recount once more. If still over, raise a typed error so the session
-    # ends with a debuggable reason instead of a server 400.
-    new_messages = _ensure_protected_correction_tail(
-        session, new_messages
-    )
-    final_count = _recount_tokens(new_messages, tokenizer, tools=tool_schemas)
-    if final_count > 0 and final_count > budget:
+    # recount once more. Automatic clipping and failure both require current
+    # reported evidence; explicit estimation and forced recovery retain their policy.
+    new_messages = _ensure_protected_correction_tail(session, new_messages)
+    final_evidence = {}
+    require_reported = not force and getattr(cfg, "tokenizer_id", "") == "auto"
+    final_count = _recount_tokens(new_messages, tokenizer, tools=tool_schemas, evidence=final_evidence)
+    if final_count > budget and (not require_reported or final_evidence["reported"]):
         tool_indices = [i for i, m in enumerate(new_messages)
                         if m.get("role") == "tool"]
         if tool_indices:
@@ -923,8 +930,8 @@ def maybe_compact_messages(
                 "truncated %d tool message(s) to ~%d chars each",
                 over_tokens, len(tool_indices), per_msg_budget,
             )
-            final_count = _recount_tokens(new_messages, tokenizer, tools=tool_schemas)
-        if final_count > 0 and final_count > budget:
+            final_count = _recount_tokens(new_messages, tokenizer, tools=tool_schemas, evidence=final_evidence)
+        if final_count > budget and (not require_reported or final_evidence["reported"]):
             raise CompactionOverflowError(
                 f"compaction cannot fit prompt within budget after truncation: "
                 f"final_count={final_count} > budget={budget} "
@@ -960,6 +967,8 @@ def maybe_compact_messages(
             "encoding": "message_list_json_utf8_v1",
             "tokens_before": est_pt,
             "tokens_after": final_count,
+            "tokens_after_count_basis": final_evidence["count_basis"],
+            "tokens_after_count_precision": final_evidence["count_precision"],
             "message_count_before": len(messages),
             "message_count_after": len(new_messages),
             "first_kept_turn": first_kept_turn,
@@ -1001,31 +1010,27 @@ def maybe_compact_messages(
     if compaction_turns is None:
         compaction_turns = []
         session._compaction_turns = compaction_turns
-    compaction_turns.append(compaction_turn)
+    # Retain method history for diagnostics and rewind compatibility. It no
+    # longer supplies a turn-gap rule or changes the configured method.
+    checkpoint_applied = event_method == "checkpoint" and not compaction_fallback
+    if checkpoint_applied:
+        compaction_turns.append(compaction_turn)
+    else:
+        compaction_turns.clear()
     session._emit(
         "compaction",
         session_number=getattr(session, "_session_number", 0),
         turn_number=compaction_turn,
         tokens_before=est_pt,
         tokens_after=final_count,
+        tokens_after_count_basis=final_evidence["count_basis"],
+        tokens_after_count_precision=final_evidence["count_precision"],
         first_kept_turn=first_kept_turn,
         method=event_method,
         fallback=compaction_fallback,
         hook=hook_reference,
         hook_outcome=hook_outcome,
+        checkpoint_validation_reason=checkpoint_validation_reason,
         **compaction_role_fields,
     )
-    if configured_method == "checkpoint" and event_method == "checkpoint":
-        from .checkpoint_summary import loop_guard_forces_digest
-
-        if loop_guard_forces_digest(
-            compaction_turns,
-            keep_recent_turns=int(cfg.digest_keep_recent_turns),
-        ):
-            session._compaction_method_override = "digest"
-            log.warning(
-                "checkpoint loop guard activated after compactions at turns %s; "
-                "using digest for the rest of this session",
-                compaction_turns[-2:],
-            )
     return new_messages

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .command_redirect import split_shell_fragments
+from .container_binding import container_scoped_session
 
 
 PLAN_FILE = ".solver/plan.md"
@@ -107,24 +108,23 @@ def _completed_plan_turns(events: Iterable[Mapping[str, object]]) -> int:
     return count
 
 
-def _plan_path(cwd: str | Path) -> Path:
-    return Path(cwd).resolve() / PLAN_FILE
+def _plan_path(cwd: str | Path):
+    from .task_path import resolve_task_path
+    return resolve_task_path(cwd, '.') / PLAN_FILE
 
 
 def is_exact_plan_path(cwd: str | Path, value: object) -> bool:
     """Accept only the lexical plan path inside the task working directory.
 
-    Resolving the candidate but not the expected path also rejects a symlinked
-    ``.solver`` directory or plan file that would escape the task repository.
+    Resolve in the selected task view. Compare against its lexical plan path
+    so a symlinked ``.solver`` directory or plan file cannot redirect writes.
     """
     if not isinstance(value, str) or not value.strip():
         return False
-    candidate = Path(value)
-    if not candidate.is_absolute():
-        candidate = Path(cwd) / candidate
+    from .task_path import resolve_task_path
     try:
-        return candidate.resolve() == _plan_path(cwd)
-    except OSError:
+        return resolve_task_path(cwd, value) == _plan_path(cwd)
+    except (OSError, ValueError):
         return False
 
 
@@ -308,6 +308,7 @@ def render_plan_mode_error(tool_name: str, message: str, max_chars: int) -> str:
 class PlanModeController:
     """Session-local phase state rehydrated only from raw trace transitions."""
 
+    @container_scoped_session
     def __init__(
         self,
         *,
@@ -315,6 +316,9 @@ class PlanModeController:
         cfg,
         events: Iterable[Mapping[str, object]],
         event_sink: Callable[[dict[str, object]], None],
+        effective_env=None,
+        allow_login_shell=None,
+        ignore_policy=None,
     ) -> None:
         event_list = tuple(events)
         self.cwd = cwd
@@ -323,9 +327,24 @@ class PlanModeController:
         self.active = self.required and _active_from_trace(event_list)
         self.prior_turns = _completed_plan_turns(event_list)
         self._event_sink = event_sink
+        self._effective_env = effective_env
+        self._allow_login_shell = allow_login_shell
+        self._ignore_policy = ignore_policy
 
+    def _file_scope(self):
+        from .task_file_runtime import task_file_scope
+        return task_file_scope(
+            self.cwd, self.cfg, environment=self._effective_env,
+            allow_login_shell=self._allow_login_shell,
+            ignore_policy=self._ignore_policy,
+        )
+
+    @container_scoped_session
     def is_plan_write(self, tool_name: str, arguments: Mapping[str, object]) -> bool:
-        return is_plan_write(tool_name, arguments, self.cwd)
+        if tool_name != 'write':
+            return False
+        with self._file_scope():
+            return is_plan_write(tool_name, arguments, self.cwd)
 
     def check(
         self,
@@ -369,13 +388,17 @@ class PlanModeController:
             )
         return PlanModeDecision(True)
 
+    @container_scoped_session
     def exit(self, *, turn: int) -> str:
+        with self._file_scope():
+            return self._exit(turn=turn)
+
+    def _exit(self, *, turn: int) -> str:
         max_chars = int(getattr(self.cfg, "max_output_chars", 20000))
         if not self.active:
             return render_plan_mode_error(
                 "exit_plan_mode", "Plan mode is not active.", max_chars
             )
-        path = _plan_path(self.cwd)
         if not is_exact_plan_path(self.cwd, PLAN_FILE):
             return render_plan_mode_error(
                 "exit_plan_mode",
@@ -383,6 +406,7 @@ class PlanModeController:
                 max_chars,
             )
         try:
+            path = _plan_path(self.cwd)
             plan = path.read_text()
         except FileNotFoundError:
             return render_plan_mode_error(

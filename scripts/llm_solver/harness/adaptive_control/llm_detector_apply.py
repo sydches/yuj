@@ -85,8 +85,10 @@ def _handle_pending_watch_verdict(
     machine = episode.machine(session)
     transition = episode.UNKNOWN
     next_family = ""
-    watch_end = int(pending.get("watch_window_end", turn) or turn)
-    budget_exhausted = int(turn) >= watch_end
+    watch_end = int(pending.get("watch_window_end", turn))
+    from ..time_budget import remaining_run_seconds
+    remaining_seconds = remaining_run_seconds()
+    budget_exhausted = int(turn) >= watch_end or remaining_seconds == 0
     post_slots = _post_intervention_slots(session, pending, turn)
     progress_slots = [slot for slot in post_slots if watch.material_progress(slot)]
     progress_refs = [str(slot.get("evidence_refs") or "") for slot in progress_slots]
@@ -116,6 +118,7 @@ def _handle_pending_watch_verdict(
         "material_progress": bool(progress_slots),
         "material_progress_refs": progress_refs,
         "budget_exhausted": budget_exhausted,
+        "run_remaining_seconds": remaining_seconds,
     }
 
     cleared = transition in {
@@ -127,11 +130,11 @@ def _handle_pending_watch_verdict(
         row["watch_transition"]["episode_transition"] = ""
         return
 
-    # Failing to prove an unlock within the fixed budget advances the ladder.
-    # An uncertain detector result must not extend one candidate indefinitely.
-    if transition == episode.UNKNOWN:
-        transition = episode.UNCHANGED
-        row["watch_transition"]["episode_transition"] = transition
+    # An expired observation allowance is not evidence of an unchanged hurdle.
+    # Close an inconclusive watch without restoring or escalating its candidate.
+    row["watch_transition"]["closure_reason"] = (
+        "observed_clearance" if cleared else "observation_allowance_exhausted"
+    )
     row["watch_transition"]["watch_status"] = "closed"
 
     closed_episode = episode.close_watch(machine, transition)
@@ -212,7 +215,7 @@ def _post_intervention_slots(
     """Project only the causal post-intervention trace window."""
     from .slot_recorder import recent_prefix_slots_from_events
 
-    start = int(pending.get("watch_window_start", turn) or turn)
+    start = int(pending.get("watch_window_start", turn))
     slots = recent_prefix_slots_from_events(
         list(getattr(session, "_trace_events", []) or []),
         int(turn),
@@ -262,8 +265,19 @@ def _select_and_apply_ranked_ladder(
     lookup_path = str(getattr(cfg, "adaptive_control_lookup_table_path", "") or "")
     lookup_rows = lookup_runtime.load_lookup(lookup_path)
     machine = episode.machine(session)
-    ladder_size = lookup_runtime.ranked_ladder_size(lookup_rows)
-    caps = _episode_caps_for_detector(cfg, ladder_size=ladder_size)
+    caps = _episode_caps_for_detector(cfg)
+    from ..time_budget import remaining_run_seconds
+    remaining_seconds = remaining_run_seconds()
+    watch_start, watch_end = _watch_window(turn, cfg)
+    if watch_end < watch_start or remaining_seconds == 0:
+        row["intervention_selection"] = {
+            "selection_status": "not_attempted",
+            "selection_blocked_reason": "observation_budget_exhausted",
+            "resolved_episode_caps": dataclasses.asdict(caps),
+            "watch_window_start": watch_start, "watch_window_end": watch_end,
+            "run_remaining_seconds": remaining_seconds,
+        }
+        return
 
     chosen_preview, preview_status, preview_reason = lookup_runtime.select_ranked_ladder(
         lookup_rows,
@@ -291,6 +305,7 @@ def _select_and_apply_ranked_ladder(
         "lookup_table_path": lookup_path,
         "detector_family": verdict.hurdle_family,
         "selection_policy": "atlas_ranked_ladder",
+        "resolved_episode_caps": dataclasses.asdict(caps),
         "selection_status": selection_status,
         "selection_blocked_reason": selection_reason or plan.block_reason,
         "excluded_intervention_ids": ";".join(exclude_ids),
@@ -465,6 +480,9 @@ def _select_and_apply_ranked_ladder(
         result = executors.apply(session, payload)
     applied_episode = None
     if result.applied:
+        if _delivery == "stop_resume":
+            import copy
+            prior_machine = copy.deepcopy(machine)
         attempt_id = str(getattr(session, "attempt_id", "") or "attempt")
         applied_episode = episode.record_apply(machine, caps, signal_id, intervention_id, turn, attempt_id)
         _set_pending_watch(
@@ -479,6 +497,16 @@ def _select_and_apply_ranked_ladder(
             previous_intervention_id=applied_episode.previous_intervention_id,
             same_hurdle_escalation=plan.is_escalation or same_hurdle_escalation,
         )
+        if _delivery == "stop_resume":
+            from .persistence import save_state
+            if not save_state(session):
+                session._adaptive_stop_requested = None
+                session._adaptive_control_episode_machine = prior_machine
+                machine = prior_machine
+                _clear_pending_watch(session)
+                applied_episode = None
+                result = dataclasses.replace(result, applied=False,
+                    blocked_reason="controller_state_write_failed")
     result_dict = _result_dict(result)
     row["intervention_apply"] = result_dict
     pending = _pending_watch(session) or {}
@@ -539,56 +567,29 @@ def _select_and_apply_ranked_ladder(
 
 
 def _episode_caps_for_detector(cfg: Any, *, ladder_size: int = 0):
+    """Use episode limits; legacy fields only fill absent replacements.
+
+    Candidate count and the product of episode limits grant no total budget.
+    Keep ladder_size for existing callers without using it for permission.
+    """
     from . import episode
 
     caps = episode.caps_from_cfg(cfg)
-
-    def _legacy(key: str, default: int) -> int:
-        # same falsy-zero trap as episode.caps_from_cfg: `or default`
-        # would eat an explicit 0
-        value = getattr(cfg, key, None)
-        if value is None or value == "":
-            return default
-        return int(value)
-
-    legacy_attempt = _legacy("adaptive_control_max_interventions", 1)
-    legacy_same = _legacy("adaptive_control_max_same_signal_interventions", 1)
-    # Shadow mode (withheld branch): an explicit zero intervention
-    # budget on BOTH the episode cap and the legacy cap means observe
-    # only — no ladder floor, no applies. The detector keeps running
-    # and recording; plan_apply refuses every apply.
-    if caps.max_interventions_per_attempt == 0 and legacy_attempt == 0:
-        return episode.Caps(
-            max_interventions_per_attempt=0,
-            max_interventions_per_hurdle_episode=0,
-            max_distinct_hurdle_episodes_per_attempt=0,
-            cooldown_after_apply_slots=caps.cooldown_after_apply_slots,
-        )
-    per_episode = max(
-        caps.max_interventions_per_hurdle_episode,
-        legacy_same,
-        int(ladder_size),
-    )
-    distinct_episodes = max(
-        caps.max_distinct_hurdle_episodes_per_attempt,
-        legacy_attempt,
-    )
-    return episode.Caps(
-        max_interventions_per_attempt=max(
-            caps.max_interventions_per_attempt,
-            legacy_attempt,
-            per_episode * distinct_episodes,
-        ),
-        max_interventions_per_hurdle_episode=per_episode,
-        max_distinct_hurdle_episodes_per_attempt=distinct_episodes,
-        cooldown_after_apply_slots=caps.cooldown_after_apply_slots,
-    )
+    if caps.max_interventions_per_attempt == 0:
+        return episode.Caps(0, 0, 0, caps.cooldown_after_apply_slots)
+    return caps
 
 
 def _watch_window(turn: int, cfg: Any) -> tuple[int, int]:
-    width = max(1, int(getattr(cfg, "adaptive_control_watch_window_turns", 5) or 5))
+    value = getattr(cfg, "adaptive_control_watch_window_turns", None)
+    width = max(0, int(value)) if value is not None else 5
     start = int(turn) + 1
-    return start, int(turn) + width
+    end = int(turn) + width
+    max_turns = getattr(cfg, "max_turns", None)
+    # A stop/resume watch belongs to the next invocation, bounded on restore.
+    if max_turns is not None and getattr(cfg, "adaptive_control_delivery", "in_place") != "stop_resume":
+        end = min(end, int(max_turns) - 1)
+    return start, end
 
 
 def _pending_watch(session: Any) -> dict[str, Any] | None:

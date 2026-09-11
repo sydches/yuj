@@ -13,11 +13,15 @@ import time
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from contextlib import nullcontext
+from functools import wraps
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from .._shared.telemetry_paths import telemetry_dir
 from .tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
+from .task_path import TaskPath, bound_task_path
+from .time_budget import BudgetExhausted, execution_deadline, remaining_before
 
 _HEAD_REF = "refs/heads/checkpoints"
 _TURN_REF_PREFIX = "refs/yuj/checkpoints/turn-"
@@ -31,6 +35,14 @@ class WorkspaceCheckpointError(RuntimeError):
 
 class CheckpointNotFoundError(WorkspaceCheckpointError):
     pass
+
+
+class RestoreRecoveryError(WorkspaceCheckpointError):
+    """Restore failed and its durable undo record still needs recovery."""
+
+    def __init__(self, recovery_path):
+        self.recovery_path = recovery_path
+        super().__init__(f'workspace restore recovery incomplete; records retained at {recovery_path}')
 
 
 def _utc_now() -> datetime:
@@ -118,6 +130,21 @@ def _normalize_exclude(pattern: str) -> str:
     return value
 
 
+def _file_scoped_checkpoint(function):
+    @wraps(function)
+    def scoped(store, *args, **kwargs):
+        from .checkpoint_binding import checkpoint_hidden_paths
+        with store._lock:
+            with store._task_access() if store._task_access is not None else nullcontext():
+                previous = store._checkpoint_hidden_paths
+                store._checkpoint_hidden_paths = checkpoint_hidden_paths(store.workspace)
+                try:
+                    return function(store, *args, **kwargs)
+                finally:
+                    store._checkpoint_hidden_paths = previous
+    return scoped
+
+
 class WorkspaceCheckpointStore:
     def __init__(
         self,
@@ -126,12 +153,18 @@ class WorkspaceCheckpointStore:
         shadow_dir: Path | None = None,
         excludes: Iterable[str] = (),
         clock: Callable[[], datetime] = _utc_now,
+        object_format: str = 'sha1',
     ) -> None:
         self.workspace = Path(workspace).resolve()
         self.shadow_dir = Path(shadow_dir or default_shadow_dir(self.workspace)).resolve()
         self.excludes = tuple(_normalize_exclude(value) for value in excludes)
         self._clock = clock
         self._lock = threading.RLock()
+        self._task_access = None
+        self._checkpoint_hidden_paths = ()
+        if object_format not in ('sha1', 'sha256'):
+            raise ValueError('unsupported checkpoint Git object format')
+        self.object_format = object_format
         if not self.workspace.is_dir():
             raise ValueError(f"workspace is not a directory: {self.workspace}")
         try:
@@ -145,12 +178,31 @@ class WorkspaceCheckpointStore:
     def sandbox_unreadable_paths(self) -> tuple[str, ...]:
         return (f"optional:{self.shadow_dir}",)
 
-    def _env(self, *, index: Path | None = None) -> dict[str, str]:
+    def bind_task_access(self, cfg, *, environment, allow_login_shell, ignore_policy):
+        """Keep session capture and operator rewind on the configured task view."""
+        from contextlib import contextmanager
+        from .task_file_runtime import task_file_scope
+        from .task_path import activate_task_files
+        environment = dict(environment)
+        options = dict(environment=environment, allow_login_shell=allow_login_shell,
+                       ignore_policy=ignore_policy)
+        with task_file_scope(str(self.workspace), cfg, **options) as files:
+            pass
+
+        @contextmanager
+        def access():
+            with activate_task_files(files, host_root=self.workspace):
+                with task_file_scope(str(self.workspace), cfg, **options):
+                    yield
+
+        self._task_access = access
+
+    def _env(self, *, index: Path | None = None, worktree: Path | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env.update(
             {
                 "GIT_DIR": str(self.shadow_dir),
-                "GIT_WORK_TREE": str(self.workspace),
+                "GIT_WORK_TREE": str(worktree if worktree is not None else self.workspace),
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "GIT_ATTR_NOSYSTEM": "1",
                 "GIT_CONFIG_GLOBAL": os.devnull,
@@ -170,16 +222,17 @@ class WorkspaceCheckpointStore:
         *,
         input_bytes: bytes | None = None,
         index: Path | None = None,
+        worktree: Path | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
         try:
             proc = subprocess.run(
                 ["git", *args],
-                cwd=self.workspace,
-                env=self._env(index=index),
+                cwd=worktree if worktree is not None else self.shadow_dir,
+                env=self._env(index=index, worktree=worktree),
                 input=input_bytes,
                 capture_output=True,
-                timeout=120,
+                timeout=remaining_before(execution_deadline()),
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -204,11 +257,11 @@ class WorkspaceCheckpointStore:
             init_env.pop("GIT_WORK_TREE", None)
             init_env.pop("GIT_INDEX_FILE", None)
             proc = subprocess.run(
-                ["git", "init", "--bare", "-q", str(self.shadow_dir)],
-                cwd=self.workspace,
+                ["git", "init", "--bare", "-q", f"--object-format={self.object_format}", str(self.shadow_dir)],
+                cwd=self.shadow_dir.parent,
                 env=init_env,
                 capture_output=True,
-                timeout=30,
+                timeout=remaining_before(execution_deadline()),
                 check=False,
             )
             if proc.returncode != 0:
@@ -225,9 +278,15 @@ class WorkspaceCheckpointStore:
             raise WorkspaceCheckpointError(
                 "shadow Git metadata does not belong to this workspace"
             )
+        observed_format = self._git(['rev-parse', '--show-object-format']).stdout.decode().strip()
+        if observed_format != self.object_format:
+            raise WorkspaceCheckpointError('checkpoint Git object format does not match the selected source')
 
     def _is_excluded(self, rel_path: str) -> bool:
         if rel_path == ".git" or rel_path.startswith(".git/"):
+            return True
+        if any(rel_path == path or rel_path.startswith(path + '/')
+               for path in self._checkpoint_hidden_paths):
             return True
         for pattern in self.excludes:
             prefix = pattern[:-3].rstrip("/") if pattern.endswith("/**") else ""
@@ -242,6 +301,11 @@ class WorkspaceCheckpointStore:
         return False
 
     def _candidate_paths(self) -> list[str]:
+        native = bound_task_path(str(self.workspace), '.')
+        if native is not None:
+            from .checkpoint_files import native_checkpoint_paths
+            return native_checkpoint_paths(native, shadow_dir=self.shadow_dir,
+                                           git=self._git, excluded=self._is_excluded)
         output = self._git(
             ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"]
         ).stdout
@@ -258,10 +322,11 @@ class WorkspaceCheckpointStore:
         return sorted(set(paths))
 
     def _hash_file(self, rel_path: str) -> tuple[int, str, int]:
-        path = self.workspace / rel_path
+        native = bound_task_path(str(self.workspace), '.')
+        path = (native if native is not None else self.workspace) / rel_path
         info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
-            data = os.fsencode(os.readlink(path))
+            data = os.fsencode(path.files.readlink(str(path.path)) if isinstance(path, TaskPath) else os.readlink(path))
             mode = 0o120000
         elif stat.S_ISREG(info.st_mode):
             data = path.read_bytes()
@@ -324,22 +389,59 @@ class WorkspaceCheckpointStore:
         finally:
             os.close(fd)
 
+    def _observe_task_binding(self) -> dict:
+        from .checkpoint_binding import checkpoint_task_binding
+        try:
+            # Normalize tuples before comparing with metadata read from Git.
+            return json.loads(json.dumps(checkpoint_task_binding(
+                self.workspace, hidden_paths=self._checkpoint_hidden_paths, excludes=self.excludes,
+            )))
+        except BudgetExhausted:
+            raise
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise WorkspaceCheckpointError('checkpoint task binding unavailable') from exc
+
+    def _require_task_binding(self, expected: dict) -> None:
+        if self._observe_task_binding() != expected:
+            raise WorkspaceCheckpointError('checkpoint task binding differs from the selected task')
+
+    def _recorded_task_binding(self, commit: str) -> dict:
+        raw = self._git(['cat-file', 'commit', commit]).stdout
+        try:
+            message = raw.split(b'\n\n', 1)[1]
+            metadata = json.loads(message.split(b'\n\n', 1)[1])
+            binding = metadata['yuj_checkpoint_binding']
+            if not isinstance(binding, dict) or binding.get('version') != 1:
+                raise ValueError('unsupported checkpoint task binding')
+            return binding
+        except (IndexError, ValueError, KeyError, TypeError) as exc:
+            raise WorkspaceCheckpointError(
+                'checkpoint has no supported task binding; automatic restore unavailable'
+            ) from exc
+
+    @_file_scoped_checkpoint
     def capture(self, turn: int) -> WorkspaceCheckpoint:
+        from .restore_recovery import DIRECTORY, restore_lock
         if int(turn) < 0:
             raise ValueError("checkpoint turn must be non-negative")
         turn = int(turn)
         started = time.perf_counter()
-        with self._lock:
+        with self._lock, restore_lock(self):
             self._ensure_initialized()
+            if (self.shadow_dir / DIRECTORY).exists():
+                raise RestoreRecoveryError(self.shadow_dir / DIRECTORY)
+            binding = self._observe_task_binding()
             paths = self._candidate_paths()
             temporary_index = self.shadow_dir / f".index-{uuid.uuid4().hex}"
             try:
                 tree, byte_count = self._build_tree(paths, temporary_index)
+                self._require_task_binding(binding)
                 args = ["commit-tree", tree]
                 parent = self._current_commit()
                 if parent:
                     args.extend(["-p", parent])
-                message = f"yuj workspace checkpoint turn {turn}\n".encode()
+                metadata = json.dumps({'yuj_checkpoint_binding': binding}, sort_keys=True)
+                message = f"yuj workspace checkpoint turn {turn}\n\n{metadata}\n".encode()
                 commit = self._git(args, input_bytes=message).stdout.decode().strip()
                 transaction = (
                     f"start\nupdate {_HEAD_REF} {commit}\n"
@@ -391,7 +493,9 @@ class WorkspaceCheckpointStore:
         return entries
 
     def _remove_path(self, rel_path: str) -> bool:
-        target = self.workspace / rel_path
+        native = bound_task_path(str(self.workspace), '.')
+        root = native if native is not None else self.workspace
+        target = root / rel_path
         if target.is_symlink() or target.is_file():
             target.unlink()
         elif target.exists():
@@ -399,7 +503,7 @@ class WorkspaceCheckpointStore:
         else:
             return False
         parent = target.parent
-        while parent != self.workspace:
+        while parent != root:
             try:
                 parent.rmdir()
             except OSError:
@@ -409,11 +513,15 @@ class WorkspaceCheckpointStore:
 
     def _write_regular_file(self, target: Path, data: bytes, mode: int) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(target, TaskPath):
+            target.files.replace_bytes(str(target.path), data,
+                                       mode=stat.S_IMODE(mode))
+            return
         fd, temporary_name = tempfile.mkstemp(prefix=".yuj-restore-", dir=target.parent)
         temporary = Path(temporary_name)
         try:
             _write_all(fd, data)
-            os.fchmod(fd, 0o755 if mode & 0o111 else 0o644)
+            os.fchmod(fd, stat.S_IMODE(mode))
             os.fsync(fd)
             os.close(fd)
             fd = -1
@@ -434,37 +542,64 @@ class WorkspaceCheckpointStore:
             except FileNotFoundError:
                 pass
 
+    @_file_scoped_checkpoint
     def restore_checkpoint(self, turn: int) -> RestoredCheckpoint:
-        with self._lock:
+        from .restore_recovery import RestoreJournal, restore_lock
+        with self._lock, restore_lock(self):
+            native = bound_task_path(str(self.workspace), '.')
+            root = native if native is not None else self.workspace
+            pending = RestoreJournal.load(self, root)
+            if pending is not None:
+                try:
+                    pending.recover()
+                except Exception as error:
+                    raise RestoreRecoveryError(pending.directory) from error
             commit = self._resolve_turn(turn)
+            binding = self._recorded_task_binding(commit)
+            self._require_task_binding(binding)
             target_entries = self._tree_entries(commit)
             current_paths = set(self._candidate_paths())
-            removed = sum(
-                self._remove_path(path)
-                for path in sorted(
-                    current_paths - target_entries.keys(), reverse=True
-                )
+            journal = RestoreJournal.prepare(
+                self, root, current_paths | target_entries.keys(), binding, commit,
             )
+            removed = 0
             bytes_restored = 0
-            for entry in target_entries.values():
-                target = self.workspace / entry.path
-                data = self._git(["cat-file", "blob", entry.object_id]).stdout
-                bytes_restored += len(data)
-                if entry.mode == 0o120000:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if target.is_symlink() or target.is_file():
-                        target.unlink()
-                    elif target.exists():
-                        try:
-                            target.rmdir()
-                        except OSError as exc:
-                            raise WorkspaceCheckpointError(
-                                f"cannot replace non-empty directory at {entry.path}"
-                            ) from exc
-                    os.symlink(os.fsdecode(data), target)
-                else:
-                    self._write_regular_file(target, data, entry.mode)
-            self._git(["read-tree", commit])
+            try:
+                for path in sorted(current_paths - target_entries.keys(), reverse=True):
+                    journal.record(path)
+                    removed += self._remove_path(path)
+                for entry in target_entries.values():
+                    target = root / entry.path
+                    data = self._git(["cat-file", "blob", entry.object_id]).stdout
+                    bytes_restored += len(data)
+                    if isinstance(target, TaskPath):
+                        from .checkpoint_files import native_entry_matches
+                        if native_entry_matches(target, data, entry.mode):
+                            continue
+                    journal.record(entry.path, data=data, mode=entry.mode)
+                    if entry.mode == 0o120000:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if target.is_symlink() or target.is_file():
+                            target.unlink()
+                        elif target.exists():
+                            try:
+                                target.rmdir()
+                            except OSError as exc:
+                                raise WorkspaceCheckpointError(
+                                    f"cannot replace non-empty directory at {entry.path}"
+                                ) from exc
+                        target.symlink_to(os.fsdecode(data))
+                    else:
+                        self._write_regular_file(target, data, entry.mode)
+                self._require_task_binding(binding)
+                self._git(["read-tree", commit])
+            except Exception as error:
+                try:
+                    journal.recover()
+                except Exception:
+                    raise RestoreRecoveryError(journal.directory) from error
+                raise
+            journal.finish()
             return RestoredCheckpoint(
                 turn=int(turn),
                 commit=commit,
@@ -472,6 +607,22 @@ class WorkspaceCheckpointStore:
                 files_removed=removed,
                 bytes_restored=bytes_restored,
             )
+
+    @_file_scoped_checkpoint
+    def recover_incomplete_restore(self) -> bool:
+        """Retry durable recovery under the currently selected task binding."""
+        from .restore_recovery import RestoreJournal, restore_lock
+        with self._lock, restore_lock(self):
+            native = bound_task_path(str(self.workspace), '.')
+            root = native if native is not None else self.workspace
+            journal = RestoreJournal.load(self, root)
+            if journal is None:
+                return False
+            try:
+                journal.recover()
+            except Exception as error:
+                raise RestoreRecoveryError(journal.directory) from error
+            return True
 
     def metrics_payload(self) -> dict[str, object]:
         self._ensure_initialized()

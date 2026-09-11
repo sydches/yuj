@@ -1,6 +1,7 @@
 """Guardrail framework — facade over the _guardrails/ package.
 
-Pre-tool decisions: intent_gate, loop_detect, duplicate_guard, pre_mutation_gate,
+Post-turn observation guard: duplicate_guard.
+Pre-tool decisions: intent_gate, loop_detect, pre_mutation_gate,
 done_guard, mutation_repeat_guard, contract_gate,
 post_mutation_verification_gate, rumination_gate.
 Post-tool ladders: error_ladder, test_read_ladder, rumination_ladder.
@@ -27,6 +28,7 @@ from ._guardrails import (  # noqa: F401
     TOOL_POST_DISPATCH_ORDER,
     TOOL_PRE_DISPATCH_ORDER,
     TURN_PRE_DISPATCH_ORDER,
+    TURN_POST_DISPATCH_ORDER,
     contract_gate,
     done_guard,
     duplicate_guard,
@@ -108,12 +110,14 @@ def _builtins_for_phase(phase: str) -> dict[str, Callable[..., Any]]:
 def build_guardrail_registry(
     *,
     turn_pre_overrides: dict[str, Callable[..., Decision]] | None = None,
+    turn_post_overrides: dict[str, Callable[..., Decision]] | None = None,
     tool_pre_overrides: dict[str, Callable[..., Decision]] | None = None,
     tool_post_overrides: dict[str, Callable[..., Decision]] | None = None,
     observer_overrides: dict[str, Callable[..., None]] | None = None,
 ) -> GuardrailRegistry:
     """Build the effective guardrail registry with optional overrides."""
     turn_pre_dispatch = _builtins_for_phase("turn_pre_dispatch")
+    turn_post_dispatch = _builtins_for_phase("turn_post_dispatch")
     tool_pre_dispatch = _builtins_for_phase("tool_pre_dispatch")
     tool_post_dispatch = _builtins_for_phase("tool_post_dispatch")
     observers = _builtins_for_phase("observers")
@@ -131,10 +135,13 @@ def build_guardrail_registry(
             )
 
     _check_keys(turn_pre_dispatch, turn_pre_overrides, "turn_pre")
+    _check_keys(turn_post_dispatch, turn_post_overrides, "turn_post")
     _check_keys(tool_pre_dispatch, tool_pre_overrides, "tool_pre")
     _check_keys(tool_post_dispatch, tool_post_overrides, "tool_post")
     _check_keys(observers, observer_overrides, "observer")
 
+    if turn_post_overrides:
+        turn_post_dispatch.update(turn_post_overrides)
     if turn_pre_overrides:
         turn_pre_dispatch.update(turn_pre_overrides)
     if tool_pre_overrides:
@@ -145,6 +152,7 @@ def build_guardrail_registry(
         observers.update(observer_overrides)
     return GuardrailRegistry(
         turn_pre_dispatch=turn_pre_dispatch,
+        turn_post_dispatch=turn_post_dispatch,
         tool_pre_dispatch=tool_pre_dispatch,
         tool_post_dispatch=tool_post_dispatch,
         observers=observers,
@@ -165,6 +173,7 @@ def validate_guardrail_registry(registry: GuardrailRegistry) -> None:
 
     missing = (
         _missing(TURN_PRE_DISPATCH_ORDER, registry.turn_pre_dispatch)
+        + _missing(TURN_POST_DISPATCH_ORDER, registry.turn_post_dispatch)
         + _missing(TOOL_PRE_DISPATCH_ORDER, registry.tool_pre_dispatch)
         + _missing(TOOL_POST_DISPATCH_ORDER, registry.tool_post_dispatch)
         + _missing(OBSERVER_ORDER, registry.observers)
@@ -175,6 +184,7 @@ def validate_guardrail_registry(registry: GuardrailRegistry) -> None:
     bad: list[str] = []
     for phase_name, registered in (
         ("turn_pre", registry.turn_pre_dispatch),
+        ("turn_post", registry.turn_post_dispatch),
         ("tool_pre", registry.tool_pre_dispatch),
         ("tool_post", registry.tool_post_dispatch),
         ("observer", registry.observers),

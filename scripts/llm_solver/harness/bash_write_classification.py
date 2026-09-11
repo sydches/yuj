@@ -45,7 +45,7 @@ BASH_ACTION_SHELL_WRITE_RE = re.compile(
 )
 BASH_ACTION_REDIRECT_SOURCE_RE = re.compile(
     rf"(?:^|[\s;&|])(?:\d?>|>>)\s*"
-    rf"(?:/testbed/)?[A-Za-z0-9_./+-]+\.({_SOURCE_EXT_RE})\b",
+    rf"[A-Za-z0-9_./+-]+\.({_SOURCE_EXT_RE})\b",
     re.DOTALL,
 )
 BASH_ACTION_PYTHON_WRITE_RE = re.compile(
@@ -67,7 +67,7 @@ BASH_LEGACY_PYTHON_WRITE_RE = re.compile(
     re.DOTALL,
 )
 FILE_TOKEN_RE = re.compile(
-    r"(?<![\w/.-])(?:/testbed/)?[A-Za-z0-9_./+-]+\."
+    r"(?<![\w/.-])[A-Za-z0-9_./+-]+\."
     rf"(?:{_SOURCE_EXT_RE})\b"
 )
 PY_PATH_RE = re.compile(r"(?:open|Path)\(\s*['\"]([^'\"]+)['\"]")
@@ -110,8 +110,8 @@ class BashWriteClassification:
 def normalize_trace_path(path: str) -> str:
     """Normalize path tokens emitted in model tool arguments."""
     path = path.strip().strip("'\"")
-    if path.startswith("/testbed/"):
-        path = path[len("/testbed/"):]
+    from .task_environment import relative_task_path
+    path = relative_task_path(path)
     if path.startswith("./"):
         path = path[2:]
     return path
@@ -122,9 +122,8 @@ def is_workspace_path(path: str) -> bool:
     path = path.strip().strip("'\"")
     if not path or "://" in path:
         return False
-    if path.startswith("/testbed/"):
-        path = path[len("/testbed/"):]
-    elif path.startswith("/"):
+    path = normalize_trace_path(path)
+    if path.startswith("/"):
         return False
     if path.startswith("./"):
         path = path[2:]

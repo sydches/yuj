@@ -9,17 +9,19 @@ visible at one read-site. Names patched by tests are late-bound through the
 public ``loop`` module rather than imported directly.
 """
 from __future__ import annotations
+from contextlib import nullcontext
 import hashlib
 import logging
 import os
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ..._shared.telemetry_paths import telemetry_dir
+from ..._shared.task_artifacts import PROMPT_NAME
 from ...config import Config
 from ...server.request_controls import CacheUsageAccumulator
 from ..context import ContextManager
@@ -31,7 +33,6 @@ from ..security_scan import (
     prepend_finding_markers,
 )
 from . import (
-    _normalize_repo_timestamps,
     _pretest_is_green,
     build_resume_prompt,
     run_pretest,
@@ -59,11 +60,15 @@ from ..plan_mode import (
     plan_mode_required,
 )
 from ..tool_loading import estimate_tool_block_tokens
+from ..task_environment import task_environment_scope
+from ..time_budget import solve_time_budget, remaining_run_seconds
 
 if TYPE_CHECKING:
     from ..loop import SessionResult, TaskSpec
 log = logging.getLogger(__name__)
 
+@task_environment_scope
+@solve_time_budget
 def solve_task(
     repo_dir: Path, cfg: Config, client,
     system_prompt_file: Path | None = None,
@@ -94,6 +99,8 @@ def solve_task(
     profile_path: optional path to profile.toml for provenance hashing.
     """
     work_dir = Path(repo_dir)
+    from ..sandbox.policy import bind_sandbox_resolution, preflight_sandbox
+    cfg = bind_sandbox_resolution(cfg, preflight_sandbox(cfg))
     if startup_guard is not None:
         startup_guard(work_dir, cfg, system_prompt_file)
     if transparent_resume and resume_path is None:
@@ -108,6 +115,20 @@ def solve_task(
     log = _loop_mod.log  # so test patches on loop.log intercept these emits
 
     work_dir, artifact_dir, trace_path = resolve_run_paths(work_dir, artifacts_dir)
+    # An implicit output name does not grant ownership of an existing task file.
+    overwrite_status = artifacts_dir is not None
+    if not overwrite_status:
+        from ..._shared.task_artifacts import CHECKPOINT_NAME, METRICS_NAME
+        for name in (CHECKPOINT_NAME, METRICS_NAME):
+            destination = artifact_dir / name
+            if destination.exists() or destination.is_symlink():
+                raise ValueError(
+                    f"Refusing to replace automatic status output {destination}. "
+                    "Preserve or move that file, or explicitly select artifacts_dir "
+                    "for status records that may be replaced."
+                )
+    from ..task_environment import discover_task_environment
+    task_environment = discover_task_environment(work_dir, refresh=True)
     subagent_runtime = None
     if getattr(cfg, "tools_task_enabled", False):
         from ..subagents import SubagentRuntime
@@ -185,25 +206,14 @@ def solve_task(
             unreadable_paths=tuple(cfg.unreadable_paths) + (str(rewind_dir),),
         )
     from ..tools import _effective_command_environment
-    resolved_env, allow_login_shell = _effective_command_environment(cfg)
+    resolved_env, allow_login_shell = _effective_command_environment(cfg, cwd=work_dir)
     # One immutable snapshot is shared by every session and command surface;
     # later host-process environment mutations cannot change this run.
     effective_env = MappingProxyType(resolved_env)
-    from ..sandbox.ignore_policy import (
-        PROJECT_INIT_PRIVATE_RULES,
-        load_ignore_policy,
-    )
-    ignore_policy = load_ignore_policy(
-        work_dir,
-        enabled=getattr(cfg, "state_ignore_file_enabled", True),
-        file_names=getattr(
-            cfg, "state_ignore_file_names", (".yujignore",)
-        ),
-        builtin_rules=(
-            PROJECT_INIT_PRIVATE_RULES
-            if getattr(cfg, "assistant_project_init_destination", "")
-            else ()
-        ),
+    from ..task_file_runtime import load_task_ignore_policy
+    ignore_policy = load_task_ignore_policy(
+        work_dir, cfg, environment=effective_env,
+        allow_login_shell=allow_login_shell,
     )
     # Context discovery happens before the first model call. Give it the same
     # startup view as the tools while retaining the immutable compiled policy
@@ -212,19 +222,16 @@ def solve_task(
         *tuple(cfg.unreadable_paths),
         *ignore_policy.sandbox_unreadable_paths(),
     )))
-    from ..skills import discover_skills
-    skill_catalog = discover_skills(
-        work_dir,
-        enabled=getattr(cfg, "skills_enabled", False),
-        skills_dirs=getattr(cfg, "skills_dirs", ()),
-        skill_paths=getattr(cfg, "skill_paths", ()),
-        root_markers=cfg.project_root_markers,
+    from ..startup_files import discover_task_skills
+    skill_catalog = discover_task_skills(
+        work_dir, cfg, environment=effective_env,
+        allow_login_shell=allow_login_shell, ignore_policy=ignore_policy,
         unreadable_paths=prompt_unreadable_paths,
     )
     # Freeze only validated, first-wins skill directories into the run config.
     # File mutation tools retain their cwd-only resolver.
     cfg = replace(cfg, skills_readable_dirs=skill_catalog.readable_dirs)
-    prompt_file = artifact_dir / "prompt.txt"
+    prompt_file = artifact_dir / PROMPT_NAME
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
     if task_prompt is None and task_spec is not None:
@@ -236,22 +243,36 @@ def solve_task(
         task_prompt = prompt_file.read_text()
 
     start_time = time.time()
+    from ..runtime_discovery import bind_command_environment, discover_runtime
+    runtime_observations = discover_runtime(
+        work_dir, cfg, effective_env=effective_env,
+        unreadable_paths=prompt_unreadable_paths,
+    )
+    effective_env = MappingProxyType(bind_command_environment(cfg, runtime_observations, effective_env))
+    cfg = resolve_task_format(cfg, work_dir, runtime_observations=runtime_observations)
     (system_prompt, provenance, context_contract,
      prompt_metadata) = load_system_prompt_and_provenance(
         cfg, client, work_dir, system_prompt_file, profile_path, run_metadata,
         context_class,
         unreadable_paths=prompt_unreadable_paths,
         skill_catalog=skill_catalog,
+        runtime_observations=runtime_observations,
+        effective_env=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
     )
     resolved_injections, injection_import_tree = load_session_injections(
         cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
+        effective_env=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
     )
     (resolved_injections, injection_security_findings,
      injection_security_blocked) = scan_session_injections(
          cfg, resolved_injections
     )
     resolved_stream_rules, stream_rule_files = load_session_stream_rules(
-        cfg, work_dir,
+        cfg, work_dir, unreadable_paths=prompt_unreadable_paths,
+        effective_env=effective_env, allow_login_shell=allow_login_shell,
+        ignore_policy=ignore_policy,
     )
     (resolved_stream_rules, stream_security_findings,
      stream_security_blocked) = scan_session_stream_rules(
@@ -321,11 +342,10 @@ def solve_task(
     # Mechanical state.json is rebuilt from the trace at session boundaries.
     state_json_path = artifact_dir / ".solver" / "state.json"
     state_path: Path | None = state_json_path if cfg.state_writer_enabled else None
-    # Multilingual: resolve analysis_task_format="auto" to the repo's
-    # actual runner before any consumer (verification detection, output
-    # parsing, detector fields) reads it. No-op when a concrete format
-    # is pinned. Must precede load_transforms_and_estimator.
-    cfg = resolve_task_format(cfg, work_dir)
+    if state_path is not None:
+        from .state_projection import validate_state_destination
+        validate_state_destination(state_path, trace_path, cfg)
+    # Share the runner resolved before startup context assembly with the client.
     if "cfg" in getattr(client, "__dict__", {}):
         client.cfg = cfg
     setup_run_outputs(
@@ -343,23 +363,10 @@ def solve_task(
          cfg, client, work_dir
      )
 
-    # YUJ_HOLD_UNTIL — explicit pre-launch gate (same env-var contract style
-    # as YUJ_CONTAINER). An orchestrator that pipelines tasks can start this
-    # solver early, let ALL startup above (imports, config, transforms,
-    # tokenizer) complete while the previous task still owns the GPU, and
-    # release it by creating the signal file the moment the GPU frees. Every
-    # step above this line is CPU-only; the first server request happens
-    # after it. Unset => no behavior change. A signal that never arrives is
-    # a loud RuntimeError after YUJ_HOLD_TIMEOUT_S (default 1800), not a hang.
-    _hold = os.environ.get("YUJ_HOLD_UNTIL", "")
-    if _hold:
-        _deadline = time.time() + float(os.environ.get("YUJ_HOLD_TIMEOUT_S", "1800"))
-        log.info("hold_until: startup complete, waiting for signal %s", _hold)
-        while not os.path.exists(_hold):
-            if time.time() > _deadline:
-                raise RuntimeError(f"YUJ_HOLD_UNTIL signal never arrived: {_hold}")
-            time.sleep(0.05)
-        log.info("hold_until: released")
+    # Earlier CLI metadata queries precede this solve-loop gate. The wait
+    # shares the invocation deadline; a signal is not an ownership proof.
+    from .hold_gate import wait_for_hold
+    wait_for_hold(trace_path, log)
 
     # Pretest-parity baseline captured at session 1 (when parser is loaded).
     # Holds {'failing': set, 'passing': set}; passed unchanged to every
@@ -375,6 +382,12 @@ def solve_task(
             trace_path,
             mode=getattr(cfg, "interrupted_turn_mode", "mechanical"),
         )
+    from ..task_identity import resolve_task_identity
+    task_identity = resolve_task_identity(
+        cfg,
+        prior_events=_load_trace_events(trace_path) if resume_from_artifacts else None,
+        transcript_resume=resume_path is not None,
+    )
     start_session_num = _next_session_number(trace_path) if resume_from_artifacts else 1
     end_session_num = start_session_num + cfg.max_sessions - 1
     plan_transition_seen = has_plan_mode_transition(
@@ -432,10 +445,9 @@ def solve_task(
                 "the first model call"
             )
         for session_num in range(start_session_num, end_session_num + 1):
-            # Pretest: run failing tests BEFORE every session. Verdict becomes
-            # the first block of the session's first user message. On sessions
-            # 2+ we short-circuit to success if the pretest already exits
-            # green — no model invocation needed.
+            # Only an explicit caller script enters the legacy pretest path.
+            # Its formatted output and later-session green shortcut remain;
+            # task/revision-bound acceptance is a separate unresolved contract.
             _pretest_t0 = time.time()
             pretest_block = (
                 run_pretest(
@@ -444,6 +456,7 @@ def solve_task(
                     pretest_timeout=cfg.pretest_timeout,
                     pretest_head_chars=cfg.pretest_head_chars,
                     pretest_tail_chars=cfg.pretest_tail_chars,
+                    report_cfg=cfg,
                 )
                 if pretest_enabled
                 else ""
@@ -476,6 +489,7 @@ def solve_task(
                 session_number=session_num,
                 duration_ms=_pretest_duration_ms,
                 chars=len(pretest_block),
+                native_test_report=getattr(pretest_block, "native_test_report", None),
             )
             # Record the pretest-block character cost on the savings ledger as
             # `pretest_block` per
@@ -492,8 +506,8 @@ def solve_task(
                     measure_type="exact",
                     ctx={"duration_ms": _pretest_duration_ms},
                 )
-            # Parse pretest output on session 1 ONLY — this is the task's
-            # ground-truth baseline. Subsequent sessions inherit the same
+            # Capture the runner report on session 1 only. Diagnostic stdout
+            # does not establish per-test identities. Later sessions inherit the
             # baseline (pretest on session 2+ may look different after
             # mid-task progress but should not re-seed).
             if (session_num == start_session_num
@@ -508,8 +522,9 @@ def solve_task(
                         ) or 0) > 0
                     )):
                 try:
-                    from ...bash_quirks import parse_structured
-                    pre_parsed = parse_structured(pretest_block, output_parser)
+                    pre_parsed = getattr(pretest_block, "native_test_report", None) or {}
+                    if pre_parsed.get("status") != "available":
+                        pre_parsed = {}
                     tests = pre_parsed.get("tests") or {}
                     failing = {t for t, v in tests.items() if v in ("FAILED", "FAIL", "ERROR")}
                     passing = {t for t, v in tests.items() if v in ("PASSED", "PASS")}
@@ -518,7 +533,7 @@ def solve_task(
                         log.info("Pretest parity baseline: %d failing, %d passing",
                                  len(failing), len(passing))
                     else:
-                        log.info("Pretest not structurally parseable — done_guard falls back to heuristic")
+                        log.info("Pretest per-test report unavailable; parity is unknown")
                 except Exception as e:
                     log.debug("Pretest parse failed: %s", e)
             plan_still_active = (
@@ -531,17 +546,10 @@ def solve_task(
                 and not plan_still_active
             ):
                 log.info("Pretest exited green at session start — short-circuiting.")
-                write_checkpoint(artifact_dir, cfg.model, "completed")
+                write_checkpoint(artifact_dir, cfg.model, "completed", overwrite=overwrite_status)
                 success = True
                 sessions_used = session_num - start_session_num
                 break
-
-            # Normalize file timestamps before the first model turn. A
-            # pretest can change directory times through temporary files.
-            # Changing times can change `ls -la` output even with fixed
-            # model sampling. Later sessions must keep the model's changes.
-            if session_num == start_session_num and normalize_repo_timestamps:
-                _normalize_repo_timestamps(work_dir)
 
             if session_num == start_session_num:
                 if resume_from_artifacts:
@@ -596,43 +604,42 @@ def solve_task(
             session_start_tool_surface = build_tool_surface(
                 session_cfg, session_client
             )
-            local_tokenizer = None
-            if int(getattr(session_cfg, "repo_map_tokens", 0) or 0) > 0:
-                from ..local_tokenizer import load as load_local_tokenizer
-
-                local_tokenizer = load_local_tokenizer(
-                    getattr(session_cfg, "tokenizer_id", "") or ""
-                )
-                if local_tokenizer is not None:
-                    synced = local_tokenizer.sync_chat_template(
-                        getattr(session_cfg, "base_url", "") or ""
-                    )
-                    log.info(
-                        "local tokenizer loaded for repo map: %s "
-                        "(server template %s)",
-                        local_tokenizer.id,
-                        "synced" if synced else "NOT synced — counts approximate",
-                    )
-            from ..repo_map import append_repo_map, build_repo_map
-
-            repo_map = build_repo_map(
-                work_dir,
-                task_message=initial,
-                ranking_text=task_prompt,
-                token_budget=int(getattr(session_cfg, "repo_map_tokens", 0) or 0),
-                refresh=str(getattr(session_cfg, "repo_map_refresh", "auto")),
-                cache_dir=repo_map_cache_dir,
-                unreadable_paths=prompt_unreadable_paths,
-                tokenizer=local_tokenizer,
-                token_estimator=(
-                    model_binding.token_estimator or token_estimator
+            from ..request_counting import resolve_counter
+            local_tokenizer = resolve_counter(
+                session_client, session_cfg,
+                event_sink=lambda event, **fields: _emit_trace_event(
+                    trace_file, event, session_number=session_num, **fields,
                 ),
             )
+            from ..repo_map import append_repo_map, build_repo_map
+            from ..task_file_runtime import task_file_scope
+
+            map_budget = int(getattr(session_cfg, "repo_map_tokens", 0) or 0)
+            with (task_file_scope(
+                work_dir, session_cfg, environment=effective_env,
+                allow_login_shell=allow_login_shell, ignore_policy=ignore_policy,
+            ) if map_budget else nullcontext()):
+                repo_map = build_repo_map(
+                    work_dir,
+                    task_message=initial,
+                    ranking_text=task_prompt,
+                    token_budget=map_budget,
+                    refresh=str(getattr(session_cfg, "repo_map_refresh", "auto")),
+                    cache_dir=repo_map_cache_dir,
+                    unreadable_paths=prompt_unreadable_paths,
+                    tokenizer=local_tokenizer,
+                    token_estimator=(
+                        model_binding.token_estimator or token_estimator
+                    ),
+                )
             session_initial = append_repo_map(initial, repo_map)
             # Trace: session start
             _emit_trace_event(
                 trace_file, "session_start",
                 session_number=session_num,
+                task_identity=task_identity.record(),
+                instance_id=task_identity.instance_id,
+                attempt_id=task_identity.attempt_id(session_num),
                 context_contract=context_contract,
                 sandbox_backend=env_fields["sandbox_backend"],
                 sandbox_selected=env_fields.get(
@@ -648,6 +655,18 @@ def solve_task(
                 container_runtime=env_fields["container_runtime"],
                 container_image_digest=env_fields["container_image_digest"],
                 sandbox_env_names=list(effective_env),
+                task_environment={
+                    "host_root": task_environment.host_root,
+                    "working_directory": task_environment.working_directory,
+                    "aliases": list(task_environment.aliases),
+                    **({"container_id": task_environment.container_id,
+                        "configured_user": task_environment.configured_user,
+                        "docker_engine_id": task_environment.docker_engine_id,
+                        "docker_context_fingerprint": task_environment.docker_context_fingerprint,
+                        "process_identity": asdict(task_environment.process_identity)
+                        if task_environment.process_identity is not None else None}
+                       if task_environment.container_id else {}),
+                },
                 edit_format=resolve_effective_edit_format(
                     session_cfg, session_client
                 ),
@@ -700,15 +719,17 @@ def solve_task(
                     state_path,
                     max_result_chars=session_cfg.max_output_chars,
                     think_keep_turns=session_cfg.tools_think_keep_turns,
+                    imperative_projection=session_cfg.state_imperative_projection_enabled,
                 )
 
             ctx = build_context_manager(
                 context_class, session_cfg, work_dir, session_initial, session_num,
                 model_binding.token_estimator or token_estimator,
+                artifact_dir=artifact_dir,
+                effective_env=effective_env,
+                allow_login_shell=allow_login_shell,
+                ignore_policy=ignore_policy,
             )
-            if getattr(cfg, "turn_snapshots_enabled", False):
-                from ..turn_snapshots import ensure_snapshot_setup
-                ensure_snapshot_setup(work_dir)
             session = Session(
                 session_cfg, session_client, system_prompt, session_initial, str(work_dir),
                 context_manager=ctx, trace_file=trace_file, session_number=session_num,
@@ -734,7 +755,12 @@ def solve_task(
                 subagent_runtime=subagent_runtime,
                 local_tokenizer=local_tokenizer,
                 tool_allowlist=tool_allowlist,
+                task_identity=task_identity,
+                runtime_briefing=prompt_metadata.runtime_briefing,
             )
+            if getattr(cfg, "turn_snapshots_enabled", False):
+                from ..turn_snapshots import ensure_snapshot_setup
+                ensure_snapshot_setup(work_dir, session=session)
             if tool_loading_metrics is None:
                 default_tokens, count_method = estimate_tool_block_tokens(
                     session._tool_schemas,
@@ -803,7 +829,8 @@ def solve_task(
                 # ExitDiagnostics turns SIGTERM/SIGINT into normal Python
                 # unwind after durably recording the signal. Checkpoint here,
                 # outside the signal handler, before preserving the exit.
-                _auto_commit(work_dir, session_num, "signal")
+                _auto_commit(work_dir, session_num, "signal", enabled=auto_commit and cfg.auto_commit,
+                             file_scope=session._task_file_scope)
                 raise
             end_hook = session._run_hook(
                 "session_end",
@@ -871,6 +898,9 @@ def solve_task(
                 session_number=session_num,
                 finish_reason=result.finish_reason,
                 turns=result.turns,
+                turns_unit="loop_iterations",
+                turns_scope="session_invocation",
+                turn_start_offset=int(getattr(session, "_turn_start_offset", 0) or 0),
                 total_prompt_tokens=result.total_prompt_tokens,
                 usage_estimated=result.usage_estimated,
             )
@@ -880,49 +910,49 @@ def solve_task(
                     state_path,
                     max_result_chars=cfg.max_output_chars,
                     think_keep_turns=session.cfg.tools_think_keep_turns,
+                    imperative_projection=session.cfg.state_imperative_projection_enabled,
                 )
 
             if result.done:
-                if auto_commit:
-                    _auto_commit(work_dir, session_num, result.finish_reason)
-                write_checkpoint(artifact_dir, cfg.model, "completed")
+                _auto_commit(work_dir, session_num, result.finish_reason, enabled=auto_commit and cfg.auto_commit,
+                             file_scope=session._task_file_scope)
+                write_checkpoint(artifact_dir, cfg.model, "completed", overwrite=overwrite_status)
                 success = True
                 break
 
             if result.finish_reason in {"error", "sandbox_unavailable"}:
                 # Preserve mutations before a fatal API or sandbox failure.
                 # Neither condition may roll into another model session.
-                if auto_commit:
-                    _auto_commit(work_dir, session_num, result.finish_reason)
-                write_checkpoint(artifact_dir, cfg.model, "error")
+                _auto_commit(work_dir, session_num, result.finish_reason, enabled=auto_commit and cfg.auto_commit,
+                             file_scope=session._task_file_scope)
+                write_checkpoint(artifact_dir, cfg.model, "error", overwrite=overwrite_status)
                 break
 
             if result.finish_reason == "approval_required":
-                write_checkpoint(artifact_dir, cfg.model, "paused")
+                write_checkpoint(artifact_dir, cfg.model, "paused", overwrite=overwrite_status)
                 break
 
             if result.finish_reason == "hook_block":
-                if auto_commit:
-                    _auto_commit(work_dir, session_num, result.finish_reason)
-                write_checkpoint(artifact_dir, cfg.model, "blocked")
+                _auto_commit(work_dir, session_num, result.finish_reason, enabled=auto_commit and cfg.auto_commit,
+                             file_scope=session._task_file_scope)
+                write_checkpoint(artifact_dir, cfg.model, "blocked", overwrite=overwrite_status)
                 break
 
-            # Auto-commit for non-error sessions.
-            if auto_commit:
-                _auto_commit(work_dir, session_num, result.finish_reason)
+            # Optional whole-workspace commit for non-error sessions.
+            _auto_commit(work_dir, session_num, result.finish_reason, enabled=auto_commit and cfg.auto_commit,
+                         file_scope=session._task_file_scope)
 
             # The per-task wall-clock budget bounds how long one task can run.
-            # It is checked after the session's
-            # auto-commit so the partial work survives.
-            wall_limit = int(getattr(cfg, "task_wall_clock_limit_s", 0) or 0)
-            if wall_limit > 0:
+            # Working files survive this check whether or not commits are enabled.
+            remaining = remaining_run_seconds()
+            if remaining is not None:
                 elapsed = time.time() - start_time
-                if elapsed >= wall_limit:
+                if remaining <= 0:
                     log.warning(
-                        "task_wall_clock: elapsed=%.0fs limit=%ds; ending task",
-                        elapsed, wall_limit,
+                        "task_wall_clock: elapsed=%.0fs; invocation deadline exhausted",
+                        elapsed,
                     )
-                    write_checkpoint(artifact_dir, cfg.model, "error")
+                    write_checkpoint(artifact_dir, cfg.model, "error", overwrite=overwrite_status)
                     # Mark the loop as terminated by wall budget. Use a
                     # synthetic SessionResult only for finish_reason
                     # propagation — the real session already ended cleanly.
@@ -949,7 +979,7 @@ def solve_task(
             prev_result = result
         else:
             log.warning("Max sessions (%d) exhausted for %s", cfg.max_sessions, work_dir.name)
-            write_checkpoint(artifact_dir, cfg.model, "error")
+            write_checkpoint(artifact_dir, cfg.model, "error", overwrite=overwrite_status)
 
     # Write run metrics (#57, #60)
     wall_clock = time.time() - start_time
@@ -962,6 +992,8 @@ def solve_task(
         "wall_clock_seconds": round(wall_clock, 2),
         "sessions_used": sessions_used,
         "total_turns": agg_turns,
+        "total_turns_unit": "loop_iterations",
+        "total_turns_scope": "solve_task_invocation",
         "done_blocked_total": agg_done_blocked,
         # Cross-session totals for guardrail counters. Previously only
         # done_blocked_total surfaced; the rest died with the session.
@@ -1023,7 +1055,7 @@ def solve_task(
             "per_call": [],
         }
     )
-    write_run_metrics(artifact_dir, metrics, provenance)
+    write_run_metrics(artifact_dir, metrics, provenance, overwrite=overwrite_status)
     close_ledger()
     close_system_log()
     return success

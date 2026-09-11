@@ -28,8 +28,8 @@ Before a live measurement, make sure the selected model service is available.
 The command reads its normal service address from `[server].base_url`. A dry
 run and a replay without live handover do not need that service.
 
-Prepare a fresh copy of each task repository. Yuj changes the task files and
-may stage and commit dirty work in that repository.
+Prepare a fresh copy of each task repository. Yuj changes task files.
+Whole-workspace automatic commits require an explicit `[loop].auto_commit = true`.
 
 ## Run one task
 
@@ -40,6 +40,7 @@ Give at most one prompt override:
 ```bash
 .venv/bin/python -m scripts.llm_solver RUN_DIR \
   --task /path/to/task \
+  --artifacts-dir /path/to/task-records \
   --prompt-text "Fix the failing tests."
 ```
 
@@ -64,10 +65,16 @@ The measurement command applies settings in this order:
 A later value replaces an earlier value for the same field.
 
 `RUN_DIR` holds run-level records, such as `session.json` and the harness log.
-The task repository holds its trace, state, checkpoint, and metrics. In
-one-task mode, the default transcript and savings paths come from the task
-path, not from `RUN_DIR`. Use `--transcript-dir` and `--savings-dir` to choose
-other paths.
+Use `--artifacts-dir PATH` to select the task's trace, state, checkpoint,
+metrics, transcript, and savings directory. For a prepared task set, each task
+gets a subdirectory under that path. This option takes precedence over
+`--transcript-dir` and `--savings-dir` for those task records.
+
+Without `--artifacts-dir`, Yuj refuses to replace existing task files named
+`checkpoint.json` or `metrics.json`. Default trace, transcript, and savings
+records use a telemetry directory outside the task. An explicit artifact
+directory authorizes replacement of its status records; choose it separately
+from task inputs.
 
 The measurement command has no `--treatment` or `--no-treatment` option.
 Select a released base with `--config`. Select its context mode separately.

@@ -304,10 +304,6 @@ def test_solve_task_review_surface_has_no_mutation_tools_or_auto_commit(
     )
 
     with (
-        patch("scripts.llm_solver.harness.loop._auto_commit") as auto_commit,
-        patch(
-            "scripts.llm_solver.harness._loop.driver._normalize_repo_timestamps"
-        ) as normalize_timestamps,
         patch.object(Session, "_get_server_ctx", return_value=8192),
     ):
         assert solve_task(
@@ -327,8 +323,6 @@ def test_solve_task_review_surface_has_no_mutation_tools_or_auto_commit(
         for item in client.chat.call_args.args[1]
     }
     assert offered == REVIEW_TOOL_ALLOWLIST
-    auto_commit.assert_not_called()
-    normalize_timestamps.assert_not_called()
     assert (repo / "app.py").read_bytes() == source_before
     assert (repo / "app.py").stat().st_mtime_ns == source_mtime_before
     assert (repo / ".git/config").read_bytes() == git_config_before

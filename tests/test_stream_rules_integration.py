@@ -382,7 +382,7 @@ def test_narration_escalates_and_resets_after_executed_work(tmp_path, error_argu
     session = Session(cfg, client, "system", "task", str(tmp_path), trace_file=trace)
     result = session.run()
     client.close_transcript()
-    assert result.done and result.turns == 9  # The normal loop numbers turns from zero.
+    assert result.done and result.turns == 10  # Ten entered iterations; labels start at zero.
     assert session._narration_breaches == 0
     assert (tmp_path / "out.py").read_text() == "VALUE = 1\n"
     calls = client.client.chat.completions.create.call_args_list
@@ -399,7 +399,10 @@ def test_narration_escalates_and_resets_after_executed_work(tmp_path, error_argu
     ]
     assert not any(r.get("cause", "").startswith("forced_request_") for r in rows)
     if error_arguments is not None:
-        assert any(r["event"] == "tool_call" and r.get("tool_name") == "read" and r.get("outcome") == "error" for r in rows)
+        failed_read = next(r for r in rows if r["event"] == "tool_call"
+                           and r.get("tool_name") == "read" and r["turn_number"] == 5)
+        # Check the fixture's failure response, not a status inferred from text.
+        assert "ERROR" in failed_read["result_summary"]
     replay_trace = io.StringIO()
     replay = ReplayClient(transcript, strict_fidelity=False)
     replay_result = Session(cfg, replay, "system", "task", str(tmp_path), trace_file=replay_trace).run()

@@ -247,6 +247,8 @@ def _build_cell_process(
     allow_login_shell: bool,
 ) -> tuple[list[str], str | None, dict[str, str] | None]:
     """Return argv, subprocess cwd, and host-side env for one cell."""
+    from ..task_path import active_task_host_root
+    cwd = active_task_host_root(cwd) or cwd
     execution = sandbox_execution_kwargs(cfg)
     if not execution["sandbox"]:
         return (
@@ -274,6 +276,8 @@ def _build_cell_process(
             or container.resolve_runtime(sandbox_required=True)
         )
         assert runtime_bin is not None
+        from ..container_binding import bind_container_image
+        container = bind_container_image(container, runtime_bin)
         return (
             container.build_argv(
                 _cell_command(),
@@ -294,10 +298,10 @@ def _build_cell_process(
         )
     if legacy_mode == AMBIENT_CONTAINER:
         # The explicitly declared outer container is the filesystem boundary.
-        # Mirror the normal bash path's best-effort empty network namespace.
-        from ._run_in_sandbox import _probe_ambient_unshare_net
+        # All task execution paths share the declared network policy.
+        from ._run_in_sandbox import _ambient_network_prefix
 
-        prefix = ["unshare", "-n"] if _probe_ambient_unshare_net() else []
+        prefix = _ambient_network_prefix()
         return (
             [*prefix, "python3", "-u", "-c", _CELL_RUNNER],
             cwd,
@@ -391,6 +395,7 @@ def execute_cell(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
+            **({'pass_fds': argv.pass_fds} if getattr(argv, 'pass_fds', ()) else {}),
         )
     except Exception as exc:
         return ExecCellExecution(
@@ -401,6 +406,8 @@ def execute_cell(
     assert proc.stdin is not None
     assert proc.stdout is not None
     assert proc.stderr is not None
+    from ..process_identity import ProcessVerification, ProcessIdentityError
+    verification = ProcessVerification(argv)
     deadline = time.monotonic() + timeout
     timed_out = False
     stderr_buffer = bytearray()
@@ -434,12 +441,18 @@ def execute_cell(
                 except BlockingIOError:
                     continue
                 if not chunk:
+                    if key.data == 'stdout':
+                        verification.finish()
                     selector.unregister(key.fileobj)
                     continue
                 if key.data == "stdout":
-                    collector.append(chunk)
+                    collector.append(verification.feed(chunk))
+                else:
+                    stderr_buffer.extend(chunk)
+                # stdout and stderr can become readable in either order.
+                # Do not dispatch a queued tool request until startup passes.
+                if not verification.verified:
                     continue
-                stderr_buffer.extend(chunk)
                 while b"\n" in stderr_buffer:
                     raw_line, _, remainder = stderr_buffer.partition(b"\n")
                     stderr_buffer = bytearray(remainder)
@@ -475,9 +488,11 @@ def execute_cell(
                     started = time.perf_counter()
                     dispatch_error = ""
                     try:
-                        result, call_metadata = inner_dispatch(
-                            str(name), arguments, _remaining_cfg(cfg, deadline)
-                        )
+                        from ..time_budget import command_time_budget, remaining_before
+                        with command_time_budget(remaining_before(deadline)):
+                            result, call_metadata = inner_dispatch(
+                                str(name), arguments, _remaining_cfg(cfg, deadline)
+                            )
                     except Exception as exc:
                         dispatch_error = str(exc)
                         result = f"ERROR: exec_cell inner dispatch failed: {exc}"
@@ -517,7 +532,7 @@ def execute_cell(
             timed_out = True
             _terminate_process(proc)
             exit_status = proc.wait(timeout=2)
-    except (BrokenPipeError, OSError) as exc:
+    except (BrokenPipeError, OSError, ProcessIdentityError) as exc:
         _terminate_process(proc)
         try:
             proc.wait(timeout=2)

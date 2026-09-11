@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..bash_write_classification import STATE_WRITER_MUTATION_PREFIXES
 
@@ -51,7 +51,7 @@ class FileSlot:
     the ``edit``/``write`` tools or via a bash sed/redirect.
     """
     path: str               # as the model referenced it (relative or absolute)
-    content: str            # snapshot; authoritative only when re-read fails
+    content: str            # last snapshot; never substitutes for an unavailable reread
     last_access_turn: int
     epoch: int = 0          # bumped on write/edit; unused by consumers but handy for debug
 
@@ -193,8 +193,8 @@ class WorkingSet:
 
         Returns ``(rendered, elided_paths)``. Elided paths are still
         reported to the model so it knows it has seen them before.
-        Files inside cwd are re-read from disk on every call; files
-        outside cwd fall back to the stored snapshot.
+        Re-read files through the current task view on every call. Report
+        unavailable content when a path cannot be admitted or read.
         """
         if not self.files:
             return "", []
@@ -268,8 +268,8 @@ class WorkingSet:
         """One line per unique cmd_sig with latest verdict.
 
         A gate with ``repeat_count >= 3`` renders as a turn-range
-        with multiplicity so the model sees its own loop:
-            T0-15: ls -la seaborn/ → OK ×16 (unchanged — change approach)
+        with multiplicity. This displays stored recurrence; it does not
+        establish that the output is unchanged or that progress has stopped.
         """
         if not self.gate_latest:
             return ""
@@ -370,7 +370,7 @@ class WorkingSet:
                 continue
             for fpath in reversed(raw_paths):
                 key = self._canon(fpath)
-                if key in seen or fpath.endswith("state.json"):
+                if key in seen:
                     continue
                 seen.add(key)
                 body = self._read_disk(fpath)
@@ -389,30 +389,25 @@ class WorkingSet:
 
     def _canon(self, path: str) -> str:
         """Canonicalize a path so 'foo.py' and './foo.py' collapse."""
-        p = path.lstrip("./").rstrip("/")
-        return p or path
+        # Keep leading dots, absolute roots and parent traversal distinct.
+        # Resolving symlinks or '..' here would require the native task view.
+        return str(PurePosixPath(path))
 
     def _read_disk(self, path: str) -> str | None:
         """Read live file content if it is inside cwd. Return None otherwise."""
-        stripped = path.lstrip("./")
-        target = (self.cwd / stripped)
+        from ..task_path import resolve_task_path
         try:
-            target_res = target.resolve()
-            cwd_res = self.cwd.resolve()
-            target_res.relative_to(cwd_res)
-        except (ValueError, OSError):
-            return None
-        if not target_res.is_file():
-            return None
-        try:
+            target_res = resolve_task_path(self.cwd, path)
+            if not target_res.is_file():
+                return None
             return target_res.read_text(errors="replace")
-        except OSError:
+        except (ValueError, OSError, RuntimeError):
             return None
 
     def _current_body(self, slot: FileSlot) -> str:
-        """Return live disk content when available, else stored snapshot."""
+        """Return an admitted reread, or report that current content is unavailable."""
         live = self._read_disk(slot.path)
         if live is not None:
             slot.content = live
             return live
-        return slot.content
+        return "[Current file content unavailable; read the file again when accessible.]"

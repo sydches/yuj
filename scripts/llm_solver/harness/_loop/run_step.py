@@ -15,12 +15,14 @@ on the ``loop`` module, so this file looks ``dispatch`` up via
 directly. Same pattern as ``_run_in_sandbox`` in PR #1.
 """
 from __future__ import annotations
+from .._guardrails.state import Decision
 
 import logging
 import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from typing import TYPE_CHECKING
 
 from ..guardrails import Action, PASS
@@ -409,6 +411,8 @@ def _run_post_turn_hooks(
         process_rewind_turn_boundary(session, turn)
         return
     session._maybe_emit_harness_observation(turn)
+    from ..adaptive_control.observation_notice import record_loop_observation_notice
+    record_loop_observation_notice(session, turn)
     session._maybe_run_llm_hurdle_detector(turn)
     session._maybe_switch_adaptive_phase(turn)
     rewound = process_rewind_turn_boundary(session, turn)
@@ -475,35 +479,45 @@ def _complete_turn_rewind(
 def _preflight_estimate(session) -> int:
     """Current-list token estimate for the pre-flight gate.
 
-    When a local tokenizer is loaded, render the chat template with the
-    session's tool schemas so the count includes the tool catalog. When
-    no tokenizer is configured, use the strategy estimator (chars/4).
+    Use the active request counter with the effective tool catalog. Explicit
+    estimate-only runs retain the strategy estimator.
     """
     tok = getattr(session, "_tokenizer", None)
+    session._preflight_count_authoritative = False
     if tok is not None:
         try:
-            return int(tok.count(
+            count = tok.count(
                 list(session.context.get_messages()),
-                tools=effective_model_tool_schemas(session)))
+                tools=effective_model_tool_schemas(session))
+            if type(count) is not int or count < 0:
+                raise ValueError("request counter must return a nonnegative integer")
+            from ..request_counting import has_reported_count
+            session._preflight_count_authoritative = has_reported_count(tok, count)
+            return count
         except Exception as e:
-            log.warning("preflight exact count failed (%s); using strategy estimate", e)
-    return int(session.context.estimate_tokens())
+            log.warning("preflight request count failed (%s); using strategy estimate", e)
+    try:
+        return int(session.context.estimate_tokens())
+    except Exception:
+        # The strategy may share the same unavailable counter.
+        from ..context import chars_div_4
+        return int(chars_div_4(session.context.get_messages()))
 
 
 def _preflight_prompt_tokens(live_pt: int, estimated_pt: int,
                              prev_estimate: int | None,
-                             density_hat: float = 0.25) -> int:
-    """Best lower bound on the next request's prompt tokens.
+                             density_hat: float = 0.25, *, authoritative_count: bool = False) -> int:
+    """Use the current backend count, otherwise a historical usage estimate.
 
-    live_pt (server-reported) is exact but stale by whatever was appended
-    since the last request; the chars/4 estimate sees the current message
-    list but systematically underruns real tokenizers on code-heavy text.
-    A large new tool result can make both values too low. A third value
-    adds the new characters, priced at the last known token density, to
-    the exact server count. density_hat starts at 0.25 and rises when an
-    observed turn has a higher token density. max() keeps the guard
-    monotone, so it can only end a session earlier.
+    With an authoritative count, prior usage describes a different request
+    and must not raise the current count. Otherwise, compare prior usage,
+    the current strategy estimate, and a projection of positive estimated
+    growth at the stored density. Multiplying estimate growth by four is
+    a legacy character approximation, not a measurement of appended text.
+    This path can overestimate or underestimate; it does not prove a fit.
     """
+    if authoritative_count:
+        return estimated_pt  # prior usage names a different request
     candidates = [live_pt, estimated_pt]
     if prev_estimate is not None and live_pt > 0:
         chars_new = max(0, estimated_pt - prev_estimate) * 4
@@ -513,9 +527,12 @@ def _preflight_prompt_tokens(live_pt: int, estimated_pt: int,
 
 def _observe_token_density(session, live_pt_at_gate: int,
                            chars_new_at_gate: int, actual_pt: int) -> None:
-    """Calibrate the session's tokens-per-char estimate from the server's
-    own numbers. Monotone up, capped at 2.0; ignores tiny appends where
-    the ratio is template-overhead noise."""
+    """Update a legacy density estimate from usage and estimated text growth.
+
+    Keep the estimate monotone up, capped at 2.0. The 800-character minimum
+    is a policy filter for small estimated appends, not proof that template
+    overhead is absent above it.
+    """
     if chars_new_at_gate < 800 or live_pt_at_gate <= 0:
         return
     delta = actual_pt - live_pt_at_gate
@@ -536,7 +553,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         2. context fill                                     END
         3. intent_gate         (turn-level, pre-dispatch)   BLOCK / END
         4. stop check          (natural exit)
-        5. duplicate_guard     (turn-level, pre-dispatch)   WARN / END
+        5. loop_detect         (pre-dispatch request diagnostics; native PASS)
         6. per tool call:
            6a. pre_tool hook      (before validation)         BLOCK / REWRITE
            6b. schema/permission/approval                    BLOCK / PAUSE
@@ -544,7 +561,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
            6d. dispatch          (when not blocked)
            6e. post_tool hook     (after real dispatch)       BLOCK / ANNOTATE
            6f. post-tool ladders, trace, and record
-        7. max_turns                                         END
+        7. duplicate_guard     (completed observations)     WARN / END
+        8. max_turns                                         END
     """
     # Late-bind names that tests patch on the public ``loop`` module.
     # mock.patch is entered before session.run() is called, so by the
@@ -562,6 +580,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
     total_prompt = 0
     total_completion = 0
     turn_pre = session._guardrail_registry.turn_pre_dispatch
+    turn_post = session._guardrail_registry.turn_post_dispatch
     tool_pre = session._guardrail_registry.tool_pre_dispatch
     tool_post = session._guardrail_registry.tool_post_dispatch
     observers = session._guardrail_registry.observers
@@ -583,15 +602,19 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 total_prompt_tokens=0,
                 total_completion_tokens=0,
             )
+    # Charge an entered loop iteration once, including preflight/failed work.
+    # Restored labels identify conversation turns, not newly consumed budget.
+    consumed_turns = 0
     if getattr(session, "_lifecycle_hook_block_reason", ""):
         return SessionResult(
-            turn_start,
+            consumed_turns,
             "hook_block",
             done=False,
             total_prompt_tokens=0,
             total_completion_tokens=0,
         )
     for local_turn in range(session.cfg.max_turns):
+        consumed_turns = local_turn + 1
         turn = turn_start + local_turn
         # Session-owned services (for example the lazy LSP manager) emit
         # trace records outside this loop module.  Stamp their events with
@@ -611,7 +634,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         if getattr(session, "_adaptive_stop_requested", None):
             log.info("adaptive_stop: controller requested stop-resume hand-off")
             return SessionResult(
-                turn,
+                consumed_turns,
                 "adaptive_stop",
                 done=False,
                 total_prompt_tokens=total_prompt,
@@ -666,7 +689,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 pre_model_hook.reason,
             )
             return SessionResult(
-                turn,
+                consumed_turns,
                 "hook_block",
                 done=False,
                 total_prompt_tokens=total_prompt,
@@ -686,40 +709,51 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # the session ends with finish_reason="error" instead of the
         # cleaner "context_full". Same threshold as the post-flight
         # check (cfg.context_fill_ratio).
-        # Sync cfg.context_size from the live server on first turn so
-        # the fill_ratio gate measures against the actual window.
+        # Refresh the local config after applying shared capacity constraints.
         session._get_server_ctx()
-        # Pre-flight gate uses the larger of:
-        #   - the prior turn's server-reported pt, and
-        #   - the current context estimate.
-        #
-        # The server pt is exact for the last request, but it becomes stale
-        # after the previous turn appends a large tool result. The local
-        # estimate is less exact, but it sees the current message list and
-        # prevents a post-tool-result overflow from reaching the API.
+        cfg = session.cfg
+        if local_turn == 0 and getattr(session, "_runtime_briefing", None):
+            from ..runtime_briefing import admit_runtime_briefing
+            admit_runtime_briefing(session)
+        # Use the backend's current request count when available. Only an
+        # explicitly selected estimator retains the legacy density policy.
         if cfg.context_size > 0:
             live_pt = int(getattr(session, "_last_actual_prompt_tokens", 0) or 0)
             _tok_t0 = time.perf_counter()
             estimated_pt = _preflight_estimate(session)
             _phase_token_ms += (time.perf_counter() - _tok_t0) * 1000
+            estimate_policy = getattr(cfg, "tokenizer_id", "") != "auto"
+            can_budget = session._preflight_count_authoritative or estimate_policy
+            pressure = getattr(session.context, "projection_pressure", None)
+            if (can_budget and isinstance(pressure, dict) and pressure.get("overflow")
+                    and pressure.get("actionable", True)):
+                # The projection already exhausted its permitted reductions.
+                # Keep its required content and response reserve intact.
+                session._emit("context_projection_pressure", turn_number=turn,
+                              generation_sent=False, **pressure)
+                return SessionResult(consumed_turns, "context_full", done=False,
+                                     total_prompt_tokens=total_prompt,
+                                     total_completion_tokens=total_completion)
             prev_estimate = getattr(session, "_preflight_prev_estimate", None)
             session._preflight_prev_estimate = estimated_pt
             density_hat = getattr(session, "_preflight_density", 0.25)
-            # Remember what this gate saw so the post-response usage can
-            # calibrate observed token density (tokens per appended char).
+            # Retain gate estimates for the legacy post-response projection.
+            # Estimate growth is not a measurement of appended characters.
             session._preflight_gate_live = live_pt
             session._preflight_gate_chars_new = (
                 max(0, estimated_pt - prev_estimate) * 4
-                if prev_estimate is not None else 0)
+                if estimate_policy and prev_estimate is not None
+                and not session._preflight_count_authoritative else 0)
             preflight_pt = _preflight_prompt_tokens(
-                live_pt, estimated_pt, prev_estimate, density_hat)
+                live_pt, estimated_pt, prev_estimate, density_hat,
+                authoritative_count=session._preflight_count_authoritative) if can_budget else estimated_pt
+            if not can_budget:
+                session._emit("context_count_unverified", turn_number=turn,
+                              estimate_tokens=estimated_pt, action="preserve_context")
             pre_fill = preflight_pt / cfg.context_size
-            # Turn-level density: live_pt is the server's REAL token
-            # count for the message list whose local estimate was
-            # recorded at the previous turn's pre-flight. real/estimate
-            # > 2 means the char-based projection undercounts this
-            # conversation by more than 2x — log the anomaly to the
-            # system log even when everything still fits.
+            # Diagnostic ratio of prior usage to the prior gate estimate.
+            # Their payloads may differ after compaction or request assembly;
+            # this ratio is not a measured density of the current request.
             prev_est = int(getattr(session, "_prev_preflight_estimate_pt", 0) or 0)
             density = (live_pt / prev_est) if (prev_est > 0 and live_pt > 0) else 0.0
             session._prev_preflight_estimate_pt = estimated_pt
@@ -731,7 +765,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     density=density, ctx=cfg.context_size,
                     command_shape=_shape, quirk_hit=_quirk, action="none",
                 )
-            if pre_fill > cfg.context_fill_ratio:
+            if can_budget and pre_fill > cfg.context_fill_ratio:
                 # Last-resort fit gate, after the configured context strategy
                 # (including halflife) has rendered the request. First try one
                 # local, deficit-sized re-clip. If that cannot make the prompt
@@ -749,12 +783,13 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 if clip is not None:
                     _tok_t0 = time.perf_counter()
                     estimated_pt = _preflight_estimate(session)
+                    can_budget = session._preflight_count_authoritative or estimate_policy
                     _phase_token_ms += (time.perf_counter() - _tok_t0) * 1000
                     # The old server count names a different message list after
                     # re-clipping. Carry its conservative projection forward by
                     # subtracting only the measured local reduction.
                     reduction = max(0, clip["orig_pt"] - clip["new_pt"])
-                    preflight_pt = max(
+                    preflight_pt = estimated_pt if session._preflight_count_authoritative else max(
                         estimated_pt,
                         original_projection - reduction,
                     )
@@ -762,7 +797,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
 
                 compacted = False
                 compaction_failed = False
-                if pre_fill > cfg.context_fill_ratio:
+                if can_budget and pre_fill > cfg.context_fill_ratio:
                     count_before = int(getattr(session, "_compaction_count", 0))
                     try:
                         maybe_compact_messages(
@@ -783,6 +818,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     if compacted:
                         _tok_t0 = time.perf_counter()
                         estimated_pt = _preflight_estimate(session)
+                        can_budget = session._preflight_count_authoritative or estimate_policy
                         _phase_token_ms += (
                             time.perf_counter() - _tok_t0
                         ) * 1000
@@ -793,7 +829,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         pre_fill = preflight_pt / cfg.context_size
                 _shape, _quirk = provenance_for(
                     session, (clip or {}).get("tool_call_id", ""))
-                still_over = pre_fill > cfg.context_fill_ratio
+                still_over = can_budget and pre_fill > cfg.context_fill_ratio
                 if still_over:
                     recovery_action = "session_end"
                 elif compacted and clip is not None:
@@ -817,7 +853,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         pre_fill * 100, turn, live_pt, estimated_pt,
                         preflight_pt, density, compaction_failed,
                     )
-                    return SessionResult(turn, "context_full", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+                    return SessionResult(consumed_turns, "context_full", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
                 if compacted:
                     log.info(
                         "Context pre-flight overflow at turn %d recovered by "
@@ -841,17 +877,18 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # ─── 1. API call (with transient-error retry) ────────────────
         _chat_t0 = time.perf_counter()
         chat_result = session._chat_with_retry(turn)
+        cfg = session.cfg  # A successful fallback can replace the client/config.
         _phase_chat_ms = (time.perf_counter() - _chat_t0) * 1000
+        abandoned = getattr(session, "_abandoned_chat_usage", None)
+        if abandoned is not None:
+            total_prompt += abandoned.prompt_tokens
+            total_completion += abandoned.completion_tokens
+            session._abandoned_chat_usage = None
         if chat_result is None:
-            abandoned = getattr(session, "_abandoned_chat_usage", None)
-            if abandoned is not None:
-                total_prompt += abandoned.prompt_tokens
-                total_completion += abandoned.completion_tokens
-                session._abandoned_chat_usage = None
             # chat_io may have set a more specific reason (e.g.
             # "compaction_overflow"); fall back to "error" otherwise.
             err_reason = getattr(session, "_last_chat_error_reason", None) or "error"
-            return SessionResult(turn, err_reason, done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+            return SessionResult(consumed_turns, err_reason, done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
         content = chat_result.content
         session._last_assistant_content = (
             content if isinstance(content, str) else ""
@@ -957,18 +994,21 @@ def run_session_loop(session: "Session") -> "SessionResult":
             continue
 
         # ─── 3. GUARDRAIL: intent_gate (BLOCK / END tiers) ───────────
-        # Warmup: guardrails stay dormant through the first
-        # guardrails_arm_after_turn turns (earliest observed hurdle onset
-        # is turn 11; the opening naturally contains probes and rereads).
+        # Declared delay for intent, duplicate-call and loop-detection guards.
+        # Other guards retain their own activation rules. Provenance and
+        # policy limits live in docs/knob_reference/loop.md.
         guards_armed = turn > getattr(cfg, "guardrails_arm_after_turn", 0)
         intent_decision = (
             turn_pre["intent_gate"](
                 session._guards, cfg,
                 turn=turn, content=content, tool_calls=tool_calls,
+                allow_intervention=guards_armed,
             )
-            if guards_armed and not plan_task_required
+            if not plan_task_required
             else PASS
         )
+        if not guards_armed:
+            intent_decision = PASS
         if intent_decision.action in (
             Action.BLOCK,
             Action.END,
@@ -1025,7 +1065,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             if intent_decision.action == Action.END:
                 log.warning("Intent abort: %d consecutive silent rejections",
                             session._guards.consecutive_intent_rejections)
-                return SessionResult(turn, intent_decision.reason, done=False,
+                return SessionResult(consumed_turns, intent_decision.reason, done=False,
                                      total_prompt_tokens=total_prompt,
                                      total_completion_tokens=total_completion)
             _run_post_turn_hooks(session, turn)
@@ -1039,7 +1079,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             if reason == "length":
                 session._maybe_run_advisor(turn)
                 log.info("Response truncated at turn %d (max_tokens hit), ending session", turn)
-                return SessionResult(turn, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+                return SessionResult(consumed_turns, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
             if plan_turn_active:
                 log.warning(
                     "Model stopped at turn %d while plan mode remained active; "
@@ -1047,7 +1087,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     turn,
                 )
                 return SessionResult(
-                    turn,
+                    consumed_turns,
                     "no_tool_call",
                     done=False,
                     total_prompt_tokens=total_prompt,
@@ -1069,7 +1109,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             # silently fell off the conversation".
             allow_implicit = bool(getattr(cfg, "allow_implicit_done", True))
             if allow_implicit:
-                formal_gate_active = (
+                verification_gate_active = (
                     int(
                         getattr(
                             cfg,
@@ -1080,9 +1120,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     )
                     > 0
                     and session._guards.has_mutated
-                    and not session._guards.formal_verification_passed_since_mutation
                 )
-                if formal_gate_active:
+                if verification_gate_active:
                     implicit_done_decision = tool_pre["done_guard"](
                         session._guards,
                         cfg,
@@ -1103,7 +1142,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         continue
                     if implicit_done_decision.action == Action.END:
                         return SessionResult(
-                            turn,
+                            consumed_turns,
                             implicit_done_decision.reason or "done_loop",
                             done=False,
                             total_prompt_tokens=total_prompt,
@@ -1127,56 +1166,31 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     _run_post_turn_hooks(session, turn)
                     continue
                 log.info("Model stopped at turn %d (reason=%s) — implicit done", turn, reason)
-                return SessionResult(turn, "stop", done=True, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+                return SessionResult(consumed_turns, "stop", done=True, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
             log.warning(
                 "Model stopped at turn %d (reason=%s) without calling done() — "
                 "session ended without success (allow_implicit_done=False)",
                 turn, reason,
             )
-            return SessionResult(turn, "no_tool_call", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
+            return SessionResult(consumed_turns, "no_tool_call", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
 
-        # ─── 5. GUARDRAIL: duplicate_guard (WARN / END tiers) ────────
         sig = tuple(_dedup_signature(tc) for tc in tool_calls)
-        dup_decision = (
-            turn_pre["duplicate_guard"](
-                session._guards, cfg, tool_calls_sig=sig
-            )
-            if guards_armed and not plan_turn_active
-            else PASS
-        )
-        if dup_decision.action == Action.REWIND:
-            session._record_pressure_event(True)
-            _complete_turn_rewind(
-                session,
-                dup_decision,
-                turn=turn,
-                content=content,
-                tool_calls=tool_calls,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
-            _run_post_turn_hooks(session, turn)
-            continue
-        if dup_decision.action == Action.END:
-            session._record_pressure_event(True)
-            log.warning("Duplicate tool calls detected, aborting at turn %d", turn)
-            return SessionResult(turn, dup_decision.reason, done=False,
-                                 total_prompt_tokens=total_prompt,
-                                 total_completion_tokens=total_completion)
-        turn_warn_text = dup_decision.text if dup_decision.action == Action.WARN else ""
-        turn_had_pressure = bool(turn_warn_text)
+        turn_warn_text = ""
+        turn_had_pressure = False
 
-        # ─── 5b. GUARDRAIL: loop_detect (WARN / END tiers) ───────────
-        # Tighter than duplicate_guard: fires at N consecutive identical
-        # signatures (default 5) with a single recovery-inject before
-        # hard abort. See guardrails.loop_detect for the contract.
+        # Collect request-signature diagnostics. The native guard leaves
+        # intervention to completed-observation notices after dispatch.
+        # Custom registry decisions retain the ordinary handling below.
         loop_decision = (
             turn_pre["loop_detect"](
-                session._guards, cfg, tool_calls_sig=sig
+                session._guards, cfg, tool_calls_sig=sig,
+                allow_intervention=guards_armed,
             )
-            if guards_armed and not plan_turn_active
+            if not plan_turn_active
             else PASS
         )
+        if not guards_armed:
+            loop_decision = PASS
         if loop_decision.action == Action.REWIND:
             session._record_pressure_event(True)
             _complete_turn_rewind(
@@ -1193,11 +1207,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
         if loop_decision.action == Action.END:
             session._record_pressure_event(True)
             log.warning("Loop detected, aborting at turn %d", turn)
-            return SessionResult(turn, loop_decision.reason, done=False,
+            return SessionResult(consumed_turns, loop_decision.reason, done=False,
                                  total_prompt_tokens=total_prompt,
                                  total_completion_tokens=total_completion)
         if loop_decision.action == Action.WARN:
-            # Compose with any duplicate-guard warn already queued.
+            # Queue this pre-dispatch guard warning separately.
             turn_warn_text = (
                 f"{turn_warn_text}\n\n{loop_decision.text}"
                 if turn_warn_text else loop_decision.text
@@ -1347,8 +1361,9 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     # worker may start executing as soon as ``submit``
                     # returns, and multiple read calls can overlap.
                     record_tool_start(tc, state)
+                    state.preexecuted_metadata[tc.id] = {}
                     futures[tc.id] = _ex.submit(
-                        dispatch, tc.name, tc.arguments,
+                        copy_context().run, dispatch, tc.name, tc.arguments,
                         cwd=session.cwd, cfg=cfg,
                         output_control=effective_output_control,
                         universal_rewrites=effective_universal_rewrites,
@@ -1364,6 +1379,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         effective_env=session._effective_env,
                         allow_login_shell=session._allow_login_shell,
                         tool_call_id=tc.id,
+                        execution_metadata=state.preexecuted_metadata[tc.id],
                     )
                 for tc_id, fut in futures.items():
                     try:
@@ -1371,7 +1387,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     except SandboxUnavailableError as exc:
                         log.error("Sandbox unavailable at turn %d: %s", turn, exc)
                         return SessionResult(
-                            turn,
+                            consumed_turns,
                             "sandbox_unavailable",
                             done=False,
                             total_prompt_tokens=total_prompt,
@@ -1442,7 +1458,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                             completion_tokens=completion_tokens,
                         )
                         return SessionResult(
-                            turn,
+                            consumed_turns,
                             "approval_required",
                             done=False,
                             total_prompt_tokens=total_prompt,
@@ -1453,7 +1469,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             except SandboxUnavailableError as exc:
                 log.error("Sandbox unavailable at turn %d: %s", turn, exc)
                 return SessionResult(
-                    turn,
+                    consumed_turns,
                     "sandbox_unavailable",
                     done=False,
                     total_prompt_tokens=total_prompt,
@@ -1470,7 +1486,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     advisor_intervened = True
                     break
                 return SessionResult(
-                    turn, outcome.reason, done=outcome.done,
+                    consumed_turns, outcome.reason, done=outcome.done,
                     total_prompt_tokens=total_prompt,
                     total_completion_tokens=total_completion,
                 )
@@ -1478,13 +1494,65 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # here guarantees the assistant message and every result from a
         # multi-tool turn form a complete protocol boundary before any cut.
         finalize_deferred_context_actions(session, turn)
+        process_manager = getattr(session, "_process_manager", None)
+        pending_work = False
+        if cfg.duplicate_guard_enabled and process_manager is not None:
+            pending_check = getattr(process_manager, "has_pending_observations", None)
+            try:
+                pending_work = not callable(pending_check) or pending_check() is not False
+            except Exception:
+                pending_work = True  # Unavailable process evidence is not completion.
+        if session._guards.duplicate_last_turn != turn - 1:
+            session._guards.recent_calls.clear()
+        session._guards.duplicate_last_turn = turn
+        session._guards.duplicate_evidence = {}
+        dup_decision = (
+            turn_post["duplicate_guard"](
+                session._guards, cfg, tool_calls_sig=sig,
+                observations=(None if pending_work else
+                              tuple(state.observations.get(tc.id) for tc in tool_calls)),
+                allow_intervention=guards_armed,
+            )
+            if not plan_turn_active and not outcome.rewind
+            else PASS
+        )
+        if not guards_armed:
+            dup_decision = PASS
+        if not plan_turn_active and not outcome.rewind and cfg.duplicate_guard_enabled:
+            session._emit(
+                "duplicate_observation_check", session_number=session._session_number,
+                turn_number=turn, action=dup_decision.action.value,
+                reason=dup_decision.reason, pending_work=pending_work,
+                interventions_allowed=guards_armed,
+                quiet_through_turn=getattr(cfg, "guardrails_arm_after_turn", 0),
+                **{"eligible": False, "count": 0, **session._guards.duplicate_evidence},
+                abort_limit=cfg.duplicate_abort, warn_limit=cfg.duplicate_warn_count,
+            )
+        if plan_turn_active or outcome.rewind:
+            session._guards.recent_calls.clear()
+        if dup_decision.action == Action.WARN:
+            session._queue_user_turn_injection(UserTurnInjection(
+                text=dup_decision.text, bucket="guardrail_intervention",
+                mechanism="duplicate_guard",
+                ctx={"delivery": "user_turn", "basis": "completed_observations"},
+            ))
+            state.turn_had_pressure = True
+        elif dup_decision.action == Action.REWIND:
+            session.request_rewind(dup_decision.target_turn,
+                                   reason=dup_decision.reason or "rewind_on_guardrail")
+            state.turn_had_pressure = True
+        elif dup_decision.action == Action.END:
+            session._record_pressure_event(True)
+            return SessionResult(consumed_turns, dup_decision.reason, done=False,
+                                 total_prompt_tokens=total_prompt,
+                                 total_completion_tokens=total_completion)
         session._record_pressure_event(state.turn_had_pressure)
         _run_post_turn_hooks(
             session, turn, run_advisor=not advisor_intervened
         )
     # ─── 7. GUARDRAIL: max_turns (hard cap, END tier) ────────────────
     return SessionResult(
-        turn_start + cfg.max_turns,
+        consumed_turns,
         "max_turns",
         done=False,
         total_prompt_tokens=total_prompt,

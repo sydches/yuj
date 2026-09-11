@@ -8,7 +8,7 @@ import shlex
 from typing import Any
 
 from ..bash_write_classification import is_bash_workspace_mutation_like
-from .._shell_patterns import TEST_COMMAND_RE as _TEST_COMMAND_RE
+from .._shell_patterns import matches_command
 from ..tool_specs import GUARDRAIL_MUTATION_TOOL_NAMES
 from .state import GuardrailState
 
@@ -63,13 +63,13 @@ def _is_test_command(tc_name: str, tc_args: dict | None = None) -> bool:
 
     Covers two shapes:
       - bash with a pytest/cargo/go-test-style command line — matched
-        via _TEST_COMMAND_RE on the extracted bash command.
+        via the shared descriptor-based command recognizer.
       - the dedicated `run_tests` tool — language_quirks-driven, the
         canonical gate when a runner is registered.
     """
     if tc_name == "run_tests":
         return True
-    return bool(_TEST_COMMAND_RE.search(_extract_bash_cmd(tc_name, tc_args)))
+    return matches_command(_extract_bash_cmd(tc_name, tc_args))
 
 
 def _is_test_read(
@@ -355,11 +355,9 @@ _RUNNER_SUBCOMMAND_TOKENS = {"test", "tests", "check", "build", "vet", "clippy",
 def _extract_test_target(cmd: str) -> str:
     """Pull the test-file/dir argument out of a verification command.
 
-    Skips interpreter-binary tokens like `/usr/bin/python3`,
-    `/opt/miniconda3/.../python`, `pytest` — those are runner paths,
-    not test targets, and treating them as targets caused
-    `same_target_count` to ratchet on the runner rather than on the
-    actual test file.
+    Skips known interpreter and runner names regardless of their installation
+    directory. Candidate targets may live under any directory. This is command
+    text parsing, not evidence that a file exists or a runner executed it.
 
     It also skips go/cargo/npm/jest-family
     runner binaries and the bare subcommand word that follows them
@@ -379,16 +377,6 @@ def _extract_test_target(cmd: str) -> str:
     runner_prefix = False
     for token in tokens:
         candidate = token.split("::", 1)[0].rstrip(",")
-        # Strip system-binary directories before the `_looks_like_test_path`
-        # check — `/usr/bin/python3` and `/opt/miniconda3/envs/testbed/bin/pytest`
-        # would otherwise be considered "test paths" because they contain
-        # `python` (no longer matches new _looks_like_test_path) but their
-        # trailing `bin/...` directory may still resemble a test path under
-        # adversarial inputs. Belt-and-braces check for the two known
-        # offenders.
-        if candidate.startswith(("/usr/", "/opt/")):
-            runner_prefix = False
-            continue
         leaf = candidate.rsplit("/", 1)[-1]
         if _INTERPRETER_TOKEN_RE.match(leaf):
             runner_prefix = leaf in _RUNNER_BINARIES

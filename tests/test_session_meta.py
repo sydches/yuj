@@ -20,6 +20,7 @@ import pytest
 def test_checkpoint_failure_reports_git_stderr(tmp_path, monkeypatch, caplog):
     from scripts.llm_solver.harness._loop.session_io import _auto_commit
 
+    (tmp_path / ".git").mkdir()
     calls = []
 
     def run(command, **kwargs):
@@ -32,7 +33,7 @@ def test_checkpoint_failure_reports_git_stderr(tmp_path, monkeypatch, caplog):
         return subprocess.CompletedProcess(command, 0, stdout=" M file.py\n")
 
     monkeypatch.setattr(subprocess, "run", run)
-    _auto_commit(tmp_path, 1, "context_full")
+    _auto_commit(tmp_path, 1, "context_full", enabled=True)
     assert len(calls) == 3
     assert "auto_commit_failed" in caplog.text
     assert "fatal: cannot write checkpoint object" in caplog.text

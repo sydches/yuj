@@ -3,8 +3,13 @@
 name = "python"
 description = "Python environment and package recovery advice"
 
+# Context can retain inline checks without treating them as a test runner.
+custom_check_patterns = [
+    '''(?:^|[\s/'"])python[0-9.]*\s+(?:-c\b|-\s*<<)''',
+]
+
 [advice]
-python_runner_missing = "\n[HARNESS: Python or the requested Python runner could not start in the current environment. Use the project's existing Python environment or runner if available, such as a virtual environment, Conda, uv, tox, or nox, then retry. Inspect the project before creating an environment or installing packages.]"
+python_runner_missing = "\n[HARNESS: The output contains a Python runner lookup error. This message alone does not establish which runtime or package is missing. Use the observed runtime facts and the project's declared check command to assess it. Retry only with an available, permitted runtime.]"
 # A missing import alone does not identify its cause or permit environment changes.
-python_env_missing = "\n[HARNESS: this Python interpreter cannot import `{module}`. Check the command and module path first: this may be a wrong test label, an optional dependency, or a required package. Check the project's declared requirements and follow task restrictions. Install packages or switch interpreters only if allowed and needed.]"
-python_install_failure = "\n[HARNESS: Python package installation failed. Check the reported cause and the project's dependency files. Use the project's existing environment or package tool if available, such as pip, uv, Conda, Poetry, or PDM. If network access is unavailable, prefer installed packages or a local cache instead of repeating the same network install.]"
+python_env_missing = "\n[HARNESS: The output contains a Python missing-module message naming `{module}`. Check the command and module path against the observed runtime facts: this may be a wrong test label, an optional dependency, or a required package. Check the project's declared requirements and follow task restrictions. Install packages or switch interpreters only if allowed and needed.]"
+python_install_failure = "\n[HARNESS: The requested installation returned a dependency-resolution or connection error. Compare its details with the observed runtime facts and the project's dependency files before retrying. A local cache helps only if it is available and contains the required packages.]"

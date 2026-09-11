@@ -46,6 +46,7 @@ def test_bash_dispatch_exports_exit_status_and_pre_reminder_hash(tmp_path):
         execution_metadata=metadata,
     )
     assert fields["exit_status"] == 1
-    assert fields["pass_fail"] == "fail"
+    assert fields["pass_fail"] == "unknown"
+    assert fields["outcome"] == "completed"
     assert fields["execution_output_sha256"] == metadata["output_sha256"]
     assert fields["output_sha256"] != fields["execution_output_sha256"]

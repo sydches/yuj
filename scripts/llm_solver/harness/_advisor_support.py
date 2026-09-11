@@ -14,6 +14,7 @@ from .sandbox.ignore_policy import (
     parse_ignore_lines,
 )
 from .schemas import get_tool_schemas
+from .container_binding import container_scoped_session
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,6 @@ NO_ADVISORY = "NO_ADVISORY"
 MAX_REVIEW_STEPS = 8
 MAX_REASONING_CHARS = 16_000
 MAX_ARGUMENT_CHARS = 4_000
-MAX_WATCHDOG_CHARS = 16_000
 
 SYSTEM_PROMPT = """You are a passive second-opinion reviewer for one primary-model turn.
 You receive only that completed turn's delta, never the primary transcript.
@@ -127,21 +127,27 @@ def append_transcript(
         log.warning("advisor transcript write failed: %s", exc)
 
 
-def advisor_system_prompt(session: Any) -> str:
-    """Return the fixed prompt plus a visible, bounded WATCHDOG.md."""
-    watchdog = Path(session.cwd) / "WATCHDOG.md"
+@container_scoped_session
+def advisor_system_prompt(session: Any, *, ignore_policy: IgnorePolicy) -> str:
+    """Return fixed protocol plus complete visible task-local priorities."""
+    from .task_file_runtime import task_file_scope
+    from .task_path import resolve_task_path
     try:
-        session._ignore_policy.require_visible(watchdog, is_dir=False)
-        if watchdog.is_file():
-            body = watchdog.read_text(encoding="utf-8", errors="replace")
-            if len(body) > MAX_WATCHDOG_CHARS:
-                body = body[:MAX_WATCHDOG_CHARS]
-            return (
-                SYSTEM_PROMPT
-                + "\nRepository-specific review priorities from WATCHDOG.md:\n"
-                + body
-            )
-    except OSError:
+        with task_file_scope(
+            session.cwd, session.cfg, environment=session._effective_env,
+            allow_login_shell=session._allow_login_shell,
+            ignore_policy=ignore_policy,
+        ):
+            ignore_policy.require_visible('WATCHDOG.md', is_dir=False)
+            watchdog = resolve_task_path(session.cwd, 'WATCHDOG.md')
+            if watchdog.is_file():
+                body = watchdog.read_text(encoding="utf-8", errors="replace")
+                return (
+                    SYSTEM_PROMPT
+                    + "\nRepository-specific review priorities from WATCHDOG.md:\n"
+                    + body
+                )
+    except (OSError, ValueError):
         pass
     return SYSTEM_PROMPT
 
@@ -181,7 +187,9 @@ def advisor_schemas() -> list[dict[str, Any]]:
 
 def advisor_ignore_policy(session: Any, artifact_dir: Path) -> IgnorePolicy:
     """Hide harness-owned evidence from the advisor's repository view."""
-    root = Path(session.cwd).resolve()
+    from .task_path import captured_host_path
+    base_policy = session._ignore_policy
+    root = base_policy.root
     reserved = [
         "/.git/",
         "/.solver/",
@@ -206,7 +214,8 @@ def advisor_ignore_policy(session: Any, artifact_dir: Path) -> IgnorePolicy:
         "/llm_hurdle_detector.jsonl",
     ]
     try:
-        relative_artifacts = artifact_dir.resolve().relative_to(root)
+        relative_artifacts = Path(captured_host_path(
+            session.cwd, str(artifact_dir))).resolve().relative_to(root)
     except (OSError, ValueError):
         relative_artifacts = None
     if relative_artifacts is not None and str(relative_artifacts) != ".":
@@ -219,7 +228,8 @@ def advisor_ignore_policy(session: Any, artifact_dir: Path) -> IgnorePolicy:
         if raw_path is None:
             continue
         try:
-            relative = Path(raw_path).resolve().relative_to(root)
+            relative = Path(captured_host_path(
+                session.cwd, str(raw_path))).resolve().relative_to(root)
         except (OSError, ValueError):
             continue
         if str(relative) != ".":
@@ -234,11 +244,12 @@ def advisor_ignore_policy(session: Any, artifact_dir: Path) -> IgnorePolicy:
         ),
     )
     base_sources = (
-        session._ignore_policy.sources
-        if session._ignore_policy.enabled
+        base_policy.sources
+        if base_policy.enabled
         else ()
     )
-    return IgnorePolicy(root=root, sources=(source, *base_sources), enabled=True)
+    return IgnorePolicy(root=root, sources=(source, *base_sources), enabled=True,
+                        source_files=base_policy.source_files)
 
 
 def assistant_message(content: str | None, calls: list[Any]) -> dict[str, Any]:

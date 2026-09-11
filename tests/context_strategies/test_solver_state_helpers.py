@@ -1,5 +1,6 @@
-"""Tests for _solver_state_helpers.py — dedup command classification and
-error-snippet extraction across languages (F12: go/rust/js, not just pytest).
+"""Historical command/snippet helpers across languages.
+
+These helpers no longer select the rendered compression message.
 """
 from __future__ import annotations
 
@@ -10,8 +11,7 @@ from scripts.llm_solver.harness.context_strategies._solver_state_helpers import 
 
 
 class TestClassifyCmdMultilingual:
-    """_TEST_PREFIXES additions: dedup framing must land in 'test', not
-    fall through to 'other', for go/rust/js/pnpm/yarn test commands."""
+    """Retain the existing standalone command classification contract."""
 
     def test_pytest_still_classified_as_test(self):
         assert _classify_cmd("pytest tests/") == "test"

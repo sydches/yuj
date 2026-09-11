@@ -7,10 +7,10 @@ from typing import Any
 
 from ..._shared.classification import is_error_result
 from .state import PASS, Action, Decision, GuardrailState
+from .test_inspection import test_read_ladder, observe_test_file_read
 from .extractors import (
     MUTATION_TOOLS,
     _arm_recovery_mode,
-    _canon_test_path,
     _clear_commit_contract,
     _clear_mutation_repeat_state,
     _clear_recovery_mode,
@@ -23,9 +23,6 @@ from .extractors import (
     _is_concrete_read,
     _mutation_signature,
     _is_test_command,
-    _is_test_read,
-    _looks_like_test_path,
-    _test_target_is_covered,
 )
 
 log = logging.getLogger(__name__)
@@ -86,51 +83,11 @@ def error_ladder(state: GuardrailState, cfg: Any, *,
     return PASS
 
 
-def test_read_ladder(
-    state: GuardrailState,
-    cfg: Any,
-    *,
-    tc_name: str,
-    result: str,
-    gate_blocked: bool,
-    tc_args: dict | None = None,
-) -> Decision:
-    """Warn when verification repeats before the relevant test file is read."""
-    warn_after = int(getattr(cfg, "test_read_warn_after", 0) or 0)
-    if warn_after <= 0 or tc_name != "bash" or gate_blocked or is_error_result(result):
-        return PASS
-    cmd = ""
-    if isinstance(tc_args, dict):
-        raw = tc_args.get("cmd")
-        if isinstance(raw, str):
-            cmd = raw
-    target = _extract_test_target(cmd)
-    if not target:
-        return PASS
-    state.last_test_target = target
-    if _test_target_is_covered(state, target):
-        state.test_runs_without_test_read = 0
-        state.test_read_nudge_target = ""
-        return PASS
-    state.test_runs_without_test_read += 1
-    if state.test_runs_without_test_read < warn_after:
-        return PASS
-    if state.test_read_nudge_target == target:
-        return PASS
-    state.test_read_nudge_target = target
-    return Decision.warn(
-        cfg.test_read_nudge.format(
-            count=state.test_runs_without_test_read,
-            target=target,
-        ),
-        reason="test_read_ladder",
-    )
-
-
 def rumination_ladder(state: GuardrailState, cfg: Any, *,
                       tc_name: str, result: str, gate_blocked: bool,
                       already_blocked_this_turn: bool,
                       tc_args: dict | None = None,
+                      execution_metadata: dict | None = None,
                       focus_key: str = "", focus_display: str = "") -> Decision:
     """Post-dispatch tier of the rumination ladder: warn, then activate.
 
@@ -148,8 +105,11 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
     if not successful_think:
         state.think_streak = 0
         state.think_streak_nudge_emitted = False
-    if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
-        if not _is_tool_error(result):
+    from ..file_changes import observed_mutation
+    observed = observed_mutation(execution_metadata)
+    if observed is True or (observed is None and (
+            tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args))):
+        if observed is True or not _is_tool_error(result):
             state.non_write_calls_since_write = 0
             state.same_target_key = ""
             state.same_target_display = ""
@@ -162,6 +122,8 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
             state.has_mutated = True
             state.verified_since_mutation = False
             state.mutation_count += 1
+            state.latest_test_parsed.clear()
+            state.green_parity_streak = 0
             _clear_commit_contract(state)
             _clear_recovery_mode(state)
             state.verify_repeat_sig = ""
@@ -292,90 +254,33 @@ def _update_same_target_streak(
 
 
 def mark_bash_verified(state: GuardrailState, cfg: Any, *,
-                       tc_name: str, result: str, gate_blocked: bool, **_: Any) -> None:
-    """Update verified_since_mutation on a content-blind signal.
-
-    Two pathways qualify (post-mutation, non-blocked, non-ERROR):
-    - ``run_tests``: structured envelope opens with
-      ``<test_results status="passed"`` (pytest exit 0, no length threshold —
-      the status field is already a hard signal).
-    - ``bash``: no ``[exit code: N]`` marker for N≠0 AND real-text length
-      exceeds ``cfg.done_verified_bash_min_chars``.
-
-    Name kept for back-compat (it's now misnamed; touch sites referenced
-    across loop.py / OBSERVER_ORDER / tests).
-    """
+                       tc_name: str, result: str, gate_blocked: bool,
+                       tc_args: dict | None = None, cwd: str | None = None,
+                       execution_metadata: dict | None = None,
+                       **_: Any) -> None:
+    """Remember a successful formal check or custom probe from process facts."""
     if not state.has_mutated or gate_blocked:
         return
-    if is_error_result(result):
+    changes = (execution_metadata or {}).get("file_changes")
+    if changes is not None and not (
+        changes.get("status") == "unchanged_metadata"
+        or (changes.get("status") == "changed"
+            and execution_metadata.get("_verification_inputs_unchanged"))
+    ):
+        state.verified_since_mutation = False
         return
-    if tc_name == "run_tests":
-        # Recognise both the bare envelope and a unified <tool_result>
-        # wrap that contains a passed <test_results>. The wrap is
-        # currently suppressed for run_tests by skip-already-enveloped
-        # logic in dispatch, but if that ever changes, this branch
-        # still flips verified_since_mutation.
-        if (
-            result.startswith('<test_results status="passed"')
-            or '<test_results status="passed"' in result
-        ):
-            state.verified_since_mutation = True
+    from .verification import verification_changes_tree, verification_tree_matches
+    if (not verification_tree_matches(state, cwd)
+            or verification_changes_tree(tc_name, tc_args)):
         return
-    if tc_name != "bash":
-        return
-    # Strip legacy in-band harness text before the verification length test.
-    # Current next-action advice is delivered separately as a synthetic user
-    # turn. Old traces and externally supplied results can still contain
-    # appended [HARNESS: …] lines; without subtraction, a 0-byte real bash
-    # output could clear the threshold on harness text alone.
-    # Also strip the unified <tool_result …> envelope's opening/closing
-    # tags because they are harness-emitted padding. The "real"
-    # verification length is what
-    # dispatch produced.
-    def _is_padding(line: str) -> bool:
-        s = line.lstrip()
-        if s.startswith("[HARNESS:"):
-            return True
-        if s.startswith("<tool_result") or s.startswith("</tool_result"):
-            return True
-        return False
-
-    real_lines = [ln for ln in result.splitlines() if not _is_padding(ln)]
-    real_text = "\n".join(real_lines)
-    exit_marker_present = "[exit code:" in real_text
-    exit_ok = ("[exit code: 0]" in real_text) or not exit_marker_present
-    if exit_ok and len(real_text) > cfg.done_verified_bash_min_chars:
+    from .verification import verification_result_passed
+    if verification_result_passed(tc_name, result, execution_metadata, formal=False):
         state.verified_since_mutation = True
-
-
-def observe_test_file_read(
-    state: GuardrailState,
-    cfg: Any,
-    *,
-    tc_name: str,
-    result: str,
-    gate_blocked: bool,
-    tc_args: dict | None = None,
-    focus_key: str = "",
-    focus_display: str = "",
-) -> None:
-    """Track which test files have been read so test runs can demand them."""
-    del cfg
-    if gate_blocked or is_error_result(result):
-        return
-    path = ""
-    if tc_name == "read" and isinstance(tc_args, dict):
-        raw = tc_args.get("path") or tc_args.get("file_path")
-        if isinstance(raw, str):
-            path = raw
-    elif tc_name == "bash" and focus_key.startswith("file:") and _looks_like_test_path(focus_display):
-        path = focus_display
-    if not _looks_like_test_path(path):
-        return
-    state.test_file_reads.add(_canon_test_path(path))
-    if state.last_test_target and _test_target_is_covered(state, state.last_test_target):
-        state.test_runs_without_test_read = 0
-        state.test_read_nudge_target = ""
+    elif ((execution_metadata or {}).get("executed")
+          and (execution_metadata or {}).get("verification_status") in {
+              "custom_failed", "timed_out", "error",
+          }):
+        state.verified_since_mutation = False
 
 
 def observe_contract_state(
@@ -386,14 +291,18 @@ def observe_contract_state(
     result: str,
     gate_blocked: bool,
     tc_args: dict | None = None,
+    execution_metadata: dict | None = None,
     focus_key: str = "",
     focus_display: str = "",
 ) -> None:
     """Track contract state from successful, content-blind tool outcomes."""
-    if gate_blocked or _is_tool_error(result):
+    from ..file_changes import observed_mutation
+    observed = observed_mutation(execution_metadata)
+    if gate_blocked or (observed is not True and _is_tool_error(result)):
         return
 
-    if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
+    if observed is True or (observed is None and (
+            tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args))):
         sig, target = _mutation_signature(tc_name, tc_args, focus_display=focus_display)
         if sig and state.mutation_repeat_sig == sig:
             state.mutation_repeat_count += 1
@@ -410,12 +319,6 @@ def observe_contract_state(
         state.verify_repeat_sig = ""
         state.verify_repeat_count = 0
         state.mutation_count_at_last_verify = state.mutation_count
-        return
-
-    if _is_test_read(tc_name, tc_args, focus_key=focus_key, focus_display=focus_display):
-        _clear_mutation_repeat_state(state)
-        _clear_commit_contract(state)
-        _clear_recovery_mode(state)
         return
 
     if _is_test_command(tc_name, tc_args):
@@ -446,7 +349,6 @@ def observe_contract_state(
     if (
         read_path
         and _is_concrete_file_path(read_path)
-        and not _looks_like_test_path(read_path)
         and not state.has_mutated
         and not focus_key.startswith("outside:")
     ):

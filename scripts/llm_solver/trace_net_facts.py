@@ -97,13 +97,13 @@ def same_passing_output_recurrence(
 ) -> TraceNetFact | None:
     cur = turns[idx]
     cur_hash = result_hash(cur)
-    if not cur_hash or source_write_like(cur) or fail_like(cur):
+    if not cur_hash or source_write_like(cur) or not _recorded_success(cur):
         return None
     prior = [
         row
         for row in turns[max(0, idx - lookback):idx]
         if result_hash(row) == cur_hash
-        and not fail_like(row)
+        and _recorded_success(row)
         and not source_write_like(row)
     ]
     if len(prior) < min_prior:
@@ -147,7 +147,23 @@ def args_reread_after_gap(
     )
 
 
+def _recorded_success(row: dict[str, Any]) -> bool:
+    """Require positive trace evidence; absence of failure is not success.
+
+    These fields describe the recorded tool outcome, not verified task success.
+    Failure evidence takes precedence over a conflicting success field.
+    """
+    return not fail_like(row) and (
+        str(row.get("pass_fail") or "").lower() == "pass"
+        or str(row.get("outcome") or "").lower() == "ok"
+        or (row.get("outcome_version") != "native_execution_v1"
+            and str(row.get("exit_status")).strip() == "0")
+    )
+
+
 def fail_like(row: dict[str, Any]) -> bool:
+    if row.get("outcome_version") == "native_execution_v1":
+        return row.get("pass_fail") == "fail" or row.get("outcome") == "error"
     status = _parse_int(row.get("exit_status"))
     return (
         str(row.get("pass_fail") or "").lower() == "fail"

@@ -309,13 +309,14 @@ def all_verification_patterns() -> tuple[str, ...]:
     command?" across all languages. Any shared regex that previously
     hard-coded one language's runners (e.g. ``_shell_patterns.TEST_COMMAND_RE``)
     derives from this so it can never drift from the per-runner TOMLs.
-    Analysis-only descriptors such as ``generic.toml`` are intentionally
-    excluded because they do not define an executable ``[run_tests]`` runner.
+    Descriptors may explicitly opt into recognition without supplying an
+    automatic ``[run_tests]`` command. Broad analysis-only descriptors such as
+    ``generic.toml`` are excluded.
     """
     pats: list[str] = []
     for toml_path in sorted(FORMATS_DIR.glob("*.toml")):
         d = _load_runner_quirk_dict(toml_path.stem)
-        if not isinstance(d.get("run_tests"), dict):
+        if not isinstance(d.get("run_tests"), dict) and d.get("recognition_only") is not True:
             continue
         for p in d.get("verification_patterns", []) or []:
             if p not in pats:
@@ -323,34 +324,38 @@ def all_verification_patterns() -> tuple[str, ...]:
     return tuple(pats)
 
 
+@functools.lru_cache(maxsize=1)
+def all_custom_check_patterns() -> tuple[str, ...]:
+    """Context-only probe recognition; never an automatic or formal runner."""
+    patterns: list[str] = []
+    for path in sorted(FORMATS_DIR.glob("*.toml")):
+        for pattern in _load_runner_quirk_dict(path.stem).get("custom_check_patterns", []):
+            if pattern not in patterns:
+                patterns.append(pattern)
+    return tuple(patterns)
+
+
 def detect_runner(cwd: str | Path) -> str:
-    """Return the runner name (e.g. 'pytest', 'cargo') for the given cwd.
+    """Return one evidenced project runner; absence or ambiguity is generic.
 
-    Inspects ``cwd`` for each descriptor's ``[run_tests].detect_files``
-    in ``detection_priority`` order. First match wins. Falls back to
-    ``"pytest"`` when nothing matches because it is the most common Python
-    test runner.
+    This identifies declarations only, not runtime availability. Startup uses
+    the same rules with its access-controlled reader and records all candidates.
     """
-    cwd_path = Path(cwd)
-    for descriptor in list_run_test_runner_descriptors():
-        for marker in descriptor.detect_files:
-            if (cwd_path / marker).exists():
-                return descriptor.name
-    # Log the fallback so the operator can see when run_tests is
-    # dispatched to pytest because
-    # no language marker matched (vs because pytest was the explicit
-    # detection winner).
-    log.info("detect_runner: no language marker found in cwd %s; falling back to pytest", cwd)
-    return "pytest"
+    from ._discovery import inspect_runner_candidates, selected_runner
+    return selected_runner(inspect_runner_candidates(cwd))
 
 
-def load_run_tests_quirk_object(cwd: str | Path) -> RunTestsQuirk:
+def load_run_tests_quirk_object(cwd: str | Path, *, runner: str = "auto") -> RunTestsQuirk:
     """Return command metadata for the run_tests runner detected for ``cwd``."""
-    return load_run_tests_quirk_for_runner(detect_runner(cwd))
+    return load_run_tests_quirk_for_runner(
+        detect_runner(cwd) if runner in ("", "auto") else runner
+    )
 
 
 def load_run_tests_quirk_for_runner(runner: str) -> RunTestsQuirk:
     """Return command metadata for one named runner descriptor."""
+    if runner == "generic":
+        return RunTestsQuirk(runner="generic")
     cfg = _load_runner_quirk_dict(runner)
     run_tests = cfg.get("run_tests", {})
     if not isinstance(run_tests, dict):

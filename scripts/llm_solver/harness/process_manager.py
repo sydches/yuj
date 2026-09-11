@@ -8,6 +8,8 @@ admission, allowing replay without starting an operating-system process.
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
+import math
 import os
 import signal
 import subprocess
@@ -42,6 +44,22 @@ OutputAdmission = Callable[[str], str]
 
 class AdmittedProcessOutput(str):
     """A process result that already passed model-output admission."""
+
+    def __new__(cls, text, *, security_blocked_stage=""):
+        value = super().__new__(cls, text)
+        value.security_blocked_stage = security_blocked_stage
+        return value
+
+
+def _poll_output(text, exit_code, metadata):
+    result = AdmittedProcessOutput(text, security_blocked_stage=metadata.get("security_blocked_stage", ""))
+    result.exit_status = exit_code
+    # A wait deadline is not a timeout of the underlying process.
+    result.timed_out = False
+    result.verification_status = metadata.get("verification_status", "")
+    result.verification_evidence = metadata.get("verification_evidence")
+    result.observation_receipt = metadata.get("observation_receipt")
+    return result
 
 
 @dataclass(frozen=True)
@@ -78,6 +96,11 @@ class _ProcessRecord:
     log_path: Path
     process: ManagedProcess
     cursor: int = 0
+    security_blocked_stage: str = ""
+    terminal_observed: bool = False
+    verification_pending: bool = False
+    startup_stderr_path: Path | None = None
+    startup_stderr_cursor: int = 0
 
 
 def _command_digest(command: str) -> str:
@@ -105,15 +128,20 @@ def build_background_sandbox_argv(
     effective_env: Mapping[str, str] | None = None,
     allow_login_shell: bool = False,
     interactive: bool = False,
+    _host_task_root=None,
+    _filesystem_view=None,
 ) -> list[str]:
     """Build a long-lived command argv under the active sandbox policy.
 
     Bwrap mode uses the same mount/network argv builder as ordinary ``bash``.
     Docker-exec mode is handled by that builder as well. Ambient mode mirrors
-    ordinary bash's best-effort network namespace inside the outer container.
+    ordinary bash's required network namespace or explicit outer-boundary policy.
     """
     from .sandbox import AMBIENT_CONTAINER, _build_bwrap_argv, container_mode
     from .sandbox.env_policy import build_bash_argv, build_clean_exec_argv
+    from .task_path import active_task_host_root
+
+    cwd = active_task_host_root(cwd) or cwd
 
     shell_argv = build_bash_argv(
         command, allow_login_shell=allow_login_shell,
@@ -145,6 +173,8 @@ def build_background_sandbox_argv(
             or backend.resolve_runtime(sandbox_required=True)
         )
         assert runtime_bin is not None
+        from .container_binding import bind_container_image
+        backend = bind_container_image(backend, runtime_bin)
         return backend.build_argv(
             command,
             cwd,
@@ -159,9 +189,9 @@ def build_background_sandbox_argv(
     if sandbox_backend != "bwrap":
         raise ProcessManagerError(f"unknown sandbox backend {sandbox_backend!r}")
     if container_mode() == AMBIENT_CONTAINER:
-        from ._tools._run_in_sandbox import _probe_ambient_unshare_net
+        from ._tools._run_in_sandbox import _ambient_network_prefix
 
-        prefix = ["unshare", "-n"] if _probe_ambient_unshare_net() else []
+        prefix = _ambient_network_prefix()
         return [*prefix, *explicit(shell_argv)]
     return _build_bwrap_argv(
         command,
@@ -173,6 +203,9 @@ def build_background_sandbox_argv(
         effective_env=effective_env,
         allow_login_shell=allow_login_shell,
         tail=shell_argv,
+        _combine_task_output=True,
+        _host_task_root=_host_task_root,
+        _filesystem_view=_filesystem_view,
     )
 
 
@@ -189,6 +222,7 @@ class ProcessManager:
         poll_timeout_s: float,
         admit_output: OutputAdmission | None = None,
         event_sink: EventSink | None = None,
+        poll_metadata: Callable[[str, int | None], Mapping[str, object]] | None = None,
         popen_factory: Callable[..., ManagedProcess] = subprocess.Popen,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -197,12 +231,12 @@ class ProcessManager:
     ) -> None:
         if max_procs < 1:
             raise ValueError("max_procs must be >= 1")
-        if poll_timeout_s < 0:
-            raise ValueError("poll_timeout_s must be >= 0")
-        if poll_interval_s <= 0:
-            raise ValueError("poll_interval_s must be > 0")
-        if terminate_grace_s < 0:
-            raise ValueError("terminate_grace_s must be >= 0")
+        if not math.isfinite(poll_timeout_s) or poll_timeout_s < 0:
+            raise ValueError("poll_timeout_s must be finite and >= 0")
+        if not math.isfinite(poll_interval_s) or poll_interval_s <= 0:
+            raise ValueError("poll_interval_s must be finite and > 0")
+        if not math.isfinite(terminate_grace_s) or terminate_grace_s < 0:
+            raise ValueError("terminate_grace_s must be finite and >= 0")
         self.run_dir = Path(run_dir).resolve()
         self.cwd = Path(cwd).resolve()
         self.argv_builder = argv_builder
@@ -210,11 +244,14 @@ class ProcessManager:
         self.poll_timeout_s = float(poll_timeout_s)
         self.admit_output = admit_output or (lambda text: text)
         self.event_sink = event_sink
+        self.poll_metadata = poll_metadata
         self.popen_factory = popen_factory
         self.monotonic = monotonic
         self.sleep = sleep
         self.poll_interval_s = float(poll_interval_s)
         self.terminate_grace_s = float(terminate_grace_s)
+        from .time_budget import execution_deadline
+        self._inherited_deadline = execution_deadline()
         self.procs_dir = self.run_dir / ".procs"
         self.procs_dir.mkdir(parents=True, exist_ok=True)
         self._records: dict[str, _ProcessRecord] = {}
@@ -242,9 +279,23 @@ class ProcessManager:
         **kwargs,
     ) -> "ProcessManager":
         """Construct a manager whose children use the normal bash sandbox."""
-        cwd_text = str(Path(cwd).resolve())
+        effective_env = dict(effective_env) if effective_env is not None else None
+        from .sandbox import AMBIENT_CONTAINER, container_mode
+        selected_mode = container_mode() if sandbox else None
+        from .task_path import capture_task_execution_paths, capture_host_task_root
+        cwd_text, unreadable_paths, readable_paths = capture_task_execution_paths(
+            cwd, unreadable_paths, readable_paths)
+        host_task_root = capture_host_task_root(
+            cwd_text, sandbox=sandbox, sandbox_backend=sandbox_backend)
+        from .sandbox._filesystem import capture_frozen_filesystem_view
+        filesystem_view = capture_frozen_filesystem_view(host_task_root)
 
         def argv_builder(command: str) -> list[str]:
+            if (container_mode() if sandbox else None) != selected_mode:
+                from .task_environment import TaskEnvironmentUnavailable
+                raise TaskEnvironmentUnavailable('task execution selection changed after manager binding')
+            if host_task_root is not None:
+                host_task_root.verify()
             return build_background_sandbox_argv(
                 command,
                 cwd=cwd_text,
@@ -260,7 +311,17 @@ class ProcessManager:
                 container_flags=container_flags,
                 effective_env=effective_env,
                 allow_login_shell=allow_login_shell,
+                _host_task_root=host_task_root,
+                _filesystem_view=filesystem_view,
             )
+
+        if sandbox and sandbox_backend == 'container':
+            from .container_binding import container_image_scope
+            with container_image_scope() as image_binding:
+                argv_builder = container_image_scope(image_binding)(argv_builder)
+        elif selected_mode and selected_mode != AMBIENT_CONTAINER:
+            from .task_environment import discover_task_environment, use_task_environment
+            argv_builder = use_task_environment(discover_task_environment(cwd_text))(argv_builder)
 
         return cls(
             run_dir=run_dir,
@@ -294,6 +355,10 @@ class ProcessManager:
                 f"unknown background process {proc_id!r}"
             ) from None
 
+    def has_pending_observations(self) -> bool:
+        """Keep work pending until its terminal outcome has been observed."""
+        return any(not record.terminal_observed for record in self._records.values())
+
     def _running_count(self) -> int:
         return sum(record.process.poll() is None for record in self._records.values())
 
@@ -310,25 +375,41 @@ class ProcessManager:
         proc_id = f"p{self._next_id:04d}"
         self._next_id += 1
         log_path = self.procs_dir / f"{proc_id}.log"
-        argv = list(self.argv_builder(command))
+        from .process_identity import GuardedProcessArgv
+        built_argv = self.argv_builder(command)
+        guarded = isinstance(built_argv, GuardedProcessArgv)
+        argv = list(built_argv)
         if not argv:
             raise ProcessManagerError("background sandbox argv is empty")
 
         # Exclusive creation prevents a resumed session from silently
         # overwriting a prior process log if an ID allocator ever regresses.
-        with log_path.open("xb", buffering=0) as log_stream:
+        # Keep transport diagnostics separate from the stdout startup frame.
+        # The guarded command merges task stderr after verifying credentials.
+        startup_stderr_path = log_path.with_suffix('.stderr') if guarded else None
+        startup_stderr_created = False
+        with ExitStack() as streams:
+            log_stream = streams.enter_context(log_path.open('xb', buffering=0))
             try:
+                stderr = subprocess.STDOUT
+                if startup_stderr_path is not None:
+                    stderr = streams.enter_context(startup_stderr_path.open('xb', buffering=0))
+                    startup_stderr_created = True
                 process = self.popen_factory(
                     argv,
                     cwd=str(self.cwd),
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
-                    stderr=subprocess.STDOUT,
+                    stderr=stderr,
                     start_new_session=True,
                     close_fds=True,
+                    **({'pass_fds': built_argv.pass_fds}
+                       if getattr(built_argv, 'pass_fds', ()) else {}),
                 )
             except Exception as exc:
                 log_path.unlink(missing_ok=True)
+                if startup_stderr_created:
+                    startup_stderr_path.unlink(missing_ok=True)
                 raise ProcessManagerError(
                     f"could not start background process: {exc}"
                 ) from exc
@@ -339,6 +420,8 @@ class ProcessManager:
             command_sha256=command_sha256,
             log_path=log_path,
             process=process,
+            verification_pending=guarded,
+            startup_stderr_path=startup_stderr_path,
         )
         relative_log = str(log_path.relative_to(self.run_dir))
         result = (
@@ -361,24 +444,54 @@ class ProcessManager:
         return f"{output}{'' if not output or output.endswith(chr(10)) else chr(10)}{footer}"
 
     def poll(self, proc_id: str, *, timeout_s: float | None = None) -> ProcessPoll:
-        """Return newly appended output, waiting up to the configured cap."""
+        """Read available state; bound an optional wait by declared deadlines."""
         self._ensure_open()
         record = self._record_for(proc_id)
         requested = self.poll_timeout_s if timeout_s is None else float(timeout_s)
-        if requested < 0:
-            raise ProcessManagerError("poll timeout must be >= 0")
-        timeout = min(requested, self.poll_timeout_s)
-        deadline = self.monotonic() + timeout
+        if not math.isfinite(requested) or requested < 0:
+            raise ProcessManagerError("poll timeout must be finite and >= 0")
+        timeout = min(requested, self.poll_timeout_s) if self.poll_timeout_s > 0 else requested
+        started = self.monotonic()
+        from .time_budget import execution_deadline
+        bounds = [d for d in (self._inherited_deadline, execution_deadline()) if d is not None]
+        inherited = min(bounds) if bounds else None
+        deadline = min(started + timeout, inherited) if inherited is not None else started + timeout
+        wait_budget = {
+            "requested_seconds": requested, "configured_cap_seconds": self.poll_timeout_s or None,
+            "remaining_execution_seconds": max(0.0, inherited - started) if inherited is not None else None,
+            "effective_seconds": max(0.0, deadline - started),
+            "limiting_source": "execution_deadline" if inherited is not None and inherited <= started + timeout
+                               else "configured_cap" if timeout < requested else "requested_wait",
+        }
         start = record.cursor
+        stderr_start = record.startup_stderr_cursor
         raw = b""
         timed_out = False
+        from .process_identity import GuardedProcessArgv, ProcessVerification, ProcessIdentityError
 
         while True:
+            # If exit is observed, read after it so the last child write is
+            # included before deciding whether startup completed.
+            exit_code = record.process.poll()
             with record.log_path.open("rb") as stream:
                 stream.seek(start)
                 raw = stream.read()
-            exit_code = record.process.poll()
-            if raw or exit_code is not None:
+            startup_stderr = b''
+            if record.startup_stderr_path is not None:
+                with record.startup_stderr_path.open('rb') as stream:
+                    stream.seek(stderr_start)
+                    startup_stderr = stream.read()
+            verification = ProcessVerification(GuardedProcessArgv([]) if record.verification_pending else [])
+            verification_error = ''
+            try:
+                output = verification.feed(raw)
+                if exit_code is not None:
+                    verification.finish()
+            except ProcessIdentityError as error:
+                verification_error = str(error)
+                output = b''
+            if (verification_error or (verification.verified and (raw or startup_stderr))
+                    or exit_code is not None):
                 break
             now = self.monotonic()
             if now >= deadline:
@@ -386,13 +499,40 @@ class ProcessManager:
                 break
             self.sleep(min(self.poll_interval_s, max(0.0, deadline - now)))
 
-        end = start + len(raw)
-        decoded = raw.decode("utf-8", errors="replace")
+        observed = verification.verified or bool(verification_error)
+        end = start + len(raw) if observed else start
+        stderr_end = stderr_start + len(startup_stderr) if observed else stderr_start
+        if verification_error:
+            decoded = 'ERROR: ' + verification_error + '\n'
+        elif verification.verified:
+            decoded = (output + startup_stderr).decode('utf-8', errors='replace')
+        else:
+            decoded = ''
         rendered = self._render_poll(proc_id, decoded, exit_code)
         # Advance only after admission succeeds; a failing admission callback
         # may be retried without silently losing process bytes.
-        result = AdmittedProcessOutput(self.admit_output(rendered))
+        metadata = (dict(self.poll_metadata(proc_id, exit_code))
+                    if self.poll_metadata and verification.verified else {})
+        if record.startup_stderr_path is not None:
+            metadata.update(process_identity_verified=verification.verified,
+                            startup_stderr_cursor_start=stderr_start,
+                            startup_stderr_cursor_end=stderr_end)
+            if not verification.verified:
+                metadata['verification_status'] = ('process_identity_unverified' if verification_error
+                                                   else 'process_identity_pending')
+        wait_budget["elapsed_seconds"] = max(0.0, self.monotonic() - started)
+        metadata["wait_budget"] = wait_budget
+        admitted = self.admit_output(rendered)
+        record.security_blocked_stage = getattr(admitted, "security_blocked_stage", "") or record.security_blocked_stage
+        if record.security_blocked_stage:
+            metadata["security_blocked_stage"] = record.security_blocked_stage
+        from .repeated_observations import process_observation
+        metadata["observation_receipt"] = process_observation(proc_id, exit_code is None, start, end, exit_code)
+        result = _poll_output(admitted, exit_code, metadata)
         record.cursor = end
+        record.startup_stderr_cursor = stderr_end
+        record.verification_pending = not verification.verified
+        record.terminal_observed = exit_code is not None
         poll_result = ProcessPoll(
             proc_id=proc_id,
             result=result,
@@ -412,6 +552,8 @@ class ProcessManager:
             timed_out=timed_out,
             cursor_start=start,
             cursor_end=end,
+            execution_metadata=metadata,
+            wait_budget=wait_budget,
         )
         return poll_result
 
@@ -447,10 +589,12 @@ class ProcessManager:
             except (ProcessLookupError, OSError):
                 pass
         exit_code = record.process.poll()
+        record.terminal_observed = exit_code is not None
         result = (
-            f"Killed background process {proc_id}"
-            if was_running
-            else f"Background process {proc_id} already exited"
+            f"Requested termination of background process {proc_id}; exit not confirmed"
+            if exit_code is None
+            else f"Killed background process {proc_id}"
+            if was_running else f"Background process {proc_id} already exited"
         )
         self._emit(
             "proc_kill",
@@ -497,6 +641,16 @@ class ReplayProcessManager:
         self._index = 0
         self._closed = False
 
+    def has_pending_observations(self) -> bool:
+        pending = {}
+        for event in self._events[:self._index]:
+            pending[event.get("proc_id")] = (
+                event["event"] == "proc_start"
+                or event["event"] == "proc_poll" and event.get("running") is not False
+                or event["event"] == "proc_kill" and event.get("exit_code") is None
+            )
+        return any(pending.values())
+
     def _take(self, expected: str, proc_id: str | None = None) -> dict[str, object]:
         if self._index >= len(self._events):
             raise ProcessManagerError(f"replay trace exhausted; expected {expected}")
@@ -528,7 +682,7 @@ class ReplayProcessManager:
     def poll(self, proc_id: str, *, timeout_s: float | None = None) -> ProcessPoll:
         del timeout_s  # recorded result is authoritative
         event = self._take("proc_poll", proc_id)
-        result = AdmittedProcessOutput(str(event["result"]))
+        result = _poll_output(str(event["result"]), event.get("exit_code"), event.get("execution_metadata", {}))
         if event.get("output_sha256") != _result_digest(result):
             raise ProcessManagerError("replay poll output digest mismatch")
         return ProcessPoll(

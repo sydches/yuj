@@ -59,11 +59,10 @@ from ._guardrails.extractors import MUTATION_TOOLS
 from .._shared.classification import is_error_result
 from .tool_validation import ToolSchemaSet
 from .tool_policy import PermissionPolicy
-from .sandbox.ignore_policy import (
-    PROJECT_INIT_PRIVATE_RULES,
-    IgnorePolicy,
-    load_ignore_policy,
-)
+from .sandbox.ignore_policy import IgnorePolicy
+from .task_file_runtime import file_scoped_session
+from .startup_files import startup_file_scope
+from .container_binding import container_scoped_session
 from .solver import build_system_prompt, collect_provenance, write_checkpoint, write_run_metrics
 from .state_writer import active_events, write_state_from_events, write_state_from_trace
 from .tools import (
@@ -137,7 +136,7 @@ from ._loop import (  # noqa: F401
     _extract_bash_focus_target, _extract_test_target_from_command,
     _filter_disabled_tools, _focus_signature, _load_bash_transforms,
     _looks_like_path_token, _normalize_bash_for_dedup,
-    _normalize_repo_timestamps, _path_within_cwd, _pretest_is_green,
+    _path_within_cwd, _pretest_is_green,
     _record_session_start_costs, _resolve_profile,
     _resolve_token_estimator, _sanitize_runner_timing,
     _simplify_tool_schema, _split_bash_segments,
@@ -182,7 +181,7 @@ _KNOWN_FINISH_REASONS: frozenset[str] = frozenset({
 
 @dataclass(frozen=True)
 class SessionResult:
-    turns: int
+    turns: int  # Entered loop iterations in this invocation; excludes resume offset.
     finish_reason: str  # one of _KNOWN_FINISH_REASONS
     done: bool
     total_prompt_tokens: int = 0
@@ -205,7 +204,7 @@ class TaskSpec:
     """Task substrate input for solve_task (repo layout is only one source)."""
 
     prompt_text: str
-    pretest_script: Path | None = None
+    pretest_script: Path | None = None  # No implicit neighboring-script selection.
 
 
 def rewind_to(
@@ -219,6 +218,7 @@ def rewind_to(
 class Session:
     """One context window — multi-turn tool calling until done or limit."""
 
+    @container_scoped_session
     def __init__(
         self,
         cfg: Config,
@@ -256,9 +256,12 @@ class Session:
         subagent_runtime=None,
         subagent_read_only: bool = False,
         local_tokenizer=None,
+        task_identity=None,
+        runtime_briefing=None,
     ):
         cfg = bind_effective_edit_format(cfg, client)
         self.cfg = cfg
+        self._runtime_briefing = runtime_briefing
         from .compaction_hooks import resolve_compaction_hook
         self._compaction_hook_reference = str(
             getattr(cfg, "compaction_hook", "") or ""
@@ -272,12 +275,9 @@ class Session:
         )
         self.client = client
         self.cwd = cwd
-        from .worktree_runtime import exclude_runtime_directories
-        if getattr(client, "is_replay", False) is not True:
-            exclude_runtime_directories(Path(cwd))
         if effective_env is None:
             resolved_env, resolved_login_shell = (
-                _effective_command_environment(cfg)
+                _effective_command_environment(cfg, cwd=cwd)
             )
         else:
             from .sandbox.env_policy import build_subprocess_env
@@ -289,17 +289,10 @@ class Session:
             )
         self._effective_env = MappingProxyType(resolved_env)
         self._allow_login_shell = resolved_login_shell
-        self._ignore_policy = ignore_policy or load_ignore_policy(
-            cwd,
-            enabled=getattr(cfg, "state_ignore_file_enabled", True),
-            file_names=getattr(
-                cfg, "state_ignore_file_names", (".yujignore",)
-            ),
-            builtin_rules=(
-                PROJECT_INIT_PRIVATE_RULES
-                if getattr(cfg, "assistant_project_init_destination", "")
-                else ()
-            ),
+        from .task_file_runtime import load_task_ignore_policy
+        self._ignore_policy = ignore_policy or load_task_ignore_policy(
+            cwd, cfg, environment=self._effective_env,
+            allow_login_shell=self._allow_login_shell,
         )
         self._session_number = session_number
         self._current_turn = 0
@@ -342,23 +335,13 @@ class Session:
         self.redactions = redactions
         self.output_parser = output_parser
         self.pretest_parsed = pretest_parsed
-        explicit_instance_id = str(
-            getattr(cfg, "adaptive_control_source_instance_id", "") or ""
-        )
-        task_dir = Path(cwd)
-        derived_instance_id = (
-            task_dir.parent.name if task_dir.name == "host_task" else task_dir.name
-        )
-        self.instance_id = explicit_instance_id or (
-            derived_instance_id
-            if bool(getattr(cfg, "adaptive_control_enabled", False))
-            else ""
-        )
-        self.attempt_id = (
-            f"{self.instance_id}:session{int(session_number)}"
-            if self.instance_id
-            else ""
-        )
+        from .task_identity import resolve_task_identity
+        self.task_identity = task_identity or resolve_task_identity(cfg)
+        declared_id = str(getattr(cfg, "adaptive_control_source_instance_id", "") or "")
+        if declared_id and declared_id != self.task_identity.declared_instance_id:
+            raise ValueError("session configuration conflicts with task identity")
+        self.instance_id = self.task_identity.instance_id
+        self.attempt_id = self.task_identity.attempt_id(session_number)
         self.adaptive_control_baseline_config_paths = tuple(
             adaptive_control_baseline_config_paths
             if adaptive_control_baseline_config_paths is not None
@@ -465,6 +448,8 @@ class Session:
         handlers = dict(base_registry.handlers)
         self._process_manager = process_manager
         self._terminal_manager = terminal_manager
+        from .background_verification import BackgroundVerification
+        self._background_verification = BackgroundVerification(lambda: self._guards, cwd)
 
         base_bash_handler = handlers["bash"]
 
@@ -485,7 +470,7 @@ class Session:
                 return base_bash_handler(args, dispatch_cwd, dispatch_cfg)
             if self._process_manager is None:
                 return "ERROR: background processes are not enabled"
-            return self._process_manager.start(str(args["cmd"])).result
+            return self._background_verification.start(self._process_manager, str(args["cmd"]))
 
         def _bash_poll_handler(args, _cwd, _cfg):
             if self._process_manager is None:
@@ -536,15 +521,12 @@ class Session:
             if self._lsp_manager is None:
                 return "ERROR: lsp manager is not configured"
             try:
-                target = Path(self.cwd) / str(args["path"])
-                self._ignore_policy.require_visible(
-                    target, is_dir=target.is_dir()
-                )
                 query = self._lsp_manager.query(
                     str(args["kind"]),
                     path=str(args["path"]),
                     line=int(args.get("line", 0)),
                     character=int(args.get("character", 0)),
+                    ignore_policy=self._ignore_policy,
                 )
             except Exception as exc:
                 return f"ERROR: lsp query failed: {exc}"
@@ -631,6 +613,12 @@ class Session:
         self._pending_context_checkpoint = None
         self._pending_context_rewind = None
         self._checkpoint_store = checkpoint_store
+        if checkpoint_store is not None:
+            checkpoint_store.bind_task_access(
+                cfg, environment=self._effective_env,
+                allow_login_shell=self._allow_login_shell,
+                ignore_policy=self._ignore_policy,
+            )
         self._artifact_dir = Path(artifact_dir or cwd)
         from .turn_snapshots import rewind_snapshot_dir
         self._rewind_snapshot_dir = rewind_snapshot_dir(
@@ -660,6 +648,10 @@ class Session:
                 initial_message,
                 session_number,
                 _resolve_token_estimator(client),
+                artifact_dir=self._artifact_dir,
+                effective_env=self._effective_env,
+                allow_login_shell=self._allow_login_shell,
+                ignore_policy=self._ignore_policy,
             )
             assert self.context is not None
         self.context.configure_thought_retention(
@@ -805,6 +797,9 @@ class Session:
             cfg=cfg,
             events=self._trace_events,
             event_sink=_plan_mode_event_sink,
+            effective_env=self._effective_env,
+            allow_login_shell=self._allow_login_shell,
+            ignore_policy=self._ignore_policy,
         )
         self._rewind_count = sum(
             1
@@ -855,7 +850,9 @@ class Session:
                     except Exception as exc:
                         log.warning("security finding emit failed: %s", exc)
                     if outcome.blocked:
-                        return render_security_block("bash_poll", outcome)
+                        from .process_manager import AdmittedProcessOutput
+                        return AdmittedProcessOutput(render_security_block("bash_poll", outcome),
+                                                     security_blocked_stage="result")
                     return admit_tool_output(
                         "bash_poll",
                         value,
@@ -887,6 +884,7 @@ class Session:
                     poll_timeout_s=float(cfg.tools_background_poll_timeout),
                     admit_output=_admit_poll_output,
                     event_sink=_process_event_sink,
+                    poll_metadata=self._background_verification.poll_metadata,
                 )
         if (
             self._terminal_manager is None
@@ -991,10 +989,10 @@ class Session:
             event_sink=_stale_guard_event_sink,
         )
 
-        # Seed pretest parity from session 1's parsed pretest verdict (passed
+        # Seed pretest parity from session 1's native pretest cases (passed
         # as a dict with 'failing' and 'passing' sets). Later sessions inherit
         # the baseline from session 1 via the same mechanism (caller passes
-        # the same dict every time). No-op when pretest was not parseable.
+        # the same dict every time). No-op without an established baseline.
         if pretest_parsed:
             self._guards.pretest_failing_tests = set(pretest_parsed.get("failing") or ())
             self._guards.pretest_passing_tests = set(pretest_parsed.get("passing") or ())
@@ -1005,31 +1003,9 @@ class Session:
         # call from chat_result.usage.prompt_tokens. 0 before the first
         # turn returns; callers fall back to chars_div_4 estimate.
         self._last_actual_prompt_tokens: int = 0
-        # Local tokenizer for exact request token counts. None when
-        # cfg.tokenizer_id is unset — callers fall back to the profile or
-        # chars_div_4 estimator.
-        from .local_tokenizer import load as _load_tokenizer
-        tokenizer_was_preloaded = local_tokenizer is not None
-        self._tokenizer = (
-            local_tokenizer
-            if tokenizer_was_preloaded
-            else _load_tokenizer(getattr(cfg, "tokenizer_id", "") or "")
-        )
-        if self._tokenizer is not None and not tokenizer_was_preloaded:
-            synced = self._tokenizer.sync_chat_template(
-                getattr(cfg, "base_url", "") or "")
-            log.info("local tokenizer loaded: %s (server template %s)",
-                     self._tokenizer.id, "synced" if synced else "NOT synced — counts approximate")
-        if self._tokenizer is not None:
-            def _estimate_request_tokens(messages: list[dict]) -> int:
-                return int(self._tokenizer.count(
-                    messages, tools=self.model_tool_schemas,
-                ))
-
-            # Context strategies make pressure decisions before pre-flight.
-            # Give them the same rendered-request count used by the gate,
-            # including the active tool catalog.
-            self.context.set_token_estimator(_estimate_request_tokens)
+        # Share the active transport's request counter with context strategies.
+        from .request_counting import bind_session_counter
+        bind_session_counter(self, local_tokenizer)
         # Server n_ctx fetched from /props on first need. Once known,
         # cfg.context_size is rewritten to match so the fill_ratio math
         # uses the live server window instead of a stale config knob.
@@ -1071,34 +1047,40 @@ class Session:
         if cfg.injections_enabled and injections is None:
             from .project_instructions import find_project_root
 
-            inj_dir = Path(self.cwd) / cfg.injections_dir
-            project_root = find_project_root(
-                Path(self.cwd), getattr(cfg, "project_root_markers", ())
-            )
-            self._injections = load_injections(
-                inj_dir,
-                imports_enabled=getattr(cfg, "imports_enabled", True),
-                imports_max_depth=getattr(cfg, "imports_max_depth", 5),
-                allowed_dirs=(project_root,),
-                unreadable_paths=_bash_unreadable_paths(
-                    cwd, cfg, self._ignore_policy,
-                ),
-            )
+            with startup_file_scope(
+                self.cwd, cfg, effective_env=self._effective_env,
+                allow_login_shell=self._allow_login_shell, ignore_policy=self._ignore_policy,
+            ) as task_root:
+                project_root = find_project_root(
+                    task_root, getattr(cfg, "project_root_markers", ())
+                )
+                self._injections = load_injections(
+                    task_root / cfg.injections_dir,
+                    imports_enabled=getattr(cfg, "imports_enabled", True),
+                    imports_max_depth=getattr(cfg, "imports_max_depth", 5),
+                    allowed_dirs=(project_root,),
+                    unreadable_paths=_bash_unreadable_paths(
+                        cwd, cfg, self._ignore_policy,
+                    ),
+                )
         # Stream-rule files are parsed before the task's first model call by
         # the outer driver. Direct Session construction retains the same loud
         # startup validation path for focused integrations/tests.
         self._stream_rule_runtime: StreamRuleRuntime | None = None
         self._stream_rule_decorated_call_ids: set[str] = set()
         if getattr(cfg, "stream_rules_enabled", False):
-            resolved_stream_rules = (
-                tuple(stream_rules)
-                if stream_rules is not None
-                else load_stream_rules(
-                    Path(self.cwd) / cfg.stream_rules_dir,
-                    display_dir=cfg.stream_rules_dir,
-                    allowed_root=Path(self.cwd),
-                ).rules
-            )
+            if stream_rules is not None:
+                resolved_stream_rules = tuple(stream_rules)
+            else:
+                with startup_file_scope(
+                    self.cwd, cfg, effective_env=self._effective_env,
+                    allow_login_shell=self._allow_login_shell, ignore_policy=self._ignore_policy,
+                ) as task_root:
+                    resolved_stream_rules = load_stream_rules(
+                        task_root / cfg.stream_rules_dir,
+                        display_dir=cfg.stream_rules_dir,
+                        allowed_root=task_root,
+                    ).rules
             self._stream_rule_runtime = StreamRuleRuntime(
                 resolved_stream_rules,
                 repeat_gap=cfg.stream_rules_repeat_gap,
@@ -1143,6 +1125,14 @@ class Session:
             replay=getattr(client, "is_replay", False) is True,
             recorded_events=getattr(client, "hook_events", ()),
         )
+        from .task_file_runtime import task_file_scope
+        from .task_path import retain_task_file_scope
+        with task_file_scope(
+            self.cwd, self.cfg, environment=self._effective_env,
+            allow_login_shell=self._allow_login_shell,
+            ignore_policy=self._ignore_policy,
+        ):
+            self._task_file_scope = retain_task_file_scope(self.cwd)
 
     @property
     def active_tool_names(self) -> frozenset[str]:
@@ -1473,6 +1463,15 @@ class Session:
                 path=str(record.get("path") or ""),
                 tool_name=str(record.get("tool_name") or ""),
                 interrupt=bool(record.get("interrupt", False)),
+                **({"narration_measurement": {
+                    key: record.get(key) for key in (
+                        "observed_chars", "measurement_basis",
+                        "characters_per_estimated_token", "policy_limit_chars",
+                        "observed_text_tokens", "limit_text_tokens", "text_count",
+                        "request_completion_tokens", "request_budget_basis",
+                        "request_model",
+                    )
+                }} if record.get("measurement_basis") is not None else {}),
             )
 
     def _record_stream_rule_injection(
@@ -1649,6 +1648,8 @@ class Session:
         from ._loop.state_projection import sink_to_disk
         return sink_to_disk(self, raw, turn)
 
+    @container_scoped_session
+    @file_scoped_session
     def run(self) -> SessionResult:
         from ._loop.interrupted_turn import ExitDiagnostics
         from ._loop.run_step import run_session_loop

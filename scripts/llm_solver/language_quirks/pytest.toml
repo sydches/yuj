@@ -9,15 +9,63 @@
 
 name = "pytest"
 description = "pytest / py.test / unittest / python -m pytest invocations"
-
-# Regex patterns matched against bash args_summary with re.IGNORECASE | re.VERBOSE.
-# A match means "this bash call is a verification gate for the task."
+non_execution_flags = ["--help", "-h", "--version", "--collect-only", "--co"]
 verification_patterns = [
     '''(?:^|[\s/'"])(?:pytest|py\.test|unittest)\b''',
-    '''(?:^|[\s/'"])python[0-9]?\s+(?:-m\s+)?(?:pytest|unittest)\b''',
-    # Project test entrypoints: recognition only, not pytest flag rewriting.
+    '''(?:^|[\s/'"])python[0-9.]*\s+(?:-m\s+)?(?:pytest|unittest)\b''',
     '''(?:^|[\s/'"])python[0-9.]*\s+['"]?(?:[^\s;|&]+/)?run_?tests\.py['"]?(?:\s|$)''',
+    '''(?:^|[\s/'"])(?:python[0-9.]*\s+)?(?:[^\s;|&]+/)?manage\.py\s+test\b''',
+    '''(?:^|[\s/'"])(?:tox|nox)\b''',
 ]
+
+[[detection]]
+path = "pyproject.toml"
+format = "toml"
+section = ["tool", "pytest", "ini_options"]
+
+[[detection]]
+path = "pytest.ini"
+format = "ini"
+section = ["pytest"]
+
+[[detection]]
+path = "setup.cfg"
+format = "ini"
+section = ["tool:pytest"]
+
+[[detection]]
+path = "tox.ini"
+format = "ini"
+section = ["pytest"]
+
+[[detection]]
+path = "conftest.py"
+format = "presence"
+
+[runtime]
+executables = ["python3", "python"]
+environment_executable = "bin/python"
+environment_markers = ["pyvenv.cfg", "conda-meta/history"]
+probe_format = "json"
+command_path_from_runtime = "executable"
+project_arguments = ["pyproject.toml:project.requires-python"]
+probe_args = ["-I", "-c", '''
+import json, sys
+result = dict(executable=sys.executable, prefix=sys.prefix, version=sys.version.split()[0], available=False, compatible=False)
+try:
+    import pytest
+    result['available'] = True
+    result['runner_version'] = pytest.__version__
+    if not sys.argv[1]:
+        result['compatible'] = True
+    else:
+        from packaging.specifiers import SpecifierSet
+        result['compatible'] = SpecifierSet(sys.argv[1]).contains(result['version'])
+except (ImportError, ValueError):
+    pass
+print(json.dumps(result))
+''']
+command_args = ["-m", "pytest", "--tb=short", "-q", "--no-header"]
 
 # Flags appended to test commands by the harness to reduce output volume.
 # Only appended if not already present in the command.
@@ -57,6 +105,7 @@ skipped = '''(\d+)\s+skipped'''
 #   "FAILED tests/test_x.py::test_y - AssertionError: ..."
 #   "ERROR tests/test_x.py::test_y"
 [output_parser.per_test]
+verdict_map = { PASSED = "PASSED", FAILED = "FAILED", ERROR = "ERROR" }
 regex = '''
     ^(?P<verdict>PASSED|FAILED|ERROR)\s+(?P<test_id>\S+)
 '''
@@ -66,8 +115,8 @@ regex = '''
 # any of the detect_files; consumed by harness/tools.py:run_tests.
 [run_tests]
 detection_priority = 0
-# Use the task's current environment. A benchmark or other caller that needs
-# an exact activation command owns that setup outside the core descriptor.
+# Startup observes installed project environments before selecting the
+# interpreter. Explicit runner requests without startup use the current PATH.
 env_activate_prefix = ""
 base_cmd = "python3 -m pytest --tb=short -q --no-header"
 detect_files = ["pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "conftest.py", "tox.ini"]
@@ -77,6 +126,14 @@ arg_last_failed = "--lf"
 component_test_names = ["test_{stem}{suffix}", "{stem}_test{suffix}"]
 component_target_template = "{test_path}"
 component_fallback = "none"
+component_collection_plugin = "pytest_component.py"
+
+[run_tests.native_report]
+format = "junit"
+collection_plugin = "pytest_report.py"
+environment = "PYTEST_ADDOPTS"
+argument = "--junitxml={path}"
+completed_exit_codes = [0, 1]
 
 # pytest exit-code semantics (docs.pytest.org/en/stable/reference/exit-codes.html).
 # Encoded explicitly here (rather than relying solely on run_tests.py's
@@ -92,5 +149,47 @@ component_fallback = "none"
 5 = "no_tests_collected"
 
 [advice]
-pytest_path_missing = "\n[HARNESS: pytest reports the test path does not exist. Either fix the path, or write the test file before running tests again.]"
+pytest_path_missing = "\n[HARNESS: The output contains a pytest missing-path message. Compare the requested path with the observed task layout before changing files or retrying. The message alone does not establish which path is absent.]"
 pytest_lf_cache_empty = "\n[HARNESS: last_failed=true requires a prior run to populate the lastfailed cache; pytest collected no tests because the cache is empty (no previously-failing tests on record). Run run_tests once without last_failed to populate the cache, then re-issue with last_failed=true. If you intended to verify against the full suite, drop last_failed.]"
+
+# Requested CLI grammar only; it does not establish execution or coverage.
+
+[[diagnostic_invocations]]
+family = "pytest"
+literal_targets_after_separator = true
+prefix = ["pytest|py\\.test"]
+flags = ["-q", "-v", "-vv", "-x", "-s", "--lf", "--help", "--version", "--collect-only"]
+value_options = ["-k", "-m", "-c", "-o", "--override-ini", "--tb", "--maxfail", "--ignore", "--deselect"]
+
+[[diagnostic_invocations]]
+family = "pytest"
+literal_targets_after_separator = true
+prefix = ["python[0-9.]*", "-m", "pytest"]
+flags = ["-q", "-v", "-vv", "-x", "-s", "--lf", "--help", "--version", "--collect-only"]
+value_options = ["-k", "-m", "-c", "-o", "--override-ini", "--tb", "--maxfail", "--ignore", "--deselect"]
+
+[[diagnostic_invocations]]
+family = "unittest"
+prefix = ["python[0-9.]*", "-m", "unittest"]
+flags = ["-q", "-v", "-b", "-f", "-c"]
+value_options = ["-k", "-s", "-p", "-t"]
+non_targets = ["discover"]
+
+[[diagnostic_invocations]]
+family = "unittest"
+prefix = ["unittest"]
+flags = ["-q", "-v", "-b", "-f", "-c"]
+value_options = ["-k", "-s", "-p", "-t"]
+non_targets = ["discover"]
+
+[[diagnostic_invocations]]
+family = "tox"
+prefix = ["tox"]
+flags = ["-q", "-v", "--help", "--version"]
+value_options = ["-e", "-c"]
+
+[[diagnostic_invocations]]
+family = "nox"
+prefix = ["nox"]
+flags = ["-q", "-v", "--help", "--version"]
+value_options = ["-s", "-f"]

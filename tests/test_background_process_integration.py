@@ -35,7 +35,7 @@ def test_background_config_defaults_overlay_and_validation(tmp_path):
     defaults = load_config()
     assert defaults.tools_background_enabled is False
     assert defaults.tools_background_max_procs == 4
-    assert defaults.tools_background_poll_timeout == 300
+    assert defaults.tools_background_poll_timeout == 0
 
     overlay = tmp_path / "enabled.toml"
     overlay.write_text(

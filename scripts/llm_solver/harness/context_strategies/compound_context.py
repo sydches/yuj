@@ -33,6 +33,7 @@ import json
 from pathlib import Path
 
 from .solver_state_context import SolverStateContext
+from ._solver_state_format import format_outcome
 from ._metadata import (
     STATEFUL_BUDGET_CONFIG_ATTRS,
     STATEFUL_CONSTRUCTOR_CONFIG_ATTRS,
@@ -93,14 +94,14 @@ class CompoundContext(SolverStateContext):
                     short = short[:297] + "..."
                 lines.append(f"{header} [{short}]")
                 prev_reasoning = reasoning
-            lines.append(f"    → {action} → {stub_result}{' → ' + nxt if nxt else ''}")
+            lines.append(f"    → {action}{format_outcome(entry)} → {stub_result}{' → ' + nxt if nxt else ''}")
         return "\n".join(lines)
 
     @staticmethod
     def _render_evidence_item(item) -> str:
         """Render an evidence entry as a human-readable line."""
         if isinstance(item, dict):
-            return f"step {item['step']}: {item['action']} → {item.get('result', '')}"
+            return f"step {item['step']}: {item['action']}{format_outcome(item)} → {item.get('result', '')}"
         return str(item)
 
     @staticmethod

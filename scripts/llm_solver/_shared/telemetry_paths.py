@@ -20,8 +20,8 @@ _DIR_PREFIX = ".yuj_"
 
 
 def telemetry_dir(repo_dir: Path) -> Path:
-    """The harness-owned directory paired with a task workspace."""
-    repo_dir = Path(repo_dir)
+    """The harness-owned sibling of the resolved task workspace."""
+    repo_dir = Path(repo_dir).resolve()
     return repo_dir.parent / f"{_DIR_PREFIX}{repo_dir.name}"
 
 

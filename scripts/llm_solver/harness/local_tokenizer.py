@@ -1,15 +1,8 @@
-"""Local exact-tokenizer wrapper.
+"""Legacy local-tokenizer estimates for explicitly selected artifacts.
 
-Loads the model's tokenizer once at session start and returns exact
-token counts for the about-to-send message list. Replaces the
-chars_div_4 estimate and the previous-turn-pt proxy in
-Session._maybe_compact_messages with the same tokenizer the server
-uses.
-
-For Qwen3 family GGUFs, the upstream HF tokenizer (e.g.
-"Qwen/Qwen3-30B-A3B-Instruct-2507") produces identical token counts
-to llama-server's /tokenize on plain strings — verified at
-implementation time.
+An artifact's vocabulary and renderer are not verified against the backend.
+Plain-string agreement or copying a template does not establish full-request
+agreement. Automatic request counting is owned by the active transport.
 
 Configuration: cfg.tokenizer_id is either a HuggingFace model id
 (downloaded once, cached locally) or a path to a directory containing
@@ -18,7 +11,10 @@ tokenizer.json + tokenizer_config.json.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 def _parse_tool_call_args(messages: list[dict]) -> list[dict]:
@@ -53,18 +49,14 @@ def _parse_tool_call_args(messages: list[dict]) -> list[dict]:
 
 
 class LocalTokenizer:
-    """Exact token counter using the model's HF tokenizer.
-
-    Wraps transformers.AutoTokenizer. count() applies the model's
-    chat template to the message list and returns the exact token
-    count the server will see.
-    """
+    """Estimate with an explicit HF artifact; serving identity is unverified."""
 
     def __init__(self, tokenizer_id: str):
         if not tokenizer_id:
             raise ValueError("LocalTokenizer requires a non-empty tokenizer_id")
         from transformers import AutoTokenizer
         self._id = tokenizer_id
+        self.last_basis = "local_tokenizer_estimate"
         self._tok = AutoTokenizer.from_pretrained(tokenizer_id)
         # A GGUF may embed a different chat template from its hub tokenizer.
         # When set, use the server's /props template. None uses the bundled
@@ -94,20 +86,19 @@ class LocalTokenizer:
         return self._id
 
     def count(self, messages: list[dict], tools: list[dict] | None = None) -> int:
-        """Return exact token count for the message list under the
-        model's chat template.
+        """Estimate tokens under the selected artifact's chat template.
 
         ``tools`` is the OAI-style tool-schema list the request will carry.
         Pass the same schemas that the client sends so the count includes
         the rendered tool catalog.
 
         For mixed message shapes (assistant tool_calls, tool role
-        results) the chat template renders them in the same form
-        the server tokenizes. If the template raises (unsupported
+        results), backend rendering may differ. If the template raises (unsupported
         message shape), falls back to per-message encode summed
         with a small framing budget.
         """
         try:
+            self.last_basis = "local_tokenizer_estimate"
             kwargs = {}
             if self._chat_template:
                 # Server template render: match the real request, which
@@ -129,7 +120,9 @@ class LocalTokenizer:
             else:
                 ids = result
             return len(ids)
-        except Exception:
+        except Exception as exc:
+            self.last_basis = "local_message_estimate"
+            log.warning("local chat template failed (%s); using per-message estimate", type(exc).__name__)
             total = 0
             for m in messages:
                 content = m.get("content") or ""

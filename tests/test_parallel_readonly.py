@@ -9,6 +9,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
@@ -60,6 +63,56 @@ class TestConcurrentDispatch:
             rb = fb.result()
         assert "content-a" in ra
         assert "content-b" in rb
+
+    def test_session_read_workers_see_the_persistent_shell_files(self, tmp_path):
+        import shutil
+        import subprocess
+        from llm_solver.server.types import TurnResult, Usage, ToolCall
+        binary = shutil.which('bwrap')
+        if not binary:
+            pytest.skip('bwrap is unavailable')
+        probe = subprocess.run([binary, '--ro-bind', '/', '/', '--', 'true'], capture_output=True)
+        if probe.returncode:
+            pytest.skip('mount namespaces are unavailable')
+        hooks = tmp_path / '.git' / 'hooks'
+        hooks.mkdir(parents=True)
+        (tmp_path / '.yujignore').write_text('secret\n')
+        (tmp_path / 'secret').write_text('ignored host content')
+        for number in range(2):
+            (hooks / f'marker-{number}').write_text('hidden host marker')
+        cfg = make_config(sandbox_bash=True, bwrap_bin=binary, max_turns=4,
+                          parallel_readonly_enabled=True, unreadable_paths=())
+        client = MagicMock()
+        calls = [
+            [ToolCall(id='create', name='bash', arguments={
+                'cmd': "printf 'selected marker 0' > .git/hooks/marker-0; "
+                       "printf 'selected marker 1' > .git/hooks/marker-1",
+            })],
+            [ToolCall(id=f'read-{number}', name='read', arguments={
+                'path': f'.git/hooks/marker-{number}',
+            }) for number in range(2)],
+            [],
+        ]
+        client.chat.side_effect = [TurnResult(
+            content=None if group else 'done', tool_calls=group,
+            finish_reason='tool_calls' if group else 'stop',
+            usage=Usage(prompt_tokens=10, completion_tokens=5),
+        ) for group in calls]
+        client.build_assistant_message.return_value = {'role': 'assistant', 'content': ''}
+        with patch.object(loop_mod.Session, '_get_server_ctx', return_value=0):
+            session = loop_mod.Session(cfg, client, 'sys', 'prompt', str(tmp_path))
+            result = session.run()
+        assert result.done
+        observed = [message['content'] for message in session.context.get_messages()
+                    if message.get('role') == 'tool'
+                    and message.get('tool_call_id', '').startswith('read-')]
+        assert len(observed) == 2
+        assert all('selected marker' in content for content in observed), '\n'.join(
+            message['content'] for message in session.context.get_messages()
+            if message.get('role') == 'tool')
+        assert all('hidden host marker' not in content for content in observed)
+        assert all((hooks / f'marker-{number}').read_text() == 'hidden host marker'
+                   for number in range(2))
 
 
 class TestConfigDefaults:

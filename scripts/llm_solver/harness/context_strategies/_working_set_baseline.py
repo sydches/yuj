@@ -360,7 +360,7 @@ class WorkingSetBaselineContext(ContextManager):
         return True
 
     def prepopulate_from_trace(self) -> int:
-        state_path = self._cwd / ".solver" / "state.json"
+        state_path = (self._artifact_dir or self._cwd) / ".solver" / "state.json"
         return self._ws.seed_from_state_trace(state_path, turn=0)
 
     # -- internal -------------------------------------------------
@@ -428,7 +428,7 @@ class WorkingSetBaselineContext(ContextManager):
     def _load_state_json(self) -> dict:
         if self._raw_state_cache is not None:
             return self._raw_state_cache
-        state_path = self._cwd / ".solver" / "state.json"
+        state_path = (self._artifact_dir or self._cwd) / ".solver" / "state.json"
         if not state_path.is_file():
             self._raw_state_cache = {}
             return self._raw_state_cache

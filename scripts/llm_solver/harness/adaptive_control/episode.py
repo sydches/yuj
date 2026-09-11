@@ -55,11 +55,10 @@ def caps_from_cfg(cfg) -> Caps:
 
     cooldown_default = _i("adaptive_control_watch_window_turns", 5)
     return Caps(
-        max_interventions_per_attempt=_i("adaptive_control_max_interventions_per_attempt", 1),
-        max_interventions_per_hurdle_episode=_i("adaptive_control_max_interventions_per_hurdle_episode", 1),
-        max_distinct_hurdle_episodes_per_attempt=_i("adaptive_control_max_distinct_hurdle_episodes_per_attempt", 1),
-        cooldown_after_apply_slots=int(
-            getattr(cfg, "adaptive_control_cooldown_after_apply_slots", cooldown_default) or cooldown_default),
+        max_interventions_per_attempt=_i("adaptive_control_max_interventions_per_attempt", _i("adaptive_control_max_interventions", 1)),
+        max_interventions_per_hurdle_episode=_i("adaptive_control_max_interventions_per_hurdle_episode", _i("adaptive_control_max_same_signal_interventions", 1)),
+        max_distinct_hurdle_episodes_per_attempt=_i("adaptive_control_max_distinct_hurdle_episodes_per_attempt", _i("adaptive_control_max_interventions", 1)),
+        cooldown_after_apply_slots=_i("adaptive_control_cooldown_after_apply_slots", cooldown_default),
     )
 
 
@@ -136,6 +135,8 @@ def plan_apply(m: EpisodeMachine, caps: Caps, signal: str, slot: int) -> ApplyPl
             is_escalation=cur.attempt_index >= 1,
             exclude_ids=tuple(cur.applied_intervention_ids),
             previous_intervention_id=prev, episode=cur)
+    if caps.max_interventions_per_hurdle_episode <= 0:
+        return ApplyPlan(False, PER_EPISODE_EXHAUSTED, ACTIVE_HURDLE)
     if m.episodes_opened >= caps.max_distinct_hurdle_episodes_per_attempt:
         return ApplyPlan(False, DISTINCT_EPISODES_EXHAUSTED, ACTIVE_HURDLE)
     return ApplyPlan(True, "", SELECT_MEDICINE, is_new_episode=True, episode=None)

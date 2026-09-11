@@ -2,20 +2,72 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
-import re
 import shlex
 from typing import Any
 
 from ..._shared.classification import classify_outcome, is_error_result
 from ...language_quirks import (
-    load_run_tests_quirk_for_runner,
     load_run_tests_quirk_object,
 )
 from ..command_redirect import split_shell_fragments, strip_leading_assignments
-from .extractors import MUTATION_TOOLS, _is_bash_write_like, _is_test_command
+from ..bash_write_classification import is_workspace_path, normalize_trace_path
+from .extractors import MUTATION_TOOLS, _is_bash_write_like
 from .state import PASS, Decision, GuardrailState
+from .custom_execution import (
+    completed_custom_execution, _observe_runtime_executable,
+    observed_component_runner_base_cmd,
+)
+
+
+def _file_revision(cwd: str | Path, path: str) -> str:
+    try:
+        from ..task_path import resolve_task_path
+        target = resolve_task_path(cwd, path)
+        with target.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, RuntimeError, ValueError):
+        return ""
+
+
+def verification_tree_matches(state: GuardrailState, cwd: str | Path | None) -> bool:
+    """Check only the files observed in successful edits, not task semantics."""
+    revisions = state.verification_file_revisions
+    if not revisions:
+        return True
+    return bool(cwd) and all(
+        digest and _file_revision(cwd, path) == digest
+        for path, digest in revisions.items()
+    )
+
+
+def verification_changes_tree(tc_name: str, tc_args: dict | None) -> bool:
+    """Do not credit a test bundled with an explicit Git tree change."""
+    if tc_name != "bash" or not isinstance(tc_args, dict):
+        return False
+    for fragment in split_shell_fragments(str(tc_args.get("cmd") or "")):
+        try:
+            argv = shlex.split(strip_leading_assignments(fragment.text))
+        except ValueError:
+            continue
+        if not argv or argv[0].rsplit("/", 1)[-1] != "git":
+            continue
+        args = iter(argv[1:])
+        for arg in args:
+            if arg in {"-C", "-c", "--git-dir", "--work-tree"}:
+                next(args, None)
+            elif not arg.startswith("-"):
+                if arg in {
+                    "stash", "checkout", "switch", "restore", "reset",
+                    "revert", "cherry-pick", "rebase", "merge", "apply", "clean",
+                }:
+                    return True
+                break
+    return False
 
 
 @dataclass(frozen=True)
@@ -26,6 +78,7 @@ class ComponentVerificationTarget:
     display: str
     runner: str
     source_path: str
+    native_sources: tuple[str, ...] = ()
 
 
 def automatic_component_verification_due(
@@ -47,13 +100,23 @@ def resolve_component_verification_target(
     cwd: str | Path,
     *,
     ignore_policy: Any = None,
+    runner: str = "auto",
 ) -> ComponentVerificationTarget | None:
     """Select a unique conventional component target without task knowledge."""
-    root = Path(cwd).resolve()
-    quirk = load_run_tests_quirk_object(root)
+    from ..task_path import resolve_task_path
+    root = resolve_task_path(cwd, '.')
+    quirk = load_run_tests_quirk_object(root, runner=runner)
     sources = _safe_source_paths(root, state.post_mutation_source_paths)
     if not sources:
         return None
+
+    if quirk.extra_fields.get("component_collection_plugin"):
+        # The runner selects from its actual collection during execution.
+        return ComponentVerificationTarget(
+            path="", display="<runner-collected component>", runner=quirk.runner,
+            source_path=sources[0].relative_to(root).as_posix(),
+            native_sources=tuple(source.relative_to(root).as_posix() for source in sources),
+        )
 
     for source in sources:
         names = _component_test_names(quirk.component_test_names, source)
@@ -113,138 +176,40 @@ def mark_automatic_component_verification_attempted(
     )
 
 
-def verification_result_passed(tc_name: str, result: str) -> bool:
-    """Read only harness-owned status markers for a verification verdict."""
-    if tc_name == "run_tests":
-        return '<test_results status="passed"' in result
-    return classify_outcome(result) == "OK"
-
-
-def verification_runner_unavailable(result: str) -> bool:
-    """Return whether a registered runner could not start."""
-    from .._tools._pytest_hints import _pytest_binary_missing
-    return (
-        '<test_results status="runner_unavailable"' in result
-        or _UNAVAILABLE_EXIT_RE.search(result) is not None
-        or _pytest_binary_missing(result, None)
-    )
-
-
-_RUNTIME_FAMILIES = {
-    "bun", "cargo", "ctest", "deno", "dotnet", "go", "java", "make",
-    "node", "npm", "npx", "php", "pnpm", "ruby", "yarn",
-}
-_NON_CHECK_EXECUTABLES = {
-    "cat", "cp", "diff", "echo", "file", "find", "git", "grep", "head",
-    "ls", "mkdir", "mv", "pwd", "rg", "sed", "stat", "tail", "tee",
-    "touch", "wc", "which",
-}
-_UNAVAILABLE_EXIT_RE = re.compile(
-    r'(?:\[exit code:\s*12[67]\]|\bexit_code="12[67]")'
-)
-
-
-def _runtime_family(executable: str) -> str:
-    leaf = executable.rsplit("/", 1)[-1]
-    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", leaf):
-        return "python"
-    return leaf if leaf in _RUNTIME_FAMILIES else ""
-
-
-def _observe_runtime_executable(
-    tc_name: str,
-    tc_args: dict | None,
-    result: str,
-) -> tuple[str, str] | None:
-    """Find one runtime executable that just ran in a shell check."""
-    if tc_name != "bash" or not isinstance(tc_args, dict):
-        return None
-    if _UNAVAILABLE_EXIT_RE.search(result):
-        return None
-    command = tc_args.get("cmd")
-    if not isinstance(command, str):
-        return None
-    for fragment in split_shell_fragments(command):
-        try:
-            argv = shlex.split(
-                strip_leading_assignments(fragment.text), posix=True
-            )
-        except ValueError:
-            continue
-        if not argv:
-            continue
-        family = _runtime_family(argv[0])
-        if family:
-            return family, argv[0]
-    return None
-
-
-def _runs_direct_executable(
-    tc_name: str,
-    tc_args: dict | None,
-    result: str,
-) -> bool:
-    """Return whether a shell check ran an explicit executable path."""
-    if tc_name != "bash" or not isinstance(tc_args, dict):
-        return False
-    if _UNAVAILABLE_EXIT_RE.search(result):
-        return False
-    command = tc_args.get("cmd")
-    if not isinstance(command, str):
-        return False
-    for fragment in split_shell_fragments(command):
-        try:
-            argv = shlex.split(
-                strip_leading_assignments(fragment.text), posix=True
-            )
-        except ValueError:
-            continue
-        if not argv:
-            continue
-        executable = argv[0]
-        leaf = executable.rsplit("/", 1)[-1]
-        if (
-            executable.startswith(("/", "./", "../"))
-            and leaf not in _NON_CHECK_EXECUTABLES
-        ):
-            return True
+def verification_result_passed(tc_name: str, result: str, execution_metadata: dict | None = None, *, formal: bool = True) -> bool:
+    """Use private runner facts; displayed test tags cannot grant a pass."""
+    if tc_name in {"run_tests", "bash", "bash_poll"}:
+        facts = execution_metadata or {}
+        return bool(facts.get("executed")
+                    and facts.get("exit_status_known")
+                    and facts.get("exit_status") == 0
+                    and not facts.get("timed_out")
+                    and not facts.get("security_blocked_stage")
+                    and facts.get("verification_status") in ({"passed"} if formal else {"passed", "custom_passed"}))
     return False
 
 
-def observed_component_runner_base_cmd(
-    state: GuardrailState,
-    runner: str,
-) -> str:
-    """Reuse a runtime executable already demonstrated in this revision."""
-    executable = state.post_mutation_observed_runtime_executable
-    family = state.post_mutation_observed_runtime_family
-    if not executable or not family:
-        return ""
-    quirk = load_run_tests_quirk_for_runner(runner)
-    try:
-        base = shlex.split(quirk.base_cmd, posix=True)
-    except ValueError:
-        return ""
-    if not base or _runtime_family(base[0]) != family:
-        return ""
-    base[0] = executable
-    return shlex.join(base)
+def verification_runner_unavailable(result: str, *, tc_name: str = "bash",
+                                    execution_metadata: dict | None = None) -> bool:
+    """Return whether a registered runner could not start."""
+    if tc_name in {"run_tests", "bash", "bash_poll"}:
+        facts = execution_metadata or {}
+        return bool(facts.get("executed")
+                    and not facts.get("security_blocked_stage")
+                    and facts.get("verification_status") == "runner_unavailable")
+    return False
 
 
 def _safe_source_paths(root: Path, raw_paths: tuple[str, ...]) -> list[Path]:
+    from ..task_path import resolve_task_path
     paths: list[Path] = []
     for raw in raw_paths:
-        candidate = Path(raw)
-        if candidate.is_absolute():
-            resolved = candidate.resolve(strict=False)
-        else:
-            resolved = (root / candidate).resolve(strict=False)
         try:
-            resolved.relative_to(root)
-        except ValueError:
+            resolved = resolve_task_path(root, raw)
+            if resolved.is_file() and resolved not in paths:
+                paths.append(resolved)
+        except (ValueError, OSError, RuntimeError):
             continue
-        if resolved.is_file() and resolved not in paths:
-            paths.append(resolved)
     return paths
 
 
@@ -270,21 +235,17 @@ def _pretest_candidates(
     names: set[str],
 ) -> list[Path]:
     candidates: list[Path] = []
+    from ..task_path import resolve_task_path
     for test_id in sorted(
         state.pretest_failing_tests | state.pretest_passing_tests
     ):
         raw = test_id.split("::", 1)[0]
-        candidate = (root / raw).resolve(strict=False)
         try:
-            candidate.relative_to(root)
-        except ValueError:
+            candidate = resolve_task_path(root, raw)
+            if candidate.name in names and candidate.is_file() and candidate not in candidates:
+                candidates.append(candidate)
+        except (ValueError, OSError, RuntimeError):
             continue
-        if (
-            candidate.name in names
-            and candidate.is_file()
-            and candidate not in candidates
-        ):
-            candidates.append(candidate)
     return candidates
 
 
@@ -294,11 +255,11 @@ def _walk_named_files(
     *,
     ignore_policy: Any,
 ) -> list[Path]:
+    from ..task_path import TaskPath
     candidates: list[Path] = []
-    for directory, dir_names, file_names in os.walk(
-        root, topdown=True, followlinks=False
-    ):
-        base = Path(directory)
+    traversal = root.walk() if isinstance(root, TaskPath) else os.walk(root, topdown=True, followlinks=False)
+    for directory, dir_names, file_names in traversal:
+        base = directory if isinstance(directory, TaskPath) else Path(directory)
         kept_dirs: list[str] = []
         for name in sorted(dir_names):
             path = base / name
@@ -322,31 +283,26 @@ def _walk_named_files(
                         continue
                 except (OSError, ValueError):
                     continue
-            candidates.append(path.resolve(strict=False))
+            try:
+                candidate = path.resolve(strict=False)
+                candidate.relative_to(root)
+                candidates.append(candidate)
+            except (ValueError, OSError, RuntimeError):
+                continue
             if len(candidates) > 64:
                 return []
     return candidates
 
 
 def _select_unique_candidate(source: Path, candidates: list[Path]) -> Path | None:
-    if not candidates:
-        return None
-    source_parts = source.parent.parts
+    """Preserve ambiguity; path spelling cannot establish source relevance.
 
-    def score(candidate: Path) -> tuple[int, int, int]:
-        common = 0
-        for left, right in zip(source_parts, candidate.parent.parts):
-            if left != right:
-                break
-            common += 1
-        distance = len(source_parts) + len(candidate.parent.parts) - 2 * common
-        test_dir = int(any("test" in part.lower() for part in candidate.parent.parts))
-        return common, test_dir, -distance
-
-    ranked = sorted(candidates, key=lambda path: (score(path), str(path)), reverse=True)
-    best_score = score(ranked[0])
-    best = [path for path in ranked if score(path) == best_score]
-    return best[0] if len(best) == 1 else None
+    Callers supply resolved candidates. Uniqueness retains the existing
+    conventional fallback, not proof of collection membership or coverage.
+    """
+    del source
+    unique = set(candidates)
+    return next(iter(unique)) if len(unique) == 1 else None
 
 
 def post_mutation_verification_gate(
@@ -370,13 +326,39 @@ def observe_post_mutation_verification(
     gate_blocked: bool,
     tc_args: dict | None = None,
     source_write_paths: tuple[str, ...] = (),
+    execution_metadata: dict | None = None,
+    cwd: str | Path | None = None,
     **_: Any,
 ) -> None:
     """Arm one automatic component run after repeated custom checks."""
     if gate_blocked:
         return
-    if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
-        if not is_error_result(result):
+    from ..file_changes import observed_mutation
+    observed = observed_mutation(execution_metadata)
+    changes = (execution_metadata or {}).get("file_changes")
+    if changes is not None and changes.get("status") in {"unavailable", "incomplete"}:
+        state.verified_since_mutation = False
+        state.formal_verification_passed_since_mutation = False
+        return
+    accounted = bool((execution_metadata or {}).get("_mutation_accounted"))
+    if accounted and not (execution_metadata or {}).get("_verification_inputs_unchanged"):
+        return
+    if (observed is True and not accounted) or (observed is None and (
+            tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args))):
+        if observed is True or not is_error_result(result):
+            # Accepted check outputs are effects, not newly edited inputs.
+            check_outputs = bool(
+                (execution_metadata or {}).get("_verification_inputs_unchanged")
+                and verification_result_passed(tc_name, result, execution_metadata, formal=False)
+                and not verification_changes_tree(tc_name, tc_args)
+            )
+            if cwd and not check_outputs:
+                paths = set(state.verification_file_revisions)
+                paths.update(normalize_trace_path(path) for path in source_write_paths
+                             if is_workspace_path(path))
+                state.verification_file_revisions = {
+                    path: _file_revision(cwd, path) for path in sorted(paths)
+                }
             state.post_mutation_non_test_bash_count = 0
             state.post_mutation_verification_gate_armed = False
             state.formal_verification_passed_since_mutation = False
@@ -385,33 +367,45 @@ def observe_post_mutation_verification(
             state.post_mutation_source_paths = tuple(source_write_paths)
             state.post_mutation_observed_runtime_family = ""
             state.post_mutation_observed_runtime_executable = ""
+            state.post_mutation_observed_runtime_binding = {}
             state.post_mutation_automatic_verification_unavailable = False
         return
     if not state.has_mutated:
         return
-    if _is_test_command(tc_name, tc_args):
+    if tc_name not in {"bash", "exec_cell", "run_tests", "bash_poll"}:
+        return
+    if (not verification_tree_matches(state, cwd)
+            or verification_changes_tree(tc_name, tc_args)):
+        return
+    facts = execution_metadata or {}
+    formal_attempt = (tc_name == "run_tests"
+                      or (facts.get("runner_request") or {}).get("check_intent")
+                      or facts.get("verification_status") in {"passed", "failed", "runner_unavailable"})
+    if (facts.get("executed") and facts.get("exit_status_known") and
+            formal_attempt):
         state.post_mutation_non_test_bash_count = 0
         state.post_mutation_verification_gate_armed = False
-        passed = verification_result_passed(tc_name, result)
+        passed = verification_result_passed(tc_name, result, execution_metadata)
         state.formal_verification_passed_since_mutation = passed
         state.verified_since_mutation = passed
-        if not verification_runner_unavailable(result):
+        if not verification_runner_unavailable(result, tc_name=tc_name,
+                                               execution_metadata=execution_metadata):
             state.post_mutation_automatic_verification_unavailable = False
         return
     if state.post_mutation_automatic_verification_attempted:
         return
-    if tc_name not in {"bash", "exec_cell"}:
+    if tc_name != "bash" or not completed_custom_execution(facts, cwd):
         return
-    observed_runtime = _observe_runtime_executable(tc_name, tc_args, result)
-    if observed_runtime is None and not _runs_direct_executable(
-        tc_name, tc_args, result
-    ):
-        return
+    observed_runtime = _observe_runtime_executable(facts)
+    state.post_mutation_observed_runtime_family = ""
+    state.post_mutation_observed_runtime_executable = ""
+    state.post_mutation_observed_runtime_binding = {}
     if observed_runtime is not None:
         (
             state.post_mutation_observed_runtime_family,
             state.post_mutation_observed_runtime_executable,
         ) = observed_runtime
+        state.post_mutation_observed_runtime_binding = dict(facts["shell_submission"])
     state.post_mutation_non_test_bash_count += 1
     threshold = int(
         getattr(cfg, "post_mutation_verification_gate_after", 0) or 0

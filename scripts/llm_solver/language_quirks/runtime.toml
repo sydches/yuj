@@ -1,0 +1,304 @@
+name = "runtime"
+description = "Read-only observations of project declarations and installed tools"
+
+# Installed layout evidence admits these components, never the entire prefix.
+[[filesystem.layouts]]
+name = "python-venv"
+markers = ["pyvenv.cfg", "bin/python"]
+components = ["pyvenv.cfg", "bin", "lib", "lib64", "include"]
+base_executables = ["bin/python", "bin/python3"]
+base_directories_file = "pyvenv.cfg"
+base_directories_keys = ["home"]
+
+[[filesystem.layouts]]
+name = "conda"
+markers = ["conda-meta/history", "bin/python"]
+components = ["bin", "lib", "lib64", "include", "share", "conda-meta"]
+inventories = ["{prefix}/envs", "{home}/.conda/envs"]
+registries = ["{home}/.conda/environments.txt"]
+
+[[filesystem.layouts]]
+name = "python-installation"
+markers = ["bin/python3", "lib"]
+components = ["bin", "lib", "lib64", "include", "share"]
+
+[[filesystem.layouts]]
+name = "go"
+markers = ["VERSION", "pkg/tool", "bin/go"]
+components = ["VERSION", "bin", "pkg", "src", "lib", "go.env"]
+
+[[filesystem.layouts]]
+name = "node"
+markers = ["bin/node", "include/node/node.h"]
+components = ["bin", "lib", "include", "share"]
+
+[[filesystem.layouts]]
+name = "java"
+markers = ["release", "bin/java"]
+components = ["release", "bin", "lib", "conf", "include", "jmods"]
+
+[[filesystem.layouts]]
+name = "rust-toolchain"
+markers = ["bin/rustc", "lib/rustlib"]
+components = ["bin", "lib", "libexec", "share"]
+
+[filesystem.native_manager]
+name = "rustup"
+proxies = ["rustc", "cargo"]
+home_variable = "RUSTUP_HOME"
+default_home = ".rustup"
+settings = "settings.toml"
+settings_fields = ["version", "default_toolchain", "default_host_triple", "profile"]
+overrides_field = "overrides"
+inventory = "toolchains"
+layout = "rust-toolchain"
+query = ["which", "rustc"]
+query_executable = "bin/rustc"
+selection_variable = "RUSTUP_TOOLCHAIN"
+probe_environment = { RUSTUP_AUTO_INSTALL = "0" }
+project_files = ["rust-toolchain.toml", "rust-toolchain"]
+project_path_field = ["toolchain", "path"]
+
+[discovery]
+commands = ["python3", "python", "pip", "uv", "conda", "poetry", "pdm", "tox", "nox", "node", "npm", "npx", "pnpm", "yarn", "go", "cargo", "rustc", "rustup", "ctest", "mvn", "java"]
+skip_descent = [".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__"]
+
+[discovery.source_suffixes]
+".py" = "Python"
+".pyi" = "Python"
+".js" = "JavaScript"
+".jsx" = "JavaScript"
+".ts" = "TypeScript"
+".tsx" = "TypeScript"
+".go" = "Go"
+".rs" = "Rust"
+".java" = "Java"
+".c" = "C"
+".h" = "C/C++"
+".cpp" = "C++"
+".cc" = "C++"
+
+[[discovery.files]]
+path = "pyproject.toml"
+language = "Python"
+format = "toml"
+fields = [["project", "requires-python"], ["build-system", "build-backend"]]
+sections = [["tool", "uv"], ["tool", "poetry"], ["tool", "pdm"], ["tool", "pytest", "ini_options"]]
+
+[[discovery.files]]
+path = "package.json"
+language = "JavaScript"
+format = "json"
+fields = [["packageManager"], ["engines"], ["scripts", "test"], ["devDependencies", "jest"], ["devDependencies", "vitest"]]
+
+[[discovery.files]]
+path = "setup.cfg"
+format = "ini"
+sections = [["tool:pytest"]]
+
+[[discovery.files]]
+path = "pytest.ini"
+format = "ini"
+sections = [["pytest"]]
+
+[[discovery.files]]
+path = "tox.ini"
+format = "ini"
+sections = [["tox"], ["pytest"]]
+
+# Presence is evidence of a project artifact, not proof of an installed tool.
+[[discovery.files]]
+path = "uv.lock"
+format = "presence"
+
+[[discovery.files]]
+path = "poetry.lock"
+format = "presence"
+
+[[discovery.files]]
+path = "pdm.lock"
+format = "presence"
+
+[[discovery.files]]
+path = "requirements.txt"
+format = "presence"
+
+[[discovery.files]]
+path = "environment.yml"
+format = "presence"
+
+[[discovery.files]]
+path = ".venv/pyvenv.cfg"
+format = "presence"
+
+[[discovery.files]]
+path = "Cargo.toml"
+language = "Rust"
+format = "toml"
+fields = [["package", "rust-version"], ["package", "edition"]]
+sections = [["workspace"]]
+
+[[discovery.files]]
+path = "go.mod"
+language = "Go"
+format = "presence"
+
+[[discovery.files]]
+path = "CMakeLists.txt"
+format = "presence"
+
+[[discovery.files]]
+path = "pom.xml"
+language = "Java"
+format = "presence"
+
+[[discovery.probes]]
+id = "conda_environments"
+environment_candidates_field = "envs"
+languages = ["Python"]
+command = "conda"
+# Read the installed command's interpreter and configuration. The high-level
+# env-list CLI also collects system information and can clean the user's
+# environment registry; neither side effect belongs in startup inspection.
+script = '''
+tool_path={executable}
+IFS= read -r header < "$tool_path" || exit 1
+case "$header" in '#!'/*) interpreter=${header#??} ;; *) exit 1 ;; esac
+[ -x "$interpreter" ] || exit 1
+"$interpreter" -I - <<'YUJ_RUNTIME_INSPECTION'
+import itertools, json, os
+from pathlib import Path
+import conda
+from conda.base.context import context
+root = Path(context.root_prefix)
+envs = {str(root)}
+locations = list(context.envs_dirs)
+limited = len(locations) > 16
+for location in locations[:16]:
+    try:
+        with os.scandir(location) as stream:
+            entries = list(itertools.islice(stream, 129))
+        limited |= len(entries) > 128
+        for entry in entries[:128]:
+            if Path(entry.path, 'conda-meta', 'history').is_file():
+                envs.add(entry.path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        limited = True
+registry = Path.home() / '.conda' / 'environments.txt'
+try:
+    with registry.open() as stream:
+        for i in range(129):
+            line = stream.readline(4097)
+            if not line:
+                break
+            if i == 128 or len(line) > 4096:
+                limited = True
+                break
+            candidate = Path(line.strip())
+            if candidate.is_absolute() and (candidate / 'conda-meta' / 'history').is_file():
+                envs.add(str(candidate))
+except FileNotFoundError:
+    pass
+except OSError:
+    limited = True
+print(json.dumps(dict(envs=sorted(envs), envs_dirs=locations[:16], registry=str(registry), inventory_limited=limited, conda_version=conda.__version__)))
+YUJ_RUNTIME_INSPECTION
+'''
+format = "json"
+fields = [["envs"], ["envs_dirs"], ["registry"], ["inventory_limited"], ["conda_version"]]
+meaning = "Candidates come from the discovered Conda installation, configured environment directories and the current user's registry. Accessibility and project suitability are not established."
+
+[[discovery.probes]]
+id = "python3_runtime"
+languages = ["Python"]
+command = "python3"
+args = ["-I", "-c", "import sys,json,importlib.util; print(json.dumps(dict(executable=sys.executable,prefix=sys.prefix,base_prefix=sys.base_prefix,version=sys.version.split()[0],modules={n:bool(importlib.util.find_spec(n)) for n in ('pip','pytest')})))"]
+format = "json"
+fields = [["executable"], ["prefix"], ["base_prefix"], ["version"], ["modules"]]
+meaning = "Interpreter observation in isolated mode; module discovery does not prove tests run or imports succeed."
+
+[[discovery.probes]]
+id = "python_runtime"
+languages = ["Python"]
+command = "python"
+args = ["-I", "-c", "import sys,json,importlib.util; print(json.dumps(dict(executable=sys.executable,prefix=sys.prefix,base_prefix=sys.base_prefix,version=sys.version.split()[0],modules={n:bool(importlib.util.find_spec(n)) for n in ('pip','pytest')})))"]
+format = "json"
+fields = [["executable"], ["prefix"], ["base_prefix"], ["version"], ["modules"]]
+meaning = "Interpreter observation in isolated mode; module discovery does not prove tests run or imports succeed."
+
+[[discovery.probes]]
+id = "uv_version"
+languages = ["Python"]
+command = "uv"
+args = ["--version"]
+format = "text"
+meaning = "Installed tool version; project usage is not established."
+
+[[discovery.probes]]
+id = "pip_version"
+languages = ["Python"]
+command = "pip"
+args = ["--version"]
+format = "text"
+meaning = "Installed pip location and interpreter version; project usage is not established."
+
+[[discovery.probes]]
+id = "conda_version"
+languages = ["Python"]
+command = "conda"
+args = ["--version"]
+format = "text"
+meaning = "Installed Conda version; this does not identify the installer distribution or choose a project environment."
+
+[[discovery.probes]]
+id = "go_version"
+languages = ["Go"]
+command = "go"
+args = ["version"]
+environment = { GOTOOLCHAIN = "local" }
+format = "text"
+meaning = "Installed local Go toolchain version, with automatic toolchain download disabled for this probe. Project toolchain suitability is not established."
+
+[[discovery.probes]]
+id = "cargo_version"
+languages = ["Rust"]
+command = "cargo"
+args = ["--version"]
+environment = { RUSTUP_AUTO_INSTALL = "0" }
+format = "text"
+meaning = "Installed Cargo version; this does not establish the selected rustc version."
+
+[[discovery.probes]]
+id = "rustc_version"
+languages = ["Rust"]
+command = "rustc"
+args = ["--version"]
+environment = { RUSTUP_AUTO_INSTALL = "0" }
+format = "text"
+meaning = "Rust compiler version, with automatic toolchain installation disabled for this probe."
+
+[[discovery.probes]]
+id = "node_version"
+languages = ["JavaScript", "TypeScript"]
+command = "node"
+args = ["--version"]
+format = "text"
+meaning = "Installed Node.js version in the command environment."
+
+[[discovery.probes]]
+id = "java_version"
+languages = ["Java"]
+command = "java"
+args = ["-version"]
+format = "text"
+meaning = "Installed Java version; Maven and project compatibility are not established."
+
+[[discovery.probes]]
+id = "ctest_version"
+languages = ["C", "C++", "C/C++"]
+command = "ctest"
+args = ["--version"]
+format = "text"
+meaning = "Installed CTest version; a configured test build is not established."

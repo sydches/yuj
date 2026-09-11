@@ -7,6 +7,7 @@ from ...config import Config
 from .._tool_filters import _strip_cwd_absolute
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
 from ._common import _paginated_envelope, _resolve
+from ..task_path import TaskPath
 
 
 # "path:lineno:content" — the shape both rg -n and grep -rn emit. Non-greedy
@@ -104,7 +105,7 @@ def grep_files(
         resolved, is_dir=resolved.is_dir()
     ):
         return "No matches found."
-    rg = shutil.which("rg")
+    rg = shutil.which("rg") if not isinstance(resolved, TaskPath) else None
     if rg:
         cmd = [rg, "-n", "--no-heading"]
         if glob_filter:
@@ -116,9 +117,31 @@ def grep_files(
             cmd.extend(["--include", glob_filter])
         cmd.extend([pattern, resolved_path])
     try:
-        result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
-        )
+        if isinstance(resolved, TaskPath):
+            from ..time_budget import command_time_budget
+            from ..task_files import TaskUtilityUnavailable
+            with command_time_budget(timeout):
+                try:
+                    candidates = [TaskPath(resolved.files, path) for path in
+                                  resolved.files.search_files(str(resolved), glob_filter)]
+                    native_selection = True
+                except TaskUtilityUnavailable:
+                    candidates = [resolved] if resolved.is_file() else resolved.glob('**/*')
+                    native_selection = False
+                parts = []
+                for candidate in candidates:
+                    if not native_selection and not candidate.is_file():
+                        continue
+                    if not native_selection and glob_filter and not candidate.path.match(glob_filter):
+                        continue
+                    if policy is not None and policy.is_ignored(candidate, is_dir=False):
+                        continue
+                    parts.append(candidate.files.search(str(candidate), pattern))
+            result = subprocess.CompletedProcess([], 0, b''.join(parts).decode('utf-8', 'replace'), '')
+        else:
+            result = subprocess.run(
+                cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            )
         # rg/grep exit-code semantics: 0 = matches, 1 = no matches
         # (legitimate empty result), 2+ = error (bad regex, missing
         # path, unreadable file, ...). Surface stderr instead of
@@ -132,7 +155,7 @@ def grep_files(
         # Stable ordering and arm-neutral paths are harness invariants. They
         # must not disappear when the cleanup factor is ablated.
         if raw:
-            raw = _strip_cwd_absolute(raw, cwd)
+            raw = _strip_cwd_absolute(raw, str(resolved.files.root) if isinstance(resolved, TaskPath) else cwd)
         if policy is not None:
             raw = _filter_ignored_matches(raw, policy)
         raw = _sorted_matches(raw)

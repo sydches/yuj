@@ -19,22 +19,62 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 
-def bound_completion_budget(payload: dict, context_size: int, *, token_counter=None) -> dict:
+def bound_output_allowance(payload: dict, output_limit: int) -> dict:
+    """Apply the client's resolved permission before backend counting or HTTP."""
+    if type(output_limit) is not int or output_limit <= 0:
+        raise RequestControlError("resolved output allowance must be a positive integer")
+    extra = payload.get("extra_body")
+    if extra is not None and not isinstance(extra, Mapping):
+        raise RequestControlError("request payload extra_body must be a mapping")
+    extra = extra or {}
+    if "max_tokens" in extra or any(
+        key in payload or key in extra for key in ("max_completion_tokens", "n_predict")
+    ):
+        raise RequestControlError("output limits must use the managed max_tokens field")
+    requested = payload.get("max_tokens")
+    if requested is None:
+        requested = output_limit
+    elif type(requested) is not int or (requested <= 0 and requested != -1):
+        raise RequestControlError("max_tokens must be a positive integer or -1")
+    if requested == -1:
+        requested = output_limit
+    return {**payload, "max_tokens": min(requested, output_limit)}
+
+
+def bound_completion_budget(payload: dict, context_size: int, *, token_counter=None,
+                            payload_counter=None, count_record=None) -> dict:
     """Cap completion tokens against this request, without changing its owner."""
     requested = payload.get("max_tokens")
-    if not isinstance(requested, int) or isinstance(requested, bool) or requested <= 0:
-        return payload
     messages, tools = payload.get("messages", []), payload.get("tools", [])
     basis = "character_estimate"
     prompt_tokens = None
-    if token_counter is not None:
+    if payload_counter is not None or token_counter is not None:
         try:
-            prompt_tokens = int(token_counter(messages, tools=tools))
-            basis = "bound_tokenizer"
+            value = (payload_counter(payload) if payload_counter is not None
+                     else token_counter(messages, tools=tools))
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("invalid request token count")
+            prompt_tokens = value
+            basis = "request_counter"  # detailed source is recorded by the counter
         except Exception as exc:
             log.warning("request token count failed; using character estimate: %s", exc)
     if prompt_tokens is None:
         prompt_tokens = (sum(len(str(m)) for m in messages) + len(json.dumps(tools))) // 4
+    # Only the bound backend report supports a local exhaustion decision.
+    # Estimates and counts contradicted by observed usage retain their stated
+    # uncertainty; this check must not promote them to authoritative facts.
+    if (
+        basis == "request_counter"
+        and count_record
+        and count_record.get("count_basis") == "backend_input_tokens"
+        and count_record.get("count_precision") == "backend_reported"
+        and count_record.get("prompt_tokens") == prompt_tokens
+        and prompt_tokens >= context_size
+    ):
+        from .types import ContextBudgetExceeded
+        raise ContextBudgetExceeded(context_size, count_record)
+    if not isinstance(requested, int) or isinstance(requested, bool) or requested <= 0:
+        return payload
     bounded = min(requested, max(1, context_size - prompt_tokens - 1))
     if bounded == requested:
         return payload

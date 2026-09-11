@@ -67,7 +67,7 @@ class StructuralLanguageUnsupported(StructuralIndexError):
 
 def detect_structural_language(path: str | Path) -> str | None:
     """Return the shipped Tree-sitter language for one source path."""
-    return _CORE_LANGUAGE_BY_SUFFIX.get(Path(path).suffix.lower())
+    return _CORE_LANGUAGE_BY_SUFFIX.get(Path(str(path)).suffix.lower())
 
 
 def load_structural_language(language: str):
@@ -444,6 +444,31 @@ class _UnreadableMatcher:
     """Resolved unreadable paths with directory-descendant matching."""
 
     def __init__(self, root: Path, patterns: Sequence[str]) -> None:
+        from .task_path import TaskPath
+        if isinstance(root, TaskPath):
+            blocked = []
+            host_root = root.files.binding.get('host_root', '')
+            from pathlib import PurePosixPath
+            for original in patterns:
+                value = str(original).removeprefix('optional:')
+                candidate = PurePosixPath(value)
+                base = root
+                if candidate.is_absolute():
+                    base = TaskPath(root.files, root.files.root)
+                    if candidate.is_relative_to(root.files.root):
+                        candidate = candidate.relative_to(root.files.root)
+                    elif host_root and candidate.is_relative_to(host_root):
+                        candidate = candidate.relative_to(host_root)
+                    else:
+                        # Outside-task masks are enforced by the execution
+                        # boundary and cannot name a candidate in this index.
+                        continue
+                if any(char in str(candidate) for char in _GLOB_META):
+                    blocked.extend(base.glob(str(candidate)))
+                else:
+                    blocked.append(base / str(candidate))
+            self._blocked = tuple(blocked)
+            return
         blocked: set[Path] = set()
         for original in patterns:
             pattern = str(original)
@@ -485,7 +510,8 @@ class StructuralIndex:
         ignored_dir_names: Iterable[str] = _DEFAULT_IGNORED_DIR_NAMES,
         path_globs: Sequence[str] = (),
     ) -> None:
-        resolved_root = Path(root).resolve()
+        from .task_path import TaskPath
+        resolved_root = root.resolve() if isinstance(root, TaskPath) else Path(root).resolve()
         if not resolved_root.is_dir():
             raise ValueError(f"structural index root is not a directory: {root}")
         self.root = resolved_root
@@ -498,6 +524,12 @@ class StructuralIndex:
     def _is_readable_path(self, path: Path) -> bool:
         if path.is_symlink() or self._unreadable.blocks(path):
             return False
+        from .task_path import resolve_task_path
+        from .sandbox.ignore_policy import IgnoredPathError
+        try:
+            resolve_task_path(self.root, str(path))
+        except (IgnoredPathError, ValueError):
+            return False
         return True
 
     def _accept_file(self, path: Path) -> bool:
@@ -509,13 +541,12 @@ class StructuralIndex:
         return any(fnmatchcase(relative, pattern) for pattern in self._path_globs)
 
     def _candidate_paths(self) -> tuple[Path, ...]:
+        from .task_path import TaskPath
         candidates: list[Path] = []
-        for raw_dir, dir_names, file_names in os.walk(
-            self.root,
-            topdown=True,
-            followlinks=False,
-        ):
-            directory = Path(raw_dir)
+        traversal = self.root.walk() if isinstance(self.root, TaskPath) else os.walk(
+            self.root, topdown=True, followlinks=False)
+        for raw_dir, dir_names, file_names in traversal:
+            directory = raw_dir if isinstance(raw_dir, TaskPath) else Path(raw_dir)
             dir_names[:] = [
                 name
                 for name in sorted(dir_names)
@@ -568,6 +599,38 @@ class StructuralIndex:
             digest.update(len(payload).to_bytes(8, "big"))
             digest.update(payload)
         return digest.hexdigest()
+
+    def view_identity(self) -> str | None:
+        """Observe the native mount view used by this index, when selected."""
+        from .task_path import TaskPath
+        if not isinstance(self.root, TaskPath):
+            return None
+        from .task_view import task_view_identity
+        return task_view_identity(self.root.files, root=self.root,
+                                  ignored_dir_names=self._ignored_dir_names)
+
+    def cached_paths_readable(self, rows: Sequence[StructuralRow]) -> bool:
+        """Recheck admission without requiring unchanged source contents."""
+        from .task_path import TaskPath, resolve_task_path
+        for name in sorted({row.path for row in rows}):
+            try:
+                candidate = self.root / name
+                candidate.relative_to(self.root)
+                if not self._accept_file(candidate):
+                    return False
+                path = resolve_task_path(self.root, name)
+                if not path.is_file():
+                    return False
+                if isinstance(path, TaskPath):
+                    # A zero-byte read still opens the native input file, so
+                    # it tests access under the selected process credentials.
+                    path.files.read_range(str(path), 0, 0)
+                else:
+                    with path.open('rb'):
+                        pass
+            except (OSError, ValueError):
+                return False
+        return True
 
     def scan(self) -> IndexSnapshot:
         rows: list[StructuralRow] = []

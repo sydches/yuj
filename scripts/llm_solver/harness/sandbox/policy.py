@@ -395,7 +395,8 @@ def _preflight_resolved_backend(
                 f"container runtime {resolution.resolved!r} has no resolved "
                 "executable"
             )
-        digest = backend.image_digest(runtime_bin)
+        from ..container_binding import bind_container_image
+        digest = bind_container_image(backend, runtime_bin).image
     except ContainerBackendError as exc:
         raise SandboxResolutionError(
             f"selected sandbox backend {resolution.resolved!r} failed startup "

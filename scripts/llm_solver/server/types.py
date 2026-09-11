@@ -9,6 +9,17 @@ class ImageInput:
 
     media_type: str
     data: bytes
+class ContextBudgetExceeded(RuntimeError):
+    """The counted request leaves no output space; generation was not sent."""
+
+    def __init__(self, context_size: int, count_record: dict):
+        self.context_size = context_size
+        self.count_record = dict(count_record)
+        super().__init__(
+            "Request has no remaining context budget: "
+            f"prompt={count_record['prompt_tokens']}, context={context_size}, "
+            f"count={count_record['count_basis']}"
+        )
 
 
 class ToolCall(NamedTuple):

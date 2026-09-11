@@ -516,6 +516,8 @@ def _live_detector_cfg(
     *,
     max_interventions: int = 1,
     max_same_signal_interventions: int = 1,
+    max_interventions_per_attempt: int | None = None,
+    max_interventions_per_hurdle_episode: int | None = None,
     cooldown_after_apply_slots: int = 0,
     watch_window_turns: int = 5,
     cadence: int = 1,
@@ -525,6 +527,8 @@ def _live_detector_cfg(
 ) -> object:
     detector_log = detector_log_path or str(tmp_path / "llm_detector.jsonl")
     control_ledger = ledger_path or str(tmp_path / "adaptive_control_ledger.jsonl")
+    total_cap = max_interventions if max_interventions_per_attempt is None else max_interventions_per_attempt
+    episode_cap = max_same_signal_interventions if max_interventions_per_hurdle_episode is None else max_interventions_per_hurdle_episode
     baseline_path.write_text(f"""
 [loop]
 loop_detect_enabled = false
@@ -542,8 +546,8 @@ lookup_table_path = "{lookup_path}"
 baseline_config_paths = ["{baseline_path}"]
 max_interventions = {max_interventions}
 max_same_signal_interventions = {max_same_signal_interventions}
-max_interventions_per_attempt = {max_interventions}
-max_interventions_per_hurdle_episode = {max_same_signal_interventions}
+max_interventions_per_attempt = {total_cap}
+max_interventions_per_hurdle_episode = {episode_cap}
 max_distinct_hurdle_episodes_per_attempt = {max_interventions}
 disallow_repeat_intervention = true
 cooldown_after_apply_slots = {cooldown_after_apply_slots}
@@ -837,7 +841,7 @@ loop_detect_enabled = true
     assert ledger_rows[1]["episode_transition"] == "cleared_to_progress"
 
 
-def test_live_hook_advances_at_budget_limit_after_silence_without_progress(tmp_path: Path) -> None:
+def test_live_hook_stops_at_budget_limit_despite_another_candidate(tmp_path: Path) -> None:
     atlas_path = _llm_atlas(tmp_path / "hurdle_dictionary.llm.v1.tsv")
     candidate1 = tmp_path / "candidate1.toml"
     candidate1.write_text("[loop]\nloop_detect_enabled = true\n", encoding="utf-8")
@@ -893,25 +897,24 @@ def test_live_hook_advances_at_budget_limit_after_silence_without_progress(tmp_p
     assert early["watch_transition"]["budget_exhausted"] is False
     assert quiet["watch_transition"]["episode_transition"] == "dislodged_no_progress"
     assert quiet["watch_transition"]["budget_exhausted"] is True
-    assert "baseline_restore" not in quiet
-    assert quiet["intervention_selection"]["rank_within_ladder"] == "2"
-    assert quiet["intervention_selection"]["excluded_intervention_ids"]
-    assert quiet["intervention_apply"]["apply_status"] == "applied"
+    assert quiet["baseline_restore"]["apply_status"] == "applied"
     assert session.cfg.loop_detect_enabled is False
-    assert session.cfg.compound_selective_trace_test_anchor_lines == 1
+    assert session.cfg.compound_selective_trace_test_anchor_lines == 0
     machine = session._adaptive_control_episode_machine
     assert machine.episodes_opened == 1
-    assert machine.current.attempt_index == 2
+    assert machine.interventions_total == 1
+    assert machine.episodes[0].attempt_index == 1
     ledger_rows = [
         json.loads(line)
         for line in Path(cfg.adaptive_control_ledger_path).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert [row["intervention_id"] for row in ledger_rows] == [
-        "toml_overlay.apply::loop.loop_detect_enabled",
-        "toml_overlay.apply::output.compound_selective_trace_test_anchor_lines",
-    ]
-    assert all(row["active_config_basis"] == "baseline_plus_candidate" for row in ledger_rows)
+    applied_candidates = [row for row in ledger_rows
+                          if row["apply_status"] == "applied"
+                          and row["intervention_id"] != "toml_overlay.restore_baseline"]
+    assert [row["intervention_id"] for row in applied_candidates] == [
+        "toml_overlay.apply::loop.loop_detect_enabled"]
+    assert applied_candidates[0]["active_config_basis"] == "baseline_plus_candidate"
 
 
 def test_live_hook_walks_each_rank_once_then_exhausts_on_baseline(tmp_path: Path) -> None:
@@ -942,6 +945,8 @@ def test_live_hook_walks_each_rank_once_then_exhausts_on_baseline(tmp_path: Path
         baseline_path,
         max_interventions=1,
         max_same_signal_interventions=1,
+        max_interventions_per_attempt=3,
+        max_interventions_per_hurdle_episode=3,
         cadence=25,
     )
     client = _FakeDetectorClient([
@@ -1148,7 +1153,7 @@ def test_live_hook_treats_family_flip_without_progress_as_same_episode(tmp_path:
     assert session._adaptive_control_episode_machine.episodes_opened == 1
 
 
-def test_live_hook_advances_when_unlock_is_unproven_at_budget_limit(tmp_path: Path) -> None:
+def test_live_hook_keeps_uncertainty_at_observation_budget_limit(tmp_path: Path) -> None:
     atlas_path = _llm_atlas(tmp_path / "hurdle_dictionary.llm.v1.tsv")
     candidate1 = tmp_path / "candidate1.toml"
     candidate1.write_text("[loop]\nloop_detect_enabled = true\n", encoding="utf-8")
@@ -1199,11 +1204,14 @@ def test_live_hook_advances_when_unlock_is_unproven_at_budget_limit(tmp_path: Pa
     advanced = maybe_run_llm_hurdle_detector(session, turn=29)
 
     assert advanced["watch_transition"]["budget_exhausted"] is True
-    assert advanced["watch_transition"]["episode_transition"] == "unchanged"
+    assert advanced["watch_transition"]["episode_transition"] == "unknown"
+    assert advanced["watch_transition"]["closure_reason"] == "observation_allowance_exhausted"
     assert "extended_watch_window_end" not in advanced["watch_transition"]
-    assert advanced["intervention_selection"]["rank_within_ladder"] == "2"
-    assert session.cfg.loop_detect_enabled is False
-    assert session.cfg.compound_selective_trace_test_anchor_lines == 1
+    assert "intervention_selection" not in advanced
+    assert session._llm_detector_pending_watch is None
+    assert session._adaptive_control_episode_machine.interventions_total == 1
+    assert session.cfg.loop_detect_enabled is True
+    assert session.cfg.compound_selective_trace_test_anchor_lines == 0
 
 
 def test_live_hook_escalates_same_hurdle_after_watch_window(tmp_path: Path) -> None:

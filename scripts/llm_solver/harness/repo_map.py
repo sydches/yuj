@@ -20,6 +20,7 @@ from typing import Any
 
 from .context import chars_div_4
 from .structural_index import IndexSnapshot, StructuralIndex, StructuralRow
+from .task_path import TaskPath, resolve_task_path
 
 
 log = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def append_repo_map(task_message: str, result: RepoMapResult) -> str:
 
 
 def build_repo_map(
-    root: str | Path,
+    root: str | Path | TaskPath,
     *,
     task_message: str,
     ranking_text: str | None = None,
@@ -92,9 +93,9 @@ def build_repo_map(
     """Build one ranked ``<repo-map>`` block within ``token_budget``.
 
     Token cost is the incremental count of appending the block to the task
-    user message.  A configured local tokenizer therefore measures the same
-    message boundary that the model receives.  With no local tokenizer, the
-    active profile estimator is used, then the documented chars/4 fallback.
+    user message. The active request counter measures that message boundary.
+    Explicit local artifacts and unavailable backend counts remain estimates.
+    With no counter, use the active profile estimator or chars/4 fallback.
     ``ranking_text`` lets the runtime rank from the original task statement
     while still fitting against pretest or resume framing in ``task_message``.
     """
@@ -114,7 +115,7 @@ def build_repo_map(
         return RepoMapResult(refresh=policy)
 
     index = StructuralIndex(
-        root,
+        resolve_task_path(root, '.'),
         extractor=extractor,
         unreadable_paths=unreadable_paths,
     )
@@ -172,6 +173,10 @@ def _cache_scope_identity(
     """Bind even manual reuse to the current parser and visibility policy."""
     extractor_type = type(index.extractor)
     payload = {
+        # A host cache is not evidence about an identically named path in a
+        # task namespace. This domain tag separates access implementations;
+        # it does not establish identity between two native task views.
+        "file_access": "namespace" if isinstance(index.root, TaskPath) else "host",
         "extractor": (
             f"{extractor_type.__module__}.{extractor_type.__qualname__}"
         ),
@@ -190,15 +195,20 @@ def _load_or_scan(
     scope_identity: str,
 ) -> tuple[IndexSnapshot, bool]:
     cache_path = _cache_path(cache_dir)
+    view_identity = index.view_identity()
     cached = _read_cache(
         cache_path,
         root=index.root,
         scope_identity=scope_identity,
+        view_identity=view_identity,
     )
     fingerprint_kind = ""
     fingerprint = ""
 
+    if cached is not None and not index.cached_paths_readable(cached[0].rows):
+        cached = None
     if refresh == "manual" and cached is not None:
+        _verify_view(index, view_identity)
         return cached[0], True
     if refresh in {"auto", "files"}:
         fingerprint_kind = refresh
@@ -208,9 +218,11 @@ def _load_or_scan(
             and cached[1] == fingerprint_kind
             and cached[2] == fingerprint
         ):
+            _verify_view(index, view_identity)
             return cached[0], True
 
     snapshot = index.scan()
+    _verify_view(index, view_identity)
     _write_cache(
         cache_path,
         root=index.root,
@@ -218,8 +230,15 @@ def _load_or_scan(
         snapshot=snapshot,
         fingerprint_kind=fingerprint_kind,
         fingerprint=fingerprint,
+        view_identity=view_identity,
     )
     return snapshot, False
+
+
+def _verify_view(index: StructuralIndex, expected: str | None) -> None:
+    if index.view_identity() != expected:
+        from .task_files import TaskFileError
+        raise TaskFileError('task mount view changed during repository-map construction')
 
 
 def _read_cache(
@@ -227,6 +246,7 @@ def _read_cache(
     *,
     root: Path,
     scope_identity: str,
+    view_identity: str | None = None,
 ) -> tuple[IndexSnapshot, str, str] | None:
     if path is None or not path.is_file():
         return None
@@ -241,6 +261,8 @@ def _read_cache(
         if data.get("root_identity") != _root_identity(root):
             return None
         if data.get("scope_identity") != scope_identity:
+            return None
+        if data.get("view_identity") != view_identity:
             return None
         raw_rows = data.get("rows")
         if not isinstance(raw_rows, list) or len(raw_rows) > _CACHE_MAX_ROWS:
@@ -314,6 +336,7 @@ def _write_cache(
     snapshot: IndexSnapshot,
     fingerprint_kind: str,
     fingerprint: str,
+    view_identity: str | None = None,
 ) -> None:
     if path is None:
         return
@@ -343,6 +366,7 @@ def _write_cache(
         "schema_version": _CACHE_SCHEMA_VERSION,
         "root_identity": _root_identity(root),
         "scope_identity": scope_identity,
+        "view_identity": view_identity,
         "fingerprint_kind": fingerprint_kind,
         "fingerprint": fingerprint,
         "files_scanned": snapshot.files_scanned,

@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 
 from ..._shared.classification import classify_outcome
+from ..file_changes import observed_mutation
 from ..bash_write_classification import (
     BASH_LEGACY_MUTATION_RE,
     BASH_LEGACY_PYTHON_WRITE_RE,
@@ -45,17 +46,14 @@ class SalienceContext(CompoundSelectiveContext):
         r"^(?:cd\s+\S+\s+&&\s+|env\s+[^;&|]+\s+)*"
         r"(?:cat|sed\s+-n|grep|rg|find|ls|head|tail|wc)\b"
     )
-    _BASH_VERIFICATION_RE = re.compile(
-        r"\b(?:pytest|py\.test|python3?\s+-m\s+pytest|"
-        r"unittest|python3?\s+-c|python3?\s+-\s*<<)\b"
-    )
+    from .._shell_patterns import CHECK_COMMAND_RE as _BASH_VERIFICATION_RE
     _MUTATION_INTENT_RE = re.compile(
         r"\b(?:apply|change|edit|fix|implement|modify|patch|replace|rewrite|write)\b",
         re.IGNORECASE,
     )
     _DIFF_ACTION_RE = re.compile(r"(?:^|[;&|]\s*)git\s+diff(?:\s|$)")
     _FILE_TOKEN_RE = re.compile(
-        r"(?<![\w/.-])(?:/testbed/)?[A-Za-z0-9_./+-]+\."
+        r"(?<![\w/.-])[A-Za-z0-9_./+-]+\."
         r"(?:py|rst|txt|md|toml|cfg|ini|yaml|yml)\b"
     )
     _PY_OPEN_PATH_RE = re.compile(
@@ -110,7 +108,37 @@ class SalienceContext(CompoundSelectiveContext):
         re.IGNORECASE,
     )
 
-    _TARGET_TOKENS = 46_000
+    _projection_request = None
+    _projection_binding = None
+    _projection_estimates_allowed = True
+    projection_pressure = None
+
+    def set_projection_request(self, provider):
+        """Use the active session's allocation, counter and tool catalog."""
+        self._projection_request = provider
+        self._projection_binding = None
+        self._msg_cache = self._tok_cache = None
+
+    def _projection_inputs(self):
+        if self._projection_request is None:
+            return None, None, None
+        counter, cfg, tools = self._projection_request()
+        self._projection_estimates_allowed = getattr(cfg, "tokenizer_id", "") != "auto"
+        # The same permission, fill policy and response reserve used by halflife.
+        from .halflife_context import HalfLifeContext
+        allowance = HalfLifeContext._request_allowance(cfg)
+        binding = (id(counter), id(cfg), allowance, json.dumps(tools, sort_keys=True))
+        if binding != self._projection_binding:
+            self._projection_binding = binding
+            self._msg_cache = self._tok_cache = None
+        return counter, allowance, tools
+
+    def get_messages(self):
+        self._projection_inputs()
+        if self._msg_cache is None:
+            self.projection_pressure = None
+        return super().get_messages()
+
     _MIN_TRACE_LINES = 8
     _MIN_TOOL_CHARS = 2_500
     _PRESSURE_MIN_TURN = 16
@@ -128,6 +156,9 @@ class SalienceContext(CompoundSelectiveContext):
     def _is_mutation_item(cls, item) -> bool:
         if isinstance(item, dict) and item.get("plan_artifact") is True:
             return False
+        observed = observed_mutation(item) if isinstance(item, dict) else None
+        if observed is not None:
+            return observed
         if isinstance(item, dict) and item.get("source_write_like") is True:
             return True
         action = cls._item_action_text(item)
@@ -146,6 +177,8 @@ class SalienceContext(CompoundSelectiveContext):
     def _mutation_failed(cls, item) -> bool:
         if not isinstance(item, dict):
             return False
+        if observed_mutation(item) is True:
+            return False
         if item.get("gate_blocked") is True:
             return True
         return classify_outcome(str(item.get("result") or "")) == "FAIL"
@@ -160,18 +193,23 @@ class SalienceContext(CompoundSelectiveContext):
 
     @classmethod
     def _is_read_only_item(cls, item) -> bool:
+        from .._shell_patterns import matches_command
         action = cls._item_action_text(item)
         if action.startswith(("read(", "grep(", "glob(", "list_files(")):
             return True
         cmd = cls._extract_action_cmd(item).strip()
-        return bool(cmd and cls._BASH_READ_ONLY_RE.search(cmd))
+        return bool(cmd and cls._BASH_READ_ONLY_RE.search(cmd)
+                    and not matches_command(cmd, cls._BASH_VERIFICATION_RE, allow_partial=True))
 
     @classmethod
     def _is_verification_item(cls, item) -> bool:
-        if cls._anchor_bucket(item) == "test":
+        from .._shell_patterns import matches_command
+        if cls._is_mutation_item(item) or cls._is_read_only_item(item):
+            return False
+        if cls._item_action_text(item).startswith("run_tests("):
             return True
         cmd = cls._extract_action_cmd(item)
-        return bool(cmd and cls._BASH_VERIFICATION_RE.search(cmd))
+        return matches_command(cmd, cls._BASH_VERIFICATION_RE, allow_partial=True)
 
     @classmethod
     def _is_diff_item(cls, item) -> bool:
@@ -195,16 +233,13 @@ class SalienceContext(CompoundSelectiveContext):
         return min(trace_len, max(recent_floor, (limit * 2 + 2) // 3))
 
     def _pressure_trace_limit(self) -> int:
-        base = self._selective_trace_lines
-        return max(base, min(36, max(24, base * 2)))
+        return self._selective_trace_lines
 
     def _pressure_unresolved_evidence_limit(self) -> int:
-        base = self._selective_unresolved_evidence_lines
-        return max(base, 8)
+        return self._selective_unresolved_evidence_lines
 
     def _pressure_resolved_evidence_limit(self) -> int:
-        base = self._selective_resolved_evidence_lines
-        return max(base, 4)
+        return self._selective_resolved_evidence_lines
 
     @classmethod
     def _recent_loop_stats(cls, trace: list) -> tuple[int, int, int]:
@@ -232,15 +267,9 @@ class SalienceContext(CompoundSelectiveContext):
         base = min(base, 6_000)
         if self._turn_count >= 160:
             base = min(base, 4_000)
-        elif self._turn_count >= 120:
-            base = min(base, 6_000)
-        elif self._turn_count >= 80:
-            base = min(base, 9_000)
-        elif self._turn_count >= 40:
-            base = min(base, 12_000)
         if trace and self._has_read_only_loop(trace):
             base = min(base, 3_500)
-        return max(self._MIN_TOOL_CHARS, base)
+        return base
 
     def _trace_repeat_cap(self) -> int:
         if self._selective_trace_action_repeat_cap > 0:
@@ -421,17 +450,20 @@ class SalienceContext(CompoundSelectiveContext):
             key_fn=self._item_action_key,
         )
         return (
-            fails[-unresolved_limit:],
+            fails[-unresolved_limit:] if unresolved_limit > 0 else [],
             [self._render_resolved_evidence_item(item) for item in selected_passes],
         )
 
     def _format_tool_results_budget(self, char_budget: int) -> str:
         original = self._recent_tool_results_chars
+        window = self._recent_tool_results
+        self._recent_tool_results = deque(window)
         self._recent_tool_results_chars = max(0, char_budget)
         try:
             return self._format_tool_results()
         finally:
             self._recent_tool_results_chars = original
+            self._recent_tool_results = window
 
     def _format_tool_results_pressure(self, trace: list, char_budget: int) -> str:
         repeated = self._repeated_read_summaries(trace, min_count=8)
@@ -440,8 +472,8 @@ class SalienceContext(CompoundSelectiveContext):
             return (
                 "=== Tool results suppressed ===\n"
                 "Recent raw read/search output is omitted because the same read/search "
-                f"actions are looping: {rendered}. Use the trace/evidence already shown; "
-                "the next tool call should not repeat those reads."
+                f"requests recur in the retained trace: {rendered}. "
+                "This omission does not establish unchanged output or lack of progress."
             )
         return self._format_tool_results_budget(char_budget)
 
@@ -512,12 +544,8 @@ class SalienceContext(CompoundSelectiveContext):
 
     @staticmethod
     def _normalize_target_path(path: str) -> str:
-        path = path.strip().strip("'\"")
-        if path.startswith("/testbed/"):
-            path = path[len("/testbed/"):]
-        if path.startswith("./"):
-            path = path[2:]
-        return path
+        from ..bash_write_classification import normalize_trace_path
+        return normalize_trace_path(path)
 
     @classmethod
     def _mutation_target_paths(cls, item) -> list[str]:
@@ -801,234 +829,8 @@ class SalienceContext(CompoundSelectiveContext):
         }
 
     def _format_next_action_contract(self, trace: list, evidence: list) -> str:
-        if not trace:
-            return ""
-        mutation_indices = [
-            idx for idx, item in enumerate(trace)
-            if self._is_successful_mutation_item(item)
-        ]
-        failed_mutation_indices = [
-            idx for idx, item in enumerate(trace)
-            if self._is_failed_mutation_item(item)
-        ]
-        test_indices = [
-            idx for idx, item in enumerate(trace)
-            if self._is_verification_item(item)
-        ]
-        mutated_paths = self._mutated_paths(trace)
-        diff_paths = self._latest_diff_paths(trace)
-        read_loop = self._has_read_only_loop(trace)
-
-        if failed_mutation_indices and (
-            not mutation_indices or failed_mutation_indices[-1] > mutation_indices[-1]
-        ):
-            last_failed = failed_mutation_indices[-1]
-            item = trace[last_failed]
-            target_paths = self._failed_mutation_paths(item) or diff_paths
-            lines = [
-                "Status: last source write attempt failed; no source mutation is recorded.",
-                f"- failed write step: {self._entry_step(item)}",
-            ]
-            if target_paths:
-                lines.append(f"- target path: {', '.join(target_paths[:4])}")
-            result = item.get("result", "") if isinstance(item, dict) else ""
-            if result:
-                lines.append(
-                    f"- failure: {self._compact_text(result, 700)}"
-                )
-            lines.extend([
-                "- next bash command should retry the source edit, not run verification and not reread the same region.",
-                "- source files may reject direct Path.write_text(); prefer sed -i/perl -0pi for one-line replacements, or write a temporary sibling file and os.replace it.",
-                "- example shape:",
-                "  cd /testbed && python - <<'PY'",
-                "  from pathlib import Path",
-                "  import os",
-                f"  path = Path({(target_paths[0] if target_paths else 'relative/source.py')!r})",
-                "  text = path.read_text()",
-                "  old = \"\"\"paste the exact old snippet shown in the evidence\"\"\"",
-                "  new = \"\"\"paste the corrected snippet\"\"\"",
-                "  updated = text.replace(old, new, 1)",
-                "  if updated == text:",
-                "      raise SystemExit('target snippet not found')",
-                "  tmp = path.with_name(path.name + '.tmp-write')",
-                "  tmp.write_text(updated)",
-                "  os.replace(tmp, path)",
-                "  PY",
-            ])
-            return "\n".join(lines)
-
-        if mutation_indices:
-            last_mutation = mutation_indices[-1]
-            tests_after = [idx for idx in test_indices if idx > last_mutation]
-            target_paths = mutated_paths or diff_paths
-            if tests_after:
-                revision = self._post_mutation_revision_details(
-                    trace, last_mutation_idx=last_mutation
-                )
-                if revision is not None:
-                    lines = [
-                        "Status: source mutation already has repeated verification/probe results; more reruns are not progress.",
-                        f"- last mutation step: {self._entry_step(trace[last_mutation])}",
-                        f"- latest verification/probe step: {revision.get('latest_verification_step')}",
-                        f"- verification/probe count after mutation: {revision.get('verification_count')}",
-                    ]
-                    if target_paths:
-                        lines.append(f"- patch paths: {', '.join(target_paths[:6])}")
-                    repeated_verifications = list(
-                        revision.get("repeated_verifications") or []
-                    )
-                    if repeated_verifications:
-                        lines.append(
-                            "- repeated verification/probe commands: "
-                            + "; ".join(str(item) for item in repeated_verifications[:3])
-                            + "."
-                        )
-                    repeated = list(revision.get("repeated") or [])
-                    if repeated:
-                        lines.append(
-                            "- repeated post-mutation inspections: "
-                            + "; ".join(str(item) for item in repeated[:3])
-                            + "."
-                        )
-                    latest_failure = str(revision.get("latest_failure") or "")
-                    if latest_failure:
-                        lines.append(f"- latest failing result: {latest_failure}")
-                    if revision.get("env_blocker"):
-                        lines.append(
-                            "- verification blocker looks environmental; do not patch "
-                            "unrelated compatibility/import files only to make local "
-                            "probes run."
-                        )
-                    if len(target_paths) > 1:
-                        lines.append(
-                            "- patch hygiene: keep only task-relevant source edits; "
-                            "remove setup/interpreter compatibility edits made only to run probes."
-                        )
-                    lines.extend([
-                        "- next action must revise the source patch from the concrete failure, "
-                        "remove setup-only edits, or call done if the current patch is intended.",
-                        "- do not rerun the same verification/probe or reread the same diff without a new edit.",
-                    ])
-                    return "\n".join(lines)
-                last_test = tests_after[-1]
-                stalled = self._post_mutation_stall_details(
-                    trace,
-                    last_mutation_idx=last_mutation,
-                    last_test_idx=last_test,
-                )
-                if stalled is None:
-                    return ""
-                lines = [
-                    "Status: source mutation has been verified or probed, but the trajectory is stalled after the patch.",
-                    f"- last mutation step: {self._entry_step(trace[last_mutation])}",
-                    f"- latest verification/probe step: {self._entry_step(trace[last_test])}",
-                ]
-                if target_paths:
-                    lines.append(f"- patch paths: {', '.join(target_paths[:6])}")
-                since_verification = stalled.get("since_verification")
-                if isinstance(since_verification, int):
-                    lines.append(
-                        f"- {since_verification} step(s) since the latest verification/probe."
-                    )
-                repeated = list(stalled.get("repeated") or [])
-                if repeated:
-                    lines.append(
-                        "- repeated post-mutation inspections: "
-                        + "; ".join(str(item) for item in repeated[:3])
-                        + "."
-                    )
-                if len(target_paths) > 1:
-                    lines.append(
-                        "- patch hygiene: keep only task-relevant source edits; "
-                        "remove setup/interpreter compatibility edits made only to run probes."
-                    )
-                lines.extend([
-                    "- next action must be one of: run one targeted verification/reproducer "
-                    "for the current diff; revise the patch from a concrete failing result; "
-                    "remove unrelated compatibility/setup edits and verify; or call done "
-                    "if the current source patch is intended.",
-                    "- do not keep reading git diff or source regions without a new failing fact.",
-                ])
-                return "\n".join(lines)
-            lines = [
-                "Status: source mutation exists and needs verification.",
-                f"- last mutation step: {self._entry_step(trace[last_mutation])}",
-            ]
-            if target_paths:
-                lines.append(f"- patch paths: {', '.join(target_paths[:6])}")
-            lines.append(
-                "- next bash command should run one targeted verification or a small reproducer for the changed behavior."
-            )
-            lines.append(
-                "- if verification is blocked by environment/setup, treat that as a limitation; do not patch unrelated compatibility/import files to make local probes run."
-            )
-            lines.append(
-                "- after one concrete verification result, revise the source patch or call done instead of repeating the same probe."
-            )
-            return "\n".join(lines)
-
-        candidate = self._candidate_edit_details(trace)
-        if candidate is not None:
-            item = candidate["item"]
-            reasoning = str(candidate["reasoning"])
-            target_paths = list(candidate["target_paths"])
-            latest_read = str(candidate["latest_read"])
-            target = target_paths[0] if target_paths else "relative/source.py"
-            lines = [
-                "Status: pending source mutation; no source write has been recorded after the latest edit plan.",
-                f"- edit intent step {self._entry_step(item)}: {self._compact_text(reasoning, 700)}",
-            ]
-            if target_paths:
-                lines.append(f"- target path: {', '.join(target_paths[:4])}")
-            if latest_read:
-                lines.append(f"- evidence already available: {latest_read}")
-            if read_loop:
-                lines.append("- repeated reads of the same source area are closed.")
-            lines.extend([
-                "- next bash command must write the target source file.",
-                "- do not use cat, sed -n, grep, rg, find, ls, head, tail, or wc as the next command.",
-                "- use sed -i/perl -0pi for a one-line replacement, or a temp-file replace script for multiline edits:",
-                "  cd /testbed && python - <<'PY'",
-                "  from pathlib import Path",
-                "  import os",
-                f"  path = Path({target!r})",
-                "  text = path.read_text()",
-                "  old = \"\"\"paste the exact old snippet shown in the evidence\"\"\"",
-                "  new = \"\"\"paste the corrected snippet\"\"\"",
-                "  updated = text.replace(old, new, 1)",
-                "  if updated == text:",
-                "      raise SystemExit('target snippet not found')",
-                "  tmp = path.with_name(path.name + '.tmp-write')",
-                "  tmp.write_text(updated)",
-                "  os.replace(tmp, path)",
-                "  PY",
-                "- after mutation, run targeted verification or a small reproducer before done.",
-            ])
-            return "\n".join(lines)
-
-        if read_loop:
-            repeated = self._repeated_read_summaries(trace, min_count=4)
-            lines = [
-                "Status: hard read/search loop before any recorded source mutation.",
-            ]
-            if repeated:
-                lines.append("- closed read targets: " + "; ".join(repeated) + ".")
-            lines.append(
-                "- next bash command must not repeat those reads."
-            )
-            lines.append(
-                "- next move should make a minimal source edit; only read again if it names a different unresolved symbol and will directly support that edit."
-            )
-            return "\n".join(lines)
-
-        gate = self._last_blocking_gate_entry(evidence)
-        if gate:
-            return (
-                "Status: harness gate is blocking the current trajectory.\n"
-                f"- latest gate: {self._compact_text(gate, 500)}\n"
-                "- next command must satisfy the gate instead of repeating the blocked action."
-            )
-        return ""
+        from ._salience_advice import recorded_action
+        return recorded_action(trace)
 
     def _last_blocking_gate_entry(self, evidence: list) -> str | None:
         for item in reversed(evidence):
@@ -1037,174 +839,8 @@ class SalienceContext(CompoundSelectiveContext):
         return None
 
     def _format_salience_pressure(self, trace: list) -> str:
-        if self._turn_count < self._PRESSURE_MIN_TURN or not trace:
-            return ""
-
-        actions = [self._item_action_text(item) for item in trace]
-        if not actions:
-            return ""
-
-        mutation_indices = [
-            idx for idx, item in enumerate(trace)
-            if self._is_successful_mutation_item(item)
-        ]
-        failed_mutation_indices = [
-            idx for idx, item in enumerate(trace)
-            if self._is_failed_mutation_item(item)
-        ]
-        test_indices = [
-            idx for idx, item in enumerate(trace)
-            if self._is_verification_item(item)
-        ]
-        recent_window, recent_read_only, recent_mutations = self._recent_loop_stats(
-            trace
-        )
-
-        repeated = 1
-        latest = actions[-1]
-        for action in reversed(actions[:-1]):
-            if action != latest:
-                break
-            repeated += 1
-
-        lines: list[str] = []
-        if not mutation_indices:
-            lines.append(
-                f"No file-mutation action has succeeded across {len(actions)} steps."
-            )
-            lines.append(
-                "Calling done now would submit an empty patch; do not call done to describe a pending edit."
-            )
-        else:
-            since_mutation = len(actions) - mutation_indices[-1] - 1
-            if since_mutation >= 20:
-                lines.append(
-                    f"{since_mutation} steps since the last file mutation."
-                )
-
-        if failed_mutation_indices:
-            failed_item = trace[failed_mutation_indices[-1]]
-            lines.append(
-                "Latest file-mutation command failed: "
-                + self._compact_text(self._item_action_text(failed_item), 240)
-            )
-
-        if not test_indices:
-            lines.append(
-                f"No test/verification-like command is recorded across {len(actions)} steps."
-            )
-        else:
-            since_test = len(actions) - test_indices[-1] - 1
-            if since_test >= 20:
-                lines.append(
-                    f"{since_test} steps since the last test/verification-like command."
-                )
-
-        if repeated >= 3:
-            lines.append(
-                f"Newest action repeated {repeated} consecutive times: {latest}"
-            )
-
-        if (
-            recent_window >= 8
-            and recent_read_only >= max(8, recent_window - 2)
-            and recent_mutations == 0
-        ):
-            lines.append(
-                f"Recent actions are read/search-only ({recent_read_only}/{recent_window})."
-            )
-
-        read_repeats = self._repeated_read_summaries(trace)
-        if read_repeats:
-            lines.append(
-                "Repeated read/search actions already seen: "
-                + "; ".join(read_repeats)
-                + "."
-            )
-        if read_repeats and recent_mutations == 0:
-            lines.append(
-                "Treat the repeated read/search targets as closed unless a new command names a different unresolved symbol needed for the next edit."
-            )
-
-        latest_intent = self._latest_mutation_intent(trace)
-        if latest_intent is not None:
-            intent_idx, intent = latest_intent
-            mutation_after_intent = any(
-                self._is_successful_mutation_item(item)
-                for item in trace[intent_idx + 1:]
-            )
-            mutation_before_intent = any(
-                self._is_successful_mutation_item(item)
-                for item in trace[:intent_idx]
-            )
-            intent_reasoning = (
-                str(trace[intent_idx].get("reasoning") or "")
-                if isinstance(trace[intent_idx], dict)
-                else ""
-            )
-            concrete_post_mutation_revision = (
-                self._CONCRETE_EDIT_RE.search(intent_reasoning) is not None
-                and self._NON_EDIT_PROGRESS_RE.search(intent_reasoning) is None
-            )
-            if (
-                not mutation_after_intent
-                and (
-                    not mutation_before_intent
-                    or concrete_post_mutation_revision
-                )
-            ):
-                lines.append(
-                    "Latest model intent says it is ready to edit: "
-                    f"{intent}"
-                )
-
-        mutated_paths = self._mutated_paths(trace)
-        if mutated_paths:
-            shown = ", ".join(mutated_paths[:6])
-            extra = "" if len(mutated_paths) <= 6 else f", +{len(mutated_paths) - 6} more"
-            lines.append(f"Mutation targets recorded: {shown}{extra}.")
-            last_mutation = mutation_indices[-1] if mutation_indices else -1
-            tests_after_mutation = [
-                idx for idx in test_indices if idx > last_mutation
-            ]
-            if not tests_after_mutation:
-                lines.append(
-                    "There are mutations without a later verification-like command; verify the patch or name the blocker instead of continuing broad exploration."
-                )
-            if len(mutated_paths) > 1:
-                lines.append(
-                    "Patch hygiene: keep only task-relevant source edits; remove setup/interpreter compatibility edits made only to run local probes."
-                )
-
-        diff_paths = self._latest_diff_paths(trace)
-        if diff_paths:
-            shown = ", ".join(diff_paths[:6])
-            extra = "" if len(diff_paths) <= 6 else f", +{len(diff_paths) - 6} more"
-            lines.append(f"Latest diff paths visible in trace: {shown}{extra}.")
-
-        if not lines:
-            return ""
-        mutation_verified = False
-        if mutation_indices and test_indices:
-            last_mutation = mutation_indices[-1]
-            mutation_verified = any(idx > last_mutation for idx in test_indices)
-        if mutation_verified:
-            lines.append(
-                "Immediate next tool call should revise from a concrete verification result, "
-                "run one targeted verification, call done if the patch is intended, "
-                "or name a concrete blocker; avoid another broad cat/sed/grep/read "
-                "of the same area."
-            )
-        else:
-            lines.append(
-                "Immediate next tool call should mutate a source file, run targeted "
-                "verification after a mutation, or name a concrete blocker; avoid another "
-                "broad cat/sed/grep/read of the same area."
-            )
-        lines.append(
-            "If only bash/done tools are available, edit through bash with a short python/perl/sed script; do not request an unavailable patch tool."
-        )
-        return "\n".join(lines)
+        from ._salience_advice import recorded_activity
+        return recorded_activity(trace)
 
     def _build_parts(
         self,
@@ -1222,7 +858,7 @@ class SalienceContext(CompoundSelectiveContext):
 
         action_contract = self._format_next_action_contract(trace, evidence)
         if action_contract:
-            parts.append(f"=== Next Action Contract ===\n{action_contract}")
+            parts.append(f"=== Recorded action ===\n{action_contract}")
 
         if state_text:
             parts.append(f"=== State ===\n{state_text}")
@@ -1233,7 +869,7 @@ class SalienceContext(CompoundSelectiveContext):
 
         pressure = self._format_salience_pressure(trace)
         if pressure:
-            parts.append(f"=== Salience Pressure ===\n{pressure}")
+            parts.append(f"=== Recorded activity ===\n{pressure}")
 
         trace_rendered = self._format_salience_trace(
             trace,
@@ -1282,6 +918,7 @@ class SalienceContext(CompoundSelectiveContext):
         trace: list,
         evidence: list,
     ) -> list[dict]:
+        counter, allowance, tools = self._projection_inputs()
         trace_limit = self._pressure_trace_limit()
         unresolved_limit = self._pressure_unresolved_evidence_limit()
         resolved_limit = self._pressure_resolved_evidence_limit()
@@ -1298,12 +935,33 @@ class SalienceContext(CompoundSelectiveContext):
                 resolved_limit=resolved_limit,
                 tool_chars=tool_chars,
             ))
-            if self._token_estimator(messages) <= self._TARGET_TOKENS:
+            try:
+                count = (counter.count(messages, tools=tools) if counter is not None
+                         else self._token_estimator(messages))
+                if type(count) is not int or count < 0:
+                    raise ValueError("request count must be a nonnegative integer")
+            except Exception:
+                from ..context import chars_div_4
+                counter = None
+                count = chars_div_4(messages)
+            record = getattr(counter, "last", None)
+            from ..request_counting import has_reported_count
+            actionable = self._projection_estimates_allowed or has_reported_count(counter, count)
+            self.projection_pressure = {
+                "prompt_tokens": count, "prompt_allowance": allowance,
+                "count_basis": (record.get("count_basis", "estimate")
+                                if isinstance(record, dict) else "estimate"),
+                "overflow": allowance is not None and count > allowance,
+                "actionable": actionable,
+            }
+            if not actionable or allowance is None or count <= allowance:
                 return messages
-            next_trace = max(self._MIN_TRACE_LINES, trace_limit - 4)
-            next_unresolved = max(3, unresolved_limit - 2)
+            # A retention floor may stop reduction, but cannot enlarge a
+            # smaller selected section limit.
+            next_trace = min(trace_limit, max(self._MIN_TRACE_LINES, trace_limit - 4))
+            next_unresolved = min(unresolved_limit, max(3, unresolved_limit - 2))
             next_resolved = max(0, resolved_limit - 2)
-            next_tool = max(self._MIN_TOOL_CHARS, int(tool_chars * 0.65))
+            next_tool = min(tool_chars, max(self._MIN_TOOL_CHARS, int(tool_chars * 0.65)))
             if (
                 next_trace == trace_limit
                 and next_unresolved == unresolved_limit

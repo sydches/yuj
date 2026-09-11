@@ -363,16 +363,17 @@ def _find_unique(file_lines: list[str], needle: list[str],
 
 
 def _resolved_target(cwd_path: Path, op_path: str) -> Path:
-    """Resolve a FileOp path under cwd, rejecting outside-cwd traversal.
+    """Resolve through the selected task view, rejecting outside-task paths.
 
-    Mirrors the containment check that read/edit/write/list_definitions
-    apply via tools._resolve. The bwrap mount namespace blocks cross-cwd
-    writes at runtime, but defense-in-depth: refuse here so the error is
-    a clear PatchVerifyError rather than a sandbox-level EPERM
-    (which surfaces as an opaque "command failed" in the dispatcher).
+    Report resolution failures as PatchVerifyError before attempting a write.
     """
-    if op_path.startswith("/"):
-        op_path = op_path.lstrip("/")
+    from .task_path import bound_task_path
+    try:
+        bound = bound_task_path(str(cwd_path), op_path)
+        if bound is not None:
+            return bound
+    except (ValueError, OSError) as exc:
+        raise PatchVerifyError(str(exc), kind="path_outside_cwd") from exc
     target = (cwd_path / op_path).resolve()
     cwd_resolved = cwd_path.resolve()
     try:
@@ -485,7 +486,10 @@ def verify_and_apply(ops: list[FileOp], cwd: str) -> str:
     # Phase 2: apply (all ops succeed-or-fail together by Phase 1's contract).
     summaries: list[str] = []
     for op in ops:
-        summaries.append(_apply_op(op, cwd_path))
+        try:
+            summaries.append(_apply_op(op, cwd_path))
+        except OSError as exc:
+            raise PatchVerifyError(str(exc), kind="write_failed") from exc
     body = "\n".join(_xml_body(s) for s in summaries)
     return (
         f'<apply_patch ok="true" ops="{len(ops)}" v="{_ENVELOPE_VERSION}">\n'

@@ -47,6 +47,7 @@ class OutputParser:
     """
     summary_fields: dict[str, re.Pattern]
     per_test_regex: re.Pattern | None
+    verdict_map: dict[str, str] = field(default_factory=dict)
 
 
 def load_output_control(task_format_path) -> OutputControl | None:
@@ -133,52 +134,8 @@ def load_output_parser(task_format_path) -> OutputParser | None:
     return OutputParser(
         summary_fields=summary_fields,
         per_test_regex=per_test_regex,
+        verdict_map=dict(per_test_cfg.get("verdict_map") or {}),
     )
-
-
-# Summary scan window: pytest and most runners emit their terminal
-# summary line in the last few hundred chars. Searching only the tail
-# avoids iterating hundreds of intermediate "N passed" matches on a
-# 100K+ pytest log. Fall back to full-scan if the tail window misses
-# (rare — happens when the whole output is short enough that tail ==
-# output, or when the runner emits the summary mid-stream).
-_SUMMARY_TAIL_CHARS = 4000
-_FAILURE_DETAIL_CHARS = 500
-
-
-# Canonical verdict map — normalizes runner-specific PASS/FAIL tokens
-# so downstream consumers (done-parity, render_digest, run_summary)
-# don't need to know each runner's vocabulary. Unknown verdicts are
-# passed through uppercased (safe default: done-parity checks treat
-# them as non-passing).
-_VERDICT_NORMALIZE = {
-    # canonical
-    "PASSED": "PASSED", "FAILED": "FAILED", "ERROR": "ERROR",
-    "SKIPPED": "SKIPPED",
-    # short forms (pytest -rA, jest CI)
-    "PASS": "PASSED", "FAIL": "FAILED", "SKIP": "SKIPPED",
-    # cargo
-    "OK": "PASSED", "IGNORED": "SKIPPED",
-    # jest default reporter (unicode marks)
-    "✓": "PASSED", "✕": "FAILED",
-    # go
-    # (PASS/FAIL already covered)
-}
-
-
-def _normalize_verdict(raw: str) -> str:
-    """Map a runner-emitted verdict literal to a canonical PASSED/FAILED/etc.
-
-    Unknown tokens are returned uppercased unchanged. Downstream code
-    treats non-canonical tokens as non-passing, so the failure mode of
-    an unrecognized verdict is a false negative on done-parity
-    checks, not a false positive.
-    """
-    key = (raw or "").strip().upper()
-    # Handle unicode marks before uppercase (✓ is already canonical).
-    if raw in _VERDICT_NORMALIZE:
-        return _VERDICT_NORMALIZE[raw]
-    return _VERDICT_NORMALIZE.get(key, key)
 
 
 _SHELL_OPERATORS = ("&&", "||", "|&", ";", "|", "&", "\n")
@@ -312,25 +269,19 @@ def parse_structured(output: str, parser: OutputParser) -> dict:
     "2 failed, 8 passed, 1 error" parses the same as "8 passed, 2
     failed, 1 error". Last numeric match per field wins (runners
     sometimes emit the tally twice; the second instance is the
-    terminal summary). Scan is bounded to the tail of the output when
-    the output is large, to avoid sweeping intermediate lines.
+    terminal summary). Scan the supplied output without slicing it so
+    numeric tokens, line anchors and other regex context stay intact.
 
     Per-test verdicts are normalized to canonical PASSED/FAILED/
-    ERROR/SKIPPED via _normalize_verdict. Callers depending on
+    ERROR/SKIPPED via the selected descriptor's verdict map. Callers depending on
     canonical verdict strings (done-parity, regression detection,
     render_digest) work uniformly across runners.
     """
-    tail = output if len(output) <= _SUMMARY_TAIL_CHARS else output[-_SUMMARY_TAIL_CHARS:]
     summary: dict[str, int] = {}
     for field_name, rx in parser.summary_fields.items():
         match = None
-        for match in rx.finditer(tail):
+        for match in rx.finditer(output):
             pass  # keep the last match
-        if match is None and tail is not output:
-            # Fall back to full-scan only when the tail missed — covers
-            # runners that emit their summary mid-stream.
-            for match in rx.finditer(output):
-                pass
         if match is None:
             continue
         try:
@@ -345,7 +296,7 @@ def parse_structured(output: str, parser: OutputParser) -> dict:
             tid = m.groupdict().get("test_id")
             verdict = m.groupdict().get("verdict")
             if tid and verdict:
-                normalized = _normalize_verdict(verdict)
+                normalized = parser.verdict_map.get(verdict, verdict).strip().upper()
                 tests[tid] = normalized
                 if normalized in {"FAILED", "ERROR"} and len(failure_details) < 3:
                     line_end = output.find("\n", m.end())
@@ -353,11 +304,9 @@ def parse_structured(output: str, parser: OutputParser) -> dict:
                         line_end = len(output)
                     detail = output[m.start() : line_end].strip()
                     if detail:
-                        failure_details.append(
-                            detail
-                            if len(detail) <= _FAILURE_DETAIL_CHARS
-                            else detail[: _FAILURE_DETAIL_CHARS - 3] + "..."
-                        )
+                        # Preserve the selected diagnostic for output/request
+                        # admission; parsing owns no separate display budget.
+                        failure_details.append(detail)
 
     return {
         "summary": summary or None,

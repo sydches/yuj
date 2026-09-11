@@ -16,6 +16,7 @@ from .config import (
 )
 from ._shared.edit_formats import EDIT_FORMATS
 from .harness import collect_pending, solve_task
+from ._shared.task_artifacts import PROMPT_NAME
 from .harness.context_strategies import (
     list_context_modes,
     resolve_context_class,
@@ -68,10 +69,6 @@ def _model_log_tag(value: str | None) -> str:
 
 
 def _build_client(cfg, profile):
-    if os.environ.get("YUJ_CODEX_HEADLESS") == "1":
-        from .analysis.codex_yuj_client import CodexHeadlessYujClient
-
-        return CodexHeadlessYujClient.from_env(cfg, profile=profile)
     return LlamaClient(cfg, profile=profile)
 
 
@@ -106,10 +103,6 @@ def _prepare_task_worktree(
 
 def main(argv: list[str] | None = None) -> int:
     cli_argv = list(sys.argv[1:] if argv is None else argv)
-    context_was_explicit = any(
-        token == "--context" or token.startswith("--context=")
-        for token in cli_argv
-    )
     parser = argparse.ArgumentParser(
         description="Run fixed coding measurements through the Yuj harness"
     )
@@ -146,8 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--context",
         choices=_context_modes,
-        default="full",
-        help="context mode (default: full)",
+        default=None,
+        help=(
+            "context mode (default: explicit transformation settings, otherwise full); "
+            "must agree with transformations.halflife_context when configured"
+        ),
     )
     parser.add_argument("--prompt-addendum", default=None,
                         help="text to add to the task prompt")
@@ -162,9 +158,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-intent", action="store_true", default=None,
                         help="reject a tool call that has no assistant text")
     parser.add_argument("--transcript-dir", type=Path, default=None,
-                        help="single-task mode: save model-message records here")
+                        help="save model-message records here (default: RUN_DIR/transcripts)")
     parser.add_argument("--savings-dir", type=Path, default=None,
-                        help="single-task mode: save context-change records here")
+                        help="save context-change records here (default: RUN_DIR/savings)")
+    parser.add_argument("--artifacts-dir", type=Path, default=None,
+                        help="task artifact directory (status may be replaced); batch mode uses DIR/task-name")
     parser.add_argument("--resume", type=Path, default=None,
                         help="resume this transcript without adding a message")
     parser.add_argument("--resume-message-file", type=Path, default=None,
@@ -195,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="measurement-only settings appended after source settings; "
                              "repeatable; request parity is not currently checked")
     args = parser.parse_args(cli_argv)
+    context_was_explicit = args.context is not None
+    if not context_was_explicit:
+        args.context = "full"
     if args.prompt_file is not None and args.prompt_text is not None:
         parser.error("--prompt-file and --prompt-text are mutually exclusive")
     if (args.prompt_file is not None or args.prompt_text is not None) and args.task is None:
@@ -211,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=level, format=log_fmt, datefmt=log_datefmt)
 
     run_dir = args.run_dir.resolve()
+    transcript_dir = args.transcript_dir if args.transcript_dir is not None else run_dir / "transcripts"
+    savings_dir = args.savings_dir if args.savings_dir is not None else run_dir / "savings"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_tag = _model_log_tag(args.model)
     log_path = run_dir / f"harness_{model_tag}_{ts}.log"
@@ -248,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         args.model = _replay_prov["model"]
         src_mode = _replay_prov.get("context_mode") or ""
         if src_mode:
-            if args.context == parser.get_default("context"):
+            if not context_was_explicit:
                 # flag not explicitly set: adopt the recording's mode
                 args.context = src_mode
                 log.info("replay adopts context mode %r from the recording", src_mode)
@@ -436,55 +439,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         log.warning("server_meta.json capture failed: %s", e)
 
-    # Query server for effective context size
-    server_ctx = client.query_server_context()
-    if server_ctx:
-        effective_ctx = min(cfg.context_size, server_ctx) if cfg.context_size > 0 else server_ctx
-        if effective_ctx != cfg.context_size:
-            log.info(
-                "Context: config=%d, server=%d → effective=%d",
-                cfg.context_size, server_ctx, effective_ctx,
-            )
-            cfg = replace(cfg, context_size=effective_ctx)
-        else:
-            log.info("Context: %d (config matches server)", effective_ctx)
-    else:
-        log.warning("Could not query server context — using config value %d", cfg.context_size)
-
-    # Derive max_tokens from effective context size. The hardcoded
-    # max_tokens=16384 was correct only at ctx=65,536 (16384/65536≈0.25);
-    # any other server ctx gave the wrong shape (32k server → still 16k
-    # generation, eating half the context). max_tokens_fraction=0.25 by
-    # default preserves the prior generation budget at the canonical ctx
-    # while scaling correctly elsewhere.
-    derived_max_tokens = int(cfg.context_size * cfg.max_tokens_fraction)
-    if derived_max_tokens != cfg.max_tokens:
-        log.info(
-            "max_tokens from ctx=%d × %.2f = %d (was %d)",
-            cfg.context_size, cfg.max_tokens_fraction,
-            derived_max_tokens, cfg.max_tokens,
-        )
-        cfg = replace(cfg, max_tokens=derived_max_tokens)
-
-    # Derive char budgets from effective context size.
-    # Rolling window + single tool result must fit within ~45% of the
-    # token budget (rest goes to system prompt, state.json, task prompt,
-    # generation headroom). At ~4 chars/token this gives the char caps.
-    _ROLLING_WINDOW_RATIO = 0.45   # fraction of token budget for rolling window
-    _MAX_OUTPUT_RATIO = 0.40       # fraction of token budget for single tool result
-    _CHARS_PER_TOKEN = 4
-    token_budget = int(cfg.context_size * cfg.context_fill_ratio)
-    derived_recent = int(token_budget * _ROLLING_WINDOW_RATIO * _CHARS_PER_TOKEN)
-    derived_output = int(token_budget * _MAX_OUTPUT_RATIO * _CHARS_PER_TOKEN)
-    if derived_recent != cfg.recent_tool_results_chars or derived_output != cfg.max_output_chars:
-        log.info(
-            "Char budgets from ctx=%d (%.0f%% fill): "
-            "recent_tool_results %d→%d, max_output %d→%d",
-            cfg.context_size, cfg.context_fill_ratio * 100,
-            cfg.recent_tool_results_chars, derived_recent,
-            cfg.max_output_chars, derived_output,
-        )
-        cfg = replace(cfg, recent_tool_results_chars=derived_recent, max_output_chars=derived_output)
+    from .context_allocation import allocate_context
+    cfg = allocate_context(
+        cfg, observed=client.query_server_context(), profile=getattr(client, "profile", None),
+    )
+    log.info("Context allocation: %s", cfg.context_allocation)
 
     # Re-bind the client's cfg reference. dataclasses.replace builds a NEW
     # Config object each call, so the LlamaClient instance constructed at
@@ -527,6 +486,8 @@ def main(argv: list[str] | None = None) -> int:
             initial_prompt = args.prompt_file.read_text()
         elif args.prompt_text is not None:
             initial_prompt = args.prompt_text
+        elif args.artifacts_dir is not None and (args.task / PROMPT_NAME).is_file():
+            initial_prompt = (args.task / PROMPT_NAME).read_text()
         # Resume mode: --resume alone restores a balanced request boundary
         # without adding a message. --resume-message-file selects the older
         # explicit-handoff path and supplies its next user message.
@@ -556,9 +517,10 @@ def main(argv: list[str] | None = None) -> int:
             profile_path=(profile.profile_dir / "profile.toml")
                          if profile and profile.profile_dir else None,
             initial_prompt=initial_prompt,
-            transcript_dir=args.transcript_dir,
-            savings_dir=args.savings_dir,
+            transcript_dir=transcript_dir,
+            savings_dir=savings_dir,
             resume_path=args.resume,
+            artifacts_dir=args.artifacts_dir,
             transparent_resume=(
                 args.resume is not None and args.resume_message_file is None
             ),
@@ -593,8 +555,14 @@ def main(argv: list[str] | None = None) -> int:
             context_class=context_class,
             profile_path=(profile.profile_dir / "profile.toml")
                          if profile and profile.profile_dir else None,
+            transcript_dir=transcript_dir,
+            savings_dir=savings_dir,
             run_metadata=run_metadata,
             worktree_info=worktree_info,
+            artifacts_dir=(args.artifacts_dir / repo_dir.name
+                           if args.artifacts_dir is not None else None),
+            initial_prompt=((repo_dir / PROMPT_NAME).read_text()
+                            if args.artifacts_dir is not None else None),
         )
         results[repo_dir.name] = ok
         status = "PASS" if ok else "FAIL"

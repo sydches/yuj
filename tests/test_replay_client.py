@@ -426,7 +426,9 @@ def test_volatile_v7_chown_whole_line(tmp_path):
 
 def test_volatile_v7_sphinx_scm_hash(tmp_path):
     rec = "Running Sphinx v5.0.0+/c9af4d7\n"
-    assert _verify_pair(tmp_path, rec, rec.replace("c9af4d7", "ab12cd3")) is None
+    # v15 retires this v7 exception: a revision is source state.
+    with pytest.raises(ReplayDivergence):
+        _verify_pair(tmp_path, rec, rec.replace("c9af4d7", "ab12cd3"))
 
 
 def test_volatile_v7_dd_timing(tmp_path):
@@ -505,8 +507,8 @@ def test_volatile_v11_stat_birth_leading_space(tmp_path):
 
 
 def test_volatile_v12_sidecar_recapture_cases(tmp_path):
-    """Sidecar recapture drain: seven process/container volatile fields."""
-    assert VOLATILE_NORMALIZATION_VERSION == "replay_volatile_norm_v14"
+    """Retain the other v12 mechanics without accepting their acquisition rule."""
+    assert VOLATILE_NORMALIZATION_VERSION == "replay_volatile_norm_v15"
 
     cases = [
         (
@@ -516,9 +518,6 @@ def test_volatile_v12_sidecar_recapture_cases(tmp_path):
         ("PID: 452\n", "PID: 447\n"),
         ("0.1.0.dev1+g9fc64e8.d20260609\n",
          "0.1.0.dev1+g9fc64e8.d20260611\n"),
-        ("Traceback (most recent call last):\n",
-         "Matplotlib is building the font cache; this may take a moment.\n"
-         "Traceback (most recent call last):\n"),
         (
             "File stat: os.stat_result(st_mode=33188, st_ino=28437238921, "
             "st_dev=64, st_nlink=1)\n",

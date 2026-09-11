@@ -792,7 +792,8 @@ def test_all_true_transformations_override_plain_arm_gates(tmp_path: Path) -> No
     assert cfg.adaptive_control_enabled is True
     assert cfg.llm_hurdle_detector_enabled is True
     assert cfg.detector_activated_guardrails is True
-    assert cfg.post_mutation_verification_gate_after > 0
+    # Enabling a transformation preserves the recipe's declared allowance.
+    assert cfg.post_mutation_verification_gate_after == 0
 
 
 @pytest.mark.parametrize("enabled", sorted(TRANSFORMATION_KEYS))

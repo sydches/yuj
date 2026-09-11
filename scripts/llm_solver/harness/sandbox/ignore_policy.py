@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -325,12 +325,31 @@ class IgnorePolicy:
     root: Path
     sources: tuple[IgnoreSource, ...] = ()
     enabled: bool = True
+    source_files: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        root = Path(self.root).resolve()
-        if not root.is_dir():
+        from ..task_path import active_task_host_root
+        observed = active_task_host_root(self.root) if self.source_files is not None else None
+        root = Path(observed) if observed is not None else Path(self.root).resolve()
+        if not self._source_root(root).is_dir():
             raise IgnorePolicyError(f"task root is not a directory: {root}")
         object.__setattr__(self, "root", root)
+
+    def _source_root(self, root=None):
+        if self.source_files is not None:
+            from ..task_path import TaskPath
+            return TaskPath(self.source_files, self.source_files.root)
+        return self.root if root is None else root
+
+    def _directory(self, relative):
+        return (self._source_root() / relative).is_dir()
+
+    def contains(self, path):
+        """Recognize task paths without converting them to host paths."""
+        from ..task_path import TaskPath
+        if isinstance(path, TaskPath):
+            return str(path.files.root) == str(self._source_root())
+        return path == self.root or self.root in path.parents
 
     @property
     def aggregate_hash(self) -> str | None:
@@ -349,6 +368,11 @@ class IgnorePolicy:
         }
 
     def _relative(self, path: str | os.PathLike[str]) -> tuple[str, Path]:
+        from ..task_path import TaskPath
+        if isinstance(path, TaskPath):
+            relative = path.path.relative_to(path.files.root).as_posix()
+            # This path is a lexical rule key, never a source of task bytes.
+            return relative, self.root / relative
         raw = os.fspath(path)
         if not isinstance(raw, str) or not raw or "\x00" in raw:
             raise IgnorePolicyError("path must be a non-empty NUL-free string")
@@ -374,7 +398,7 @@ class IgnorePolicy:
         if not self.enabled:
             return None
         relative, target = self._relative(path)
-        directory = target.is_dir() if is_dir is None else bool(is_dir)
+        directory = self._directory(relative) if is_dir is None else bool(is_dir)
         for source in self.sources:
             decision = source.decision(relative, is_dir=directory)
             if decision is not None:
@@ -397,7 +421,7 @@ class IgnorePolicy:
     ) -> None:
         """Raise FileNotFoundError-compatible error when a path is hidden."""
         if self.is_ignored(path, is_dir=is_dir):
-            raise IgnoredPathError(os.fspath(path))
+            raise IgnoredPathError(str(path))
 
     def is_model_hidden(
         self,
@@ -413,14 +437,16 @@ class IgnorePolicy:
         mask roots, while traversable ignored parents do not.
         """
         relative, target = self._relative(path)
-        directory = target.is_dir() if is_dir is None else bool(is_dir)
+        directory = self._directory(relative) if is_dir is None else bool(is_dir)
         if not self.is_ignored(relative, is_dir=directory):
             return False
         if not directory:
             return True
+        source_target = PurePosixPath(str(self._source_root())) / relative
         return any(
-            target == root or target.is_relative_to(root)
-            for root in map(Path, self.existing_ignored_paths())
+            source_target == PurePosixPath(root)
+            or source_target.is_relative_to(PurePosixPath(root))
+            for root in self.existing_ignored_paths()
         )
 
     def filter_paths(
@@ -441,12 +467,14 @@ class IgnorePolicy:
         if not self.enabled or not self.sources:
             return ()
         entries: list[tuple[Path, bool, bool]] = []
-        for directory, dir_names, file_names in os.walk(
-            self.root, topdown=True, followlinks=False,
-        ):
+        source_root = self._source_root()
+        walk = source_root.walk() if self.source_files is not None else os.walk(
+            source_root, topdown=True, followlinks=False,
+        )
+        for directory, dir_names, file_names in walk:
             dir_names.sort()
             file_names.sort()
-            base = Path(directory)
+            base = directory if self.source_files is not None else Path(directory)
             for name in dir_names:
                 entry = base / name
                 entries.append((entry, True, self.is_ignored(entry, is_dir=True)))
@@ -462,7 +490,7 @@ class IgnorePolicy:
             if ignored:
                 continue
             parent = entry.parent
-            while parent != self.root and parent not in has_visible_descendant:
+            while parent != source_root and parent not in has_visible_descendant:
                 has_visible_descendant.add(parent)
                 parent = parent.parent
 
@@ -471,7 +499,7 @@ class IgnorePolicy:
                 entry for entry, is_dir, ignored in entries
                 if is_dir and ignored and entry not in has_visible_descendant
             ),
-            key=lambda path: (len(path.parts), str(path)),
+            key=lambda path: (len(PurePosixPath(str(path)).parts), str(path)),
         )
         kept_dirs: list[Path] = []
         for directory in opaque_dirs:
@@ -527,7 +555,10 @@ def active_ignore_policy(
     if policy is None or cwd is None:
         return policy
     try:
-        return policy if Path(cwd).resolve() == policy.root else None
+        from ..task_path import active_task_host_root
+        observed = active_task_host_root(cwd)
+        root = Path(observed) if observed is not None else Path(cwd).resolve()
+        return policy if root == policy.root else None
     except OSError:
         return None
 
@@ -540,14 +571,18 @@ def load_ignore_policy(
     builtin_rules: Sequence[str] = (),
 ) -> IgnorePolicy:
     """Load configured ignore files from ``root`` once, with stable hashes."""
-    root_path = Path(root).resolve()
-    if not root_path.is_dir():
+    from ..task_path import active_task_files, active_task_host_root, TaskPath
+    observed = active_task_host_root(root)
+    root_path = Path(observed) if observed is not None else Path(root).resolve()
+    source_files = active_task_files(root)
+    source_root = TaskPath(source_files, source_files.root) if source_files is not None else root_path
+    if not source_root.is_dir():
         raise IgnorePolicyError(f"task root is not a directory: {root_path}")
     if not isinstance(enabled, bool):
         raise IgnorePolicyError("state.ignore_file_enabled must be a boolean")
     names = validate_ignore_file_names(file_names)
     if not enabled:
-        return IgnorePolicy(root_path, (), enabled=False)
+        return IgnorePolicy(root_path, (), enabled=False, source_files=source_files)
 
     sources: list[IgnoreSource] = []
     if builtin_rules:
@@ -563,13 +598,13 @@ def load_ignore_policy(
             ),
         ))
     for name in names:
-        candidate = root_path / name
+        candidate = source_root / name
         if not candidate.exists() and not candidate.is_symlink():
             continue
-        resolved = candidate.resolve()
         try:
-            resolved.relative_to(root_path)
-        except ValueError:
+            resolved = candidate.resolve()
+            resolved.relative_to(source_root)
+        except (ValueError, PermissionError):
             raise IgnorePolicyError(
                 f"ignore file {name!r} resolves outside the task root"
             ) from None
@@ -592,4 +627,4 @@ def load_ignore_policy(
             size_bytes=len(raw),
             rules=parse_ignore_lines(text.splitlines(), source_name=name),
         ))
-    return IgnorePolicy(root_path, tuple(sources), enabled=True)
+    return IgnorePolicy(root_path, tuple(sources), enabled=True, source_files=source_files)

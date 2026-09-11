@@ -152,6 +152,11 @@ def split_shell_fragments(command: str) -> tuple[ShellFragment, ...]:
             quote = char
             index += 1
             continue
+        if char == "#" and (index == 0 or command[index - 1] in " \t\n;&|()"):
+            # Shell operators inside a comment cannot start a new command.
+            newline = command.find("\n", index)
+            index = len(command) if newline < 0 else newline
+            continue
         if char == "(":
             paren_depth += 1
             index += 1

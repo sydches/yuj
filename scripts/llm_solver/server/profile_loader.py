@@ -54,6 +54,10 @@ class Profile:
     max_tools: int
     simplify_schemas: bool
     reasoning_levels: dict[str, dict[str, object]] = field(default_factory=dict)
+    # Only supplied metadata is capacity evidence; context_size keeps its
+    # historical loader fallback for consumers that still require a number.
+    context_capacity: int | None = None
+    context_capacity_source: str | None = None
 
     # Server launch config
     server_model_path: str = ""
@@ -338,6 +342,7 @@ def load_profile(
 
     prof: dict = {}
     model: dict = {}
+    context_capacity_source = None
     tokens: dict = {}
     capacity: dict = {}
     server: dict = {}
@@ -360,6 +365,8 @@ def load_profile(
             )
 
         prof.update(current_prof)
+        if "context_size" in data.get("model", {}):
+            context_capacity_source = str(current_dir / "profile.toml")
         model.update(data.get("model", {}))
         tokens.update(data.get("tokens", {}))
         capacity.update(data.get("capacity", {}))
@@ -420,6 +427,8 @@ def load_profile(
         canonical_version=prof.get("canonical_version", "openai-v1"),
         edit_format=edit_format,
         context_size=model.get("context_size", 40960),
+        context_capacity=model.get("context_size"),
+        context_capacity_source=context_capacity_source,
         chat_template=model.get("chat_template", "chatml"),
         supports_tool_calls=model.get("supports_tool_calls", True),
         supports_system_role=model.get("supports_system_role", True),

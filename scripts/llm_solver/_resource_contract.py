@@ -86,11 +86,15 @@ PACKAGE_RUNTIME_FILES = (
     "bash_quirks/rewrites.toml",
     "language_quirks/cargo.toml",
     "language_quirks/ctest.toml",
+    "language_quirks/diagnostics.toml",
     "language_quirks/generic.toml",
     "language_quirks/go.toml",
     "language_quirks/jest.toml",
+    "language_quirks/maven.toml",
+    "language_quirks/npm.toml",
     "language_quirks/pytest.toml",
     "language_quirks/python.toml",
+    "language_quirks/runtime.toml",
     "tool_quirks/glob.toml",
 )
 

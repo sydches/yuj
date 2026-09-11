@@ -40,7 +40,6 @@ from ._session_setup import build_context_manager
 from .session_io import (
     _auto_commit,
     _load_bash_transforms,
-    _normalize_repo_timestamps,
     _record_session_start_costs,
     _sanitize_runner_timing,
     _summarize_args,

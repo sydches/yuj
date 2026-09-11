@@ -565,9 +565,9 @@ _UT_SUGGESTION = {
                     "different action toward the task"),
 }
 _UT_GUARD_BY_RUNG = {
-    1: "loop_detect (warnings for repeated identical calls)",
+    1: "loop_detect (factual notices for matching completed observations)",
     2: "duplicate_guard (warnings for repeated identical calls)",
-    3: "loop_detect recovery guidance (recovery instructions for repeated calls)",
+    3: "loop_detect (the same completed-observation notice policy)",
     4: "unified tool-result envelope (explicit tool-result status fields)",
     5: "intent gate (checks for stated tool-call intent)",
 }
@@ -595,9 +595,9 @@ def compose_user_turn_message(session, *, evidence: str, rung: int,
             continue
         if event.get("source_write_like"):
             last_edit = int(t) if last_edit is None else max(last_edit, int(t))
-    edit_line = (f"Your last source edit was at turn {last_edit}."
+    edit_line = (f"At that point, the last recorded source edit was at turn {last_edit}."
                  if last_edit is not None
-                 else "You have not made any source edits yet.")
+                 else "At that point, no source edit had been recorded.")
     sug = _UT_SUGGESTION.get(hurdle_family,
                              "change your approach and take a different "
                              "action toward the task")
@@ -605,7 +605,7 @@ def compose_user_turn_message(session, *, evidence: str, rung: int,
     if include_guard:
         guard = _UT_GUARD_BY_RUNG.get(int(rung) or 1, _UT_GUARD_BY_RUNG[1])
         guard_sentence = f"Selected guard response: {guard}. "
-    return (f"The harness detected a problem: "
+    return (f"Harness observation at turn {turn}: "
             f"{ev}. {edit_line} Suggestion: {sug}. "
             f"{guard_sentence}"
             f"Your previous work is saved and in place. Continue.")
@@ -715,8 +715,6 @@ def stop_for_resume(session, payload: InterventionPayload,
         return ExecutorResult(STOP_RESUME_EXECUTOR_ID, applied=False,
                               blocked_reason="stop_note_write_failed")
     setattr(session, "_adaptive_stop_requested", note)
-    # controller memory must survive the segment boundary (persistence.py)
-    from .persistence import save_state
-    save_state(session)
+    # The caller saves controller state after recording this requested apply.
     return ExecutorResult(STOP_RESUME_EXECUTOR_ID, applied=True,
                           active_config_basis="stop_resume_pending")

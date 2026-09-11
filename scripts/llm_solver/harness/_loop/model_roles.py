@@ -45,6 +45,8 @@ class ModelTarget:
     base_url: str | None = None
     api_key: str | None = None
     context_size: int | None = None
+    declared_context_size: int | None = None
+    context_source: str = "explicit_role"
 
     def label(self) -> str:
         """Return a secret-free target label for trace/provenance fields."""
@@ -379,6 +381,8 @@ class ModelRoleResolver:
             context_size=_validate_context_size(
                 main_target.context_size, field="model.context_size"
             ),
+            declared_context_size=main_target.declared_context_size,
+            context_source="caller",
         )
         self._profile_loader = profile_loader
         self._main = self._resolve_target(
@@ -413,18 +417,22 @@ class ModelRoleResolver:
         defaults: ModelTarget,
     ) -> ResolvedModelRole:
         profile = self._load_profile(requested_role, target.profile_name)
-        profile_context = getattr(profile, "context_size", None)
-        context_size = target.context_size
-        if context_size is None and isinstance(profile_context, int) and profile_context > 0:
-            context_size = profile_context
-        if context_size is None:
-            context_size = defaults.context_size
+        from ...context_allocation import capacity
+        declaration = target.declared_context_size or target.context_size
+        source = target.context_source
+        if declaration is None:
+            declaration = defaults.declared_context_size or defaults.context_size
+            source = "inherited_caller"
+        profile_context = capacity(getattr(profile, "context_capacity", None))
+        context_size = min(declaration, profile_context) if profile_context else declaration
         resolved_target = ModelTarget(
             profile_name=target.profile_name,
             model=target.model or target.profile_name,
             base_url=target.base_url or defaults.base_url,
             api_key=target.api_key if target.api_key is not None else defaults.api_key,
             context_size=context_size,
+            declared_context_size=declaration,
+            context_source=source,
         )
         return ResolvedModelRole(
             requested_role=requested_role,

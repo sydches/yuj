@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from pathlib import Path
 
 from .thoughts import (
     filter_expired_thought_messages,
@@ -58,6 +59,14 @@ class ContextManager(ABC):
         # growing a duplicate constructor argument.
         self._think_keep_turns: int | None = None
         self._context_session_number: int | None = None
+        self._artifact_dir: Path | None = None
+
+    def configure_artifact_directory(self, directory: Path) -> None:
+        """Bind state readers before session use, keeping workspace reads separate."""
+        self._artifact_dir = Path(directory)
+        for name in ("_file_cache", "_raw_state_cache", "_msg_cache", "_tok_cache"):
+            if hasattr(self, name):
+                setattr(self, name, None)
 
     def configure_thought_retention(
         self, keep_turns: int, *, session_number: int,

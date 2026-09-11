@@ -94,10 +94,192 @@ def make_manager(tmp_path: Path, **overrides):
         popen_factory=factory,
         monotonic=clock.monotonic,
         sleep=clock.sleep,
-        poll_interval_s=1,
+        poll_interval_s=overrides.pop("poll_interval_s", 1),
         **overrides,
     )
     return manager, factory, clock, events
+
+
+@pytest.mark.parametrize('mismatch', [False, True])
+def test_guarded_background_process_preserves_task_output_and_refuses_changed_credentials(
+    tmp_path, native_process_identity, mismatch,
+):
+    from dataclasses import replace
+    from scripts.llm_solver.harness.process_identity import guarded_process_argv
+    identity = native_process_identity
+    if mismatch:
+        identity = replace(identity, uids=(identity.uids[0] + 1,) * 4)
+    events = []
+    prefix = ['bash', '-c', 'printf transport-warning >&2; exec "$@"', 'fixture']
+    manager = ProcessManager(
+        run_dir=tmp_path / 'run', cwd=tmp_path, max_procs=1, poll_timeout_s=1,
+        argv_builder=lambda command: guarded_process_argv(
+            prefix, ['bash', '-c', command], identity, combine_output=True),
+        event_sink=events.append,
+    )
+    def check_metadata(proc_id, exit_code):
+        assert not mismatch, 'unverified startup must not supply completed-check evidence'
+        return {'verification_status': 'fixture-check'}
+    manager.poll_metadata = check_metadata
+    try:
+        started = manager.start('touch ran; printf out; printf err >&2; exit 77')
+        manager._records[started.proc_id].process.wait(timeout=3)
+        poll = manager.poll(started.proc_id)
+        assert poll.exit_code == 77 and not poll.running
+        assert 'yuj-process-identity-v1' not in poll.result
+        assert (tmp_path / 'ran').exists() is not mismatch
+        if mismatch:
+            assert 'did not start with verified process credentials' in poll.result
+            assert poll.result.verification_status == 'process_identity_unverified'
+            assert 'transport-warning' not in poll.result
+        else:
+            assert 'outerr' in poll.result and 'transport-warning' in poll.result
+            assert events[-1]['execution_metadata']['process_identity_verified'] is True
+            again = manager.poll(started.proc_id)
+            assert 'outerr' not in again.result and 'transport-warning' not in again.result
+    finally:
+        manager.close()
+
+
+def test_background_partial_frame_and_admission_retry_do_not_lose_output(tmp_path):
+    from scripts.llm_solver.harness.process_identity import GuardedProcessArgv, VERIFIED
+    manager, factory, _clock, _events = make_manager(tmp_path)
+    manager.argv_builder = lambda command: GuardedProcessArgv(['fixture', command])
+    proc_id = manager.start('fixture').proc_id
+    process = factory.processes[0]
+    try:
+        process.write(VERIFIED[:4])
+        partial = manager.poll(proc_id, timeout_s=0)
+        assert partial.cursor_end == 0 and partial.timed_out
+        assert 'yuj-' not in partial.result
+        process.write(VERIFIED[4:] + VERIFIED + b'payload')
+        process.finish()
+        def reject(_text):
+            raise ValueError('admission failed')
+        manager.admit_output = reject
+        with pytest.raises(ValueError, match='admission failed'):
+            manager.poll(proc_id)
+        manager.admit_output = lambda text: text
+        accepted = manager.poll(proc_id)
+        assert accepted.result.count('yuj-process-identity-v1') == 1
+        assert 'payload' in accepted.result
+        assert accepted.cursor_end == len(VERIFIED) * 2 + len(b'payload')
+    finally:
+        manager.close()
+
+
+def test_guarded_start_preserves_an_existing_transport_log(tmp_path):
+    from scripts.llm_solver.harness.process_identity import GuardedProcessArgv
+    manager, _factory, _clock, _events = make_manager(tmp_path)
+    manager.argv_builder = lambda command: GuardedProcessArgv(['fixture', command])
+    existing = manager.procs_dir / 'p0001.stderr'
+    existing.write_bytes(b'previous transport evidence')
+    try:
+        with pytest.raises(ProcessManagerError, match='could not start'):
+            manager.start('fixture')
+        assert existing.read_bytes() == b'previous transport evidence'
+    finally:
+        manager.close()
+
+
+def test_final_frame_write_is_read_after_exit_is_observed(tmp_path):
+    from scripts.llm_solver.harness.process_identity import GuardedProcessArgv, VERIFIED
+    manager, factory, _clock, _events = make_manager(tmp_path)
+    manager.argv_builder = lambda command: GuardedProcessArgv(['fixture', command])
+    proc_id = manager.start('fixture').proc_id
+    process = factory.processes[0]
+    def finish_on_poll():
+        if process.returncode is None:
+            process.write(VERIFIED + b'final output')
+            process.finish()
+        return process.returncode
+    process.poll = finish_on_poll
+    try:
+        result = manager.poll(proc_id, timeout_s=0)
+        assert 'final output' in result.result and not result.running
+        assert 'verified process credentials' not in result.result
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("name", ["poll_timeout_s", "poll_interval_s", "terminate_grace_s"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_manager_rejects_nonfinite_durations_before_creating_artifacts(tmp_path, name, value):
+    with pytest.raises(ValueError, match=name):
+        make_manager(tmp_path, **{name: value})
+
+    assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("output_ready", [False, True])
+def test_poll_rejects_nonfinite_wait_without_consuming_output_or_stopping_process(tmp_path, value, output_ready):
+    manager, factory, clock, events = make_manager(tmp_path)
+    proc_id = manager.start("fake background command").proc_id
+    process = factory.processes[0]
+    if output_ready:
+        process.write(b"retained output")
+
+    def unexpected_sleep():
+        pytest.fail("invalid poll reached the wait loop")
+
+    clock.on_sleep = unexpected_sleep
+    try:
+        with pytest.raises(ProcessManagerError, match="poll timeout"):
+            manager.poll(proc_id, timeout_s=value)
+
+        assert clock.now == 0
+        assert [event["event"] for event in events] == ["proc_start"]
+        assert process.poll() is None
+        assert not process.terminated and not process.killed
+        if not output_ready:
+            process.write(b"retained output")
+        result = manager.poll(proc_id, timeout_s=0)
+        assert "retained output" in result.result
+        assert result.cursor_start == 0
+        assert result.running is True
+    finally:
+        manager.close()
+
+
+def test_fractional_poll_wait_expires_without_ending_process(tmp_path):
+    manager, factory, clock, _events = make_manager(tmp_path, poll_timeout_s=0.25)
+    proc_id = manager.start("fake background command").proc_id
+    try:
+        result = manager.poll(proc_id, timeout_s=0.125)
+        assert clock.now == 0.125
+        assert result.timed_out is True
+        assert result.running is True
+        assert result.result.timed_out is False
+        assert not factory.processes[0].terminated
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_session_dispatch_reports_invalid_poll_wait_without_waiting(tmp_path, value):
+    from types import SimpleNamespace
+
+    from _config_helpers import make_config
+    from scripts.llm_solver.harness.loop import Session
+    from scripts.llm_solver.harness.tools import dispatch
+
+    cfg = make_config(tools_background_enabled=True, sandbox_bash=False)
+    session = Session(cfg, SimpleNamespace(), "system", "task", str(tmp_path))
+    session._process_manager.close()
+    manager, factory, clock, _events = make_manager(tmp_path)
+    session._process_manager = manager
+    proc_id = manager.start("fake background command").proc_id
+    try:
+        result = dispatch(
+            "bash_poll", {"proc_id": proc_id, "timeout_s": value},
+            cwd=str(tmp_path), cfg=cfg, tool_registry=session._tool_registry,
+        )
+        assert "ERROR: poll timeout must be finite and >= 0" in result
+        assert clock.now == 0
+        assert factory.processes[0].poll() is None
+    finally:
+        manager.close()
 
 
 def test_start_is_nonblocking_sandboxed_and_logs_under_run_dir(tmp_path):
@@ -202,6 +384,8 @@ def test_explicit_kill_and_close_kill_every_live_process(tmp_path):
     manager.close()
 
     assert killed.was_running is True
+    assert killed.result == f"Killed background process {first}"
+    assert killed.exit_code == -signal.SIGTERM
     assert factory.processes[0].terminated is True
     assert factory.processes[1].terminated is True
     kill_events = [event for event in events if event["event"] == "proc_kill"]
@@ -211,6 +395,35 @@ def test_explicit_kill_and_close_kill_every_live_process(tmp_path):
     ]
     with pytest.raises(ProcessManagerError, match="closed"):
         manager.start("three")
+
+
+@pytest.mark.parametrize("failure", ["wait_timeout", "signal_error"])
+def test_kill_does_not_claim_exit_when_cleanup_is_unconfirmed(tmp_path, monkeypatch, failure):
+    manager, factory, _clock, events = make_manager(tmp_path)
+    proc_id = manager.start("server").proc_id
+    process = factory.processes[0]
+    signals = []
+
+    def signal_process(_process, sig):
+        signals.append(sig)
+        if failure == "signal_error":
+            raise PermissionError("cannot signal process")
+
+    monkeypatch.setattr(manager, "_signal", signal_process)
+    try:
+        result = manager.kill(proc_id)
+        assert result.was_running and result.exit_code is None
+        assert result.result == (
+            f"Requested termination of background process {proc_id}; exit not confirmed"
+        )
+        assert process.poll() is None
+        assert events[-1]["result"] == result.result
+        assert events[-1]["exit_code"] is None
+        assert signals == ([signal.SIGTERM, signal.SIGKILL]
+                           if failure == "wait_timeout" else [signal.SIGTERM])
+    finally:
+        process.finish()
+        manager.close()
 
 
 def test_context_manager_kills_process_on_exception(tmp_path):

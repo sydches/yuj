@@ -111,7 +111,7 @@ def test_fact_derivation():
     by_idx = {r["slot_idx"]: r for r in rows}
     assert by_idx[1]["source_mutation"] == "true" and by_idx[1]["slot_state"] == "edit"
     assert by_idx[2]["test_like_action"] == "true"
-    assert by_idx[2]["test_execution_action"] == "true"
+    assert by_idx[2]["test_execution_action"] == "false"  # legacy text cannot establish execution
     assert by_idx[3]["obs_state"] == "tool_error" and by_idx[3]["slot_state"] == "tool_error"
     assert by_idx[4]["submit_like_action"] == "true"
 
@@ -132,12 +132,12 @@ def test_environment_preamble_does_not_make_test_file_read_an_execution():
         ),
     ], 33)
 
-    assert rows[0]["test_like_action"] == "true"  # legacy broad fact
+    assert rows[0]["test_like_action"] == "false"  # a test-file read is not a runner invocation
     assert rows[0]["test_execution_action"] == "false"
     assert watch.material_progress(rows[0]) is False
 
 
-def test_environment_preamble_preserves_real_test_execution_progress():
+def test_legacy_environment_preamble_keeps_execution_unknown():
     from llm_solver.harness.adaptive_control import watch
 
     rows = sr.recent_prefix_slots_from_events([
@@ -153,7 +153,10 @@ def test_environment_preamble_preserves_real_test_execution_progress():
         ),
     ], 34)
 
-    assert rows[0]["test_execution_action"] == "true"
+    assert rows[0]["test_execution_action"] == "false"
+    assert rows[0]["test_like_action"] == "true"
+    # The separate watch heuristic still consumes legacy outcome text. Its
+    # acceptance is not established by runner identity or invocation evidence.
     assert watch.material_progress(rows[0]) is True
 
 

@@ -1,0 +1,6 @@
+name = "diagnostics"
+
+# Frozen Stage-1 sampling vocabulary; historical replay only.
+[legacy_naive_red_v0]
+args_tokens = ["diff ", "git diff", "git status", "sed -n", "grep", "rg ", "python", "pytest", "py.test", "runtests.py", "manage.py test", "pylint", "tox", "unittest", "/tmp/test"]
+result_tokens = ["traceback", "[exit code: 1", "failed", "failure", "error", "loop detected", "permission denied", "no module named"]

@@ -6,6 +6,7 @@ function and file-write helpers.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -311,6 +312,65 @@ class TestWriteTraceIntegration:
         live = json.loads(state_path.read_text())
         replay = _project_from_trace(trace_path)
         assert live == replay
+
+    def test_recorded_paths_and_custom_probe_match_live_state_and_unrelated_replay(self, tmp_path: Path):
+        from scripts.llm_solver.harness.task_environment import recorded_task_environment
+
+        session, trace_file, trace_path, state_path = self._make_session(tmp_path)
+        try:
+            session.cfg = replace(session.cfg, state_imperative_projection_enabled=True)
+            session._write_trace({
+                "event": "session_start", "session_number": 1,
+                "task_environment": {"host_root": str(tmp_path),
+                                     "working_directory": "/observed/task",
+                                     "aliases": ["/observed/task"]},
+            })
+            session._write_trace({
+                "event": "tool_call", "session_number": 1, "turn_number": 0,
+                "tool_name": "bash", "args_summary": "cmd=\"sed -i 's/a/b/' /observed/task/source.py\"",
+                "source_write_like": True, "source_write_paths": ["/observed/task/source.py"],
+                "pass_fail": "pass",
+            })
+            session._write_trace({
+                "event": "tool_call", "session_number": 1, "turn_number": 1,
+                "tool_name": "bash", "args_summary": "cmd='python -c \"print(1)\"'",
+                "verification_status": "custom_passed", "pass_fail": "pass",
+                "result_summary": "1",
+            })
+        finally:
+            trace_file.close()
+        live = json.loads(state_path.read_text())
+        with recorded_task_environment({"host_root": "/elsewhere", "working_directory": "/elsewhere", "aliases": []}):
+            replay = project_from_trace(trace_path, max_result_chars=_CAP, imperative_projection=True)
+        assert live == replay
+        assert live["process"]["phase"] == "post_mutation_unverified"
+        assert live["process"]["target_paths"] == ["source.py"]
+        assert live["evidence"][-1]["kind"] == "custom_probe"
+        assert live["trace"][-1]["result"] == "1"
+
+    def test_unresolved_check_stays_unverified_in_live_state_and_replay(self, tmp_path: Path):
+        session, trace_file, trace_path, state_path = self._make_session(tmp_path)
+        try:
+            session.cfg = replace(session.cfg, state_imperative_projection_enabled=True)
+            session._write_trace({
+                "event": "tool_call", "session_number": 1, "turn_number": 0,
+                "tool_name": "edit", "args_summary": "path='src/item.py'",
+                "result_summary": "SUCCESS",
+            })
+            session._write_trace({
+                "event": "tool_call", "session_number": 1, "turn_number": 1,
+                "tool_name": "run_tests", "verification_status": "selection_unresolved",
+                "result_summary": "No command selected", "pass_fail": "fail",
+            })
+        finally:
+            trace_file.close()
+        live = json.loads(state_path.read_text())
+        replay = project_from_trace(trace_path, max_result_chars=_CAP, imperative_projection=True)
+        assert live == replay
+        assert live["process"]["phase"] == "post_mutation_unverified"
+        assert live["evidence"] == []
+        assert live["trace"][-1]["verification_status"] == "selection_unresolved"
+        assert live["trace"][-1]["result"] == "No command selected"
 
 
 class TestProjectReasoning:

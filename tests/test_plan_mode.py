@@ -660,9 +660,10 @@ def test_done_guard_does_not_count_plan_file_as_mutation(tmp_path: Path):
     assert cwd_has_uncommitted_changes(str(tmp_path)) is True
     changed_state = GuardrailState()
     changed_state.verified_since_mutation = True
+    # A fresh state has not observed this edit. Git dirt alone is not credit.
     assert done_guard(
         changed_state, cfg, tc_name="done", cwd=str(tmp_path)
-    ).action == Action.PASS
+    ).action == Action.BLOCK
 
 
 def test_state_projection_keeps_plan_artifact_non_mutating():

@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -55,33 +56,51 @@ def _truncate_for_trace(s: str, maxlen: int) -> str:
     return s[:maxlen - 3] + "..."
 
 
-def _auto_commit(repo_dir: Path, session_num: int, finish_reason: str) -> None:
-    """Commit changes in repo_dir if working tree is dirty. Local only.
+def _auto_commit(repo_dir: Path, session_num: int, finish_reason: str, *,
+                 enabled: bool = False, file_scope=nullcontext) -> None:
+    """Commit the dirty task tree only with an explicit opt-in. Local only.
 
     Best-effort: any subprocess failure (CalledProcessError, missing
     git, dirty index it can't resolve) is logged at warning level and
     swallowed — the harness must not crash a task because the auto-
     commit checkpoint failed.
     """
+    if enabled is not True:
+        return
+    from ..task_path import active_task_files, TaskPath
+    from ..time_budget import command_time_budget, command_timeout
     try:
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(repo_dir), capture_output=True, text=True,
-        )
-        if not status.stdout.strip():
-            return
-        subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True)
-        msg = f"yuj: session {session_num} checkpoint ({finish_reason})"
-        # Supply an identity because an extracted repository may not have
-        # user.name or user.email configured.
-        subprocess.run(
-            ["git", "-c", "user.name=yuj-harness",
-             "-c", "user.email=yuj@localhost",
-             "commit", "-m", msg],
-            cwd=str(repo_dir), capture_output=True, text=True, check=True,
-        )
+        with command_time_budget() as allowance:
+            allowance.remaining()
+            with file_scope():
+                files = active_task_files(repo_dir)
+                root = TaskPath(files, files.root) if files is not None else repo_dir
+                # Check the selected task, not ordinary upward Git discovery.
+                if not (root / '.git').exists():
+                    log.warning('auto_commit_skipped: task directory is not a Git root: %s', root)
+                    return
+
+                def run(*args):
+                    timeout = command_timeout()
+                    if files is None:
+                        return subprocess.run(['git', *args], cwd=str(root),
+                            capture_output=True, text=True, check=True, timeout=timeout).stdout
+                    git = files._utility('git')
+                    command_timeout()
+                    result = files.run('cd -- "$1" && shift && exec "$@"',
+                                       [str(root), git, *args], None)
+                    result.check_returncode()
+                    return result.stdout.decode('utf-8', 'replace')
+
+                if not run('status', '--porcelain').strip():
+                    return
+                run('add', '-A')
+                msg = f'yuj: session {session_num} checkpoint ({finish_reason})'
+                # The optional checkpoint supplies its existing author identity.
+                run('-c', 'user.name=yuj-harness', '-c', 'user.email=yuj@localhost',
+                    'commit', '-m', msg)
         log.info("Auto-commit: session %d (%s)", session_num, finish_reason)
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
+    except (subprocess.SubprocessError, OSError, RuntimeError) as e:
         log.warning(
             "auto_commit_failed: session=%d finish=%s err=%s stderr=%s",
             session_num, finish_reason, e, getattr(e, "stderr", None) or "",
@@ -124,32 +143,6 @@ def _sanitize_runner_timing(output: str) -> str:
             line = _TIMING_RE.sub('', line)
         out_lines.append(line)
     return '\n'.join(out_lines)
-
-
-def _normalize_repo_timestamps(repo_dir: Path) -> None:
-    """Set every file/dir mtime under repo_dir (except .git/) to a fixed epoch.
-
-    Removes wall-clock leakage that appears in the agent's first
-    ``ls -la`` and would otherwise flip the model's path under
-    deterministic inference (temp=0, top-k=1).
-    """
-    epoch = "2020-01-01T00:00:00"
-    try:
-        # Exclude .git contents (corrupts index timestamps) but touch
-        # the .git directory itself so its entry in `ls -la` is stable.
-        subprocess.run(
-            ["find", str(repo_dir), "-not", "-path", f"{repo_dir}/.git/*",
-             "-exec", "touch", "-d", epoch, "{}", "+"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-        )
-    except (subprocess.SubprocessError, FileNotFoundError, PermissionError):
-        # Non-fatal: determinism degrades but the run continues.
-        pass
-
-
 
 
 def _record_session_start_costs(cfg: Config, client, system_prompt: str,
@@ -282,6 +275,13 @@ def _record_session_start_costs(cfg: Config, client, system_prompt: str,
             },
         )
 
+    environment_chars = int(getattr(prompt_metadata, "task_environment_chars", 0) or 0)
+    if environment_chars:
+        ledger.record(
+            bucket="system_prompt", layer="L4_protocol", mechanism="task_environment",
+            input_chars=0, output_chars=environment_chars, measure_type="exact",
+        )
+
     skills_chars = int(
         getattr(prompt_metadata, "skills_catalog_chars", 0) or 0
     )
@@ -411,10 +411,9 @@ def _load_bash_transforms(cfg: Config, *, force_load_all: bool = False):
             _analysis_fmt = cfg.analysis_task_format if hasattr(cfg, "analysis_task_format") else None
             # Real runs resolve "auto" -> the detected runner in the driver
             # (resolve_task_format) before we get here. This is the no-repo
-            # fallback (direct tool/test calls): degrade to pytest, matching
-            # detect_runner's own marker-less default.
+            # Direct calls without setup have no discovered runner.
             if _analysis_fmt == "auto":
-                _analysis_fmt = "pytest"
+                _analysis_fmt = "generic"
             if _analysis_fmt:
                 from ...language_quirks import FORMATS_DIR
                 fmt_path = FORMATS_DIR / f"{_analysis_fmt}.toml"

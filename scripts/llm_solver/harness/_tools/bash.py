@@ -1,5 +1,5 @@
 """bash tool: run a shell command in the sandbox, return stdout+stderr."""
-from pathlib import Path
+from pathlib import PurePosixPath
 import shlex
 
 from ...language_quirks import load_language_advice
@@ -7,13 +7,15 @@ from ..injections import UserTurnInjection
 from ..sandbox import _DEFAULT_BWRAP_BIN, container_mode
 from ..sandbox.ignore_policy import IgnorePolicy, active_ignore_policy
 from ..savings import record_text_transform
+from ..time_budget import budgeted_bash_execution
 from ._common import (
     ToolExecutionText,
     _require_external_readable,
     _resolve_read,
     _tool_advice,
 )
-from ._env_hints import _missing_python_module, _python_install_failure
+from ._env_hints import _missing_python_module, _python_install_failure, _python_request_kind
+from ._trivial_read_content import _read_cat, _read_head
 from ._pytest_hints import (
     _pytest_binary_missing, _pytest_path_missing,
 )
@@ -106,92 +108,6 @@ def _try_inproc_trivial_read(
     return None
 
 
-def _read_cat(
-    path: str, cwd: str, *, ignore_policy: IgnorePolicy | None = None,
-    readonly_roots: tuple[str, ...] = (),
-    unreadable_paths: tuple[str, ...] = (),
-) -> tuple[str, int, bool]:
-    """In-process equivalent of ``cat <path>``. Bytewise output match."""
-    try:
-        target = _resolve_read(cwd, path, readonly_roots=readonly_roots)
-        _require_external_readable(
-            cwd, target, unreadable_paths=unreadable_paths,
-        )
-        if ignore_policy is not None and (
-            target == ignore_policy.root or ignore_policy.root in target.parents
-        ):
-            ignore_policy.require_visible(target, is_dir=target.is_dir())
-    except ValueError:
-        return f"cat: {path}: No such file or directory\n", 1, False
-    except FileNotFoundError:
-        return f"cat: {path}: No such file or directory\n", 1, False
-    try:
-        data = target.read_bytes()
-    except FileNotFoundError:
-        return f"cat: {path}: No such file or directory\n", 1, False
-    except IsADirectoryError:
-        return f"cat: {path}: Is a directory\n", 1, False
-    except PermissionError:
-        return f"cat: {path}: Permission denied\n", 1, False
-    return data.decode("utf-8", errors="replace"), 0, False
-
-
-def _read_head(
-    path: str,
-    cwd: str,
-    *,
-    n: int,
-    ignore_policy: IgnorePolicy | None = None,
-    readonly_roots: tuple[str, ...] = (),
-    unreadable_paths: tuple[str, ...] = (),
-) -> tuple[str, int, bool]:
-    """In-process equivalent of ``head [-n N] <path>`` (default N=10)."""
-    try:
-        target = _resolve_read(cwd, path, readonly_roots=readonly_roots)
-        _require_external_readable(
-            cwd, target, unreadable_paths=unreadable_paths,
-        )
-        if ignore_policy is not None and (
-            target == ignore_policy.root or ignore_policy.root in target.parents
-        ):
-            ignore_policy.require_visible(target, is_dir=target.is_dir())
-    except ValueError:
-        return (
-            f"head: cannot open '{path}' for reading: "
-            "No such file or directory\n", 1, False,
-        )
-    except FileNotFoundError:
-        return (
-            f"head: cannot open '{path}' for reading: "
-            "No such file or directory\n", 1, False,
-        )
-    try:
-        data = target.read_bytes()
-    except FileNotFoundError:
-        return (
-            f"head: cannot open '{path}' for reading: "
-            "No such file or directory\n", 1, False,
-        )
-    except IsADirectoryError:
-        return (
-            f"head: error reading '{path}': Is a directory\n", 1, False,
-        )
-    except PermissionError:
-        return (
-            f"head: cannot open '{path}' for reading: Permission denied\n",
-            1, False,
-        )
-    text = data.decode("utf-8", errors="replace")
-    # GNU head emits the first N newline-terminated lines. Split on
-    # '\n' and rejoin first N parts; re-add a trailing newline iff
-    # the file had at least N full lines (i.e. an N-th '\n' existed).
-    parts = text.split("\n")
-    head_text = "\n".join(parts[:n])
-    if len(parts) > n:
-        head_text += "\n"
-    return head_text, 0, False
-
-
 def _read_ls(
     args: list[str],
     cwd: str,
@@ -237,9 +153,7 @@ def _read_ls(
     display = paths[0] if paths else "."
     try:
         target = _resolve_read(cwd, display, readonly_roots=readonly_roots)
-        inside_project = (
-            target == ignore_policy.root or ignore_policy.root in target.parents
-        )
+        inside_project = ignore_policy.contains(target)
         _require_external_readable(
             cwd, target, unreadable_paths=unreadable_paths,
         )
@@ -263,11 +177,9 @@ def _read_ls(
         )
     try:
         names = []
-        inside_project = (
-            target == ignore_policy.root or ignore_policy.root in target.parents
-        )
+        inside_project = ignore_policy.contains(target)
         mask_roots = tuple(
-            Path(path) for path in ignore_policy.existing_ignored_paths()
+            PurePosixPath(path) for path in ignore_policy.existing_ignored_paths()
         ) if inside_project else ()
         for entry in target.iterdir():
             if entry.name.startswith(".") and not (show_all or almost_all):
@@ -276,7 +188,8 @@ def _read_ls(
             if inside_project:
                 ignored = ignore_policy.is_ignored(entry, is_dir=is_dir)
                 hidden_directory = is_dir and any(
-                    entry == root or entry.is_relative_to(root)
+                    PurePosixPath(str(entry)) == root
+                    or PurePosixPath(str(entry)).is_relative_to(root)
                     for root in mask_roots
                 )
                 if ignored and (not is_dir or hidden_directory):
@@ -345,7 +258,8 @@ def _semantic_exit_annotation(cmd: str, exit_code: int) -> str | None:
     return row.get(exit_code)
 
 
-def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
+@budgeted_bash_execution
+def bash(cmd: str, *, cwd: str, timeout: float | None, sandbox: bool = True,
          bwrap_bin: str = _DEFAULT_BWRAP_BIN,
          sandbox_required: bool = False,
          unreadable_paths: tuple[str, ...] = (),
@@ -425,15 +339,29 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             allow_login_shell=allow_login_shell,
             normalize_output=transform_output,
         )
+    from ..shell_verification import shell_verification_status
+    verification_status = shell_verification_status(cmd, exit_code, timed_out)
+    from ..runner_invocations import runner_request_record, bind_runner_workspace
+    runner_request = runner_request_record(cmd)
+    if 'requests' not in runner_request:
+        runner_request = bind_runner_workspace(
+            runner_request, cmd, cwd, sandbox=sandbox, backend=sandbox_backend,
+        )
+    inspection = getattr(out, "inspection_evidence", None)
+    inspection_body = getattr(out, "inspection_body", "")
     if timed_out:
         return ToolExecutionText(
-            f"ERROR: command timed out after {timeout}s",
+            (f"ERROR: command timed out after {timeout:g}s" if timeout is not None
+             else "ERROR: command timed out"),
             exit_status=None,
             timed_out=True,
+            verification_status=verification_status,
+            runner_request=runner_request,
         )
     if exit_code is None:
         # Non-timeout exception path; out already carries "ERROR: …".
-        return ToolExecutionText(out, exit_status=None)
+        return ToolExecutionText(out, exit_status=None, verification_status=verification_status,
+                                 runner_request=runner_request)
     if transform_output and exit_code != 0:
         # Semantic exit-code annotation for known non-error verbs (grep,
         # rg, find, diff). Without this, exit=1 from `grep pattern foo`
@@ -451,14 +379,9 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
             out, changed, bucket="exit_annotation", mechanism=mechanism,
             exit_code=exit_code,
         )
-    # Empty-output substitution. When the command produced no characters
-    # at all (e.g. silent `mv`, `chmod`, `git add`, `touch`, `rm` on a
-    # pre-existing file, sed -i with no match), the model otherwise re-
-    # probes ("did my command run?") burning a turn. SWE-agent uses
-    # exactly this pattern. See offload P0-1 / compaction tier 1 #3.
-    # Only applied on success — failures need to surface their actual
-    # (possibly empty) error stream rather than a misleading "no output"
-    # message.
+    # Confirm quiet success so the model need not repeat the command to
+    # establish whether it ran. Keep failed output unchanged here; its exit
+    # annotation already records the failure.
     if transform_output and exit_code == 0 and out.strip() == "":
         out = _record_output_change(
             out, "(command produced no output)", bucket="empty_output_sub",
@@ -467,13 +390,14 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
         )
     user_turn_injections: list[UserTurnInjection] = []
     if transform_output:
-        if _pytest_binary_missing(out, exit_code):
+        request_kind = _python_request_kind(cmd)
+        if request_kind in {"python", "pytest"} and _pytest_binary_missing(out, exit_code):
             user_turn_injections.append(_tool_advice(
                 load_language_advice("python")["python_runner_missing"],
                 mechanism="pytest_binary_missing_hint", tool_name="bash",
                 exit_code=exit_code,
             ))
-        elif _pytest_path_missing(out, exit_code):
+        elif request_kind == "pytest" and _pytest_path_missing(out, exit_code):
             user_turn_injections.append(_tool_advice(
                 load_language_advice("pytest")["pytest_path_missing"],
                 mechanism="pytest_path_missing_hint", tool_name="bash",
@@ -485,7 +409,7 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
                 mechanism="python_install_failure_hint", tool_name="bash",
                 exit_code=exit_code,
             ))
-        elif missing_module := _missing_python_module(out, exit_code):
+        elif request_kind in {"python", "pytest"} and (missing_module := _missing_python_module(out, exit_code)):
             user_turn_injections.append(_tool_advice(
                 load_language_advice("python")["python_env_missing"].replace(
                     "{module}", missing_module
@@ -493,8 +417,16 @@ def bash(cmd: str, *, cwd: str, timeout: int, sandbox: bool = True,
                 mechanism="python_env_missing_hint", tool_name="bash",
                 exit_code=exit_code,
             ))
-    return ToolExecutionText(
+    value = ToolExecutionText(
         out,
         exit_status=exit_code,
+        verification_status=verification_status,
+        runner_request=runner_request,
         user_turn_injections=user_turn_injections,
     )
+    value.inspection_evidence = inspection
+    value.inspection_body = inspection_body
+    if inproc is None:
+        from ..runner_invocations import describe_shell_submission
+        value.shell_submission = describe_shell_submission(cmd, cwd, backend=sandbox_backend)
+    return value

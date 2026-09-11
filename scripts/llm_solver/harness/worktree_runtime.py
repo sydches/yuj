@@ -98,6 +98,7 @@ def _run(
     *,
     cwd: Path,
     check: bool = True,
+    timeout: float | None = 120,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(
@@ -114,7 +115,7 @@ def _run(
             env=env,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -186,8 +187,9 @@ def _git_path(repo_root: Path, name: str) -> Path:
     return path.resolve() if path.is_absolute() else (repo_root / path).resolve()
 
 
-def _ensure_local_exclude(repo_root: Path, patterns: tuple[str, ...] = (_LOCAL_EXCLUDE,)) -> None:
-    exclude = _git_path(repo_root, "info/exclude")
+def _ensure_local_exclude(repo_root: Path, patterns: tuple[str, ...] = (_LOCAL_EXCLUDE,),
+                          *, exclude: Path | None = None) -> None:
+    exclude = exclude if exclude is not None else _git_path(repo_root, "info/exclude")
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_bytes() if exclude.is_file() else b""
     lines = {line.strip() for line in existing.decode(errors="replace").splitlines()}
@@ -205,24 +207,52 @@ def _ensure_local_exclude(repo_root: Path, patterns: tuple[str, ...] = (_LOCAL_E
 
 
 def exclude_runtime_directories(cwd: Path) -> None:
-    """Keep reserved runtime directories out of untracked Git status only.
+    """Compatibility no-op: directory names do not establish write ownership."""
 
-    Keep their readable paths unchanged. Local excludes do not hide tracked
-    edits and do not change the project's committed ignore rules.
+
+def exclude_created_runtime_file(cwd: Path, path: Path) -> None:
+    """Exclude one file after its harness writer exclusively creates it.
+
+    Callers supply creation evidence by invoking this only after a successful
+    exclusive write. This helper does not discover ownership from filenames.
+    Existing directory-wide rules are not removed because their owner is unknown.
     """
+    from .time_budget import BudgetExhausted, execution_deadline, remaining_before
+
     try:
+        from .task_path import TaskPath
+        if isinstance(path, TaskPath):
+            with _GIT_LOCK:
+                _exclude_native_runtime_file(path)
+            return
         cwd = Path(cwd).resolve()
-        repo_root = _repo_root(cwd)
-        relative = cwd.relative_to(repo_root)
-        prefix = "" if relative == Path(".") else relative.as_posix() + "/"
-        # Gitignore metacharacters in a workspace path must stay literal.
-        prefix = re.sub(r"([\\*?\[\] ])", r"\\\1", prefix)
-        patterns = tuple(f"/{prefix}{name}/" for name in (".tool_output", ".solver"))
+        path = Path(path)
+        if path.is_symlink() or not path.is_file():
+            return
+        path = path.resolve()
+        path.relative_to(cwd)
+        deadline = execution_deadline()
+        locations = _run(
+            ["git", "rev-parse", "--show-toplevel", "--git-path", "info/exclude"],
+            cwd=cwd, timeout=remaining_before(deadline),
+        ).stdout.splitlines()
+        if len(locations) != 2:
+            return
+        repo_root = Path(locations[0]).resolve()
+        exclude = (cwd / locations[1]).resolve()
+        relative = path.relative_to(repo_root).as_posix()
+        if "\n" in relative or "\r" in relative:
+            return
+        # Gitignore syntax must not turn the exact created path into a pattern.
+        literal = re.sub(r"([\\*?\[\] ])", r"\\\1", relative)
         with _GIT_LOCK:
-            _ensure_local_exclude(repo_root, patterns)
-    except (OSError, ValueError, WorktreeRuntimeError) as exc:
+            remaining_before(deadline)
+            _ensure_local_exclude(repo_root, (f"/{literal}",), exclude=exclude)
+    except (OSError, ValueError, WorktreeRuntimeError, BudgetExhausted) as exc:
         logging.getLogger(__name__).debug("Runtime Git exclude unavailable: %s", exc)
 
+
+from ._native_git_exclude import _exclude_native_runtime_file
 
 def _registered_worktrees(repo_root: Path) -> tuple[_RegisteredWorktree, ...]:
     text = _git(repo_root, "worktree", "list", "--porcelain").stdout

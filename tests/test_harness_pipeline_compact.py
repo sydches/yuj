@@ -25,6 +25,22 @@ from llm_solver.config import Config, load_config, MODEL_MAP, _deep_merge, get_s
 from _config_helpers import make_config  # centralized defaults — see tests/_config_helpers.py
 
 
+def _record_completed_shell(name, arguments, kwargs):
+    """Supply native facts for a mocked successful shell, not displayed output."""
+    if name != "bash":
+        return
+    from llm_solver.harness.runner_invocations import describe_shell_submission
+    from llm_solver.harness.shell_verification import shell_verification_status
+    from llm_solver.harness.sandbox.policy import sandbox_execution_kwargs
+    command = arguments["cmd"]
+    kwargs["execution_metadata"].update(
+        executed=True, exit_status_known=True, exit_status=0,
+        verification_status=shell_verification_status(command, 0),
+        shell_submission=describe_shell_submission(command, kwargs["cwd"],
+            backend=sandbox_execution_kwargs(kwargs['cfg'])['sandbox_backend']),
+    )
+
+
 def make_turn_result(content=None, tool_calls=None, finish_reason="stop", prompt_tokens=10):
     return TurnResult(
         content=content,
@@ -457,7 +473,7 @@ class TestPostMutationVerificationNudge:
     def test_nudge_waits_for_available_automatic_component_run(self, tmp_path):
         from llm_solver.harness.loop import Session
 
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n[tool.pytest.ini_options]\n")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "core.py").write_text("before\n")
         (tmp_path / "tests").mkdir()
@@ -502,9 +518,14 @@ class TestPostMutationVerificationNudge:
         tool_results = []
         trace_path = tmp_path / ".trace.jsonl"
         def dispatch_fn(name, arguments, **kwargs):
+            _record_completed_shell(name, arguments, kwargs)
             if name == "edit":
                 return "OK: edit applied"
             if name == "run_tests":
+                kwargs["execution_metadata"].update(
+                    executed=True, exit_status_known=True, exit_status=0,
+                    verification_status="passed",
+                )
                 return (
                     '<test_results status="passed" exit_code="0" '
                     'runner="pytest">\n1 passed\n</test_results>'
@@ -571,7 +592,7 @@ class TestPostMutationVerificationNudge:
     def test_unavailable_automatic_runner_suppresses_suite_demand(self, tmp_path):
         from llm_solver.harness.loop import Session
 
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n[tool.pytest.ini_options]\n")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "core.py").write_text("before\n")
         (tmp_path / "tests").mkdir()
@@ -615,9 +636,14 @@ class TestPostMutationVerificationNudge:
         }
 
         def dispatch_fn(name, arguments, **kwargs):
+            _record_completed_shell(name, arguments, kwargs)
             if name == "edit":
                 return "OK: edit applied"
             if name == "run_tests":
+                kwargs["execution_metadata"].update(
+                    executed=True, exit_status_known=True, exit_status=1,
+                    verification_status="runner_unavailable",
+                )
                 return (
                     '<test_results status="runner_unavailable" exit_code="1" '
                     'runner="pytest">\nNo module named pytest\n</test_results>'
@@ -645,7 +671,7 @@ class TestPostMutationVerificationNudge:
     def test_unavailable_component_target_suppresses_suite_demand(self, tmp_path):
         from llm_solver.harness.loop import Session
 
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n[tool.pytest.ini_options]\n")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "core.py").write_text("before\n")
         cfg = make_config(
@@ -686,7 +712,12 @@ class TestPostMutationVerificationNudge:
         executed: list[str] = []
 
         def dispatch_fn(name, arguments, **kwargs):
+            _record_completed_shell(name, arguments, kwargs)
             executed.append(name)
+            if name == "run_tests":
+                kwargs["execution_metadata"]["runner_request"] = {
+                    "component_selection": {"status": "no_candidate", "candidates": [], "items": []},
+                }
             return "OK: edit applied" if name == "edit" else "ok"
 
         with patch("llm_solver.harness.loop.dispatch", side_effect=dispatch_fn):
@@ -700,7 +731,7 @@ class TestPostMutationVerificationNudge:
             ).run()
 
         assert result.done is True
-        assert "run_tests" not in executed
+        assert executed.count("run_tests") == 1  # The runner performs collection.
         request_after_probe = client.chat.call_args_list[2].args[0]
         assert any(
             message.get("role") == "tool"
@@ -712,7 +743,7 @@ class TestPostMutationVerificationNudge:
     def test_custom_shell_streak_runs_component_target_without_blocking(self, tmp_path):
         from llm_solver.harness.loop import Session
 
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n[tool.pytest.ini_options]\n")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "core.py").write_text("before\n")
         (tmp_path / "tests").mkdir()
@@ -774,10 +805,15 @@ class TestPostMutationVerificationNudge:
         executed: list[tuple[str, dict]] = []
 
         def dispatch_fn(name, arguments, **kwargs):
+            _record_completed_shell(name, arguments, kwargs)
             executed.append((name, dict(arguments)))
             if name == "edit":
                 return "OK: edit applied"
             if name == "run_tests":
+                kwargs["execution_metadata"].update(
+                    executed=True, exit_status_known=True, exit_status=0,
+                    verification_status="passed",
+                )
                 return (
                     '<test_results status="passed" exit_code="0" '
                     'runner="pytest">\n14 passed in 0.5s\n</test_results>'
@@ -799,7 +835,8 @@ class TestPostMutationVerificationNudge:
         assert result.done is True
         automatic = [args for name, args in executed if name == "run_tests"]
         assert automatic == [{
-            "path": "tests/test_core.py",
+            "path": "",
+            "_component_source": ["src/core.py"],
             "_base_cmd_override": (
                 "/opt/conda/envs/project/bin/python -m pytest "
                 "--tb=short -q --no-header"
@@ -862,9 +899,12 @@ class TestPostMutationVerificationNudge:
         executed: list[str] = []
 
         def dispatch_fn(name, arguments, **kwargs):
+            _record_completed_shell(name, arguments, kwargs)
             executed.append(arguments.get("cmd", name))
             if name == "edit":
                 return "OK: edit applied"
+            kwargs["execution_metadata"].update(executed=True, exit_status_known=True,
+                                              exit_status=0, verification_status="passed")
             return "14 passed in 0.5s"
 
         with patch(
@@ -886,7 +926,7 @@ class TestPostMutationVerificationNudge:
     def test_failed_automatic_run_waits_for_a_source_change(self, tmp_path):
         from llm_solver.harness.loop import Session
 
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='sample'\n[tool.pytest.ini_options]\n")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "core.py").write_text("before\n")
         (tmp_path / "tests").mkdir()
@@ -960,10 +1000,17 @@ class TestPostMutationVerificationNudge:
         run_count = [0]
 
         def dispatch_fn(name, arguments, **kwargs):
+            _record_completed_shell(name, arguments, kwargs)
             if name == "edit":
                 return "OK: edit applied"
             if name == "run_tests":
                 result = automatic_results[run_count[0]]
+                passed = run_count[0] == 1
+                kwargs["execution_metadata"].update(
+                    executed=True, exit_status_known=True,
+                    exit_status=0 if passed else 1,
+                    verification_status="passed" if passed else "failed",
+                )
                 run_count[0] += 1
                 return result
             return "ok"
@@ -987,3 +1034,95 @@ class TestPostMutationVerificationNudge:
             "1 failed" in str(message.get("content") or "")
             for message in request_after_failure
         )
+
+
+@pytest.mark.parametrize("baseline_passes", [False, True])
+@pytest.mark.parametrize("edit_passes", [False, True])
+def test_verification_credit_survives_baseline_comparison_only(tmp_path, baseline_passes, edit_passes):
+    import subprocess
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.checks_post import mark_bash_verified
+    from scripts.llm_solver.harness._guardrails.checks_pre import done_guard
+    from scripts.llm_solver.harness._guardrails.verification import observe_post_mutation_verification
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init")
+    source = tmp_path / "module.py"
+    source.write_text("original = True\n")
+    git("add", "module.py")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "base")
+    source.write_text("fixed = True\n")
+    cfg = load_config()
+    state = GuardrailState(has_mutated=True)
+
+    def observe(name, result, args=None, paths=()):
+        facts = ({"executed": True, "exit_status_known": True, "exit_status": 0,
+                  "verification_status": "passed"} if name == "run_tests" else {})
+        if name == "bash" and args and args["cmd"].startswith("pytest "):
+            failed = "1 failed" in result  # Fixture outcome supplied by this test.
+            facts = {"executed": True, "exit_status_known": True,
+                     "exit_status": 1 if failed else 0,
+                     "verification_status": "failed" if failed else "passed"}
+        mark_bash_verified(state, cfg, tc_name=name, result=result, gate_blocked=False,
+                           tc_args=args, cwd=str(tmp_path), execution_metadata=facts)
+        observe_post_mutation_verification(state, cfg, tc_name=name, result=result,
+                                           gate_blocked=False, tc_args=args,
+                                           source_write_paths=paths, cwd=tmp_path,
+                                           execution_metadata=facts)
+
+    observe("edit", "OK", paths=("module.py",))
+    if edit_passes:
+        observe("run_tests", '<test_results status="passed" exit_code="0">1 passed</test_results>')
+    assert state.formal_verification_passed_since_mutation is edit_passes
+    git("stash", "push")
+    observe("bash", "saved", {"cmd": "git stash"})
+    baseline_result = "1 passed\n[exit code: 0]" if baseline_passes else "1 failed\n[exit code: 1]"
+    observe("bash", baseline_result, {"cmd": "pytest tests/test_module.py"})
+    assert state.formal_verification_passed_since_mutation is edit_passes
+    assert done_guard(state, cfg, tc_name="done", cwd=str(tmp_path)).action.name != "PASS"
+    git("stash", "pop")
+    observe("bash", "restored", {"cmd": "git stash pop"})
+    assert (done_guard(state, cfg, tc_name="done", cwd=str(tmp_path)).action.name == "PASS") is edit_passes
+    observe("bash", "1 failed\n[exit code: 1]", {"cmd": "pytest tests/test_module.py"})
+    assert not state.formal_verification_passed_since_mutation
+    assert not state.verified_since_mutation
+
+
+def test_verification_does_not_credit_compound_tree_changes_or_missing_edit(tmp_path):
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.checks_post import mark_bash_verified
+    from scripts.llm_solver.harness._guardrails.verification import (
+        observe_post_mutation_verification, verification_tree_matches, verification_changes_tree,
+    )
+    cfg = load_config()
+    state = GuardrailState(has_mutated=True)
+    source = tmp_path / "module.py"
+    source.write_text("fixed = True\n")
+    observe_post_mutation_verification(state, cfg, tc_name="edit", result="OK",
+                                       gate_blocked=False, source_write_paths=("module.py",), cwd=tmp_path)
+    for cmd in ("git stash && pytest; git stash pop", "git status; git -C . restore module.py; pytest",
+                "git checkout HEAD~1 && pytest", "git reset --hard HEAD && pytest"):
+        assert verification_changes_tree("bash", {"cmd": cmd})
+        mark_bash_verified(state, cfg, tc_name="bash", result="passed " * 200,
+                           gate_blocked=False, tc_args={"cmd": cmd}, cwd=str(tmp_path))
+        observe_post_mutation_verification(state, cfg, tc_name="bash", result="[exit code: 0]",
+                                           gate_blocked=False, tc_args={"cmd": cmd}, cwd=tmp_path)
+        assert not state.formal_verification_passed_since_mutation
+        assert not state.verified_since_mutation
+    assert not verification_changes_tree("bash", {"cmd": "git diff; pytest"})
+    assert not verification_changes_tree("bash", {"cmd": "echo 'git stash'; pytest"})
+    source.unlink()
+    assert not verification_tree_matches(state, tmp_path)
+    source.write_text("fixed = True\n")
+    assert verification_tree_matches(state, tmp_path)
+
+
+def test_revision_check_does_not_enable_disabled_done_gates(tmp_path):
+    from dataclasses import replace
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.checks_pre import done_guard
+    cfg = replace(load_config(), done_guard_enabled=False, post_mutation_verification_gate_after=0)
+    state = GuardrailState(has_mutated=True, verification_file_revisions={"module.py": "old"})
+    assert done_guard(state, cfg, tc_name="done", cwd=str(tmp_path)).action.name == "PASS"

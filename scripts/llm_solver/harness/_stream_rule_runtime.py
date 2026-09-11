@@ -47,10 +47,14 @@ def _normalize_path(value: str, cwd: Path) -> str:
     path = Path(value)
     if path.is_absolute():
         try:
+            from .task_path import bound_task_path
+            target = bound_task_path(cwd, value)
+            if target is not None:
+                return target.relative_to(target.files.root).as_posix()
             return path.resolve(strict=False).relative_to(
                 cwd.resolve(strict=False)
             ).as_posix()
-        except ValueError:
+        except (OSError, ValueError):
             return ""
     normalized = path.as_posix()
     return normalized[2:] if normalized.startswith("./") else normalized

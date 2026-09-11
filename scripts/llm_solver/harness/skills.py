@@ -12,6 +12,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from .task_path import TaskPath, startup_task_path, native_requested_path
 from typing import Iterator, Mapping, Sequence
 
 import yaml
@@ -174,7 +175,7 @@ def _optional_string(
 def load_skill(path: str | Path) -> Skill:
     """Parse and strictly validate one ``SKILL.md`` metadata envelope."""
     try:
-        skill_path = Path(path).resolve(strict=True)
+        skill_path = path.resolve(strict=True) if isinstance(path, TaskPath) else Path(path).resolve(strict=True)
     except OSError as exc:
         raise SkillError(
             f"{path}: cannot resolve SKILL.md ({type(exc).__name__})"
@@ -256,6 +257,8 @@ def load_skill(path: str | Path) -> Skill:
 
 
 def _expand_path(value: str, *, base: Path) -> Path:
+    if isinstance(base, TaskPath):
+        return native_requested_path(base, value, variables=True).resolve()
     expanded = os.path.expandvars(os.path.expanduser(value))
     path = Path(expanded)
     return (path if path.is_absolute() else base / path).resolve(strict=False)
@@ -344,6 +347,13 @@ def _candidate_files(
 
     project_dirs = _project_search_dirs(cwd, project_root)
     for value in skills_dirs:
+        if isinstance(cwd, TaskPath):
+            expanded = cwd.files.expand_path(value, variables=True)
+            roots = ((native_requested_path(cwd, expanded, expand=False).resolve(),) if expanded.startswith('/')
+                     else tuple(native_requested_path(directory, expanded, expand=False).resolve() for directory in project_dirs))
+            for root in roots:
+                yield from ((path, False) for path in _walk_skill_files(root))
+            continue
         expanded = os.path.expandvars(os.path.expanduser(value))
         configured = Path(expanded)
         roots = (
@@ -370,7 +380,7 @@ def discover_skills(
     validate_skill_settings(enabled, skills_dirs, skill_paths)
     if not enabled:
         return SkillCatalog()
-    work_dir = Path(cwd).resolve(strict=True)
+    work_dir = startup_task_path(cwd).resolve(strict=True)
     project_root = find_project_root(work_dir, root_markers)
     blocked = _UnreadableMatcher(work_dir, unreadable_paths)
     seen_files: set[Path] = set()

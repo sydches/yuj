@@ -84,15 +84,17 @@ def test_empty_file_skip_and_utf8_byte_cap(tmp_path):
     _write(root / "CLAUDE.md", "ROOT")
     _write(child / "AGENTS.md", "ééé")
 
-    result = discover_project_instructions(child, max_bytes=9)
+    with pytest.raises(ValueError, match="instruction.*byte.*ceiling"):
+        discover_project_instructions(child, max_bytes=9)
+    result = discover_project_instructions(child, max_bytes=10)
 
     assert result.files == ("CLAUDE.md", "child/AGENTS.md")
     assert result.documents[0].content == "ROOT"
-    assert result.documents[1].content == "éé"
-    assert result.documents[1].byte_count == 4
-    assert result.document_bytes == 8
-    assert result.truncated is True
-    assert len("".join(doc.content for doc in result.documents).encode()) <= 9
+    assert result.documents[1].content == "ééé"
+    assert result.documents[1].byte_count == 6
+    assert result.document_bytes == 10
+    assert result.truncated is False
+    assert len("".join(doc.content for doc in result.documents).encode()) == 10
 
 
 def test_unreadable_candidates_are_skipped_before_read(tmp_path, monkeypatch):

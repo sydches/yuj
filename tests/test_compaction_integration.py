@@ -221,17 +221,77 @@ def test_bad_checkpoint_uses_digest_and_records_fallback(tmp_path):
     assert emitted[-1]["fallback"] == "digest"
 
 
-def test_two_close_checkpoint_compactions_force_digest_for_session(tmp_path):
+@pytest.mark.parametrize("second_turn", [16, 18, 19, 30])
+def test_effective_checkpoints_after_new_history_do_not_force_digest(tmp_path, second_turn):
     session, _, emitted = _session(tmp_path, _summary())
     first = maybe_compact_messages(session, session.context.get_messages())
-    session._compaction_turn = 16
+    session._compaction_turn = second_turn
     grown = list(first) + _messages(pairs=18)[2:]
     session.context.replace_all_messages(grown)
 
     maybe_compact_messages(session, grown)
 
     assert [event["method"] for event in emitted] == ["checkpoint", "checkpoint"]
-    assert session._compaction_method_override == "digest"
+    assert not getattr(session, "_compaction_method_override", "")
+    assert all(event["tokens_after"] < event["tokens_before"] for event in emitted)
+    assert all(event["checkpoint_validation_reason"] == "ok" for event in emitted)
+
+
+@pytest.mark.parametrize("earlier_checkpoint", [False, True])
+@pytest.mark.parametrize("other_method", ["digest", "hook", "checkpoint_fallback"])
+def test_other_compaction_breaks_checkpoint_guard_sequence(
+    tmp_path, earlier_checkpoint, other_method,
+):
+    from scripts.llm_solver.harness.compaction_hooks import Compaction
+
+    session, _, emitted = _session(tmp_path, _summary())
+
+    def compact_at(turn):
+        session._compaction_turn = turn
+        grown = list(session.context.get_messages()) + _messages(pairs=18)[2:]
+        session.context.replace_all_messages(grown)
+        maybe_compact_messages(session, grown, force=True)
+
+    if earlier_checkpoint:
+        compact_at(2)
+        assert emitted[-1]["method"] == "checkpoint"
+        assert emitted[-1]["fallback"] == ""
+
+    complete = session.client.complete_side_request
+    if other_method == "digest":
+        session.cfg.compaction_method = "digest"
+    elif other_method == "hook":
+        session._compaction_hook = lambda preparation: Compaction(
+            _summary(), preparation.first_kept_turn,
+        )
+    else:
+        session.client.complete_side_request = lambda payload: SideRequestResult(
+            "## Long-term goal\nmissing", Usage(100, 30),
+        )
+    compact_at(10)
+    assert emitted[-1]["method"] == (
+        "checkpoint" if other_method == "checkpoint_fallback" else other_method
+    )
+    assert emitted[-1]["fallback"] == (
+        "digest" if other_method == "checkpoint_fallback" else ""
+    )
+    assert not getattr(session, "_compaction_method_override", "")
+
+    session.cfg.compaction_method = "checkpoint"
+    session.client.complete_side_request = complete
+    session._compaction_hook = None
+    compact_at(16)
+    assert emitted[-1]["method"] == "checkpoint"
+    assert emitted[-1]["fallback"] == ""
+    assert not getattr(session, "_compaction_method_override", "")
+
+    # Method history remains diagnostic; a second valid checkpoint is not
+    # evidence for a lasting change of method.
+    compact_at(20)
+    assert [event["turn_number"] for event in emitted] == (
+        [2, 10, 16, 20] if earlier_checkpoint else [10, 16, 20]
+    )
+    assert not getattr(session, "_compaction_method_override", "")
 
 
 def test_compaction_projection_uses_raw_metadata_not_model_summary():
@@ -427,7 +487,7 @@ def test_side_request_omits_tools_and_does_not_advance_transcript(tmp_path):
         create=lambda **payload: captured.append(payload) or response
     )
     client = LlamaClient.__new__(LlamaClient)
-    client.cfg = SimpleNamespace(model="same-model", context_size=8192)
+    client.cfg = SimpleNamespace(model="same-model", context_size=8192, max_tokens=50, tokenizer_id="")
     client._request_token_counter = None
     client.profile = None
     client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))

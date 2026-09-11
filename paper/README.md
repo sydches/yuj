@@ -2,6 +2,11 @@
 
 This directory gives the released experiment design and paired task results.
 
+These results describe the recorded experiment versions. The current runtime
+and shared settings include later harness fixes. They have not been rerun to
+produce the results below. Use the source records to identify the version and
+settings behind each result.
+
 - [`experiment.md`](experiment.md) defines the paired comparison, control,
   treatment, and outcomes.
 - [`results/task_outcomes.tsv`](results/task_outcomes.tsv) gives the result for
