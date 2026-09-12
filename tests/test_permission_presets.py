@@ -444,7 +444,7 @@ def test_preset_ask_still_requires_the_existing_approval_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _without_machine_local(monkeypatch, tmp_path)
-    cfg = load_config(_preset_overlay(tmp_path, "allow-edits"))
+    cfg = load_config(_preset_overlay(tmp_path, "allow-edits"), overrides={"sandbox_backend": "none"})
     session = Session(cfg, MagicMock(), "system", "task", str(tmp_path))
     resolution = session._permission_policy.evaluate(
         tool_name="bash",

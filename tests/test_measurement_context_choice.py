@@ -35,7 +35,9 @@ def offline_cli(tmp_path, monkeypatch):
     (None, ["--cont", "compact"], "compact"),
 ])
 def test_parsed_choice_controls_transformation_conflicts(tmp_path, capsys, arm, options, expected):
-    args = [str(tmp_path / "run"), "--task", str(tmp_path), "--dry-run", *options]
+    boundary = tmp_path / "boundary.toml"
+    boundary.write_text('[sandbox]\nbackend = "none"\n')
+    args = [str(tmp_path / "run"), "--task", str(tmp_path), "--dry-run", "--config", str(boundary), *options]
     if arm:
         args += ["--config", str(ROOT / f"configs/transformation_screen/arms/{arm}.toml")]
     if expected == "reject":

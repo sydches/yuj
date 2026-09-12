@@ -121,7 +121,7 @@ def test_real_execution_uses_remaining_time_without_extra_grace(tmp_path, backen
             pytest.skip(reason)
     env = {"PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin", "HOME": str(tmp_path)}
     cfg = make_config(tools_run_tests_enabled=True, analysis_task_format="pytest",
-                      sandbox_bash=backend_kind != "subprocess", sandbox_required=True,
+                      sandbox_bash=backend_kind != "subprocess", sandbox_required=backend_kind != "subprocess",
                       sandbox_env_set=env)
     slow = shlex.join([sys.executable, "-c", "import time; time.sleep(2)"])
     quick = shlex.join([sys.executable, "-c", "print('completed')"])

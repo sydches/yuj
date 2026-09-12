@@ -25,8 +25,11 @@ from scripts.llm_solver.harness.tools import dispatch
     ("multiple_sources", "tests/test_core.py"),
 ])
 def test_native_collection_controls_the_actual_component_run(tmp_path, case, expected, sandbox):
-    if sandbox and not shutil.which("bwrap"):
-        pytest.skip("requires bwrap")
+    if sandbox:
+        from scripts.llm_solver.harness.sandbox import bwrap_preflight
+        ready, reason = bwrap_preflight(shutil.which("bwrap") or "bwrap")
+        if not ready:
+            pytest.skip(reason)
     (tmp_path / "core.py").write_text("VALUE = 2\n")
     for directory in ("tests", "checks"):
         (tmp_path / directory).mkdir()

@@ -1,10 +1,43 @@
 """Task file primitives must observe real namespace mounts and permissions."""
 import shutil
+import shlex
 import subprocess
 
 import pytest
 
 from scripts.llm_solver.harness.task_files import NamespaceFiles, TaskFileError
+
+
+@pytest.mark.parametrize('retarget', [False, True])
+def test_legacy_chmod_uses_a_checked_descriptor(tmp_path, retarget):
+    root = tmp_path / 'task'
+    root.mkdir()
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'private')
+    outside.chmod(0o600)
+    utility = root / 'legacy-chmod'
+    swap = (f'rm -f -- "${{@: -1}}"; ln -s {shlex.quote(str(outside))} "${{@: -1}}"\n'
+            if retarget else '')
+    utility.write_text('#!/bin/bash\n'
+        'if [[ "$1" == --help ]]; then echo legacy-chmod; exit 0; fi\n'
+        'if [[ "$1" == --no-dereference ]]; then\n' + swap +
+        '  echo unsupported-option >&2; exit 2\nfi\n' +
+        f'exec {shlex.quote(shutil.which("chmod"))} "$@"\n')
+    utility.chmod(0o755)
+    def run(script, args, data):
+        return subprocess.run(['bash', '-c', script, 'fixture', *args],
+                              input=data, capture_output=True)
+    files = NamespaceFiles(str(root), run, binding={'fixture': str(root)})
+    files._utilities['chmod'] = str(utility)
+    if retarget:
+        with pytest.raises(TaskFileError):
+            files.replace_bytes('restored', b'new', mode=0o640)
+    else:
+        files.replace_bytes('restored', b'new', mode=0o640)
+        assert (root / 'restored').read_bytes() == b'new'
+        assert (root / 'restored').stat().st_mode & 0o777 == 0o640
+    assert outside.read_bytes() == b'private'
+    assert outside.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.fixture(scope='module')

@@ -154,6 +154,10 @@ def test_repository_structural_search_excludes_ignored_sources(
 
 
 def test_bash_ls_cat_and_sandbox_masks_share_policy(tmp_path: Path) -> None:
+    from scripts.llm_solver.harness.sandbox import bwrap_preflight
+    ready, reason = bwrap_preflight('/usr/bin/bwrap')
+    if not ready:
+        pytest.skip(reason)
     policy = _fixture_policy(tmp_path)
     cfg = make_config(sandbox_bash=True, sandbox_required=False)
     common = {"cwd": str(tmp_path), "cfg": cfg, "ignore_policy": policy}

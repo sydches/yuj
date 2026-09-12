@@ -46,7 +46,24 @@ change_mode() {
     # Some chmod implementations skip a symlink without reporting an error.
     # Do not mistake that skipped change for success or dereference the link.
     [[ ! -L "$3" ]] || { printf 'task symlink changed before chmod' >&2; return 74; }
-    "$1" --no-dereference "$2" -- "$3" || return
+    local error code mode_fd opened expected
+    if ! error=$("$1" --no-dereference "$2" -- "$3" 2>&1); then
+        # Older utilities lack this option. A readable entry can instead be
+        # changed through a checked open descriptor, never a mutable symlink.
+        if [[ $("$1" --help 2>&1) == *--no-dereference* ]]; then
+            printf '%s' "$error" >&2; return 74
+        fi
+        [[ ! -L "$3" ]] || return 74
+        canonical expected "$3" || return 74
+        case "$expected" in "$root"|"${root%/}/"*) ;; *) return 77 ;; esac
+        exec {mode_fd}< "$3" || return 74
+        IFS= read -r -d '' opened < <("$readlink_bin" -z -- "/proc/self/fd/$mode_fd") || return 74
+        [[ "$opened" == "$expected" ]] || return 74
+        "$1" "$2" -- "/proc/self/fd/$mode_fd"
+        code=$?
+        exec {mode_fd}<&-
+        (( code == 0 )) || return "$code"
+    fi
     [[ ! -L "$3" ]] || { printf 'task symlink changed during chmod' >&2; return 74; }
 }
 enter_directory() {

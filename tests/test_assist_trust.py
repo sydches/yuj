@@ -266,7 +266,7 @@ def test_solver_startup_guard_runs_before_artifact_creation(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     artifacts = tmp_path / "artifacts"
-    cfg = _workspace_config()
+    cfg = _workspace_config(sandbox_backend="none", sandbox_bash=False, sandbox_required=False)
 
     def reject(_work_dir, _cfg, _system_prompt_file):
         raise WorkspaceTrustError("not trusted")

@@ -530,6 +530,9 @@ def _live_detector_cfg(
     total_cap = max_interventions if max_interventions_per_attempt is None else max_interventions_per_attempt
     episode_cap = max_same_signal_interventions if max_interventions_per_hurdle_episode is None else max_interventions_per_hurdle_episode
     baseline_path.write_text(f"""
+[sandbox]
+backend = "none"
+
 [loop]
 loop_detect_enabled = false
 

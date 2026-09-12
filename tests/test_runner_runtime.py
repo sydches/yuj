@@ -199,15 +199,16 @@ def test_project_script_uses_its_declared_manager_and_preserves_arguments(tmp_pa
 
 def test_actual_node_test_script_runs_without_selecting_jest(tmp_path, monkeypatch):
     import shutil
+    import os
     if not shutil.which("node") or not shutil.which("npm"):
         pytest.skip("Node and npm are not installed")
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "node --test check.cjs"}}))
     (tmp_path / "check.cjs").write_text("require('node:test')('arithmetic', () => require('node:assert/strict').equal(2+2,4));\n")
     cfg = make_config(sandbox_bash=False, analysis_task_format="auto", tools_run_tests_enabled=True)
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path)}
     report = discover_runtime(tmp_path, cfg, effective_env=env)
-    assert report["runner_selection"]["status"] == "selected", report
+    assert report["runner_selection"]["status"] == "selected", json.dumps(report, indent=2)
     cfg = resolve_task_format(cfg, tmp_path, runtime_observations=report)
     facts = {}
     result = dispatch("run_tests", {}, cwd=str(tmp_path), cfg=cfg,

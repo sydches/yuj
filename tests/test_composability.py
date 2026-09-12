@@ -487,7 +487,7 @@ def test_guardrail_registry_override_applies_without_session_edits():
     from scripts.llm_solver.config import load_config
     from scripts.llm_solver.harness.loop import Session
 
-    cfg = load_config(overrides={"max_turns": 2, "tokenizer_id": ""})
+    cfg = load_config(overrides={"max_turns": 2, "tokenizer_id": "", "sandbox_backend": "none"})
     client = MagicMock()
     client.chat.return_value = TurnResult(
         content="",

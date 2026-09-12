@@ -430,6 +430,9 @@ def test_external_skill_read_respects_configured_unreadable_mask(
 def test_external_skill_resources_remain_listable_with_project_ignore_policy(
     tmp_path: Path,
 ) -> None:
+    ready, reason = bwrap_preflight('/usr/bin/bwrap')
+    if not ready:
+        pytest.skip(reason)
     task = tmp_path / "task"
     task.mkdir()
     (task / ".yujignore").write_text("ignored.txt\n")

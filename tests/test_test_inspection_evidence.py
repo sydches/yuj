@@ -145,6 +145,10 @@ def test_clipped_excerpt_does_not_get_whole_file_credit(rig):
 
 
 def test_trivial_cat_and_head_record_content_not_request_names(rig):
+    from scripts.llm_solver.harness.sandbox import bwrap_preflight
+    ready, reason = bwrap_preflight('/usr/bin/bwrap')
+    if not ready:
+        pytest.skip(reason)
     rig[1] = replace(rig[1], sandbox_bash=True)
     _, metadata = call(rig, "bash", {"cmd": "head -n 1 checks/cases.py"})
     assert metadata["inspection_evidence"]["line_count"] == 1
