@@ -317,6 +317,42 @@ def post_mutation_verification_gate(
     return PASS
 
 
+def record_verification_mutation(
+    state: GuardrailState,
+    *,
+    tc_name: str,
+    result: str,
+    tc_args: dict | None = None,
+    source_write_paths: tuple[str, ...] = (),
+    execution_metadata: dict | None = None,
+    cwd: str | Path | None = None,
+) -> None:
+    """Invalidate old verification and retain the changed input revisions."""
+    # Accepted check outputs are effects, not newly edited inputs.
+    check_outputs = bool(
+        (execution_metadata or {}).get("_verification_inputs_unchanged")
+        and verification_result_passed(tc_name, result, execution_metadata, formal=False)
+        and not verification_changes_tree(tc_name, tc_args)
+    )
+    if cwd and not check_outputs:
+        paths = set(state.verification_file_revisions)
+        paths.update(normalize_trace_path(path) for path in source_write_paths
+                     if is_workspace_path(path))
+        state.verification_file_revisions = {
+            path: _file_revision(cwd, path) for path in sorted(paths)
+        }
+    state.post_mutation_non_test_bash_count = 0
+    state.post_mutation_verification_gate_armed = False
+    state.formal_verification_passed_since_mutation = False
+    state.post_mutation_automatic_verification_attempted = False
+    state.post_mutation_automatic_verification_target = ""
+    state.post_mutation_source_paths = tuple(source_write_paths)
+    state.post_mutation_observed_runtime_family = ""
+    state.post_mutation_observed_runtime_executable = ""
+    state.post_mutation_observed_runtime_binding = {}
+    state.post_mutation_automatic_verification_unavailable = False
+
+
 def observe_post_mutation_verification(
     state: GuardrailState,
     cfg: Any,
@@ -346,29 +382,11 @@ def observe_post_mutation_verification(
     if (observed is True and not accounted) or (observed is None and (
             tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args))):
         if observed is True or not is_error_result(result):
-            # Accepted check outputs are effects, not newly edited inputs.
-            check_outputs = bool(
-                (execution_metadata or {}).get("_verification_inputs_unchanged")
-                and verification_result_passed(tc_name, result, execution_metadata, formal=False)
-                and not verification_changes_tree(tc_name, tc_args)
+            record_verification_mutation(
+                state, tc_name=tc_name, result=result, tc_args=tc_args,
+                source_write_paths=source_write_paths,
+                execution_metadata=execution_metadata, cwd=cwd,
             )
-            if cwd and not check_outputs:
-                paths = set(state.verification_file_revisions)
-                paths.update(normalize_trace_path(path) for path in source_write_paths
-                             if is_workspace_path(path))
-                state.verification_file_revisions = {
-                    path: _file_revision(cwd, path) for path in sorted(paths)
-                }
-            state.post_mutation_non_test_bash_count = 0
-            state.post_mutation_verification_gate_armed = False
-            state.formal_verification_passed_since_mutation = False
-            state.post_mutation_automatic_verification_attempted = False
-            state.post_mutation_automatic_verification_target = ""
-            state.post_mutation_source_paths = tuple(source_write_paths)
-            state.post_mutation_observed_runtime_family = ""
-            state.post_mutation_observed_runtime_executable = ""
-            state.post_mutation_observed_runtime_binding = {}
-            state.post_mutation_automatic_verification_unavailable = False
         return
     if not state.has_mutated:
         return

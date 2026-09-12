@@ -405,20 +405,19 @@ def _apply_dispatch_effects(tc, state, metadata, execution_metadata, result):
     session = state.session
     # A check may create files while leaving the previously edited inputs intact.
     # Capture that distinction before refreshing their revision records below.
-    from .._guardrails.verification import verification_tree_matches
+    from .._guardrails.checks_post import record_mutation
+    from .._guardrails.verification import (
+        record_verification_mutation, verification_tree_matches,
+    )
     execution_metadata["_verification_inputs_unchanged"] = bool(
         session._guards.has_mutated
         and session._guards.verification_file_revisions
         and verification_tree_matches(session._guards, session.cwd)
     )
-    state.tool_post["rumination_ladder"](
-        session._guards, state.cfg, tc_name=tc.name, tc_args=tc.arguments,
-        result=result, gate_blocked=False, already_blocked_this_turn=False,
-        execution_metadata=execution_metadata,
-    )
-    state.observers["observe_post_mutation_verification"](
-        session._guards, state.cfg, tc_name=tc.name, tc_args=tc.arguments,
-        result=result, gate_blocked=False, execution_metadata=execution_metadata,
+    record_mutation(session._guards)
+    record_verification_mutation(
+        session._guards, tc_name=tc.name, tc_args=tc.arguments,
+        result=result, execution_metadata=execution_metadata,
         source_write_paths=tuple(metadata.get("source_write_paths", ())), cwd=session.cwd,
     )
     execution_metadata["_mutation_accounted"] = True
@@ -1937,8 +1936,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             tool_call_id=tc.id,
         )
 
-    mutation_already_accounted = execution_metadata.get("_mutation_accounted")
-    rum_decision = PASS if (plan_policy_call or mutation_already_accounted) else tool_post["rumination_ladder"](
+    rum_decision = PASS if plan_policy_call else tool_post["rumination_ladder"](
         session._guards, cfg,
         tc_name=tc.name, result=result,
         gate_blocked=gate_blocked_flag,

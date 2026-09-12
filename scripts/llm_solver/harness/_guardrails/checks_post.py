@@ -83,6 +83,31 @@ def error_ladder(state: GuardrailState, cfg: Any, *,
     return PASS
 
 
+def record_mutation(state: GuardrailState) -> None:
+    """Record a file change before an error decision can end the turn."""
+    state.think_streak = 0
+    state.think_streak_nudge_emitted = False
+    state.non_write_calls_since_write = 0
+    state.same_target_key = ""
+    state.same_target_display = ""
+    state.same_target_count = 0
+    state.same_target_nudge_emitted = False
+    state.rumination_gate = False
+    state.rumination_gate_grace = 0
+    state.rumination_nudge_emitted = False
+    state.gate_block_count = 0
+    state.has_mutated = True
+    state.verified_since_mutation = False
+    state.mutation_count += 1
+    state.latest_test_parsed.clear()
+    state.green_parity_streak = 0
+    _clear_commit_contract(state)
+    _clear_recovery_mode(state)
+    state.verify_repeat_sig = ""
+    state.verify_repeat_count = 0
+    state.mutation_count_at_last_verify = state.mutation_count
+
+
 def rumination_ladder(state: GuardrailState, cfg: Any, *,
                       tc_name: str, result: str, gate_blocked: bool,
                       already_blocked_this_turn: bool,
@@ -99,6 +124,8 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
     or graced this call — in that case skip the counter bump to avoid
     double counting.
     """
+    if (execution_metadata or {}).get("_mutation_accounted"):
+        return PASS
     successful_think = (
         tc_name == "think" and not gate_blocked and not _is_tool_error(result)
     )
@@ -110,25 +137,7 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
     if observed is True or (observed is None and (
             tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args))):
         if observed is True or not _is_tool_error(result):
-            state.non_write_calls_since_write = 0
-            state.same_target_key = ""
-            state.same_target_display = ""
-            state.same_target_count = 0
-            state.same_target_nudge_emitted = False
-            state.rumination_gate = False
-            state.rumination_gate_grace = 0
-            state.rumination_nudge_emitted = False
-            state.gate_block_count = 0
-            state.has_mutated = True
-            state.verified_since_mutation = False
-            state.mutation_count += 1
-            state.latest_test_parsed.clear()
-            state.green_parity_streak = 0
-            _clear_commit_contract(state)
-            _clear_recovery_mode(state)
-            state.verify_repeat_sig = ""
-            state.verify_repeat_count = 0
-            state.mutation_count_at_last_verify = state.mutation_count
+            record_mutation(state)
         return PASS
 
     if not cfg.rumination_enabled:

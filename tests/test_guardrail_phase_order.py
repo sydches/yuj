@@ -1,20 +1,22 @@
-"""Phase-order tuples line up with the registered guardrail names.
+"""Check registry membership, declared call sites and actual dispatch order.
 
-The four `*_DISPATCH_ORDER` tuples in state.py declare the canonical phase
-ordering; build_guardrail_registry() registers them. If a future
-refactor adds a new guardrail to one but not the other, this test
-fails before any session runs.
-
-Note: this does NOT verify loop.py's hand-coded call order matches
-the tuple. That stronger property would require AST inspection;
-left as a follow-up. This test catches the realistic registry-vs-
-tuple drift.
+Structural checks keep guardrail call sites aligned with the phase specs.
+Session checks exercise real command effects before ordered policy decisions,
+including a partial write whose error ends the turn. The model is scripted;
+the tool dispatcher and registered guards execute normally.
 """
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
+import io
+import json
+import shlex
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
@@ -29,6 +31,10 @@ from llm_solver.harness._guardrails.state import (
     guardrail_order_for_phase,
 )
 from llm_solver.harness.guardrails import build_guardrail_registry
+from llm_solver.harness._guardrails.state import Decision
+from llm_solver.harness.loop import Session
+from llm_solver.server.types import ToolCall, TurnResult, Usage
+from _config_helpers import make_config
 
 
 def test_turn_pre_tuple_matches_registered_keys():
@@ -74,10 +80,6 @@ def _subscript_base_name(node: ast.AST) -> str:
 
 def _literal_subscript_names(path: Path, base_name: str) -> tuple[str, ...]:
     tree = ast.parse(path.read_text())
-    if path.name == "_dispatch_tool_call.py":
-        # Early effect accounting is separate from the ordered guard phases.
-        tree.body = [node for node in tree.body if not (
-            isinstance(node, ast.FunctionDef) and node.name == "_apply_dispatch_effects")]
     found: list[tuple[int, int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Subscript):
@@ -108,3 +110,101 @@ def test_run_loop_guardrail_call_order_matches_specs():
     assert _literal_subscript_names(dispatch_tool_call, "tool_pre") == TOOL_PRE_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "tool_post") == TOOL_POST_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "observers") == OBSERVER_ORDER
+
+
+def _run_observed_command(tmp_path, *, mutation, failure=False, abort=False,
+                          rumination_warning=False):
+    target = tmp_path / "module.py"
+    target.write_text("before")
+    program = (
+        "from pathlib import Path; Path('module.py').write_text('after')"
+        if mutation else "print('no change')"
+    )
+    if failure:
+        program += "; raise SystemExit(1)"
+    command = shlex.join([sys.executable, "-c", program])
+    cfg = make_config(
+        max_turns=1, sandbox_bash=False, auto_commit=False,
+        turn_snapshots_enabled=False, error_abort_threshold=1 if abort else 0,
+        loop_detect_enabled=False, duplicate_guard_enabled=False,
+    )
+    calls, error_states = [], []
+    registry = build_guardrail_registry()
+
+    def wrap(name, original):
+        def observe(state, config, *args, **kwargs):
+            calls.append(name)
+            if name == "error_ladder":
+                error_states.append({
+                    "has_mutated": state.has_mutated,
+                    "mutation_count": state.mutation_count,
+                    "verified": state.verified_since_mutation,
+                    "formal_verified": state.formal_verification_passed_since_mutation,
+                    "paths": state.post_mutation_source_paths,
+                })
+            decision = original(state, config, *args, **kwargs)
+            if name == "rumination_ladder" and rumination_warning:
+                return Decision.warn("ORDERED_GUARD_WARNING", reason="phase_fixture")
+            return decision
+        return observe
+
+    registry = replace(
+        registry,
+        tool_post_dispatch={name: wrap(name, fn)
+                            for name, fn in registry.tool_post_dispatch.items()},
+        observers={name: wrap(name, fn) for name, fn in registry.observers.items()},
+    )
+    client = MagicMock()
+    client.chat.return_value = TurnResult(
+        content=None,
+        tool_calls=[ToolCall(id="observed-command", name="bash", arguments={"cmd": command})],
+        finish_reason="tool_calls", usage=Usage(prompt_tokens=10, completion_tokens=5),
+    )
+    client.build_assistant_message.return_value = {"role": "assistant", "content": None}
+    trace = io.StringIO()
+    session = Session(cfg, client, "Run the command.", "Exercise dispatch order.",
+                      str(tmp_path), trace_file=trace, guardrail_registry=registry)
+    session._guards.verified_since_mutation = True
+    session._guards.formal_verification_passed_since_mutation = True
+    result = session.run()
+    events = [json.loads(line) for line in trace.getvalue().splitlines()]
+    return session, result, calls, error_states, events
+
+
+@pytest.mark.parametrize("mutation,failure,abort", [
+    (False, False, False),
+    (True, False, False),
+    (True, True, False),
+    (True, True, True),
+], ids=["unchanged", "mutation", "partial-write", "partial-write-abort"])
+def test_observed_effects_precede_ordered_guard_decisions(tmp_path, mutation, failure, abort):
+    session, result, calls, error_states, events = _run_observed_command(
+        tmp_path, mutation=mutation, failure=failure, abort=abort,
+    )
+    expected = ("error_ladder",) if abort else TOOL_POST_DISPATCH_ORDER + OBSERVER_ORDER
+    assert tuple(calls) == expected
+    assert len(error_states) == 1
+    at_error = error_states[0]
+    assert at_error["has_mutated"] is mutation
+    assert at_error["mutation_count"] == int(mutation)
+    if mutation:
+        assert not at_error["verified"] and not at_error["formal_verified"]
+        assert at_error["paths"] == ("module.py",)
+    assert session._guards.mutation_count == int(mutation)
+    assert (tmp_path / "module.py").read_text() == ("after" if mutation else "before")
+    event = next(row for row in events if row.get("event") == "tool_call"
+                 and row.get("tool_call_id") == "observed-command")
+    assert event["exit_status"] == int(failure)
+    assert event["file_changes"]["changed_paths"] == (["module.py"] if mutation else [])
+    assert result.finish_reason == ("error_abort" if abort else "max_turns")
+
+
+def test_mutation_does_not_discard_ordered_guard_warning(tmp_path):
+    session, _, calls, _, events = _run_observed_command(
+        tmp_path, mutation=True, rumination_warning=True,
+    )
+    assert tuple(calls) == TOOL_POST_DISPATCH_ORDER + OBSERVER_ORDER
+    assert session._guards.mutation_count == 1
+    assert any(item.text == "ORDERED_GUARD_WARNING"
+               for item in session._pending_user_turn_injections)
+    assert any(row.get("event") == "tool_call" for row in events)
