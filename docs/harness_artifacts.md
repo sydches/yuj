@@ -269,6 +269,52 @@ folder does not change them.
 | `<run_dir>/harness_<model>_<time>.log`, `<run_dir>/harness.stdout.log`, `<run_dir>/harness_run/*.log` | measurement command / launcher | process logs and details used to find errors | `live-prefix` as logs; most readers use them `post-run` | No. | No. | Yes. | No. | Use these files only to debug or audit a run. Do not treat them as scoring results or detector input. |
 | `<run_dir>/system_log.jsonl` or `<session_dir>/system_log.jsonl` | harness system log | warnings and internal harness events | `live-prefix` append-only | No. | No. | Yes. | No. | Use it to debug or audit the harness. Do not use it as model behavior or scoring evidence. |
 
+### Tool and turn timing
+
+Use the trace's timing fields according to their measured scope:
+
+| Record | Meaning |
+| --- | --- |
+| `tool_call.duration_ms` | Actual dispatch interval from a monotonic clock. `dispatch_executed=false` with zero means the call was rejected or handled before dispatch. |
+| `tool_end` | Dispatch completion, with actual UTC `ended_at`, dispatch duration, and `completed`. A raised dispatch has `completed=false`; this field does not mean the task or command succeeded. |
+| `tool_call.tool_dispatch_ms` | Time inside tool dispatch, including automatic verification where the call records it. It excludes later call processing. Parallel calls record their worker's dispatch time. |
+| `tool_timing.duration_ms` | Elapsed time from the turn's tool preparation through this call's completed post-processing. It includes queue wait and carries `completed=false` if processing raises an exception. |
+| `turn_timing.duration_ms` | Elapsed time from tool preparation to the next model-call boundary, or loop exit for the final turn. `tool_phase_ms`, `post_turn_ms`, and `next_model_preparation_ms` retain that phase split. |
+| `turn_timing.chat_call_ms` / `tool_ms` / `harness_ms` | Model-client call time, union of actual dispatch intervals, and remaining loop time. These sum to `model_to_boundary_ms`, apart from rounding. Parallel intervals count once; cell children are not added to their enclosing dispatch again. |
+| `turn_timing.post_ms` | Time from the last actual dispatch return to the recorded boundary. Null when the turn has no dispatch. It is part of `harness_ms`, not another amount to add. |
+
+Correlate tool records by `tool_call_id` within the session. Calls from one turn
+share a preparation start, so their elapsed times overlap. Do not sum them as
+work time. `boundary=next_model_call_entry` marks the loop reaching its next
+`_chat_with_retry` call; it is not an HTTP-send timestamp. The timing row's own
+publication is outside the interval. The final row has `boundary=session_end`
+and no next-turn number. It ends at loop exit before Session cleanup. Existing
+`tool_call` rows retain their original recording point and are not delayed
+until post-processing finishes. An absent timing field is unknown, not zero.
+
+The split measures wall intervals. The primary model-client call includes its
+retry and request-preparation work. Automatic verification and observer or
+advisor work outside that call and raw tool dispatch fall under `harness_ms`.
+Use their own records for finer attribution. Do not interpret this split as
+CPU usage or total inference-server time.
+
+When comparing implementations, measure the complete operation through its
+next usable result, including required log writes and shutdown work. Preserve
+output, coverage, freshness, and complete records. Moving work into idle time
+helps only if it reduces that complete cost without delaying the next request
+or tool call.
+
+### Turn snapshot storage
+
+Turn snapshots keep their objects and refs in a private telemetry Git store
+for both native and local task views. Use `snapshot_object_store` to locate a
+recorded snapshot instead of assuming its SHA belongs to the task repository.
+Historical lookup still supports older repository-stored snapshots. Local
+capture does not change the task repository's objects, index, or configuration,
+or global Git configuration. If the task cwd has no internal `.git` directory,
+capture uses its own files and ignore rules without discovering an enclosing
+repository or following linked-worktree metadata outside the task root.
+
 ### Trace event fields
 
 The raw trace owns run events. These rows keep their meaning even when model

@@ -240,6 +240,36 @@ def test_plan_path_is_exact_and_rejects_symlink_escape(tmp_path: Path):
     assert not is_exact_plan_path(linked_root, PLAN_FILE)
 
 
+@pytest.mark.parametrize("swap_parent", [False, True])
+def test_plan_exit_refuses_symlink_swap_after_path_resolution(tmp_path, monkeypatch, swap_parent):
+    from scripts.llm_solver.harness import plan_mode
+
+    task = tmp_path / "task"
+    (task / ".solver").mkdir(parents=True)
+    (task / PLAN_FILE).write_text("")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "plan.md").write_text("Outside plan must not unlock tools")
+    controller = PlanModeController(
+        cwd=str(task), cfg=_plan_cfg(), events=[], event_sink=lambda _event: None,
+    )
+    original_read = plan_mode.read_text
+
+    def swap_then_read(cwd, path):
+        if swap_parent:
+            (task / ".solver").rename(task / "old-solver")
+            (task / ".solver").symlink_to(outside, target_is_directory=True)
+        else:
+            (task / PLAN_FILE).unlink()
+            (task / PLAN_FILE).symlink_to(outside / "plan.md")
+        return original_read(cwd, path)
+
+    monkeypatch.setattr(plan_mode, "read_text", swap_then_read)
+    result = controller.exit(turn=0)
+    assert "not a readable text file" in result
+    assert controller.active
+
+
 def test_plan_turn_cap_keeps_only_plan_write_and_exit_available(tmp_path: Path):
     events = [
         {"event": "plan_mode_enter", "session_number": 1, "turn": 0},

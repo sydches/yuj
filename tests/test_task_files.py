@@ -2,6 +2,8 @@
 import shutil
 import shlex
 import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -38,6 +40,33 @@ def test_legacy_chmod_uses_a_checked_descriptor(tmp_path, retarget):
         assert (root / 'restored').stat().st_mode & 0o777 == 0o640
     assert outside.read_bytes() == b'private'
     assert outside.stat().st_mode & 0o777 == 0o600
+
+
+def test_file_reads_reap_children_before_returning(tmp_path):
+    (tmp_path / 'file').write_text('task bytes')
+    # A private subreaper catches children orphaned by a completed file call.
+    # This reproduces the leak even when the test machine's PID 1 reaps them.
+    script = textwrap.dedent('''
+        import ctypes, os, subprocess, sys
+        from scripts.llm_solver.harness.task_files import NamespaceFiles
+        assert ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) == 0
+        def run(script, args, data):
+            return subprocess.run(['bash', '--noprofile', '--norc', '-p', '-c',
+                script, 'reaping-test', *args], input=data, capture_output=True)
+        files = NamespaceFiles(sys.argv[1], run, binding={'test': 'reaping'})
+        for _ in range(10):
+            assert files.read_bytes('file') == b'task bytes'
+            files.replace_bytes('restored', b'restored bytes', mode=0o640)
+        try:
+            child = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        else:
+            raise AssertionError(f'file operation left an unreaped child: {child}')
+    ''')
+    result = subprocess.run([sys.executable, '-c', script, str(tmp_path)], capture_output=True,
+                            text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture(scope='module')
@@ -87,6 +116,142 @@ def test_binary_roundtrip_metadata_and_literal_paths(bwrap, tmp_path):
     assert info.is_file and not info.is_dir and info.size == len(data)
     assert files.resolve(name) == files.root / name
     assert files.iterdir() == [files.root / name]
+
+
+def test_directory_metadata_is_batched_and_does_not_follow_links(bwrap, tmp_path):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'directory').mkdir()
+    (source / 'literal\nfile').write_bytes(b'bytes')
+    (source / 'outside').symlink_to(tmp_path)
+    operations = []
+    run = files.run
+    files.run = lambda script, args, data: (operations.append(args), run(script, args, data))[1]
+    assert dict(files.scandir()) == {'directory': 'd', 'literal\nfile': 'f', 'outside': 'l'}
+    assert sum(len(args) > 3 and args[3] == 'scandir' for args in operations) == 1
+
+
+def test_checkpoint_entry_reads_current_binary_mode_and_symlink_text(bwrap, tmp_path):
+    import os
+    import stat
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    name = "literal ' $(touch escaped)\nfile\n"
+    target = source / name
+    target.write_bytes(b'original\x00\xff\r\n')
+    target.chmod(0o751)
+    mode, data = files.read_entry(name)
+    assert stat.S_ISREG(mode) and stat.S_IMODE(mode) == 0o751
+    assert data == target.read_bytes()
+    observed = target.stat()
+    target.write_bytes(b'changed\x00\xff\n')
+    target.chmod(0o640)
+    os.utime(target, ns=(observed.st_atime_ns, observed.st_mtime_ns))
+    mode, data = files.read_entry(name)
+    assert stat.S_IMODE(mode) == 0o640 and data == target.read_bytes()
+    outside = tmp_path / 'outside\n'
+    outside.write_bytes(b'outside bytes must not be read')
+    (source / 'link').symlink_to(outside)
+    mode, data = files.read_entry('link')
+    assert stat.S_ISLNK(mode) and data == os.fsencode(outside)
+    assert not (source / 'escaped').exists()
+    with pytest.raises(FileNotFoundError):
+        files.read_entry('missing')
+
+
+def test_checkpoint_entry_refuses_parent_swapped_outside_before_open(bwrap, tmp_path):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'nested').mkdir()
+    (source / 'nested' / 'file').write_bytes(b'selected')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'file').write_bytes(b'outside')
+    run = files.run
+
+    def swap_after_resolution(script, args, data):
+        if len(args) > 3 and args[3] == 'read_entry':
+            script = script.replace(
+                'enter_directory "$directory" "$readlink_bin" || exit',
+                'mv -- "$root/nested" "$root/previous"\n'
+                'ln -s -- "$YUJ_TEST_OUTSIDE" "$root/nested"\n'
+                'enter_directory "$directory" "$readlink_bin" || exit')
+            script = 'YUJ_TEST_OUTSIDE=$1; shift\n' + script
+            args = [str(outside), *args]
+        return run(script, args, data)
+
+    files.run = swap_after_resolution
+    with pytest.raises(PermissionError):
+        files.read_entry('nested/file')
+
+
+def test_entry_modes_inspect_selected_names_only_and_keep_missing_semantics(bwrap, tmp_path):
+    import stat
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f"literal '{index}\n" for index in range(70)]
+    for name in names:
+        (source / name).write_bytes(b'bytes')
+    (source / names[0]).chmod(0o751)
+    (source / 'directory').mkdir()
+    (source / 'outside-link').symlink_to(tmp_path / 'outside')
+    requested = [*names, 'directory', 'outside-link', 'absent', 'missing-parent/file']
+    run = files.run
+    operations = []
+    files.run = lambda script, args, data: (operations.append(args), run(script, args, data))[1]
+    modes = files.entry_modes(requested)
+    expected = {str(files.root / name): (source / name).lstat().st_mode
+                for name in requested if name not in ('absent', 'missing-parent/file')}
+    assert modes == expected
+    assert stat.S_ISLNK(modes[str(files.root / 'outside-link')])
+    assert sum(len(args) > 3 and args[3] == 'entry_modes' for args in operations) == 3
+    (source / names[0]).chmod(0o600)
+    assert stat.S_IMODE(files.entry_modes([names[0]])[str(files.root / names[0])]) == 0o600
+    (source / 'external-parent').symlink_to(tmp_path)
+    with pytest.raises(PermissionError):
+        files.entry_modes(['external-parent/anything'])
+
+
+@pytest.mark.parametrize('after_open', [False, True])
+def test_checkpoint_entry_uses_checked_open_descriptor(bwrap, tmp_path, after_open):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'file').write_bytes(b'selected\x00bytes')
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'outside bytes')
+    run = files.run
+
+    def replace_entry(script, args, data):
+        if len(args) > 3 and args[3] == 'read_entry':
+            opening = 'exec {input_fd}< "$target" || exit 74'
+            replacement = 'mv -- "$target" "$target.old"\nln -s -- "$YUJ_TEST_OUTSIDE" "$target"'
+            script = script.replace(opening, opening + '\n' + replacement if after_open
+                                    else replacement + '\n' + opening)
+            script = 'YUJ_TEST_OUTSIDE=$1; shift\n' + script
+            args = [str(outside), *args]
+        return run(script, args, data)
+
+    files.run = replace_entry
+    if after_open:
+        assert files.read_entry('file')[1] == b'selected\x00bytes'
+    else:
+        with pytest.raises(PermissionError):
+            files.read_entry('file')
+
+
+def test_batch_hashes_read_current_bytes_and_preserve_literal_paths(bwrap, tmp_path):
+    import hashlib
+    import os
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'file {index}\n' for index in range(70)]
+    for name in names:
+        (source / name).write_bytes(name.encode())
+    expected = {str(files.root / name): hashlib.sha256(name.encode()).hexdigest() for name in names}
+    assert files.sha256_many(names) == expected
+    changed = source / names[0]
+    observed = changed.stat()
+    changed.write_bytes(b'changed')
+    os.utime(changed, ns=(observed.st_atime_ns, observed.st_mtime_ns))
+    assert files.sha256_many(names)[str(files.root / names[0])] == hashlib.sha256(b'changed').hexdigest()
+    (source / 'escape').symlink_to(tmp_path / 'outside')
+    (tmp_path / 'outside').write_bytes(b'external')
+    with pytest.raises(PermissionError):
+        files.sha256_many(['escape'])
 
 
 def test_nested_mount_hides_host_source_for_read_stat_and_listing(bwrap, tmp_path):
@@ -336,12 +501,15 @@ def test_declared_global_skills_remain_available_through_private_home(bwrap, tmp
     environment = {'PATH': '/usr/bin:/bin', 'HOME': str(home)}
     cfg = make_config(sandbox_bash=True, bwrap_bin=bwrap, skills_enabled=True,
                       skills_dirs=('~/skills',), unreadable_paths=())
+    # A discovery path is not permission to mount host resources.
+    assert discover_task_skills(str(task), cfg, environment=environment).skills == ()
+    cfg = replace(cfg, skills_readable_dirs=(str(home / 'skills'),))
     catalog = discover_task_skills(str(task), cfg, environment=environment)
     assert catalog.readable_dirs == (str(package),)
     assert 'Body stays lazy' not in catalog.format_prompt_block()
-    assert cfg.skills_readable_dirs == ()
-    files = make_task_files(str(task), replace(cfg, skills_readable_dirs=catalog.readable_dirs),
-                            environment=environment, readable_paths=catalog.readable_dirs)
+    assert cfg.skills_readable_dirs == (str(home / 'skills'),)
+    files = make_task_files(str(task), cfg, environment=environment,
+                            readable_paths=cfg.skills_readable_dirs)
     resource = files.readonly_view(str(package))
     assert resource.read_bytes('SKILL.md') == content.encode()
     with pytest.raises(PermissionError):
@@ -421,6 +589,28 @@ def test_ignore_policy_reads_rules_and_discovers_masks_in_task_view(bwrap, tmp_p
     (source / 'private' / 'visible.py').unlink()
     assert policy.existing_ignored_paths() == (str(files.root / 'private'),)
     assert policy.is_model_hidden(TaskPath(files, files.root / 'private'))
+
+
+def test_mask_refresh_batches_entry_metadata_and_sees_new_files(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_path import activate_task_files
+    from scripts.llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / '.yujignore').write_text('*.secret\n')
+    (source / 'package').mkdir()
+    for index in range(200):
+        (source / 'package' / f'{index}.py').write_text('visible')
+    secret = source / 'package' / 'hidden.secret'
+    secret.write_text('hidden')
+    with activate_task_files(files, host_root=source):
+        policy = load_ignore_policy(source)
+    operations = []
+    run = files.run
+    files.run = lambda script, args, data: (operations.append(args), run(script, args, data))[1]
+    assert policy.existing_ignored_paths() == (str(files.root / 'package/hidden.secret'),)
+    assert len(operations) < 10
+    secret.unlink()
+    (source / 'new.secret').write_text('new hidden')
+    assert policy.existing_ignored_paths() == (str(files.root / 'new.secret'),)
 
 
 def test_dispatch_activates_native_access_and_resets_scope(bwrap, tmp_path):
@@ -578,6 +768,37 @@ def test_search_uses_namespace_bytes_and_keeps_aliases(bwrap, tmp_path):
         assert 'host answer' not in matches and 'hidden.txt' not in matches
         assert './nested/visible.txt:1:needle' in matches
         assert grep_files('absent', cwd=str(source)) == 'No matches found.'
+
+
+@pytest.mark.parametrize('ripgrep_available', [True, False])
+def test_grep_batches_the_tree_without_per_file_namespace_calls(bwrap, tmp_path, ripgrep_available):
+    from scripts.llm_solver.harness.task_path import activate_task_files
+    from scripts.llm_solver.harness._tools.grep import grep_files
+
+    source, files = namespace_files(bwrap, tmp_path)
+    for index in range(130):
+        (source / f'file-{index:02}.py').write_text('needle\n')
+    outside = tmp_path / 'outside'
+    outside.write_text('needle forbidden\n')
+    (source / 'escape.py').symlink_to(outside)
+    operations = []
+    run = files.run
+    def observed(script, args, data):
+        operations.append(args)
+        if not ripgrep_available and args == ['rg']:
+            return subprocess.CompletedProcess([], 0, b'rg\0\0', b'')
+        return run(script, args, data)
+    files.run = observed
+    with activate_task_files(files, host_root=source):
+        matches = grep_files('needle', cwd=str(source)).splitlines()
+    assert len(matches) == 130
+    assert all(line.endswith(':1:needle') for line in matches)
+    assert len(operations) < 15
+    assert sum(len(args) > 3 and args[3] == 'search_batch' for args in operations) == 1
+    if not ripgrep_available:
+        with activate_task_files(files, host_root=source):
+            # GNU grep's basic-regex alternation remains available in fallback.
+            assert len(grep_files(r'needle\|absent', cwd=str(source)).splitlines()) == 130
 
 
 def test_glob_uses_one_operation_for_a_tree_and_sees_later_changes(bwrap, tmp_path):

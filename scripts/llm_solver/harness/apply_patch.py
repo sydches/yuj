@@ -51,6 +51,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .line_matching import matching_line_starts
+
 log = logging.getLogger(__name__)
 
 
@@ -336,11 +338,10 @@ def _find_unique(file_lines: list[str], needle: list[str],
             kind="hunk_not_found",
         )
     matches: list[int] = []
-    for i in range(start_idx, len(file_lines) - n + 1):
-        if file_lines[i : i + n] == needle:
-            matches.append(i)
-            if len(matches) > 1:
-                break
+    for i in matching_line_starts(file_lines, needle, start_idx):
+        matches.append(i)
+        if len(matches) > 1:
+            break
     if not matches:
         # Surface the FIRST 4 lines of the missing needle so the model
         # can see where its expectation diverged.
@@ -390,16 +391,16 @@ def _resolved_target(cwd_path: Path, op_path: str) -> Path:
 def _apply_op(op: FileOp, cwd_path: Path) -> str:
     """Apply one verified FileOp to the filesystem. Returns a summary line."""
     target = _resolved_target(cwd_path, op.path)
+    from . import local_file_access as file_access
     if op.kind == "add":
-        target.parent.mkdir(parents=True, exist_ok=True)
         body = "\n".join(op.add_lines) + "\n"
-        target.write_text(body)
+        file_access.write_text(cwd_path, target, body, create_parents=True)
         return f"  added: {op.path} ({len(op.add_lines)} lines)"
     if op.kind == "delete":
-        target.unlink()
+        file_access.unlink(cwd_path, target)
         return f"  deleted: {op.path}"
     if op.kind == "update":
-        text = target.read_text()
+        text = file_access.read_text(cwd_path, target)
         # Preserve original trailing newline behavior.
         had_trailing_newline = text.endswith("\n")
         file_lines = text.split("\n")
@@ -419,7 +420,7 @@ def _apply_op(op: FileOp, cwd_path: Path) -> str:
         new_text = "\n".join(file_lines)
         if had_trailing_newline:
             new_text += "\n"
-        target.write_text(new_text)
+        file_access.write_text(cwd_path, target, new_text)
         n_minus = sum(len(h.old_lines) - sum(1 for o, n in zip(h.old_lines, h.new_lines) if o == n) for h in op.hunks)
         n_plus = sum(len(h.new_lines) - sum(1 for o, n in zip(h.old_lines, h.new_lines) if o == n) for h in op.hunks)
         return f"  updated: {op.path} ({len(op.hunks)} hunk{'s' if len(op.hunks) != 1 else ''}, ~{n_minus}/+{n_plus})"
@@ -438,31 +439,32 @@ def verify_and_apply(ops: list[FileOp], cwd: str) -> str:
     PatchVerifyError on failure with a message naming the failing op.
     """
     cwd_path = Path(cwd)
+    from . import local_file_access as file_access
 
     # Phase 1: verify every op (no FS mutation). Path-traversal guard
     # via _resolved_target — same containment as read/edit/write.
     for op in ops:
         target = _resolved_target(cwd_path, op.path)
         if op.kind == "add":
-            if target.exists():
+            if file_access.exists(cwd_path, target):
                 raise PatchVerifyError(
                     f"Add File: {op.path}: file already exists (use Update File: instead)",
                     kind="file_exists",
                 )
         elif op.kind == "delete":
-            if not target.is_file():
+            if not file_access.is_file(cwd_path, target):
                 raise PatchVerifyError(
                     f"Delete File: {op.path}: file does not exist",
                     kind="file_not_found",
                 )
         elif op.kind == "update":
-            if not target.is_file():
+            if not file_access.is_file(cwd_path, target):
                 raise PatchVerifyError(
                     f"Update File: {op.path}: file does not exist",
                     kind="file_not_found",
                 )
             try:
-                text = target.read_text()
+                text = file_access.read_text(cwd_path, target)
             except OSError as e:
                 raise PatchVerifyError(
                     f"Update File: {op.path}: read failed: {e}",

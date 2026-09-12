@@ -164,8 +164,8 @@ def test_explicit_local_session_does_not_follow_an_ambient_container_selector(tm
     session = SimpleNamespace(cfg=make_config(sandbox_bash=False))
     sha = snapshot(task, 1, session=session)
     assert sha
-    assert snapshot_object_store(task, sha) == task
-    assert git(task, 'show', f'{sha}:file') == b'local file'
+    assert snapshot_object_store(task, sha) != task
+    assert git(snapshot_object_store(task, sha), 'show', f'{sha}:file') == b'local file'
 
 
 def test_scripted_session_records_the_snapshot_object_store(bwrap, tmp_path):

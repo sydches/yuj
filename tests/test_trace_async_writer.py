@@ -87,7 +87,8 @@ def test_barrier_fsyncs_prior_rows_before_ack(tmp_path: Path, monkeypatch):
     assert calls
 
 
-def test_barrier_propagates_an_earlier_writer_failure():
+@pytest.mark.parametrize("require_fsync", [False, True])
+def test_barrier_propagates_an_earlier_writer_failure(require_fsync):
     class BrokenTrace:
         def write(self, _value):
             raise OSError("disk unavailable")
@@ -98,6 +99,6 @@ def test_barrier_propagates_an_earlier_writer_failure():
     writer = AsyncTraceWriter(BrokenTrace())
     writer.submit('{"lost":true}\n')
     with pytest.raises(RuntimeError, match="barrier failed"):
-        writer.barrier()
+        writer.barrier(require_fsync=require_fsync)
     with pytest.raises(RuntimeError, match="barrier failed"):
         writer.stop()

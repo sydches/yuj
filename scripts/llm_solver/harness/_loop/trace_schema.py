@@ -196,6 +196,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (TraceEventSpec("completed_obser
         "tool_call",
         frozenset({"session_number", "turn_number", "tool_name"}),
         frozenset({
+            "tool_call_id", "duration_ms", "dispatch_executed", "tool_dispatch_ms",
             "parent_tool_call_id", "cell_inner_index", "cell_source", "shell_submission",
             "combined_output_chars", "combined_output_bytes", "inspection_evidence",
             "inner_call_count", "runner_request", "execution_budget", "observation_receipt", "automatic_verification_execution_budget", "outcome_version", "execution_observation",
@@ -208,6 +209,26 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (TraceEventSpec("completed_obser
             "active_tools",
         }),
         frozenset({"already_active"}),
+    ),
+    TraceEventSpec(
+        "tool_end",
+        frozenset({"session_number", "turn_number", "tool_call_id", "tool_name",
+                   "ended_at", "duration_ms", "scope", "includes_queue_wait",
+                   "dispatch_executed", "completed"}),
+        frozenset({"parent_tool_call_id", "cell_inner_index"}),
+    ),
+    TraceEventSpec(
+        "tool_timing",
+        frozenset({"session_number", "turn_number", "tool_call_id", "tool_name",
+                   "duration_ms", "scope", "includes_queue_wait", "completed"}),
+    ),
+    TraceEventSpec(
+        "turn_timing",
+        frozenset({"session_number", "turn_number", "next_turn_number", "scope",
+                   "duration_ms", "tool_phase_ms", "post_turn_ms",
+                   "next_model_preparation_ms", "turn_total_ms"}),
+        frozenset({"boundary", "chat_call_ms", "tool_ms", "post_ms", "harness_ms",
+                   "model_to_boundary_ms", "dispatch_executed"}),
     ),
     TraceEventSpec(
         "todos",
@@ -590,6 +611,11 @@ def emit(session, event_type: str, **fields) -> None:
     and warning-only — an unknown event_type or missing required field
     logs but does not raise, so a typo doesn't break a session in flight.
     """
+    if event_type == "tool_call":
+        from .timing import dispatch_trace_fields
+        for key, value in dispatch_trace_fields(session, fields).items():
+            fields.setdefault(key, value)
+        fields.setdefault("tool_dispatch_ms", fields["duration_ms"])
     _validate_event(event_type, fields.keys())
     write_trace(session, {
         "event": event_type,

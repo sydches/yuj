@@ -1,9 +1,11 @@
 """Observe Linux process credentials and guard the process that starts work."""
 from dataclasses import dataclass
 import re
+import subprocess
 
 FIELDS = ('Uid', 'Gid', 'Groups', 'CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')
 VERIFIED = b'\0yuj-process-identity-v1\0'
+PROCESS_GROUP = b'\0yuj-task-process-v1\0'
 
 
 class ProcessIdentityError(RuntimeError):
@@ -78,31 +80,138 @@ class GuardedProcessArgv(list):
     """An argv whose stdout starts with an entry-process verification frame."""
 
 
+def with_container_deadline(argv, timeout):
+    """Enforce an exec deadline where the command and its children run."""
+    if not isinstance(argv, GuardedProcessArgv) or timeout is None or argv[:2] != ['docker', 'exec']:
+        return argv
+    # This position belongs to our constant entry shell, not task arguments.
+    entry = argv.index('yuj-process-guard') - 6
+    result = GuardedProcessArgv(argv)
+    allowance = max(timeout * 0.9, timeout - 0.25)
+    result[entry:entry] = ['timeout', '--signal=TERM', '--kill-after=0.1', f'{allowance:.6f}s']
+    result.container_deadline = True
+    return result
+
+
+_SUPERVISE_GROUP = r'''
+trap 'trap "" TERM; while :; do sleep 3600; done' TERM
+IFS= read -r status < /proc/self/stat || exit 77
+read -ra fields <<< "${status##*) }"
+printf '\0yuj-task-process-v1\0%020d:%020d\0' "$$" "${fields[19]}"
+script=$1
+shift
+bash --noprofile --norc -p -c "$script" yuj-supervised-task "$@" <&0 &
+child=$!
+wait "$child"
+exit $?
+'''
+
+_CANCEL_GROUP = r'''
+pid=$1 start=$2 grace=$3
+if ! IFS= read -r status < "/proc/$pid/stat" 2>/dev/null; then exit 0; fi
+read -ra fields <<< "${status##*) }"
+[[ "${fields[19]}" == "$start" && "${fields[0]}" != Z ]] || exit 0
+[[ "${fields[2]}" == "$pid" && "${fields[3]}" == "$pid" ]] || exit 77
+kill -TERM -- "-$pid" || exit 74
+sleep "$grace"
+IFS= read -r status < "/proc/$pid/stat" || exit 74
+read -ra fields <<< "${status##*) }"
+[[ "${fields[19]}" == "$start" && "${fields[2]}" == "$pid" ]] || exit 77
+kill -KILL -- "-$pid" || exit 74
+# Zombies have stopped executing. Check live members in the task namespace.
+for ((attempt=0; attempt<100; attempt++)); do
+    live=0
+    for entry in /proc/[0-9]*/stat; do
+        IFS= read -r status < "$entry" 2>/dev/null || continue
+        read -ra fields <<< "${status##*) }"
+        [[ "${fields[2]}" != "$pid" || "${fields[0]}" == Z ]] || live=1
+    done
+    ((live)) || exit 0
+    sleep 0.01
+done
+exit 74
+'''
+
+
+class ContainerProcessGroup:
+    """A task-reported PID/start-time pair, never a host transport PID."""
+
+    def __init__(self, cleanup_argv):
+        self.cleanup_argv = cleanup_argv
+        self.handle = None
+
+    def terminate(self, grace=0.1):
+        if self.handle is None:
+            raise ProcessIdentityError('task process startup handle is not available')
+        argv = GuardedProcessArgv([*self.cleanup_argv, *map(str, self.handle), str(grace)])
+        result = subprocess.run(argv, capture_output=True, timeout=grace + 3)
+        verified_process_result(argv, result)
+        if result.returncode:
+            raise ProcessIdentityError('task process group termination was not confirmed')
+
+
+def with_container_process_group(argv):
+    """Keep a cancellable group leader for legacy Docker background/cell work."""
+    if not isinstance(argv, GuardedProcessArgv) or argv[:2] != ['docker', 'exec']:
+        return argv
+    marker = argv.index('yuj-process-guard')
+    entry = marker - 6
+    script = argv[marker - 1]
+    if not script.startswith(_VERIFY_IDENTITY + '\n'):
+        raise ProcessIdentityError('unknown guarded task entry script')
+    result = GuardedProcessArgv(argv)
+    cleanup = [*argv[:marker - 1], _VERIFY_IDENTITY + '\n' + _CANCEL_GROUP,
+               *argv[marker:marker + 1 + len(FIELDS)]]
+    result.container_process_group = ContainerProcessGroup(cleanup)
+    result[marker - 1] = _VERIFY_IDENTITY + '\n' + _SUPERVISE_GROUP
+    result.insert(marker + 1 + len(FIELDS), script[len(_VERIFY_IDENTITY) + 1:])
+    result[entry:entry] = ['setsid', '--wait']
+    return result
+
+
 class ProcessVerification:
     """Consume exactly one startup frame, even when transport splits it."""
 
     def __init__(self, argv):
         self.remaining = VERIFIED if isinstance(argv, GuardedProcessArgv) else b''
+        self.group = getattr(argv, 'container_process_group', None)
+        self.handle_bytes = b''
+        self.handle_pending = self.group is not None
+        if self.handle_pending:
+            self.remaining += PROCESS_GROUP
 
     @property
     def verified(self):
-        return not self.remaining
+        return not self.remaining and not self.handle_pending
 
     def feed(self, data):
         count = min(len(data), len(self.remaining))
         if data[:count] != self.remaining[:count]:
             raise ProcessIdentityError('task command did not start with verified process credentials')
         self.remaining = self.remaining[count:]
-        return data[count:]
+        data = data[count:]
+        if not self.remaining and self.handle_pending:
+            count = min(len(data), 42 - len(self.handle_bytes))
+            self.handle_bytes += data[:count]
+            data = data[count:]
+            if len(self.handle_bytes) == 42:
+                if not re.fullmatch(rb'[0-9]{20}:[0-9]{20}\x00', self.handle_bytes):
+                    raise ProcessIdentityError('invalid task process startup handle')
+                handle = tuple(int(value) for value in self.handle_bytes[:-1].split(b':'))
+                if handle[0] <= 1 or handle[1] <= 0:
+                    raise ProcessIdentityError('invalid task process startup handle')
+                self.group.handle = handle
+                self.handle_pending = False
+        return data
 
     def finish(self):
-        if self.remaining:
+        if not self.verified:
             raise ProcessIdentityError('task command did not start with verified process credentials')
 
     def read(self, stream):
         """Consume only the frame from a blocking stream; leave task bytes."""
-        while self.remaining:
-            data = stream.read(len(self.remaining))
+        while not self.verified:
+            data = stream.read(len(self.remaining) or 42 - len(self.handle_bytes))
             if not data:
                 self.finish()
             self.feed(data)
@@ -131,6 +240,9 @@ def verified_process_result(argv, result):
         return result
     prefix = VERIFIED if isinstance(result.stdout, bytes) else VERIFIED.decode('ascii')
     if not result.stdout.startswith(prefix):
+        if result.returncode and result.stderr:
+            detail = result.stderr.decode('utf-8', 'replace') if isinstance(result.stderr, bytes) else result.stderr
+            raise ProcessIdentityError(f'task command did not start (exit {result.returncode}): {detail.strip()}')
         raise ProcessIdentityError('task command did not start with verified process credentials')
     result.stdout = result.stdout[len(prefix):]
     return result

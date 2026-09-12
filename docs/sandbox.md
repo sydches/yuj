@@ -18,6 +18,38 @@ configuration file. Linux does not need Docker when `bwrap` works.
 Activate the environment that contains Yuj before you run a command on this
 page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
+## Task boundary
+
+The model and file tools use the environment supplied for the task. A sandboxed
+task uses its permitted sandbox view, including separately admitted read-only
+resources. With explicit `none`, file tools and project discovery stay within
+the task's initial working directory. Installed tools may serve the task;
+their availability does not grant file tools access to unrelated projects,
+home files, or sibling tasks.
+
+The same file boundary applies to startup observations, discovered
+instructions and skills, context refreshes, and language-server response paths.
+An automatically discovered path cannot grant more access. Yuj observes task
+files through the permitted task view and does not substitute host files or
+host environment values when task observations are unavailable.
+
+Yuj may use host facilities to contact the model, operate the selected backend,
+and store its own records. Those facilities are not task resources or facts
+for the model's environment briefing. Trusted lifecycle hooks have their
+[separate operator-controlled boundary](#keep-lifecycle-hooks-outside-the-task).
+Explicit operator inputs retain their declared authority; they do not permit
+automatic discovery of surrounding host files.
+
+The task root is the working directory supplied at task startup. Unrestricted
+processes start there but can leave it: setting a process's cwd does not impose
+OS confinement. A selected sandbox never falls back to unrestricted execution.
+See [Turn the sandbox off](#turn-the-sandbox-off) for the exact scope of `none`.
+
+For each tool, choose the fastest suitable underlying implementation and
+integrate it without losing that speed to harness overhead. Check the
+[complete operation](harness_artifacts.html#tool-and-turn-timing), including
+required transformations and logging, while preserving its behavior and scope.
+
 ## Choose a mode
 
 | Your situation | What to do |
@@ -83,22 +115,34 @@ Yuj obtains runtime paths from permitted environment facts and installed
 metadata. An unavailable or ambiguous runtime stays unresolved. This discovery
 does not repair the task's dependencies.
 
-Before the first model call, Yuj records the task's working directory, selected
-language and runtime, environment or package manager, and test command when
-observed. It keeps this small record in session memory, writes it to the
-`session_start` trace event, and shows it in the system message. The briefing
-excludes host and container details, file inventories, hashes, unrelated tool
-versions, and missing-tool lists.
+When you enable Agent Skills, Yuj discovers them within the permitted task
+view. Discovery does not add host mounts or grant access outside that view.
+In a sandbox, `read` can open a discovered skill's `SKILL.md` and resources
+already visible there. Separately admitted external resource mounts remain
+read-only. With `none`, skill discovery and reads stay within the task cwd.
+File mutation tools reject every external skill path.
+
+## Startup environment briefing
+
+Before the first model call, Yuj records the task's working directory, observed
+language and runtime version and executable, environment or package manager,
+and test runner version and command when observed. It keeps this small record
+in session memory, writes it to the `session_start` trace event, and shows it
+in the system message. These facts come from the prepared task environment;
+there is no default language, folder, environment manager, or test runner.
+A usable runtime remains visible even when the check command is unknown.
+
+Discovery establishes where and how to work once at startup. It does not
+repair dependencies or inventory the machine. The briefing excludes host and
+container details, file inventories, hashes, unrelated tool versions, and
+missing-tool lists. Python-only discovery does not require pytest. A declared
+pytest check does require a usable pytest import. An unavailable or ambiguous
+runtime or runner stays unresolved.
 
 Startup observations are reused during the solve. A supplied container keeps
 its captured identity; file tools do not rediscover it on each access. Each glob
 expands in one native operation, checks containment before descending, and
 reads the current tree.
-
-When you enable Agent Skills, Yuj adds validated external skill directories
-to the read-only set. `read` can open their `SKILL.md` files and resources, and
-`bwrap` mounts those directories read-only. File mutation tools still reject
-every external skill path.
 
 ## Use the first-class container backend
 
@@ -129,7 +173,7 @@ docker system df
 For each command, Yuj:
 
 - mounts only the task directory read-write, at the same absolute path, plus
-  each startup-validated external Agent Skill directory read-only at its
+  each separately admitted external resource directory read-only at its
   absolute path;
 - uses a read-only image root plus an ephemeral `/tmp`;
 - disables the network and does not mount the Docker socket or host home;
@@ -236,11 +280,13 @@ post-edit checks, language servers, and Python cells run as the Yuj account.
 They have the account's host file and network access. Sandbox filesystem
 masks and no-network isolation do not exist in this mode.
 
-`none` does not mean unrestricted. Tool permission rules, approval decisions,
-command and path validation, shell refusals and redirects, task-owned hook
-guards, output filtering, security scans, and artifact boundaries keep their
-normal behavior. Those controls are not a replacement for process isolation.
-Use `none` only when you accept the host-access consequences.
+`none` explicitly permits unrestricted process execution. File tools, project
+discovery, and language-server response paths still use the task root.
+Tool permission rules, approval decisions, command and
+path validation, shell refusals and redirects, task-owned hook guards, output
+filtering, security scans, and artifact boundaries keep their normal behavior.
+Those controls are not a replacement for process isolation. Use `none` only
+when you accept the host-access consequences.
 
 ## Python code mode
 

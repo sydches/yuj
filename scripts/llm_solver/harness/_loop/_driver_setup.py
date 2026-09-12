@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 from ...config import Config
-from ..._shared.paths import expand_user_path
 from ..._shared.telemetry_paths import ensure_telemetry_dir, telemetry_dir, trace_path
 from ..context_contract import build_context_contract
 from ..startup_files import file_scoped_prompt_assembly, startup_file_scope
@@ -226,7 +225,7 @@ def load_system_prompt_and_provenance(
     project_truncated = False
     if cfg.project_docs_enabled:
         global_dir = (
-            expand_user_path(cfg.project_doc_global_dir)
+            cfg.project_doc_global_dir
             if cfg.project_doc_global_dir.strip()
             else None
         )
@@ -348,6 +347,7 @@ def load_system_prompt_and_provenance(
         cfg, profile_path, resolved_system_prompt=system_prompt,
         run_metadata=run_metadata, thinking_resolution=thinking_resolution,
         fallback_provenance=model_fallback_provenance(client),
+        task_cwd=work_dir,
     )
     context_contract = build_context_contract(context_class, cfg)
     provenance["context_contract"] = context_contract

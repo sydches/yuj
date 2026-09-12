@@ -3,13 +3,17 @@ import json
 import os
 import re
 import stat
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
 from .._shared.telemetry_paths import ensure_telemetry_dir, telemetry_dir
-from .task_path import TaskPath, activate_task_files
+from .task_path import activate_task_files
 from .task_files import NamespaceFiles
 from .workspace_checkpoints import WorkspaceCheckpointStore, WorkspaceCheckpointError, _safe_relative_path
+from . import local_file_access
+from .checkpoint_files import checkpoint_entry_path
+from .time_budget import execution_deadline, remaining_before
 
 RECORDS_NAME = 'turn_snapshot_records.jsonl'
 STORE_NAME = '.turn_snapshot_git'
@@ -81,7 +85,6 @@ class NativeTurnSnapshotStore(WorkspaceCheckpointStore):
 
     def _candidate_paths(self):
         result = self.native_git(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'])
-        root = TaskPath(self.files, self.files.root)
         paths = []
         for value in result.stdout.split(b'\0'):
             if not value:
@@ -89,13 +92,93 @@ class NativeTurnSnapshotStore(WorkspaceCheckpointStore):
             relative = _safe_relative_path(os.fsdecode(value))
             if self._is_excluded(relative):
                 continue
+            paths.append(relative)
+        modes = self.files.entry_modes(paths)
+        return sorted({relative for relative in paths
+                       if (mode := modes.get(str(self.files.root / relative))) is not None
+                       and (stat.S_ISREG(mode) or stat.S_ISLNK(mode))})
+
+
+class LocalTurnSnapshotStore(WorkspaceCheckpointStore):
+    """Keep local snapshots private and never discover an enclosing repository."""
+
+    def __init__(self, workspace, owned_paths):
+        self.workspace = Path(workspace).resolve()
+        self.owned_paths = owned_paths
+        # A linked worktree's external Git metadata is outside this task root.
+        self.task_git = local_file_access.is_dir(self.workspace, self.workspace / '.git')
+        object_format = (self.task_git_command(['rev-parse', '--show-object-format']).stdout.decode().strip()
+                         if self.task_git else 'sha1')
+        super().__init__(self.workspace, shadow_dir=ensure_telemetry_dir(self.workspace) / STORE_NAME,
+                         object_format=object_format)
+        self.task_head = None
+        if self.task_git:
+            result = self.task_git_command(['rev-parse', '--verify', 'HEAD'])
+            self.task_head = result.stdout.decode().strip()
+            if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', self.task_head):
+                raise WorkspaceCheckpointError('task Git returned an invalid HEAD')
+
+    def task_git_command(self, args, *, data=None):
+        environment = {name: value for name, value in os.environ.items() if not name.startswith('GIT_')}
+        environment.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                           GIT_ATTR_NOSYSTEM='1', GIT_OPTIONAL_LOCKS='0', LC_ALL='C')
+        result = subprocess.run(
+            ['git', f'--git-dir={self.workspace / ".git"}', f'--work-tree={self.workspace}',
+             '-c', f'safe.directory={self.workspace}', '-c', 'core.fsmonitor=false', *args],
+            cwd=self.workspace, env=environment, input=data, capture_output=True,
+            timeout=remaining_before(execution_deadline()),
+        )
+        if result.returncode:
+            raise WorkspaceCheckpointError('task snapshot Git failed: '
+                                           + result.stderr.decode(errors='replace').strip())
+        return result
+
+    def import_parent(self):
+        self._ensure_initialized()
+        if self.task_head and self._git(['cat-file', '-e', self.task_head], check=False).returncode:
+            pack = self.task_git_command(['pack-objects', '--stdout', '--revs'],
+                                         data=(self.task_head + '\n').encode())
+            self._git(['unpack-objects', '-q'], input_bytes=pack.stdout)
+
+    def _current_commit(self):
+        return self.task_head if self.task_head else super()._current_commit()
+
+    def _is_excluded(self, path):
+        return super()._is_excluded(path) or any(
+            path == owned or path.startswith(owned + '/') for owned in self.owned_paths)
+
+    def _candidate_paths(self):
+        if not self.task_git:
+            return super()._candidate_paths()
+        result = self.task_git_command(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'])
+        paths = []
+        for raw in result.stdout.split(b'\0'):
+            if not raw:
+                continue
+            relative = _safe_relative_path(os.fsdecode(raw))
+            if self._is_excluded(relative):
+                continue
+            target = checkpoint_entry_path(self.workspace, self.workspace / relative)
             try:
-                mode = (root / relative).lstat().st_mode
+                mode = local_file_access.stat(self.workspace, target).st_mode
             except FileNotFoundError:
                 continue
             if stat.S_ISREG(mode) or stat.S_ISLNK(mode):
                 paths.append(relative)
         return sorted(set(paths))
+
+
+def capture_local_snapshot(workspace, turn, *, owned_paths):
+    store = LocalTurnSnapshotStore(workspace, owned_paths)
+    store.import_parent()
+    checkpoint = store.capture(turn)
+    store._git(['update-ref', f'refs/yuj/snapshots/{checkpoint.commit}', checkpoint.commit])
+    record = {'turn': int(turn), 'sha': checkpoint.commit, 'storage': 'private_git_v1',
+              'task_head': store.task_head, 'task_binding': {'access': 'local',
+              'working_directory': str(store.workspace)}, 'artifact_decisions': {}}
+    with (ensure_telemetry_dir(workspace) / RECORDS_NAME).open('a') as output:
+        output.write(json.dumps(record, sort_keys=True) + '\n')
+    return checkpoint.commit
 
 
 def capture_native_snapshot(workspace, turn, *, files, owned_paths):

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..state_writer import write_state_from_events
+from ..state_writer import _write_state, project
 
 if TYPE_CHECKING:
     from ..loop import Session
@@ -18,8 +18,6 @@ _NEWLINE = "\n"
 def validate_state_destination(state_path: Path, trace_path: Path, cfg) -> None:
     """Do not adopt an inferred output path based on its filename or schema."""
     import json
-    from ..state_writer import project
-
     if not state_path.parent.is_symlink() and not state_path.is_symlink():
         if not state_path.exists():
             return
@@ -51,7 +49,7 @@ def validate_state_destination(state_path: Path, trace_path: Path, cfg) -> None:
 
 
 def refresh_state(session: "Session") -> None:
-    """Rebuild .solver/state.json from the in-memory trace event list.
+    """Publish the current projection after every appended trace event.
 
     No-op if state_path was not provided (wo_yuj arm). The events list
     is kept in sync with the on-disk trace by Session._write_trace, so
@@ -60,11 +58,39 @@ def refresh_state(session: "Session") -> None:
     """
     if session._state_path is None:
         return
-    write_state_from_events(
-        session._trace_events, session._state_path,
-        max_result_chars=session.cfg.max_output_chars,
-        imperative_projection=session.cfg.state_imperative_projection_enabled,
-        think_keep_turns=session.cfg.tools_think_keep_turns,
+    events = session._trace_events
+    options = (session.cfg.max_output_chars,
+               session.cfg.state_imperative_projection_enabled,
+               session.cfg.tools_think_keep_turns)
+    cached = getattr(session, "_state_projection_cache", None)
+    state = None
+    if cached is not None:
+        prior_events, prior_count, prior_tail, prior_options, prior_state = cached
+        if (events is prior_events and len(events) == prior_count + 1
+                and prior_count > 0 and events[prior_count - 1] is prior_tail
+                and options == prior_options):
+            event = events[-1]
+            meta = prior_state["meta"]
+            if (event.get("event") in {"tool_timing", "turn_timing", "tool_end", "turn"}
+                    and event.get("session_number") == meta["last_session"]):
+                # These rows never change the body or thought retention (which
+                # uses tool_call turns). Rewinds always rebuild the active view.
+                meta = {**meta, "event_count": len(events)}
+                turn = event.get("turn_number")
+                if isinstance(turn, int) and (meta["last_turn"] is None or turn > meta["last_turn"]):
+                    meta["last_turn"] = turn
+                for key in ("projected_event_count", "active_event_count"):
+                    if key in meta:
+                        meta[key] += 1
+                state = {**prior_state, "meta": meta}
+    if state is None:
+        state = project(events, max_result_chars=options[0],
+                        imperative_projection=options[1], think_keep_turns=options[2])
+    _write_state(session._state_path, state)
+    # Session trace events are append-only. Replacement, truncation, unknown
+    # rows and changed settings take the canonical full-project path above.
+    session._state_projection_cache = (
+        events, len(events), events[-1] if events else None, options, state,
     )
 
 

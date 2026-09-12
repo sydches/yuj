@@ -274,6 +274,7 @@ class LlamaClient:
         and are classified by chat_with_retry's _TRANSIENT_ERRORS
         tuple. See server/_streaming.py for the assembly contract.
         """
+        record_transcript = record_transcript and self._transcript_file is not None
         payload = request_controls.bound_output_allowance(payload, self.cfg.max_tokens)
         streaming = _streaming_enabled() or getattr(self, "_narration_streaming", False)
         if streaming:
@@ -345,11 +346,11 @@ class LlamaClient:
                     f"turn {n:03d} output", f"{type(e).__name__}: {e}"
                 )
             raise
-        try:
-            body = resp.model_dump_json()
-        except AttributeError:
-            body = json.dumps(resp, default=str)
         if record_transcript:
+            try:
+                body = resp.model_dump_json()
+            except AttributeError:
+                body = json.dumps(resp, default=str)
             self._write_transcript(f"turn {n:03d} output", body)
         if count_record:
             counter.observe_usage(resp, count_record)

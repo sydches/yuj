@@ -317,6 +317,27 @@ def test_large_debug_values_use_bounded_json_and_exact_sidecars(tmp_path: Path):
     assert hashlib.sha256(output_path.read_bytes()).hexdigest() == record["output_sha256"]
 
 
+def test_full_source_read_with_debug_logging_preserves_every_line(tmp_path):
+    from scripts.llm_solver.harness._tools.read import read
+
+    # Below the old 200k diff cutoff: line numbering caused quadratic work.
+    source = "    return quantity.value + other.value\n" * 2000
+    (tmp_path / "quantity.py").write_text(source)
+    path = tmp_path / "read.jsonl"
+    savings.open_ledger(path, transform_log_mode="debug")
+    try:
+        result = read("quantity.py", cwd=str(tmp_path))
+    finally:
+        savings.close_ledger()
+    assert str(result).splitlines() == [
+        f"{index}: {line}" for index, line in enumerate(source.splitlines(), 1)
+    ]
+    record = next(row for row in _read_records(path) if row['mechanism'] == 'read_line_numbering')
+    assert (path.parent / record['input_full_path']).read_text() == source.rstrip('\n')
+    assert (path.parent / record['output_full_path']).read_text() == result
+    assert len(record['changes'][0]['before']) < 1000
+
+
 def test_aggregate_keeps_transform_bytes_separate_from_legacy_chars():
     records = [
         {

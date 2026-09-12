@@ -114,7 +114,7 @@ def test_run_in_sandbox_executes_container_argv_without_shell(
     assert (out, exit_code, timed_out) == ("container-ok\n", 0, False)
 
 
-def test_missing_container_runtime_always_fails_closed_when_selected(
+def test_missing_selected_container_runtime_fails_closed_for_both_required_settings(
     monkeypatch, tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("YUJ_CONTAINER", raising=False)
@@ -131,13 +131,14 @@ def test_missing_container_runtime_always_fails_closed_when_selected(
     assert strict[1:] == (None, False)
     assert "runtime 'docker' is missing" in strict[0]
 
-    optional_flag = _run_in_sandbox(
-        "printf must-not-run", cwd=str(tmp_path), timeout=10, sandbox=True,
+    optional = _run_in_sandbox(
+        "touch must-not-run", cwd=str(tmp_path), timeout=10, sandbox=True,
         bwrap_bin=MISSING_BWRAP, sandbox_required=False,
         sandbox_backend="container", container_image=IMAGE,
     )
-    assert optional_flag[1:] == (None, False)
-    assert "refusing to run the command unsandboxed" in optional_flag[0]
+    assert optional[1:] == (None, False)
+    assert "runtime 'docker' is missing" in optional[0]
+    assert not (tmp_path / 'must-not-run').exists()
 
 
 def test_first_class_container_rejects_legacy_container_mode(
@@ -340,8 +341,10 @@ def test_lsp_builder_uses_container_backend(monkeypatch, tmp_path: Path) -> None
     assert "--network" in argv and "none" in argv
 
 
-def test_solve_task_records_container_provenance_on_every_session_start(
-    monkeypatch, tmp_path: Path,
+@pytest.mark.parametrize('required', [False, True])
+@pytest.mark.parametrize('engaged', [False, True])
+def test_solve_task_records_preflight_and_never_disables_a_failed_selected_sandbox(
+    monkeypatch, tmp_path: Path, required, engaged,
 ) -> None:
     from scripts.llm_solver._shared.telemetry_paths import trace_path
     from scripts.llm_solver.harness.loop import solve_task
@@ -369,14 +372,14 @@ def test_solve_task_records_container_provenance_on_every_session_start(
     fields = {
         "session": 1,
         "sandbox_mode": "container",
-        "sandbox_engaged": True,
+        "sandbox_engaged": engaged,
         "sandbox_backend": "container",
         "sandbox_backend_executable": "/private/host/bin/docker",
         "container_runtime": "docker",
         "container_image_digest": DIGEST,
-        "container_preflight_error": None,
+        "container_preflight_error": None if engaged else 'selected runtime unavailable',
         "sandbox_bash_cfg": True,
-        "sandbox_required_cfg": True,
+        "sandbox_required_cfg": required,
         "bwrap_bin": MISSING_BWRAP,
         "bwrap_present": False,
         "bwrap_preflight_passed": None,
@@ -405,20 +408,36 @@ def test_solve_task_records_container_provenance_on_every_session_start(
         max_sessions=1,
         sandbox_env_inherit="none",
         sandbox_bash=True,
-        sandbox_required=True,
+        sandbox_required=required,
         sandbox_backend="container",
         sandbox_container_runtime="docker",
         sandbox_container_image=IMAGE,
     )
+    client.cfg = cfg
+    pretest = MagicMock(return_value='')
+    monkeypatch.setattr('scripts.llm_solver.harness._loop.driver.run_pretest', pretest)
 
     with patch("scripts.llm_solver.harness.loop._auto_commit"):
-        assert solve_task(tmp_path, cfg, client) is True
+        if engaged:
+            assert solve_task(tmp_path, cfg, client) is True
+        else:
+            with pytest.raises(RuntimeError, match='sandbox_engaged=false'):
+                solve_task(tmp_path, cfg, client)
+            client.chat.assert_not_called()
+            pretest.assert_not_called()
+            assert client.cfg.sandbox_bash is True
 
     events = [
         json.loads(line)
         for line in trace_path(tmp_path).read_text().splitlines()
         if line.strip()
     ]
+    envelope = next(event for event in events if event['event'] == 'runtime_envelope')
+    assert envelope['sandbox_engaged'] is engaged
+    assert envelope['sandbox_required_cfg'] is required
+    if not engaged:
+        assert not any(event['event'] in ('session_start', 'pretest_run') for event in events)
+        return
     start = next(event for event in events if event["event"] == "session_start")
     envelope = next(
         event for event in events if event["event"] == "runtime_envelope"

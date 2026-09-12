@@ -15,8 +15,11 @@ def build_runtime_briefing(working_directory, report):
     if languages:
         briefing["language"] = ", ".join(languages)
     selection = report.get("runner_selection", {})
-    if selection.get("status") != "selected":
+    check_selected = selection.get('status') == 'selected'
+    if not check_selected:
         briefing["test_runner_status"] = selection.get("status", "not established")
+        selection = report.get('language_runtime', selection)
+    if selection.get('status') != 'selected':
         return briefing
     selected = selection["selected"]
     runtime = selected.get("runtime", {})
@@ -38,6 +41,8 @@ def build_runtime_briefing(working_directory, report):
                     and prefix in fact.get("environment_candidates", [])):
                 briefing["environment_manager"] = "conda"
                 break
+    if not check_selected:
+        return briefing
     briefing["test_runner"] = runner
     version = runtime.get("runner_version") or selected.get("version_output")
     if version:

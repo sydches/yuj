@@ -323,6 +323,24 @@ def test_collection_scan_ignores_root_skill_file(tmp_path: Path) -> None:
     assert [skill.path for skill in catalog.skills] == [child.resolve()]
 
 
+def test_local_skill_discovery_does_not_scan_home_ancestors_or_escaping_links(tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    root = tmp_path / 'repo'
+    cwd = root / 'task'
+    cwd.mkdir(parents=True)
+    (root / '.git').mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    _skill(home / '.agents/skills', 'home-skill', 'Host home', 'PRIVATE_HOME')
+    _skill(root / '.agents/skills', 'parent-skill', 'Ancestor', 'PRIVATE_PARENT')
+    outside = _skill(tmp_path / 'outside', 'outside-skill', 'Outside', 'PRIVATE_OUTSIDE')
+    local = _skill(cwd / '.agents/skills', 'local-skill', 'Task', 'LOCAL')
+    (cwd / '.agents/skills/linked').symlink_to(outside.parent, target_is_directory=True)
+    catalog = discover_skills(cwd, enabled=True)
+    assert [skill.path for skill in catalog.skills] == [local]
+    with pytest.raises(SkillError, match='outside task cwd'):
+        discover_skills(cwd, enabled=True, skills_dirs=(), skill_paths=(str(outside),))
+
+
 def test_discovered_masked_skill_is_skipped_but_masked_exact_path_fails() -> None:
     skill = FIXTURES / "valid" / "code-review" / "SKILL.md"
 
@@ -369,7 +387,7 @@ def test_hidden_fixture_is_loaded_but_omitted_from_prompt_catalog() -> None:
     assert catalog.trace_records()[1]["disable_model_invocation"] is True
 
 
-def test_external_skill_is_readable_but_file_tools_cannot_write_it(
+def test_unsandboxed_tools_cannot_read_or_write_external_skill_roots(
     tmp_path: Path,
 ) -> None:
     task = tmp_path / "task"
@@ -383,7 +401,7 @@ def test_external_skill_is_readable_but_file_tools_cannot_write_it(
     cfg = make_config(skills_readable_dirs=(str(skill_path.parent),))
 
     result = read(str(skill_path), cwd=str(task), cfg=cfg)
-    assert "EXTERNAL SKILL BODY" in result
+    assert result.startswith("ERROR: path escapes cwd:")
 
     attempted = write(
         str(skill_path),
@@ -391,7 +409,7 @@ def test_external_skill_is_readable_but_file_tools_cannot_write_it(
         cwd=str(task),
         cfg=cfg,
     )
-    assert attempted == f"ERROR: skill path is read-only: {skill_path}"
+    assert attempted.startswith("ERROR: path escapes cwd:")
     assert "EXTERNAL SKILL BODY" in skill_path.read_text()
     assert not (task / str(skill_path).lstrip("/")).exists()
 
@@ -410,14 +428,15 @@ def test_external_skill_read_respects_configured_unreadable_mask(
     private = skill_path.parent / "private.txt"
     private.write_text("PRIVATE RESOURCE")
     cfg = make_config(
+        sandbox_bash=True,
         skills_readable_dirs=(str(skill_path.parent),),
         unreadable_paths=(str(private),),
     )
 
-    assert read(str(private), cwd=str(task), cfg=cfg) == (
-        f"ERROR: file not found: {private}"
-    )
-    assert "No such file or directory" in bash(
+    result = dispatch('read', {'path': str(private)}, cwd=str(task), cfg=cfg)
+    assert 'status="error"' in result
+    assert 'PRIVATE RESOURCE' not in result
+    result = bash(
         f"cat {shlex.quote(str(private))}",
         cwd=str(task),
         timeout=10,
@@ -425,6 +444,8 @@ def test_external_skill_read_respects_configured_unreadable_mask(
         readable_paths=(str(skill_path.parent),),
         unreadable_paths=(str(private),),
     )
+    assert 'PRIVATE RESOURCE' not in result
+    assert 'No such file or directory' in result or 'Permission denied' in result
 
 
 def test_external_skill_resources_remain_listable_with_project_ignore_policy(
@@ -547,7 +568,7 @@ def test_solve_task_catalog_and_session_start_trace_loaded_skills(
     work.mkdir()
     (work / ".git").mkdir()
     (work / "prompt.txt").write_text("finish")
-    skill_root = tmp_path / "external-skills"
+    skill_root = work / "skills"
     visible = _skill(
         skill_root,
         "visible-skill",
@@ -648,7 +669,8 @@ def test_solve_task_catalog_and_session_start_trace_loaded_skills(
     assert skill_cost["ctx"]["skills"] == ["visible-skill"]
 
     metrics = json.loads((work / "metrics.json").read_text())
-    assert metrics["provenance"]["config"]["skills_readable_dirs"] == [
+    assert metrics["provenance"]["config"]["skills_readable_dirs"] == []
+    assert metrics["provenance"]["config"]["skills_native_readable_dirs"] == [
         str(visible.parent),
         str(hidden.parent),
     ]

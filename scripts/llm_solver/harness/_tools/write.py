@@ -1,6 +1,9 @@
 """write tool: create or overwrite a file."""
+import stat
+
 from ...config import Config
-from ._common import _is_external_readonly_path, _resolve
+from .. import local_file_access as file_access
+from ._common import _is_external_readonly_path, _resolve, _skill_readable_roots
 
 
 def write(path: str, content: str, *, cwd: str,
@@ -20,9 +23,7 @@ def write(path: str, content: str, *, cwd: str,
     if cfg is not None and _is_external_readonly_path(
         cwd,
         path,
-        readonly_roots=tuple(
-            getattr(cfg, "skills_readable_dirs", ()) or ()
-        ),
+        readonly_roots=_skill_readable_roots(cfg),
     ):
         return f"ERROR: skill path is read-only: {path}"
     try:
@@ -34,12 +35,18 @@ def write(path: str, content: str, *, cwd: str,
     # `ERROR: [Errno 21] Is a directory: '<absolute path>'`. The model
     # has no signal that the path needs to change. Refuse early with an
     # actionable message.
-    if target.is_dir():
+    try:
+        prior = file_access.stat(cwd, target)
+    except FileNotFoundError:
+        prior = None
+    except OSError as exc:
+        return f"ERROR: {exc}"
+    if prior is not None and stat.S_ISDIR(prior.st_mode):
         return (
             f"ERROR: {path} is a directory — choose a different name "
             "or remove the directory first."
         )
-    existed_before = target.exists()
+    existed_before = prior is not None
     # Snapshot prior content as raw bytes — read_text() would raise
     # UnicodeDecodeError on a binary file (escaping the inner OSError
     # catch and crashing the turn since dispatch only catches
@@ -48,21 +55,20 @@ def write(path: str, content: str, *, cwd: str,
     previous_bytes: bytes | None = None
     if existed_before:
         try:
-            previous_bytes = target.read_bytes()
+            previous_bytes = file_access.read_bytes(cwd, target)
         except OSError:
             previous_bytes = None
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
+        file_access.write_text(cwd, target, content, create_parents=True)
         head = f"OK: wrote {len(content)} bytes to {path}"
         from ..post_edit import run_post_edit_actions
         res = run_post_edit_actions(path, cwd=cwd, cfg=cfg, trigger="write")
         if res.action == "block":
             if previous_bytes is not None:
-                target.write_bytes(previous_bytes)
+                file_access.write_bytes(cwd, target, previous_bytes)
             elif not existed_before:
                 try:
-                    target.unlink()
+                    file_access.unlink(cwd, target)
                 except OSError:
                     pass
             return (

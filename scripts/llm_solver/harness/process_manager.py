@@ -101,6 +101,7 @@ class _ProcessRecord:
     verification_pending: bool = False
     startup_stderr_path: Path | None = None
     startup_stderr_cursor: int = 0
+    guarded_argv: object = None
 
 
 def _command_digest(command: str) -> str:
@@ -172,7 +173,8 @@ def build_background_sandbox_argv(
             container_runtime_bin
             or backend.resolve_runtime(sandbox_required=True)
         )
-        assert runtime_bin is not None
+        if runtime_bin is None:
+            raise ProcessManagerError('selected container runtime is unavailable')
         from .container_binding import bind_container_image
         backend = bind_container_image(backend, runtime_bin)
         return backend.build_argv(
@@ -375,8 +377,8 @@ class ProcessManager:
         proc_id = f"p{self._next_id:04d}"
         self._next_id += 1
         log_path = self.procs_dir / f"{proc_id}.log"
-        from .process_identity import GuardedProcessArgv
-        built_argv = self.argv_builder(command)
+        from .process_identity import GuardedProcessArgv, with_container_process_group
+        built_argv = with_container_process_group(self.argv_builder(command))
         guarded = isinstance(built_argv, GuardedProcessArgv)
         argv = list(built_argv)
         if not argv:
@@ -422,6 +424,7 @@ class ProcessManager:
             process=process,
             verification_pending=guarded,
             startup_stderr_path=startup_stderr_path,
+            guarded_argv=built_argv if guarded else None,
         )
         relative_log = str(log_path.relative_to(self.run_dir))
         result = (
@@ -481,7 +484,8 @@ class ProcessManager:
                 with record.startup_stderr_path.open('rb') as stream:
                     stream.seek(stderr_start)
                     startup_stderr = stream.read()
-            verification = ProcessVerification(GuardedProcessArgv([]) if record.verification_pending else [])
+            verification = ProcessVerification(
+                record.guarded_argv if record.verification_pending else [])
             verification_error = ''
             try:
                 output = verification.feed(raw)
@@ -576,7 +580,36 @@ class ProcessManager:
         self._ensure_open()
         record = self._record_for(proc_id)
         was_running = record.process.poll() is None
-        if was_running:
+        group = getattr(record.guarded_argv, 'container_process_group', None)
+        native_confirmed = True
+        if was_running and group is not None:
+            from .process_identity import ProcessVerification, ProcessIdentityError
+            try:
+                # Killing immediately after start must still wait for the
+                # task-owned handle. Reading it does not consume poll output.
+                deadline = time.monotonic() + 3
+                while group.handle is None:
+                    verification = ProcessVerification(record.guarded_argv)
+                    with record.log_path.open('rb') as stream:
+                        verification.feed(stream.read(256))
+                    if group.handle is not None:
+                        break
+                    if record.process.poll() is not None:
+                        verification.finish()
+                    if time.monotonic() >= deadline:
+                        raise ProcessIdentityError('task process startup handle is not available')
+                    time.sleep(0.01)
+                group.terminate(self.terminate_grace_s)
+                try:
+                    record.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Task-side termination is confirmed. A stuck Docker
+                    # client can now be cleaned up as host transport only.
+                    self._signal(record.process, signal.SIGKILL)
+                    record.process.wait(timeout=2)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                native_confirmed = False
+        elif was_running:
             try:
                 self._signal(record.process, signal.SIGTERM)
                 record.process.wait(timeout=self.terminate_grace_s)
@@ -588,7 +621,7 @@ class ProcessManager:
                     pass
             except (ProcessLookupError, OSError):
                 pass
-        exit_code = record.process.poll()
+        exit_code = record.process.poll() if native_confirmed else None
         record.terminal_observed = exit_code is not None
         result = (
             f"Requested termination of background process {proc_id}; exit not confirmed"

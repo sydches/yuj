@@ -491,6 +491,8 @@ class _UnreadableMatcher:
         self._blocked = tuple(sorted(blocked, key=lambda item: str(item)))
 
     def blocks(self, path: Path) -> bool:
+        if not self._blocked:
+            return False
         resolved = path.resolve(strict=False)
         for blocked in self._blocked:
             if resolved == blocked or blocked in resolved.parents:
@@ -543,8 +545,8 @@ class StructuralIndex:
     def _candidate_paths(self) -> tuple[Path, ...]:
         from .task_path import TaskPath
         candidates: list[Path] = []
-        traversal = self.root.walk() if isinstance(self.root, TaskPath) else os.walk(
-            self.root, topdown=True, followlinks=False)
+        from .local_discovery import local_walk
+        traversal = self.root.walk() if isinstance(self.root, TaskPath) else local_walk(self.root)
         for raw_dir, dir_names, file_names in traversal:
             directory = raw_dir if isinstance(raw_dir, TaskPath) else Path(raw_dir)
             dir_names[:] = [
@@ -555,6 +557,10 @@ class StructuralIndex:
             ]
             for name in sorted(file_names):
                 path = directory / name
+                # Every consumer indexes supported source languages only.
+                # Reject other suffixes before expensive namespace checks.
+                if not self.extractor.detect_language(path):
+                    continue
                 if self._accept_file(path):
                     candidates.append(path)
         return tuple(candidates)
@@ -583,9 +589,11 @@ class StructuralIndex:
             digest.update(language_bytes)
             try:
                 if contents:
-                    payload = hashlib.sha256(path.read_bytes()).digest()
+                    from .local_file_access import read_bytes
+                    payload = hashlib.sha256(read_bytes(self.root, path)).digest()
                 else:
-                    stat = path.stat()
+                    from .local_file_access import stat as file_stat
+                    stat = file_stat(self.root, path)
                     payload = (
                         int(stat.st_size).to_bytes(8, "big", signed=False)
                         + int(stat.st_mtime_ns).to_bytes(8, "big", signed=False)
@@ -626,24 +634,48 @@ class StructuralIndex:
                     # it tests access under the selected process credentials.
                     path.files.read_range(str(path), 0, 0)
                 else:
-                    with path.open('rb'):
+                    from .local_file_access import open_local_file
+                    with open_local_file(self.root, path):
                         pass
             except (OSError, ValueError):
                 return False
         return True
 
     def scan(self) -> IndexSnapshot:
+        from .task_path import TaskPath
         rows: list[StructuralRow] = []
         diagnostics: list[IndexDiagnostic] = []
         files_scanned = 0
         cache_hits = 0
-        for path in self._candidate_paths():
-            language = self.extractor.detect_language(path)
+        candidates = [(path, self.extractor.detect_language(path))
+                      for path in self._candidate_paths()]
+        digests = {}
+        if isinstance(self.root, TaskPath):
+            cached_paths = [str(path) for path, language in candidates
+                            if language and path in self._cache]
+            if cached_paths:
+                try:
+                    # Check current bytes inside the task. An unchanged file
+                    # need not cross the transport again just to page results.
+                    digests = self.root.files.sha256_many(cached_paths)
+                except OSError:
+                    # Preserve individual read errors and environments without
+                    # the native digest utility using the ordinary read path.
+                    pass
+        for path, language in candidates:
             if not language:
                 continue
             display_path = path.relative_to(self.root).as_posix()
+            cached = self._cache.get(path)
+            if (cached is not None and cached.language == language
+                    and digests.get(str(path)) == cached.digest):
+                rows.extend(cached.rows)
+                cache_hits += 1
+                files_scanned += 1
+                continue
             try:
-                source = path.read_bytes()
+                from .local_file_access import read_bytes
+                source = read_bytes(self.root, path)
             except OSError as exc:
                 diagnostics.append(
                     IndexDiagnostic(
@@ -654,7 +686,6 @@ class StructuralIndex:
                 )
                 continue
             digest = hashlib.sha256(source).hexdigest()
-            cached = self._cache.get(path)
             if cached is not None and cached.digest == digest and cached.language == language:
                 file_rows = cached.rows
                 cache_hits += 1

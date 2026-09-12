@@ -58,6 +58,50 @@ def _estimated_schema_tokens(schemas: list[dict]) -> int:
     return (len(rendered) + 3) // 4
 
 
+@pytest.mark.parametrize('alarm_first', [False, True])
+def test_legacy_cell_timeout_cleans_native_group_and_keeps_output(
+    tmp_path, native_process_identity, monkeypatch, alarm_first,
+):
+    import subprocess
+    import sys
+    import time
+    from scripts.llm_solver.harness._tools import exec_cell
+    from scripts.llm_solver.harness.process_identity import guarded_process_argv
+    argv = guarded_process_argv(['docker', 'exec', 'fixture'],
+        [sys.executable, '-u', '-c', exec_cell._CELL_RUNNER], native_process_identity)
+    monkeypatch.setattr(exec_cell, '_build_cell_process', lambda **kwargs: (argv, str(tmp_path), None))
+    original_popen = subprocess.Popen
+
+    def local_transport(command, *args, **kwargs):
+        if command[:3] == ['docker', 'exec', 'fixture']:
+            command = command[3:]
+        return original_popen(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, 'Popen', local_transport)
+    marker = tmp_path / 'late-write'
+    source = (
+        'import subprocess, time, signal\n'
+        'print("visible output", flush=True)\n'
+        'subprocess.Popen(["bash", "-c", '
+        '"trap \'\' TERM; sleep 1.4; printf leaked > \\"$1\\"", "child", '
+        + repr(str(marker)) + '])\n'
+        'signal.alarm(1)\n'
+        'time.sleep(30)\n'
+    )
+    result = exec_cell.execute_cell(
+        source, cwd=str(tmp_path), cfg=make_config(
+            tools_exec_cell_enabled=True, tools_exec_cell_timeout=3 if alarm_first else 1),
+        inner_dispatch=lambda *args: ('', {}), unreadable_paths=(), readable_paths=(),
+        effective_env={}, allow_login_shell=False,
+    )
+    assert result.timed_out
+    assert 'visible output' in result.output
+    assert 'yuj-task-process' not in result.output
+    assert 'cleanup failed' not in result.output
+    time.sleep(0.5)
+    assert not marker.exists()
+
+
 @pytest.mark.parametrize('mismatch', [False, True])
 def test_guarded_cell_preserves_output_and_does_not_dispatch_when_credentials_differ(
     tmp_path, monkeypatch, native_process_identity, mismatch,
@@ -330,6 +374,12 @@ def test_trace_records_source_child_calls_output_size_and_state_projection(
     assert outer["combined_output_bytes"] >= outer["combined_output_chars"]
     assert [event["tool_name"] for event in children] == ["read", "grep"]
     assert [event["cell_inner_index"] for event in children] == [1, 2]
+    ends = [event for event in session._trace_events if event.get("event") == "tool_end"]
+    assert len(ends) == 3
+    assert all(event["duration_ms"] >= 0 and event["dispatch_executed"] for event in ends)
+    assert all(event["duration_ms"] >= 0 and event["dispatch_executed"] for event in children)
+    turn_timing = next(event for event in session._trace_events if event.get("event") == "turn_timing")
+    assert turn_timing["tool_ms"] == outer["duration_ms"]
 
     persisted_calls = [
         event

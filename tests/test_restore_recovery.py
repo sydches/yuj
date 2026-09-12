@@ -81,6 +81,52 @@ def test_failed_restore_removes_created_parent_directories(tmp_path, monkeypatch
     assert (task / 'z').read_text() == 'current z'
 
 
+def test_recovery_restores_a_mode_zero_directory_after_replacement(tmp_path, monkeypatch):
+    task, store = local_store(tmp_path)
+    (task / 'a').unlink()
+    (task / 'a').mkdir()
+    (task / 'a').chmod(0)
+    write = store._write_regular_file
+
+    def fail_later(target, data, mode):
+        if target.name == 'z':
+            raise OSError('injected later failure')
+        return write(target, data, mode)
+
+    monkeypatch.setattr(store, '_write_regular_file', fail_later)
+    try:
+        with pytest.raises(OSError, match='injected later failure'):
+            store.restore_checkpoint(1)
+        assert (task / 'a').is_dir()
+        assert stat.S_IMODE((task / 'a').stat().st_mode) == 0
+        assert (task / 'z').read_text() == 'current z'
+        assert not (store.shadow_dir / '.restore_recovery').exists()
+    finally:
+        (task / 'a').chmod(0o700)
+
+
+def test_journal_preimage_refuses_a_late_final_symlink(tmp_path, monkeypatch):
+    from scripts.llm_solver.harness.restore_recovery import entry_state
+    task, _store = local_store(tmp_path)
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'outside bytes')
+    opened = os.open
+    fired = False
+
+    def replace_before_open(name, flags, *args, **kwargs):
+        nonlocal fired
+        if not fired and name == 'a' and kwargs.get('dir_fd') is not None:
+            fired = True
+            (task / name).unlink()
+            (task / name).symlink_to(outside)
+        return opened(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'open', replace_before_open)
+    with pytest.raises(OSError):
+        entry_state(task, task / 'a')
+    assert fired and outside.read_bytes() == b'outside bytes'
+
+
 def test_unexpected_file_change_retains_journal_and_reopened_store_can_recover(tmp_path, monkeypatch):
     task, store = local_store(tmp_path)
     (task / 'extra').write_text('current extra')

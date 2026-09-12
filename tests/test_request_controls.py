@@ -259,6 +259,33 @@ def test_openai_dialect_omits_empty_extra_body():
     assert "extra_body" not in request
 
 
+@pytest.mark.parametrize("request_dialect", ["llama", "openai"])
+@pytest.mark.parametrize("side_request", [False, True])
+def test_request_controls_own_nested_payload_and_extra_values(request_dialect, side_request):
+    payload = {
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "task"}]}],
+        "tools": [{"function": {"parameters": {"required": ["path"]}}}],
+        "extra_body": {"payload_value": {"items": [1]}, "override": {"items": [0]}},
+    }
+    configured = {"configured_value": {"items": [2]}, "override": {"items": [1]}}
+    policy = {"policy_value": {"items": [3]}, "override": {"items": [2]}}
+    request = apply_request_controls(
+        payload, session_id="owned", server_request_extra=configured,
+        cache_affinity=4, cache_retention="session", side_request=side_request,
+        policy_extra=policy, request_dialect=request_dialect,
+    )
+    assert request["extra_body"]["override"] == {"items": [2]}
+    request["messages"][0]["content"][0]["text"] = "changed"
+    request["tools"][0]["function"]["parameters"]["required"].append("content")
+    for key in ("payload_value", "configured_value", "policy_value", "override"):
+        request["extra_body"][key]["items"].append(99)
+    assert payload["messages"][0]["content"][0]["text"] == "task"
+    assert payload["tools"][0]["function"]["parameters"]["required"] == ["path"]
+    assert payload["extra_body"] == {"payload_value": {"items": [1]}, "override": {"items": [0]}}
+    assert configured == {"configured_value": {"items": [2]}, "override": {"items": [1]}}
+    assert policy == {"policy_value": {"items": [3]}, "override": {"items": [2]}}
+
+
 def test_extract_cache_observation_from_openai_usage_details():
     response = SimpleNamespace(
         usage=SimpleNamespace(

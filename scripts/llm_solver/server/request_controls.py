@@ -550,7 +550,9 @@ def apply_request_controls(
         else:
             request.pop("extra_body", None)
         merged = merge_request_extra(configured, per_request)
-    return attach_request_extra(request, merged)
+    if merged:
+        request["extra_body"] = merge_request_extra(request.get("extra_body"), merged)
+    return request
 
 
 def validate_cache_miss_warn_ratio(value: object) -> float:

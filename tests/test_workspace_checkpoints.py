@@ -21,6 +21,7 @@ from scripts.llm_solver.harness.sandbox._preflight import bwrap_preflight
 from scripts.llm_solver.harness.tools import _bash_unreadable_paths, dispatch
 from scripts.llm_solver.harness.workspace_checkpoints import (
     CheckpointNotFoundError,
+    WorkspaceCheckpointError,
     WorkspaceCheckpointStore,
     default_shadow_dir,
     restore_checkpoint,
@@ -84,6 +85,114 @@ def _manifest(root: Path, *, skip: tuple[str, ...] = ()) -> dict[str, tuple]:
                 data,
             )
     return result
+
+
+@pytest.mark.parametrize('object_format', ['sha1', 'sha256'])
+def test_batched_checkpoint_blobs_match_git_and_leave_no_staging(tmp_path, object_format):
+    repo = _make_project_repo(tmp_path)
+    for index in range(70):
+        (repo / f"literal '{index}\nfile").write_bytes(f'{index}\n'.encode() + b'\x00\xff\r\n' * 100)
+    (repo / 'large.bin').write_bytes(bytes(range(256)) * 32769)
+    store = WorkspaceCheckpointStore(repo, shadow_dir=tmp_path / 'shadow', object_format=object_format)
+    expected = _manifest(repo)
+    checkpoint = store.capture(1)
+    entries = store._tree_entries(checkpoint.commit)
+    assert set(entries) == set(expected)
+    for path, entry in entries.items():
+        data = store._git(['cat-file', 'blob', entry.object_id]).stdout
+        assert data == (os.fsencode(expected[path][1]) if expected[path][0] == 'symlink'
+                        else expected[path][3])
+    assert checkpoint.file_count == len(expected)
+    assert checkpoint.byte_count == sum(len(os.fsencode(value[1])) if value[0] == 'symlink'
+                                       else len(value[3]) for value in expected.values())
+    assert not list(store.shadow_dir.glob('.blobs-*'))
+    tree = store._git(['rev-parse', checkpoint.commit + '^{tree}']).stdout
+    repeated = store.capture(2)
+    assert store._git(['rev-parse', repeated.commit + '^{tree}']).stdout == tree
+
+
+def test_later_blob_batch_failure_does_not_publish_checkpoint(tmp_path, monkeypatch):
+    repo = _make_project_repo(tmp_path)
+    for index in range(70):
+        (repo / str(index)).write_bytes(b'bytes')
+    store = WorkspaceCheckpointStore(repo, shadow_dir=tmp_path / 'shadow')
+    run = store._git
+    batches = 0
+
+    def fail_second_batch(args, **kwargs):
+        nonlocal batches
+        if args[0] == 'hash-object':
+            batches += 1
+            if batches == 2:
+                raise WorkspaceCheckpointError('injected later batch failure')
+        return run(args, **kwargs)
+
+    monkeypatch.setattr(store, '_git', fail_second_batch)
+    with pytest.raises(WorkspaceCheckpointError, match='later batch failure'):
+        store.capture(1)
+    assert store._current_commit() is None
+    assert not list(store.shadow_dir.glob('.blobs-*'))
+    assert not list(store.shadow_dir.glob('.index-*'))
+
+
+def test_local_capture_refuses_a_late_final_symlink(tmp_path, monkeypatch):
+    repo = _make_project_repo(tmp_path)
+    outside = tmp_path / 'outside'
+    outside.write_bytes(b'outside bytes must not be captured')
+    store = WorkspaceCheckpointStore(repo, shadow_dir=tmp_path / 'shadow')
+    opened = os.open
+    fired = False
+
+    def replace_before_open(name, flags, *args, **kwargs):
+        nonlocal fired
+        if not fired and name == 'alpha.bin' and kwargs.get('dir_fd') is not None:
+            fired = True
+            (repo / name).unlink()
+            (repo / name).symlink_to(outside)
+        return opened(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'open', replace_before_open)
+    with pytest.raises(OSError):
+        store.capture(1)
+    assert fired and store._current_commit() is None
+    assert outside.read_bytes() == b'outside bytes must not be captured'
+
+
+@pytest.mark.parametrize('operation', ['regular', 'symlink', 'remove'])
+def test_local_restore_mutations_retain_the_checked_parent(tmp_path, monkeypatch, operation):
+    repo = _make_project_repo(tmp_path)
+    parent = repo / 'nested'
+    parent.mkdir()
+    target = parent / 'file'
+    target.write_bytes(b'current')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'file').write_bytes(b'outside bytes must remain intact')
+    store = WorkspaceCheckpointStore(repo, shadow_dir=tmp_path / 'shadow')
+    original = getattr(os, {'regular': 'replace', 'symlink': 'symlink', 'remove': 'unlink'}[operation])
+    fired = False
+
+    def replace_parent(*args, **kwargs):
+        nonlocal fired
+        if not fired and ('dir_fd' in kwargs or 'dst_dir_fd' in kwargs):
+            fired = True
+            parent.rename(repo / 'retained')
+            parent.symlink_to(outside, target_is_directory=True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(os, {'regular': 'replace', 'symlink': 'symlink', 'remove': 'unlink'}[operation],
+                        replace_parent)
+    if operation == 'regular':
+        store._write_regular_file(target, b'restored', 0o100755)
+        assert (repo / 'retained/file').read_bytes() == b'restored'
+    elif operation == 'symlink':
+        store._write_symlink(target, b'missing\nlink', relative='nested/file')
+        assert os.readlink(repo / 'retained/file') == 'missing\nlink'
+    else:
+        assert store._remove_path('nested/file')
+        assert not (repo / 'retained/file').exists()
+    assert fired
+    assert (outside / 'file').read_bytes() == b'outside bytes must remain intact'
 
 
 def test_shadow_repo_is_external_and_project_git_is_untouched(tmp_path):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -64,7 +65,7 @@ def test_interrupted_turn_config_default_and_validation(tmp_path: Path) -> None:
 
 
 def test_real_dispatch_is_durably_bracketed_and_cleared(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     trace = tmp_path / ".trace.jsonl"
     call = ToolCall(
@@ -80,8 +81,21 @@ def test_real_dispatch_is_durably_bracketed_and_cleared(
     client.build_assistant_message.side_effect = _assistant_message
 
     observed_at_dispatch: list[list[str]] = []
+    durable_prefixes = []
+    real_fsync = os.fsync
+
+    def track_trace_fsync(fd):
+        actual, expected = os.fstat(fd), trace.stat()
+        if (actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino):
+            durable_prefixes.append(_events(trace))
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", track_trace_fsync)
 
     def dispatch_after_start(_name, _args, **_kwargs):
+        assert len(durable_prefixes) == 1
+        assert durable_prefixes[0] == _events(trace)
+        assert durable_prefixes[0][-1]["event"] == "tool_start"
         observed_at_dispatch.append(
             [event["event"] for event in _events(trace)]
         )

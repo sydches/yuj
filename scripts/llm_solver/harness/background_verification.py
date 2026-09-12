@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from ._guardrails.verification import _file_revision
+from ._guardrails.verification import _file_revisions
 from .shell_verification import shell_verification_status
 
 
@@ -22,8 +22,7 @@ class BackgroundVerification:
         if isinstance(manager, ProcessManager):
             manager.poll_metadata = self.poll_metadata
         state = self.state()
-        revisions = {path: _file_revision(self.cwd, path)
-                     for path in state.verification_file_revisions}
+        revisions = _file_revisions(self.cwd, state.verification_file_revisions)
         snapshot = (command, state.mutation_count, state.has_mutated, revisions)
         started = manager.start(command)
         self.starts[started.proc_id] = snapshot
@@ -36,8 +35,7 @@ class BackgroundVerification:
         command, generation, after_mutation, revisions = snapshot
         state = self.state()
         matches = None if exit_code is None else (after_mutation and state.mutation_count == generation and
-                   all(digest and _file_revision(self.cwd, path) == digest
-                       for path, digest in revisions.items()))
+                   all(revisions.values()) and _file_revisions(self.cwd, revisions) == revisions)
         evidence = {
             "proc_id": proc_id,
             "command_sha256": hashlib.sha256(command.encode()).hexdigest(),

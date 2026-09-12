@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Mapping, Sequence
+from urllib.parse import unquote, urlsplit
 
 from ._tools._common import _resolve
 
@@ -196,7 +197,8 @@ def build_lsp_sandbox_argv(
             container_runtime_bin
             or backend.resolve_runtime(sandbox_required=True)
         )
-        assert runtime_bin is not None
+        if runtime_bin is None:
+            raise LspSupportError('selected container runtime is unavailable')
         from .container_binding import bind_container_image
         backend = bind_container_image(backend, runtime_bin)
         return backend.build_argv(
@@ -427,6 +429,7 @@ class LspManager:
         from .task_path import active_task_files, active_task_host_root
         self._host_alias = os.path.abspath(cwd)
         self._task_files = task_files if task_files is not None else active_task_files(cwd)
+        self._sandboxed_view = self._task_files is not None
         self.cwd = Path(active_task_host_root(cwd) or Path(cwd).resolve())
         self.servers = tuple(servers)
         self.argv_builder = argv_builder
@@ -472,7 +475,6 @@ class LspManager:
             ),
             environment=effective_env, allow_login_shell=allow_login_shell,
             unreadable_paths=unreadable_paths, readable_paths=readable_paths,
-            persistent=False,
         )
         host_task_root = files._host_task_root
         filesystem_view = files._filesystem_view
@@ -510,6 +512,7 @@ class LspManager:
         manager = cls(cwd=cwd_text, servers=servers, argv_builder=argv_builder,
                       task_files=files, **kwargs)
         manager._host_alias = os.path.abspath(cwd)
+        manager._sandboxed_view = sandbox
         if sandbox:
             # A host PID has no established meaning in the server namespace.
             manager._client_process_id = None
@@ -680,6 +683,97 @@ class LspManager:
         self._emit(report)
         return report
 
+    def _visible_locations(self, result, ignore_policy):
+        """Keep navigation locations within the bound process's permitted view."""
+        uris = {}
+
+        def collect(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key in ('uri', 'targetUri') and isinstance(item, str):
+                        try:
+                            parsed = urlsplit(item)
+                        except ValueError:
+                            uris[item] = None
+                            continue
+                        if parsed.scheme == 'file':
+                            path = unquote(parsed.path)
+                            uris[item] = path if (
+                                parsed.netloc in ('', 'localhost') and path.startswith('/')
+                                and '\0' not in path) else None
+                    else:
+                        collect(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect(item)
+
+        collect(result)
+        visible = set()
+        resolved_paths = {}
+        if self._sandboxed_view and uris:
+            # Inspect all distinct paths in one call, inside the retained namespace.
+            # Masked files are character devices; missing/hidden files are not
+            # navigation targets. Installed dependency files remain available.
+            paths = tuple(dict.fromkeys(path for path in uris.values() if path is not None))
+            if paths:
+                checked = self._task_files.run(
+                    'realpath=$1; paths=(); flags=""; '
+                    'while IFS= read -r -d "" path; do '
+                    'if [[ -f "$path" && -r "$path" ]]; then '
+                    'paths+=("$path"); flags+=1; else flags+=0; fi; done; '
+                    'printf "%s\\0" "$flags"; '
+                    'for ((index=0; index<${#paths[@]}; index+=32)); do '
+                    '"$realpath" -m -z -- "${paths[@]:index:32}" || exit; done',
+                    [self._task_files._utility('realpath')],
+                    b''.join(os.fsencode(path) + b'\0' for path in paths))
+                fields = checked.stdout.split(b'\0')
+                flags = fields[0]
+                if (checked.returncode or fields[-1] or len(flags) != len(paths)
+                    or set(flags) - {ord('0'), ord('1')}
+                    or len(fields) != flags.count(b'1') + 2):
+                    raise LspSupportError('could not check LSP locations in task environment')
+                allowed = [path for path, flag in zip(paths, flags) if flag == ord('1')]
+                resolved_paths = dict(zip(allowed, map(os.fsdecode, fields[1:-1])))
+                visible = set(allowed)
+        elif not self._sandboxed_view:
+            for path in set(uris.values()) - {None}:
+                try:
+                    resolved = Path(path).resolve()
+                except (OSError, RuntimeError):
+                    continue
+                if resolved.is_relative_to(self.cwd) and (
+                    ignore_policy is None or not ignore_policy.is_ignored(resolved, is_dir=False)
+                ):
+                    visible.add(path)
+                    resolved_paths[path] = str(resolved)
+        if ignore_policy is not None:
+            root = self._task_files.root if self._task_files is not None else PurePosixPath(self.cwd)
+            for path in tuple(visible):
+                for spelling in (path, resolved_paths[path]):
+                    native = PurePosixPath(spelling)
+                    if native.is_relative_to(root):
+                        relative = native.relative_to(root)
+                        if '..' not in relative.parts and ignore_policy.is_ignored(relative.as_posix(), is_dir=False):
+                            visible.discard(path)
+        rejected = {uri for uri, path in uris.items() if path not in visible}
+        removed = object()
+
+        def retain(value):
+            if isinstance(value, dict):
+                if any(value.get(key) in rejected for key in ('uri', 'targetUri')
+                       if isinstance(value.get(key), str)):
+                    return removed
+                items = {key: retain(item) for key, item in value.items()}
+                if items.get('location') is removed:
+                    return removed
+                return {key: item for key, item in items.items() if item is not removed}
+            if isinstance(value, list):
+                return [kept for item in value if (kept := retain(item)) is not removed]
+            return value
+
+        retained = retain(result) if rejected else result
+        return (None if retained is removed else retained), bool(rejected)
+
     def query(
         self, kind: str, *, path: str, line: int = 0, character: int = 0,
         ignore_policy=None,
@@ -720,8 +814,10 @@ class LspManager:
                     "textDocument": document,
                 }
             result = state.rpc.request(method, params)
+        result, omitted = self._visible_locations(result, ignore_policy)
         return LspQueryResult(
             kind, relative, json.dumps(result, sort_keys=True, separators=(",", ":")),
+            "outside_locations_removed" if omitted else "ok",
         )
 
     def active_roots(self) -> tuple[Path, ...]:

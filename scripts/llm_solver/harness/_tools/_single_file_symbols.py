@@ -8,7 +8,7 @@ from ..structural_index import (
 )
 
 
-def list_file_symbols(path: Path, display_path: str, cfg: Config) -> str:
+def list_file_symbols(path: Path, display_path: str, cfg: Config, *, cwd=None) -> str:
     # Imported at call time because the public tool also owns its envelopes.
     from .list_definitions import _list_definitions_error, _render_repository_page
 
@@ -21,7 +21,8 @@ def list_file_symbols(path: Path, display_path: str, cfg: Config) -> str:
             "Use read() for unsupported types.",
         )
     try:
-        source = path.read_bytes()
+        from ..local_file_access import read_bytes
+        source = read_bytes(cwd if cwd is not None else path.parent, path)
         rows = tuple(row for row in extractor.extract(
             source, language=language, display_path=display_path,
         ) if row.kind == "def")

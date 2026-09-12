@@ -144,7 +144,7 @@ def preflight_assistant_startup(
         ignore_policy=ignore_policy,
         unreadable_paths=unreadable_paths,
     )
-    cfg = replace(cfg, skills_readable_dirs=skill_catalog.readable_dirs)
+    cfg = replace(cfg, skills_native_readable_dirs=skill_catalog.readable_dirs)
     _, _, _, prompt_metadata = load_system_prompt_and_provenance(
         cfg,
         local_client,

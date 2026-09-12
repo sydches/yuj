@@ -53,6 +53,7 @@ from .compaction import (
     preflight_reclip_oversized,
 )
 from .trace_output import build_tool_call_trace_fields
+from .timing import TurnTiming, record_turn_timings, timed_dispatch, emit_tool_end
 
 if TYPE_CHECKING:
     from ..loop import Session, SessionResult
@@ -448,6 +449,7 @@ def _complete_turn_rewind(
         )
         session._emit(
             "tool_call",
+            tool_call_id=tc.id,
             session_number=session._session_number,
             turn_number=turn,
             tool_name=tc.name,
@@ -543,6 +545,7 @@ def _observe_token_density(session, live_pt_at_gate: int,
     session._preflight_density = min(2.0, max(current, observed))
 
 
+@record_turn_timings
 def run_session_loop(session: "Session") -> "SessionResult":
     """Drive one session's turn loop.
 
@@ -872,10 +875,16 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # can observe it, no later resume may inject it again silently.
         _consume_pending_correction(session, turn=turn)
         # ─── 1. API call (with transient-error retry) ────────────────
+        if session._pending_turn_timing is not None:
+            session._pending_turn_timing.finish(session, next_turn=turn)
         _chat_t0 = time.perf_counter()
+        timing = TurnTiming(turn, _turn_t0, _chat_t0)
+        session._pending_turn_timing = timing
+        session._tool_dispatch_timings = timing.dispatches
         chat_result = session._chat_with_retry(turn)
         cfg = session.cfg  # A successful fallback can replace the client/config.
-        _phase_chat_ms = (time.perf_counter() - _chat_t0) * 1000
+        timing.model_finished = time.perf_counter()
+        _phase_chat_ms = (timing.model_finished - _chat_t0) * 1000
         abandoned = getattr(session, "_abandoned_chat_usage", None)
         if abandoned is not None:
             total_prompt += abandoned.prompt_tokens
@@ -1030,6 +1039,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                                              gate_blocked=True)
                 session._emit(
                     "tool_call",
+                    tool_call_id=tc.id,
                     session_number=session._session_number,
                     turn_number=turn,
                     tool_name=tc.name,
@@ -1216,6 +1226,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
             turn_had_pressure = True
 
         # ─── 6. Dispatch loop (per tool call) ────────────────────────
+        tool_preparation_t0 = time.perf_counter()
+        timing.tools_started = tool_preparation_t0
         # Optional parallel pre-execute for all-read-only turns.
         # Guardrails and post-dispatch state still run sequentially
         # per-tc below; this only concurrent-izes the file-I/O
@@ -1326,6 +1338,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             observers=observers,
             plan_mode_active=plan_turn_active,
             turn_had_pressure=turn_had_pressure,
+            tool_preparation_t0=tool_preparation_t0,
         )
         if (
             cfg.parallel_readonly_enabled
@@ -1360,7 +1373,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     record_tool_start(tc, state)
                     state.preexecuted_metadata[tc.id] = {}
                     futures[tc.id] = _ex.submit(
-                        copy_context().run, dispatch, tc.name, tc.arguments,
+                        copy_context().run, timed_dispatch, state, tc, dispatch, tc.name, tc.arguments,
+                        emit_end=False,
                         cwd=session.cwd, cfg=cfg,
                         output_control=effective_output_control,
                         universal_rewrites=effective_universal_rewrites,
@@ -1392,6 +1406,10 @@ def run_session_loop(session: "Session") -> "SessionResult":
                         )
                     except Exception as e:
                         preexecuted[tc_id] = f"ERROR: {e}"
+                    finally:
+                        record = timing.dispatches.get(tc_id)
+                        if record is not None:
+                            emit_tool_end(session, turn, tc_id, record)
         for tc in tool_calls:
             args_summary = _summarize_args(tc.arguments, cfg.args_summary_chars)
             validation = schema_validations.get(tc.id)
@@ -1487,6 +1505,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     total_prompt_tokens=total_prompt,
                     total_completion_tokens=total_completion,
                 )
+        tools_finished = time.perf_counter()
+        timing.tools_finished = tools_finished
         # checkpoint/rewind handlers only schedule context work. Finalizing
         # here guarantees the assistant message and every result from a
         # multi-tool turn form a complete protocol boundary before any cut.
@@ -1547,6 +1567,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
         _run_post_turn_hooks(
             session, turn, run_advisor=not advisor_intervened
         )
+        timing.post_finished = time.perf_counter()
     # ─── 7. GUARDRAIL: max_turns (hard cap, END tier) ────────────────
     return SessionResult(
         consumed_turns,

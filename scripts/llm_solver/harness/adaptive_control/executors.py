@@ -67,6 +67,7 @@ _BLOCKED_FIELD_NAMES = {
     "skills_dirs",
     "skills_enabled",
     "skills_readable_dirs",
+    "skills_native_readable_dirs",
     "timeout_connect",
     "timeout_read",
     "tokenizer_id",

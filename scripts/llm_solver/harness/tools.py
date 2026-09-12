@@ -409,6 +409,7 @@ def admit_tool_output(
     filter_shell_output: bool = True,
     security_findings=(),
     cwd: str | Path | None = None,
+    runner_command: str | None = None,
 ) -> str:
     """Apply the single model-facing output-admission pipeline.
 
@@ -416,6 +417,8 @@ def admit_tool_output(
     result event. Their marked result then passes through :func:`dispatch`
     without a second transform.
     """
+    if runner_command is None:
+        runner_command = getattr(result, "runner_command", "")
     result = str(result)
     security_findings = tuple(security_findings)
     test_summary = ""
@@ -440,16 +443,14 @@ def admit_tool_output(
         if output_control is not None and name == "bash":
             from ..bash_quirks import condense_output
             result = condense_output(result, cmd, output_control)
-    elif name == "run_tests" and filter_shell_output and cwd is not None:
-        from ..language_quirks import load_run_tests_quirk_object
-        quirk = load_run_tests_quirk_object(
-            cwd, runner=getattr(cfg, "analysis_task_format", "auto"),
-        )
-        runner_cmd = quirk.env_activate_prefix + quirk.base_cmd
-        result = _filter_bash_output(result, runner_cmd, cfg)
+    elif name == "run_tests" and filter_shell_output:
+        # The tool already selected and executed its command in the task view.
+        # Admission must not inspect declarations again or invent a runner for
+        # an unresolved/error result that did not execute a command.
+        result = _filter_bash_output(result, runner_command, cfg)
         if output_control is not None:
             from ..bash_quirks import condense_output
-            result = condense_output(result, runner_cmd, output_control)
+            result = condense_output(result, runner_command, output_control)
 
     if test_summary:
         before = result
@@ -834,6 +835,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     raw_verification_status = getattr(result, "verification_status", "")
     raw_verification_evidence = getattr(result, "verification_evidence", None)
     raw_runner_request = getattr(result, "runner_request", None)
+    raw_runner_command = getattr(result, "runner_command", "")
     raw_shell_submission = getattr(result, "shell_submission", None)
     raw_execution_budget = getattr(result, "execution_budget", None)
     raw_observation = getattr(result, "observation_receipt", None)
@@ -892,10 +894,10 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         try:
             if succeeded and name == "read":
                 read_path = str(arguments.get("path", ""))
-                from ._tools._common import _resolve_read
+                from ._tools._common import _resolve_read, _skill_readable_roots
                 candidate = _resolve_read(
                     cwd, read_path,
-                    readonly_roots=tuple(getattr(cfg, "skills_readable_dirs", ()) or ()),
+                    readonly_roots=_skill_readable_roots(cfg),
                 )
                 from .task_path import resolve_task_path
                 if resolve_task_path(cwd, '.') in candidate.parents:
@@ -1009,6 +1011,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             cfg=cfg,
             output_control=output_control,
             mechanical_test_summary=display_filter_removed,
+            runner_command=raw_runner_command,
             redactions=redactions,
             filter_shell_output=not redirected,
             security_findings=(

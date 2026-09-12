@@ -14,6 +14,7 @@ from scripts.llm_solver.harness.loop import Session
 from scripts.llm_solver.harness.tools import dispatch
 from scripts.llm_solver.harness._guardrails.checks_post import mark_bash_verified
 from scripts.llm_solver.harness._guardrails.verification import observe_post_mutation_verification
+from tests.test_task_files import bwrap, namespace_files
 
 
 def _session(tmp_path, **overrides):
@@ -115,7 +116,7 @@ def test_background_replay_uses_recorded_binding_without_reading_current_files(t
         session._process_manager.close()
     events = [json.loads(line) for line in trace.getvalue().splitlines()]
     replay = ReplayProcessManager(events)
-    monkeypatch.setattr("scripts.llm_solver.harness.background_verification._file_revision",
+    monkeypatch.setattr("scripts.llm_solver.harness.background_verification._file_revisions",
                         lambda *args: pytest.fail("replay must not read current source"))
     binder = BackgroundVerification(lambda: session._guards, tmp_path)
     binder.start(replay, command)
@@ -125,6 +126,36 @@ def test_background_replay_uses_recorded_binding_without_reading_current_files(t
     assert result.verification_status == original["verification_status"] == "custom_passed"
     assert result.verification_evidence == original["verification_evidence"]
     assert replay.consumed_all
+
+
+def test_background_revision_checks_batch_all_native_inputs(bwrap, tmp_path):
+    from scripts.llm_solver.harness.background_verification import BackgroundVerification
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness.task_path import activate_task_files
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'source_{index}.py' for index in range(23)]
+    for name in names:
+        (source / name).write_text(name)
+    state = GuardrailState(has_mutated=True, mutation_count=1,
+                           verification_file_revisions=dict.fromkeys(names, 'tracked'))
+    binder = BackgroundVerification(lambda: state, source)
+    manager = SimpleNamespace(start=lambda command: SimpleNamespace(proc_id='owned', result='started'))
+    operations = []
+    original_run = files.run
+    def observed(script, args, data):
+        operations.append(args[3] if len(args) > 3 else 'discovery')
+        return original_run(script, args, data)
+    files.run = observed
+    with activate_task_files(files, host_root=source):
+        assert binder.start(manager, 'pytest') == 'started'
+        assert operations.count('resolve_files') == 1 and operations.count('digest_batch') == 1
+        operations.clear()
+        assert binder.poll_metadata('owned', None)['verification_status'] == 'process_running'
+        assert not operations
+        assert binder.poll_metadata('owned', 0)['verification_evidence']['revision_matches'] is True
+        assert operations == ['resolve_files', 'digest_batch']
+        (source / names[-1]).write_text('changed')
+        assert binder.poll_metadata('owned', 0)['verification_status'] == 'stale_revision'
 
 
 def test_blocked_background_result_retains_exit_without_verification_credit(tmp_path, monkeypatch):

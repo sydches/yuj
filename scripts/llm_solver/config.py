@@ -278,6 +278,8 @@ class Config:
     # Effective, validated roots fixed by startup discovery. This is not a
     # user knob: it lets read and shell sandboxes expose only loaded skills.
     skills_readable_dirs: tuple[str, ...] = ()
+    # Catalog aliases within the selected task namespace; never host mounts.
+    skills_native_readable_dirs: tuple[str, ...] = ()
     # Startup observation, not a user knob or a benchmark-supplied answer.
     runtime_test_selection: dict[str, object] | None = None
     context_allocation: dict[str, object] | None = None

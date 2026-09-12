@@ -44,6 +44,65 @@ def request(root):
     return bind_runner_workspace({'family': 'pytest'}, 'pytest nested/cases.py', str(root))
 
 
+def test_verification_batches_all_tracked_files_and_checks_canonical_ignore_rules(bwrap, tmp_path):
+    import os
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.verification import record_verification_mutation, verification_tree_matches
+    from scripts.llm_solver.harness.sandbox.ignore_policy import activate_ignore_policy, load_ignore_policy
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / '__pycache__').mkdir()
+    names = [f'__pycache__/module_{i}.pyc' for i in range(23)]
+    names[0] = '__pycache__/literal\nmodule.pyc'
+    for name in names:
+        (source / name).write_bytes(name.encode())
+    (source / '.yujignore').write_text('hidden.py\n')
+    (source / 'hidden.py').write_bytes(b'not observable')
+    (source / 'alias.py').symlink_to('hidden.py')
+    state = GuardrailState()
+    operations = []
+    original_run = files.run
+    def observed(script, args, data):
+        operations.append(args[3] if len(args) > 3 else 'discovery')
+        return original_run(script, args, data)
+    files.run = observed
+    with activate_task_files(files, host_root=source):
+        policy = load_ignore_policy(source)
+        with activate_ignore_policy(policy):
+            operations.clear()
+            record_verification_mutation(state, tc_name='edit', result='OK',
+                source_write_paths=tuple([*names, 'alias.py']), cwd=str(source))
+            assert len(state.verification_file_revisions) == 24
+            assert state.verification_file_revisions['alias.py'] == 'missing'
+            assert operations.count('resolve_files') == 1
+            assert operations.count('digest_batch') == 1
+            assert 'resolve' not in operations and 'stat' not in operations
+            operations.clear()
+            assert verification_tree_matches(state, str(source))
+            assert operations == ['resolve_files', 'digest_batch']
+            changed = source / names[-1]
+            info = changed.stat()
+            changed.write_bytes(b'X' * info.st_size)
+            os.utime(changed, ns=(info.st_atime_ns, info.st_mtime_ns))
+            assert not verification_tree_matches(state, str(source))
+
+
+def test_batched_verification_preserves_scalar_missing_and_unknown_results(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails.verification import _file_revision, _file_revisions
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'visible').write_bytes(b'bytes')
+    (source / 'directory').mkdir()
+    (source / 'denied').write_bytes(b'denied')
+    (source / 'denied').chmod(0)
+    (source / 'escape').symlink_to(tmp_path / 'outside')
+    (tmp_path / 'outside').write_bytes(b'outside')
+    names = ['visible', 'missing', 'directory', 'denied', 'escape']
+    with activate_task_files(files, host_root=source):
+        expected = {name: _file_revision(str(source), name) for name in names}
+        assert expected == {'visible': hashlib.sha256(b'bytes').hexdigest(),
+                            'missing': 'missing', 'directory': '', 'denied': '', 'escape': ''}
+        assert _file_revisions(str(source), names) == expected
+
+
 @pytest.mark.parametrize('spelling', ['relative', 'host', 'native'])
 def test_partial_complete_and_changed_native_revision(rig, spelling):
     root, files, overlay, cfg, state = rig

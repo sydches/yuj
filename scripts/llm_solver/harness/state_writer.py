@@ -4,9 +4,9 @@ The model never maintains `.solver/state.json`. The harness does. This module
 projects a sequence of lean `.trace.jsonl` telemetry events into a content-blind
 state schema that `SolverStateContext` reads back into the prompt.
 
-Write path: rebuild-from-trace. On each invocation, re-read the full trace
-file and rewrite state.json from scratch. No in-memory accumulator, no drift.
-state.json is a *view* over `.trace.jsonl`, nothing more.
+Offline calls rebuild from the selected trace. Live calls use the in-memory
+event prefix; state_projection can reuse the body for timing-only appends while
+publishing fresh metadata. Both paths produce the same state.json view.
 
 Schema (target of the projection, consumed by SolverStateContext):
 

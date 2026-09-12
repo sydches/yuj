@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import subprocess
 import sys
 
 import pytest
@@ -100,6 +102,114 @@ def test_content_hash_cache_reparses_only_changed_file(tmp_path):
     assert extractor.extracted == ["code.fixture", "code.fixture"]
 
 
+@pytest.fixture
+def native_index(tmp_path):
+    from llm_solver.harness.task_files import NamespaceFiles
+    from llm_solver.harness.task_path import activate_task_files, bound_task_path
+
+    def run(script, args, data):
+        return subprocess.run(
+            ['bash', '--noprofile', '--norc', '-c', script, 'index-test', *args],
+            input=data, capture_output=True, cwd=tmp_path, check=False,
+        )
+
+    files = NamespaceFiles(str(tmp_path), run, binding={'test': 'native-index'})
+    with activate_task_files(files, host_root=tmp_path):
+        yield files, StructuralIndex(bound_task_path(str(tmp_path), '.'),
+                                     extractor=_RecordingExtractor())
+
+
+def test_native_pages_check_bytes_without_retransferring_unchanged_sources(
+    tmp_path, native_index, monkeypatch,
+):
+    files, index = native_index
+    source = tmp_path / 'a.fixture'
+    source.write_text('DEF before\nREF target\n' + '# padding\n' * 100_000)
+    (tmp_path / 'b.fixture').write_text('DEF target\nREF target\n')
+    reads = []
+    original_read = files.read_bytes
+
+    def record_read(path):
+        reads.append(str(path))
+        return original_read(path)
+
+    monkeypatch.setattr(files, 'read_bytes', record_read)
+    first = index.search(page=1, per_page=2)
+    assert [row.name for row in first.rows] == ['before', 'target']
+    assert len(reads) == 2
+    reads.clear()
+    second = index.search(page=2, per_page=2)
+    assert [row.name for row in second.rows] == ['target', 'target']
+    assert second.cache_hits == 2
+    assert reads == []
+
+    # A writer outside the tool protocol can preserve size and timestamps.
+    previous = source.stat()
+    source.write_bytes(source.read_bytes().replace(b'before', b'newest'))
+    os.utime(source, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    changed = index.search(page=1, per_page=2)
+    assert [row.name for row in changed.rows] == ['newest', 'target']
+    assert changed.cache_hits == 1
+    assert reads == [str(source)]
+
+    source.unlink()
+    (tmp_path / 'c.fixture').write_text('DEF added\n')
+    refreshed = index.search(page=2, per_page=2)
+    assert [row.name for row in refreshed.rows] == ['added']
+    assert refreshed.total == 3
+
+
+def test_structural_scan_checks_supported_sources_before_other_file_metadata(
+    tmp_path, native_index, monkeypatch,
+):
+    files, index = native_index
+    (tmp_path / 'code.fixture').write_text('DEF target\n')
+    (tmp_path / 'ignored').mkdir()
+    (tmp_path / 'ignored' / 'secret.fixture').write_text('DEF secret\n')
+    index._ignored_dir_names = frozenset({'ignored'})
+    for number in range(23):
+        (tmp_path / f'cache{number}.pyc').write_bytes(b'not source')
+    checked = []
+    original = index._is_readable_path
+
+    def track(path):
+        checked.append(path.name)
+        return original(path)
+
+    monkeypatch.setattr(index, '_is_readable_path', track)
+    first = index.search()
+    assert [row.name for row in first.rows] == ['target']
+    assert checked == ['code.fixture']
+    assert index.search().cache_hits == 1
+    assert not any(name.endswith('.pyc') for name in checked)
+
+
+@pytest.mark.parametrize('readable', [False, True])
+def test_native_digest_failure_preserves_ordinary_reads_and_diagnostics(
+    tmp_path, native_index, monkeypatch, readable,
+):
+    files, index = native_index
+    source = tmp_path / 'a.fixture'
+    source.write_text('DEF before\n')
+    assert index.scan().files_scanned == 1
+    source.write_text('DEF after\n')
+
+    def unavailable(*args):
+        raise PermissionError(13, 'unreadable')
+
+    monkeypatch.setattr(files, 'sha256_many', unavailable)
+    if not readable:
+        monkeypatch.setattr(files, 'read_bytes', unavailable)
+    result = index.scan()
+    if readable:
+        assert [row.name for row in result.rows] == ['after']
+        assert result.diagnostics == ()
+    else:
+        assert result.rows == ()
+        assert result.diagnostics[0].path == 'a.fixture'
+        assert result.diagnostics[0].error_kind == 'read_error'
+
+
 def test_unreadable_file_and_directory_are_never_loaded(tmp_path):
     (tmp_path / "visible.fixture").write_text("DEF visible\n")
     secret = tmp_path / "secret.fixture"
@@ -122,14 +232,15 @@ def test_unreadable_file_and_directory_are_never_loaded(tmp_path):
 def test_read_diagnostic_does_not_retain_absolute_host_path(tmp_path, monkeypatch):
     source = tmp_path / "broken.fixture"
     source.write_text("DEF hidden\n")
-    original_read_bytes = Path.read_bytes
+    from llm_solver.harness import local_file_access
+    original_read_bytes = local_file_access.read_bytes
 
-    def failed_read(path: Path) -> bytes:
+    def failed_read(cwd, path: Path) -> bytes:
         if path.resolve() == source.resolve():
             raise PermissionError(13, "permission denied", str(path))
-        return original_read_bytes(path)
+        return original_read_bytes(cwd, path)
 
-    monkeypatch.setattr(Path, "read_bytes", failed_read)
+    monkeypatch.setattr(local_file_access, "read_bytes", failed_read)
     snapshot = StructuralIndex(tmp_path, extractor=_RecordingExtractor()).scan()
 
     assert snapshot.rows == ()

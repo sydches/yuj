@@ -65,10 +65,15 @@ def _advice_text(output: str) -> str:
     )
 
 
-def test_run_tests_admission_uses_detected_runner_command(tmp_path):
+@pytest.mark.parametrize('override', ['', 'cargo test custom_target'])
+def test_run_tests_admission_uses_executed_runner_command(tmp_path, override):
     (tmp_path / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
-    result = '<test_results status="passed" runner="cargo">ok</test_results>'
-    cfg = make_config()
+    cfg = make_config(tools_run_tests_enabled=True, analysis_task_format='auto',
+        runtime_test_selection={'status': 'selected', 'selected': {
+            'runner': 'cargo', 'base_cmd': 'cargo test --no-fail-fast --quiet'}})
+    captured = {}
+    with _patch_sandbox(captured, text='ok'):
+        result = run_tests(cwd=str(tmp_path), cfg=cfg, base_cmd_override=override)
 
     with patch.object(
         tools_mod, "_filter_bash_output", return_value=result,
@@ -82,7 +87,15 @@ def test_run_tests_admission_uses_detected_runner_command(tmp_path):
         )
 
     assert admitted == result
-    assert output_filter.call_args.args[1] == "cargo test --no-fail-fast --quiet"
+    assert output_filter.call_args.args[1] == captured['cmd']
+
+
+def test_run_tests_admission_does_not_discover_runner_for_unexecuted_error(tmp_path):
+    (tmp_path / 'Cargo.toml').write_text('[package]\n')
+    with patch.object(tools_mod, '_filter_bash_output', return_value='ERROR: disabled') as output_filter:
+        tools_mod.admit_tool_output('run_tests', 'ERROR: disabled', arguments={},
+                                    cfg=make_config(), cwd=tmp_path)
+    assert output_filter.call_args.args[1] == ''
 
 
 # ── Handler: gating ──────────────────────────────────────────────────────

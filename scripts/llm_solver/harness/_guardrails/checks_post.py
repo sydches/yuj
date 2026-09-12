@@ -278,17 +278,23 @@ def mark_bash_verified(state: GuardrailState, cfg: Any, *,
     ):
         state.verified_since_mutation = False
         return
+    from .verification import verification_result_passed
+    passed = verification_result_passed(tc_name, result, execution_metadata, formal=False)
+    failed = bool((execution_metadata or {}).get("executed")
+                  and (execution_metadata or {}).get("verification_status") in {
+                      "custom_failed", "timed_out", "error",
+                  })
+    # Ordinary inspections cannot change verification credit. Resolve current
+    # input revisions only when this result could update that credit.
+    if not passed and not failed:
+        return
     from .verification import verification_changes_tree, verification_tree_matches
     if (not verification_tree_matches(state, cwd)
             or verification_changes_tree(tc_name, tc_args)):
         return
-    from .verification import verification_result_passed
-    if verification_result_passed(tc_name, result, execution_metadata, formal=False):
+    if passed:
         state.verified_since_mutation = True
-    elif ((execution_metadata or {}).get("executed")
-          and (execution_metadata or {}).get("verification_status") in {
-              "custom_failed", "timed_out", "error",
-          }):
+    elif failed:
         state.verified_since_mutation = False
 
 

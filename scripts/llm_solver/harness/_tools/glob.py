@@ -7,37 +7,70 @@ from ._common import _paginated_envelope, _resolve
 
 _NATIVE_GLOB = r'''
 native_glob() {
-    files_only=$1; directories_only=$2; shift 2
+    local readlink_bin=$1
+    files_only=$2; directories_only=$3; shift 3
     parts=("$@")
     declare -A visiting=()
+    local -a pending=() labels=()
     shopt -s nullglob dotglob
-    emit_match() {
-        local resolved
-        canonical resolved "$1" || return 0
+    emit_resolved() {
+        local resolved=$2
         case "$resolved" in "$root"|"${root%/}/"*) ;; *) return 0 ;; esac
         [[ "$files_only" != 1 || -f "$resolved" ]] || return 0
         [[ "$directories_only" != 1 || -d "$resolved" ]] || return 0
         printf '%s\0' "$1"
     }
+    flush_matches() {
+        (( ${#pending[@]} )) || return 0
+        local index resolved status
+        local -a resolved_paths=()
+        mapfile -d '' -t resolved_paths < <("$realpath_bin" -m -z -- "${pending[@]}")
+        wait "$!"; status=$?
+        if (( status == 0 && ${#resolved_paths[@]} == ${#pending[@]} )); then
+            for index in "${!pending[@]}"; do
+                emit_resolved "${labels[$index]}" "${resolved_paths[$index]}"
+            done
+        else
+            # Preserve individual inaccessible-path handling on a partial batch.
+            for index in "${!pending[@]}"; do
+                canonical resolved "${pending[$index]}" || continue
+                emit_resolved "${labels[$index]}" "$resolved"
+            done
+        fi
+        pending=()
+        labels=()
+    }
+    emit_match() {
+        pending+=("$1")
+        labels+=("$2")
+        (( ${#pending[@]} < 64 )) || flush_matches
+        return 0
+    }
     expand() {
-        local directory=$1 index=$2 resolved key part child
+        local directory=$1 index=$2 display=$3 resolved key part child directory_fd
         [[ -d "$directory" ]] || return 0
-        canonical resolved "$directory" || return 0
-        case "$resolved" in "$root"|"${root%/}/"*) ;; *) return 0 ;; esac
+        [[ -r "$directory" ]] || return 0
+        exec {directory_fd}< "$directory" || return 74
+        resolved=$("$readlink_bin" -- "/proc/self/fd/$directory_fd"; code=$?; printf '.'; exit "$code") || return 74
+        resolved=${resolved%.}; resolved=${resolved%$'\n'}
+        case "$resolved" in "$root"|"${root%/}/"*) ;; *) exec {directory_fd}<&-; return 0 ;; esac
+        directory=/proc/self/fd/$directory_fd
         if (( index == ${#parts[@]} )); then
-            emit_match "$directory"
+            emit_match "$directory" "$display"
+            flush_matches
+            exec {directory_fd}<&-
             return
         fi
         key="$resolved/$index"
-        [[ ! ${visiting[$key]:-} ]] || return 0
+        if [[ ${visiting[$key]:-} ]]; then exec {directory_fd}<&-; return 0; fi
         visiting[$key]=1
         part=${parts[index]}
         if [[ "$part" == .. ]]; then
-            expand "$directory/.." "$((index + 1))"
+            expand "$directory/.." "$((index + 1))" "$display/.." || return
         elif [[ "$part" == '**' ]]; then
-            expand "$directory" "$((index + 1))"
+            expand "$directory" "$((index + 1))" "$display" || return
             for child in "$directory"/*; do
-                expand "$child" "$index"
+                expand "$child" "$index" "$display/${child##*/}" || return
             done
         else
             # Keep fnmatch's literal backslash and bracket-caret behavior.
@@ -46,16 +79,20 @@ native_glob() {
             for child in "$directory"/*; do
                 [[ "${child##*/}" == $part ]] || continue
                 if (( index + 1 == ${#parts[@]} )); then
-                    emit_match "$child"
+                    emit_match "$child" "$display/${child##*/}"
                 else
-                    expand "$child" "$((index + 1))"
+                    expand "$child" "$((index + 1))" "$display/${child##*/}" || return
                 fi
             done
         fi
         visiting[$key]=''
+        # Resolve queued entries while their parent descriptor is still open.
+        flush_matches
+        exec {directory_fd}<&-
         return 0
     }
-    expand "${root%/}/$requested" 0
+    expand "${root%/}/$requested" 0 "${root%/}/$requested" || return
+    flush_matches
 }
 '''
 
@@ -88,22 +125,15 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         # cleanup transform. Filesystem enumeration order varies across
         # byte-identical worktree copies.
         from ..task_path import TaskPath
+        from ..local_discovery import local_glob
         native = isinstance(base, TaskPath)
         matches = (sorted(base.glob(pattern, files_only=True))
-                   if native else sorted(base.glob(pattern)))
-        # An outside directory can contain aliases back into the task.
-        # Its entry names are still outside the permitted discovery scope.
+                   if native else sorted(local_glob(root, base, pattern)))
+        # Both walkers retain checked directories and reject outside aliases.
         rel = [
             str(m.relative_to(root))
             for m in matches
-            if (native or (m.is_file()
-            and m.resolve().is_relative_to(root)
-            and all(
-                parent.resolve().is_relative_to(root)
-                for parent in m.parents
-                if parent.is_relative_to(root)
-            )))
-            and (
+            if (
                 policy is None
                 or not policy.is_ignored(m, is_dir=False)
             )

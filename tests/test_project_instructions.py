@@ -20,7 +20,7 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text)
 
 
-def test_global_and_project_walk_order_override_precedence_and_fallback(tmp_path):
+def test_local_task_never_loads_ancestor_or_external_global_guidance(tmp_path):
     global_dir = tmp_path / "global"
     root = tmp_path / "repo"
     cwd = root / "packages" / "worker"
@@ -38,29 +38,18 @@ def test_global_and_project_walk_order_override_precedence_and_fallback(tmp_path
 
     result = discover_project_instructions(cwd, global_dir=global_dir)
 
-    assert result.files == (
-        "global/AGENTS.override.md",
-        "AGENTS.md",
-        "packages/AGENTS.override.md",
-        "packages/worker/CLAUDE.md",
-    )
-    positions = [
-        result.content.index(marker)
-        for marker in (
-            "GLOBAL_OVERRIDE",
-            "ROOT_AGENTS",
-            "PACKAGE_OVERRIDE",
-            "WORKER_FALLBACK",
-        )
-    ]
-    assert positions == sorted(positions)
+    assert result.files == ("CLAUDE.md",)
+    assert "WORKER_FALLBACK" in result.content
+    assert "GLOBAL_OVERRIDE" not in result.content
+    assert "ROOT_AGENTS" not in result.content
+    assert "PACKAGE_OVERRIDE" not in result.content
     assert "GLOBAL_DEFAULT" not in result.content
     assert "ROOT_FALLBACK_NOT_USED" not in result.content
     assert "PACKAGE_DEFAULT_NOT_USED" not in result.content
-    assert result.content.count("<project-instructions path=") == 4
+    assert result.content.count("<project-instructions path=") == 1
 
 
-def test_find_project_root_uses_nearest_marker_or_cwd(tmp_path):
+def test_local_project_root_stays_at_cwd_even_with_ancestor_markers(tmp_path):
     outer = tmp_path / "outer"
     inner = outer / "inner"
     cwd = inner / "src"
@@ -68,7 +57,7 @@ def test_find_project_root_uses_nearest_marker_or_cwd(tmp_path):
     (inner / ".hg").mkdir(parents=True)
     cwd.mkdir(parents=True)
 
-    assert find_project_root(cwd) == inner.resolve()
+    assert find_project_root(cwd) == cwd.resolve()
 
     unmarked = tmp_path / "plain" / "child"
     unmarked.mkdir(parents=True)
@@ -85,16 +74,15 @@ def test_empty_file_skip_and_utf8_byte_cap(tmp_path):
     _write(child / "AGENTS.md", "ééé")
 
     with pytest.raises(ValueError, match="instruction.*byte.*ceiling"):
-        discover_project_instructions(child, max_bytes=9)
-    result = discover_project_instructions(child, max_bytes=10)
+        discover_project_instructions(child, max_bytes=5)
+    result = discover_project_instructions(child, max_bytes=6)
 
-    assert result.files == ("CLAUDE.md", "child/AGENTS.md")
-    assert result.documents[0].content == "ROOT"
-    assert result.documents[1].content == "ééé"
-    assert result.documents[1].byte_count == 6
-    assert result.document_bytes == 10
+    assert result.files == ("AGENTS.md",)
+    assert result.documents[0].content == "ééé"
+    assert result.documents[0].byte_count == 6
+    assert result.document_bytes == 6
     assert result.truncated is False
-    assert len("".join(doc.content for doc in result.documents).encode()) == 10
+    assert len("".join(doc.content for doc in result.documents).encode()) == 6
 
 
 def test_unreadable_candidates_are_skipped_before_read(tmp_path, monkeypatch):
@@ -123,8 +111,8 @@ def test_unreadable_candidates_are_skipped_before_read(tmp_path, monkeypatch):
         unreadable_paths=(str(blocked_override), str(blocked_dir)),
     )
 
-    assert result.files == ("AGENTS.md",)
-    assert "VISIBLE_FALLBACK" in result.content
+    assert result.files == ()
+    assert "VISIBLE_FALLBACK" not in result.content
     assert "MUST_NOT_LOAD" not in result.content
 
 

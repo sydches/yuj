@@ -61,12 +61,14 @@ from ..plan_mode import (
 )
 from ..tool_loading import estimate_tool_block_tokens
 from ..task_environment import task_environment_scope
+from ..savings import savings_ledger_scope
 from ..time_budget import solve_time_budget, remaining_run_seconds
 
 if TYPE_CHECKING:
     from ..loop import SessionResult, TaskSpec
 log = logging.getLogger(__name__)
 
+@savings_ledger_scope
 @task_environment_scope
 @solve_time_budget
 def solve_task(
@@ -228,9 +230,8 @@ def solve_task(
         allow_login_shell=allow_login_shell, ignore_policy=ignore_policy,
         unreadable_paths=prompt_unreadable_paths,
     )
-    # Freeze only validated, first-wins skill directories into the run config.
-    # File mutation tools retain their cwd-only resolver.
-    cfg = replace(cfg, skills_readable_dirs=skill_catalog.readable_dirs)
+    # Discovery reads the admitted task view; it cannot grant new host mounts.
+    cfg = replace(cfg, skills_native_readable_dirs=skill_catalog.readable_dirs)
     prompt_file = artifact_dir / PROMPT_NAME
     pretest_script = task_spec.pretest_script if task_spec is not None else None
     task_prompt = initial_prompt
@@ -374,7 +375,6 @@ def solve_task(
     # Session so subsequent sessions inherit the baseline. None when not
     # populated or not applicable (no parser / empty pretest).
     pretest_parsed_verdict: dict | None = None
-    from ..savings import close_ledger
     from ..system_log import close_system_log
     artifact_dir.mkdir(parents=True, exist_ok=True)
     recovery_plan = RecoveryPlan(recovered=False)
@@ -432,6 +432,24 @@ def solve_task(
             )
             if env_fields["bwrap_preflight_error"] and not env_fields["yuj_container"]:
                 log.warning("bwrap_preflight: %s", env_fields["bwrap_preflight_error"])
+            # Refuse to start a selected sandbox when its preflight failed.
+            # _run_in_sandbox would also catch this on the first bash call,
+            # but failing here is louder and avoids any pretest noise.
+        if cfg.sandbox_bash and not env_fields["sandbox_engaged"]:
+            raise RuntimeError(
+                f"selected sandbox has sandbox_engaged=false "
+                f"(sandbox_mode={env_fields['sandbox_mode']}, "
+                f"sandbox_backend={env_fields['sandbox_backend']!r}, "
+                f"bwrap_bin={cfg.bwrap_bin!r}, "
+                f"bwrap_present={env_fields['bwrap_present']}, "
+                f"bwrap_preflight_passed={env_fields['bwrap_preflight_passed']}, "
+                f"bwrap_preflight_error={env_fields['bwrap_preflight_error']!r}, "
+                f"container_runtime={env_fields['container_runtime']!r}, "
+                f"container_preflight_error="
+                f"{env_fields['container_preflight_error']!r}, "
+                f"yuj_container={env_fields['yuj_container']!r}). Refusing "
+                "to start a session that would run model commands unsandboxed."
+            )
         for finding in prompt_metadata.security_findings:
             _emit_trace_event(
                 trace_file,
@@ -600,6 +618,7 @@ def solve_task(
             session_cfg = replace(
                 session_cfg,
                 skills_readable_dirs=cfg.skills_readable_dirs,
+                skills_native_readable_dirs=cfg.skills_native_readable_dirs,
             )
             thinking_fields = thinking_trace_fields(session_cfg, session_client)
             session_start_tool_surface = build_tool_surface(
@@ -1057,6 +1076,5 @@ def solve_task(
         }
     )
     write_run_metrics(artifact_dir, metrics, provenance, overwrite=overwrite_status)
-    close_ledger()
     close_system_log()
     return success

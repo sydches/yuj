@@ -39,6 +39,8 @@ def test_declarations_and_multiple_installed_environments_keep_their_sources(tmp
             return json.dumps({"envs": ["/envs/one", "/envs/two"]}), 0, False
         if command == "/tools/conda --version":
             return "conda 1.fixture\n", 0, False
+        if command.startswith(('/envs/one/bin/python ', '/envs/two/bin/python ')):
+            return '', 127, False
         assert command == "/tools/uv --version"
         return "uv 1.fixture\n", 0, False
 
@@ -56,6 +58,28 @@ def test_declarations_and_multiple_installed_environments_keep_their_sources(tmp
     assert all(call[1]["normalize_addresses"] is False for call in calls)
     assert not any("install" in call[0] or "activate" in call[0] for call in calls)
     assert report["facts_chars"] == len(json.dumps(report["facts"], ensure_ascii=True))
+
+
+def test_prepared_python_without_pytest_is_bound_and_briefed(tmp_path, monkeypatch):
+    from scripts.llm_solver.harness.runtime_briefing import build_runtime_briefing
+
+    monkeypatch.delenv('YUJ_CONTAINER', raising=False)
+    runtime = tmp_path / '.venv'
+    venv.EnvBuilder(with_pip=False).create(runtime)
+    (tmp_path / 'setup.py').write_text('# Python project with its own check script\n')
+    cfg = make_config(analysis_task_format='auto')
+    environment = {'PATH': str(runtime / 'bin') + ':/usr/bin:/bin'}
+    report = discovery.discover_runtime(tmp_path, cfg, effective_env=environment, selection_only=True)
+    assert report['runner_selection']['status'] != 'selected'
+    assert report['language_runtime']['request_source'] == 'observed_language'
+    selected = report['language_runtime']['selected']
+    assert selected['runtime']['prefix'] == str(runtime)
+    bound = discovery.bind_command_environment(cfg, report, environment)
+    assert bound['PATH'].split(':')[0] == str(runtime / 'bin')
+    briefing = build_runtime_briefing(str(tmp_path), report)
+    assert briefing['language'] == 'Python'
+    assert briefing['runtime_executable'] == str(runtime / 'bin' / 'python')
+    assert 'test_runner' not in briefing and 'test_command' not in briefing
 
 
 def test_actual_local_probe_observes_tools_in_the_supplied_path(tmp_path, monkeypatch):

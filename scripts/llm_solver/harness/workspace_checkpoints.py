@@ -22,6 +22,8 @@ from .._shared.telemetry_paths import telemetry_dir
 from .tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 from .task_path import TaskPath, bound_task_path
 from .time_budget import BudgetExhausted, execution_deadline, remaining_before
+from . import local_file_access
+from .checkpoint_files import checkpoint_entry_path
 
 _HEAD_REF = "refs/heads/checkpoints"
 _TURN_REF_PREFIX = "refs/yuj/checkpoints/turn-"
@@ -314,42 +316,73 @@ class WorkspaceCheckpointStore:
             if not raw:
                 continue
             rel_path = _safe_relative_path(os.fsdecode(raw))
-            target = self.workspace / rel_path
             if self._is_excluded(rel_path):
                 continue
-            if target.is_symlink() or target.is_file():
+            target = checkpoint_entry_path(self.workspace, self.workspace / rel_path)
+            try:
+                mode = local_file_access.stat(self.workspace, target).st_mode
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(mode) or stat.S_ISREG(mode):
                 paths.append(rel_path)
         return sorted(set(paths))
 
-    def _hash_file(self, rel_path: str) -> tuple[int, str, int]:
-        native = bound_task_path(str(self.workspace), '.')
-        path = (native if native is not None else self.workspace) / rel_path
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            data = os.fsencode(path.files.readlink(str(path.path)) if isinstance(path, TaskPath) else os.readlink(path))
+    def _read_file(self, rel_path: str, root) -> tuple[int, bytes]:
+        path = root / rel_path
+        if isinstance(path, TaskPath):
+            observed_mode, data = path.files.read_entry(str(path.path))
+        else:
+            path = checkpoint_entry_path(root, path)
+            observed_mode, data = local_file_access.read_entry(root, path)
+        if stat.S_ISLNK(observed_mode):
             mode = 0o120000
-        elif stat.S_ISREG(info.st_mode):
-            data = path.read_bytes()
-            mode = 0o100755 if info.st_mode & 0o111 else 0o100644
+        elif stat.S_ISREG(observed_mode):
+            mode = 0o100755 if observed_mode & 0o111 else 0o100644
         else:
             raise WorkspaceCheckpointError(f"unsupported file type at {rel_path!r}")
-        object_id = self._git(
-            ["hash-object", "-w", "--stdin"], input_bytes=data
-        ).stdout.decode().strip()
-        if len(object_id) < 40:
-            raise WorkspaceCheckpointError(f"invalid blob id for {rel_path!r}: {object_id!r}")
-        return mode, object_id, len(data)
+        return mode, data
 
     def _build_tree(self, paths: list[str], index: Path) -> tuple[str, int]:
         self._git(["read-tree", "--empty"], index=index)
+        native = bound_task_path(str(self.workspace), '.')
+        root = native if native is not None else self.workspace
         records = bytearray()
         byte_count = 0
-        for rel_path in paths:
-            mode, object_id, size = self._hash_file(rel_path)
-            records.extend(f"{mode:o} blob {object_id}\t".encode())
-            records.extend(os.fsencode(rel_path))
-            records.append(0)
-            byte_count += size
+        with tempfile.TemporaryDirectory(prefix='.blobs-', dir=self.shadow_dir) as temporary:
+            pending = []
+            pending_bytes = 0
+
+            def flush():
+                if not pending:
+                    return
+                # These files contain bytes already read through the task
+                # boundary. Git never opens the host spelling of a task path.
+                output = self._git(['hash-object', '-w', '--no-filters', '--',
+                                    *(str(item[2]) for item in pending)]).stdout.splitlines()
+                if len(output) != len(pending):
+                    raise WorkspaceCheckpointError('checkpoint blob count differs from request')
+                for (relative, mode, staged), raw_id in zip(pending, output):
+                    object_id = raw_id.decode('ascii')
+                    if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', object_id):
+                        raise WorkspaceCheckpointError(f"invalid blob id for {relative!r}: {object_id!r}")
+                    records.extend(f"{mode:o} blob {object_id}\t".encode())
+                    records.extend(os.fsencode(relative))
+                    records.append(0)
+                    staged.unlink()
+                pending.clear()
+
+            for rel_path in paths:
+                remaining_before(execution_deadline())
+                mode, data = self._read_file(rel_path, root)
+                staged = Path(temporary) / str(len(pending))
+                staged.write_bytes(data)
+                pending.append((rel_path, mode, staged))
+                byte_count += len(data)
+                pending_bytes += len(data)
+                if len(pending) >= 64 or pending_bytes >= 8 * 1024 * 1024:
+                    flush()
+                    pending_bytes = 0
+            flush()
         if records:
             self._git(
                 ["update-index", "-z", "--index-info"],
@@ -495,52 +528,91 @@ class WorkspaceCheckpointStore:
     def _remove_path(self, rel_path: str) -> bool:
         native = bound_task_path(str(self.workspace), '.')
         root = native if native is not None else self.workspace
-        target = root / rel_path
-        if target.is_symlink() or target.is_file():
-            target.unlink()
-        elif target.exists():
+        target = checkpoint_entry_path(root, root / rel_path)
+        try:
+            mode = (target.lstat().st_mode if isinstance(target, TaskPath)
+                    else local_file_access.stat(root, target).st_mode)
+        except FileNotFoundError:
             return False
-        else:
+        if not (stat.S_ISLNK(mode) or stat.S_ISREG(mode)):
             return False
-        parent = target.parent
+        local_file_access.unlink(root, target)
+        parent = (root / rel_path).parent
         while parent != root:
             try:
-                parent.rmdir()
+                local_file_access.rmdir(root, checkpoint_entry_path(root, parent))
             except OSError:
                 break
             parent = parent.parent
         return True
 
     def _write_regular_file(self, target: Path, data: bytes, mode: int) -> None:
-        target.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(target, TaskPath):
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.files.replace_bytes(str(target.path), data,
                                        mode=stat.S_IMODE(mode))
             return
-        fd, temporary_name = tempfile.mkstemp(prefix=".yuj-restore-", dir=target.parent)
-        temporary = Path(temporary_name)
-        try:
-            _write_all(fd, data)
-            os.fchmod(fd, stat.S_IMODE(mode))
-            os.fsync(fd)
-            os.close(fd)
-            fd = -1
-            if target.is_dir() and not target.is_symlink():
+        target = checkpoint_entry_path(self.workspace, target)
+        with local_file_access.checked_local_parent(
+                self.workspace, target, create_parents=True) as (parent, name):
+            temporary = '.yuj-restore-' + uuid.uuid4().hex
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                         0o600, dir_fd=parent)
+            try:
+                _write_all(fd, data)
+                os.fchmod(fd, stat.S_IMODE(mode))
+                os.fsync(fd)
+                os.close(fd)
+                fd = -1
+                try:
+                    current = os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode
+                except FileNotFoundError:
+                    current = 0
+                if stat.S_ISDIR(current):
+                    try:
+                        os.rmdir(name, dir_fd=parent)
+                    except OSError as exc:
+                        raise WorkspaceCheckpointError(
+                            'cannot replace non-empty directory at '
+                            f'{target.relative_to(self.workspace)}') from exc
+                os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                try:
+                    os.unlink(temporary, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
+
+    def _write_symlink(self, target, data, *, relative):
+        if isinstance(target, TaskPath):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.exists():
                 try:
                     target.rmdir()
                 except OSError as exc:
                     raise WorkspaceCheckpointError(
-                        "cannot replace non-empty directory at "
-                        f"{target.relative_to(self.workspace)}"
-                    ) from exc
-            os.replace(temporary, target)
-        finally:
-            if fd >= 0:
-                os.close(fd)
+                        f"cannot replace non-empty directory at {relative}") from exc
+            target.symlink_to(os.fsdecode(data))
+            return
+        target = checkpoint_entry_path(self.workspace, target)
+        with local_file_access.checked_local_parent(
+                self.workspace, target, create_parents=True) as (parent, name):
             try:
-                temporary.unlink()
+                mode = os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode
             except FileNotFoundError:
-                pass
+                mode = 0
+            if stat.S_ISREG(mode) or stat.S_ISLNK(mode):
+                os.unlink(name, dir_fd=parent)
+            elif mode:
+                try:
+                    os.rmdir(name, dir_fd=parent)
+                except OSError as exc:
+                    raise WorkspaceCheckpointError(
+                        f"cannot replace non-empty directory at {relative}") from exc
+            os.symlink(os.fsdecode(data), name, dir_fd=parent)
 
     @_file_scoped_checkpoint
     def restore_checkpoint(self, turn: int) -> RestoredCheckpoint:
@@ -578,17 +650,7 @@ class WorkspaceCheckpointStore:
                             continue
                     journal.record(entry.path, data=data, mode=entry.mode)
                     if entry.mode == 0o120000:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        if target.is_symlink() or target.is_file():
-                            target.unlink()
-                        elif target.exists():
-                            try:
-                                target.rmdir()
-                            except OSError as exc:
-                                raise WorkspaceCheckpointError(
-                                    f"cannot replace non-empty directory at {entry.path}"
-                                ) from exc
-                        target.symlink_to(os.fsdecode(data))
+                        self._write_symlink(target, data, relative=entry.path)
                     else:
                         self._write_regular_file(target, data, entry.mode)
                 self._require_task_binding(binding)

@@ -53,14 +53,17 @@ class SandboxUnavailableError(RuntimeError):
 
 def _execute(argv, *, timeout, cwd=None, env=None, input_bytes=None, binary=False,
              pass_fds=()):
-    from ..process_identity import verified_process_result
+    from ..process_identity import verified_process_result, with_container_deadline
     from ..time_budget import execution_deadline, remaining_before
     pass_fds = tuple(dict.fromkeys((*pass_fds, *getattr(argv, 'pass_fds', ()))))
     timeout = remaining_before(execution_deadline(), command_timeout(timeout))
+    argv = with_container_deadline(argv, timeout)
     if not binary and (not command_is_scoped() or timeout is None):
         result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True,
                                 text=True, timeout=timeout,
                                 **({'pass_fds': pass_fds} if pass_fds else {}))
+        if getattr(argv, 'container_deadline', False) and result.returncode in (124, 137):
+            raise subprocess.TimeoutExpired(argv, timeout)
         return verified_process_result(argv, result)
     # A test runner may fork children that inherit its output pipes. Killing
     # only the shell and then draining those pipes can outlive the allowance.
@@ -75,6 +78,8 @@ def _execute(argv, *, timeout, cwd=None, env=None, input_bytes=None, binary=Fals
             out, err = process.communicate(input=input_bytes, timeout=timeout)
         else:
             out, err = process.communicate(timeout=timeout)
+        if getattr(argv, 'container_deadline', False) and process.returncode in (124, 137):
+            raise subprocess.TimeoutExpired(argv, timeout)
         return verified_process_result(argv, subprocess.CompletedProcess(argv, process.returncode, out, err))
     except BaseException as error:
         try:
@@ -264,7 +269,8 @@ def _run_in_sandbox(
                     flags=container_flags,
                 )
                 runtime_bin = container_runtime_bin or backend.resolve_runtime(sandbox_required=True)
-                assert runtime_bin is not None
+                if runtime_bin is None:
+                    raise SandboxUnavailableError('selected container runtime is unavailable')
                 from ..container_binding import bind_container_image
                 backend = bind_container_image(backend, runtime_bin, timeout=timeout)
                 argv = backend.build_argv(

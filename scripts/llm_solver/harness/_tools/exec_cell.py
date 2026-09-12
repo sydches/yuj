@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import codecs
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -102,6 +103,11 @@ timeout = int(initial["timeout"])
 
 
 def _timeout(_signum, _frame):
+    if initial.get("supervised_process_group"):
+        # Keep the task-side leader alive until the host confirms cleanup.
+        os.kill(os.getppid(), signal.SIGTERM)
+        sys.__stderr__.write(_PREFIX + '{"event":"timeout"}\n')
+        sys.__stderr__.flush()
     os._exit(124)
 
 
@@ -338,7 +344,35 @@ def _remaining_cfg(cfg: Config, deadline: float) -> Config:
     )
 
 
-def _terminate_process(proc: subprocess.Popen) -> None:
+def _terminate_process(proc: subprocess.Popen) -> str | None:
+    group = getattr(proc, '_container_process_group', None)
+    if group is not None:
+        from ..process_identity import ProcessIdentityError
+        try:
+            verification = proc._process_verification
+            deadline = time.monotonic() + 3
+            while group.handle is None:
+                try:
+                    data = os.read(proc.stdout.fileno(), 256)
+                except BlockingIOError:
+                    data = b''
+                verification.feed(data)
+                if group.handle is not None:
+                    break
+                if proc.poll() is not None:
+                    verification.finish()
+                if time.monotonic() >= deadline:
+                    raise ProcessIdentityError('task process startup handle is not available')
+                time.sleep(0.01)
+            group.terminate()
+            try:
+                proc.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                # Native work is stopped; this is only the host transport.
+                os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            return 'task process cleanup failed: ' + str(error)
+        return None
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (OSError, ProcessLookupError):
@@ -387,6 +421,8 @@ def execute_cell(
             effective_env=effective_env,
             allow_login_shell=allow_login_shell,
         )
+        from ..process_identity import with_container_process_group
+        argv = with_container_process_group(argv)
         proc = subprocess.Popen(
             argv,
             cwd=process_cwd,
@@ -408,6 +444,13 @@ def execute_cell(
     assert proc.stderr is not None
     from ..process_identity import ProcessVerification, ProcessIdentityError
     verification = ProcessVerification(argv)
+    proc._container_process_group = getattr(argv, 'container_process_group', None)
+    proc._process_verification = verification
+
+    def stop_process():
+        error = _terminate_process(proc)
+        if error:
+            collector.append((error + '\n').encode())
     deadline = time.monotonic() + timeout
     timed_out = False
     stderr_buffer = bytearray()
@@ -418,18 +461,19 @@ def execute_cell(
     os.set_blocking(proc.stderr.fileno(), False)
     try:
         initial = json.dumps(
-            {"source": source, "timeout": timeout},
+            {"source": source, "timeout": timeout,
+             "supervised_process_group": proc._container_process_group is not None},
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8") + b"\n"
         proc.stdin.write(initial)
         proc.stdin.flush()
 
-        while selector.get_map():
+        while selector.get_map() and not timed_out:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
-                _terminate_process(proc)
+                stop_process()
                 break
             events = selector.select(timeout=min(remaining, 0.1))
             if not events and proc.poll() is not None:
@@ -462,6 +506,10 @@ def execute_cell(
                         continue
                     try:
                         request = json.loads(line[len(_PROTOCOL_PREFIX):])
+                        if request.get('event') == 'timeout':
+                            timed_out = True
+                            stop_process()
+                            break
                         name = request.get("name")
                         arguments = request.get("arguments")
                         if name not in EXEC_CELL_API_TOOL_NAMES:
@@ -500,14 +548,17 @@ def execute_cell(
                             "executed": False,
                             "gate_blocked": False,
                         }
+                    finished = time.perf_counter()
                     inner_calls.append({
                         "index": len(inner_calls) + 1,
                         "name": str(name),
                         "arguments": dict(arguments),
                         "result": str(result),
                         "duration_ms": round(
-                            (time.perf_counter() - started) * 1000, 2
+                            (finished - started) * 1000, 2
                         ),
+                        "ended_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                        "dispatch_completed": not dispatch_error,
                         "execution_metadata": dict(call_metadata),
                     })
                     response = (
@@ -530,10 +581,13 @@ def execute_cell(
             exit_status = proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             timed_out = True
-            _terminate_process(proc)
-            exit_status = proc.wait(timeout=2)
+            stop_process()
+            try:
+                exit_status = proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                exit_status = None
     except (BrokenPipeError, OSError, ProcessIdentityError) as exc:
-        _terminate_process(proc)
+        stop_process()
         try:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:

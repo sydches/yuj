@@ -307,6 +307,13 @@ def test_every_context_strategy_rebuilds_without_exploration(
     checkpoint = capture_context_checkpoint(
         context, goal="Keep the finding.", turn=0
     )
+    # A nested tool call must remain detached from both the live context and
+    # later rewinds; one context-owned deep copy is sufficient for capture.
+    retained = copy.deepcopy(checkpoint.messages)
+    for message in context.get_history_messages():
+        if message.get('tool_calls'):
+            message['tool_calls'][0]['function']['arguments'] = '{"path":"changed.txt"}'
+    assert checkpoint.messages == retained
     context.add_assistant(_assistant_message(
         "Discard this turn.",
         [ToolCall(id="read-1", name="read", arguments={"path": "discard.txt"})],
@@ -321,6 +328,10 @@ def test_every_context_strategy_rebuilds_without_exploration(
     assert "EXPLORATION_SECRET" not in rendered
     assert "rewind-report" in rendered
     assert "Only the retained finding remains." in rendered
+    for message in context.get_history_messages():
+        if message.get('tool_calls'):
+            message['tool_calls'][0]['function']['arguments'] = '{"path":"rewound-change.txt"}'
+    assert checkpoint.messages == retained
 
 
 def test_runtime_trace_projection_filesystem_and_replay_contract(

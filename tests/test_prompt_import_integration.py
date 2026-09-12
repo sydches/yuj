@@ -98,12 +98,12 @@ def test_project_imports_expand_before_utf8_cap_and_count_bytes(tmp_path: Path) 
 
 def test_global_document_import_cannot_escape_global_root(tmp_path: Path) -> None:
     work = tmp_path / "repo"
-    global_dir = tmp_path / "global"
+    global_dir = work / "global"
     work.mkdir()
     global_dir.mkdir()
     (work / ".git").mkdir()
     (global_dir / "AGENTS.md").write_text("@../secret.md\n")
-    (tmp_path / "secret.md").write_text("GLOBAL ESCAPE")
+    (work / "secret.md").write_text("GLOBAL ESCAPE")
     cfg = make_config(
         system_header="HEADER",
         project_docs_enabled=True,

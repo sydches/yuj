@@ -3,7 +3,7 @@ from ...config import Config
 from ..inspection_evidence import InspectedText
 from .._tool_filters import output_cleanup_enabled
 from ..sandbox.ignore_policy import active_ignore_policy
-from ._common import _path_hint, _require_external_readable, _resolve_read
+from ._common import _path_hint, _require_external_readable, _resolve_read, _skill_readable_roots
 
 
 def _record_read_reminder(
@@ -50,9 +50,7 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
         target = _resolve_read(
             cwd,
             path,
-            readonly_roots=tuple(
-                getattr(cfg, "skills_readable_dirs", ()) or ()
-            ) if cfg is not None else (),
+            readonly_roots=_skill_readable_roots(cfg) if cfg is not None else (),
         )
         if cfg is not None:
             _require_external_readable(
@@ -63,14 +61,16 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
                 ),
             )
         policy = active_ignore_policy(cwd)
+        is_directory = target.is_dir()
         if policy is not None and policy.contains(target):
-            policy.require_visible(target, is_dir=target.is_dir())
-        if target.is_dir():
+            policy.require_visible(target, is_dir=is_directory)
+        if is_directory:
             return (
                 f"ERROR: {path} is a directory — "
                 f"use glob to list contents."
             )
-        data = target.read_bytes()
+        from ..local_file_access import read_bytes
+        data = read_bytes(cwd, target)
 
         def inspected(text, body, count, total):
             return InspectedText(text, path=target, data=data, body=body,

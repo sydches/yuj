@@ -118,19 +118,13 @@ def activate_next_fallback(session: Any, turn: int, *, reason: str) -> bool:
             return False
         routed = switched.routed_client
         live_context = _live_context_size(routed)
-        skill_roots = tuple(
-            getattr(session.cfg, "skills_readable_dirs", ()) or ()
-        )
-        if skill_roots != tuple(
-            getattr(routed.client.cfg, "skills_readable_dirs", ()) or ()
-        ):
-            try:
-                routed.client.cfg = replace(
-                    routed.client.cfg,
-                    skills_readable_dirs=skill_roots,
-                )
-            except TypeError:
-                setattr(routed.client.cfg, "skills_readable_dirs", skill_roots)
+        for field in ("skills_readable_dirs", "skills_native_readable_dirs"):
+            skill_roots = tuple(getattr(session.cfg, field, ()) or ())
+            if skill_roots != tuple(getattr(routed.client.cfg, field, ()) or ()):
+                try:
+                    routed.client.cfg = replace(routed.client.cfg, **{field: skill_roots})
+                except TypeError:
+                    setattr(routed.client.cfg, field, skill_roots)
         _apply_context_size(routed.client, live_context)
         routed.client.cfg = bind_effective_edit_format(
             routed.client.cfg, routed.client

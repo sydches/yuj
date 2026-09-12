@@ -2,7 +2,6 @@
 from dataclasses import replace
 from contextlib import contextmanager
 from functools import wraps
-from pathlib import Path, PurePosixPath
 
 from .task_file_runtime import task_file_scope
 
@@ -23,28 +22,7 @@ def startup_file_scope(cwd, cfg, *, effective_env=None, allow_login_shell=None,
 def discover_task_skills(cwd, cfg, *, environment=None, allow_login_shell=None,
                          ignore_policy=None, unreadable_paths=None):
     from .skills import discover_skills
-    from .sandbox import container_mode
     discovery_cfg = cfg if unreadable_paths is None else replace(cfg, unreadable_paths=tuple(unreadable_paths))
-    if cfg.skills_enabled and cfg.sandbox_bash and cfg.sandbox_backend == 'bwrap' and container_mode() is None:
-        # The bwrap view has private home storage. Discover configured global
-        # resource names from that view's environment, then admit their host
-        # sources read-only for startup inspection. Only validated package
-        # directories enter the final model-facing config.
-        with task_file_scope(cwd, discovery_cfg, environment=environment,
-                             allow_login_shell=allow_login_shell,
-                             ignore_policy=ignore_policy) as files:
-            resources = []
-            for value in (*cfg.skills_dirs, *cfg.skill_paths):
-                expanded = files.expand_path(value, variables=True)
-                if not PurePosixPath(expanded).is_absolute() or PurePosixPath(expanded).is_relative_to(str(cwd)):
-                    continue
-                candidate = Path(expanded)
-                if candidate.is_file():
-                    candidate = candidate.parent
-                if candidate.is_dir():
-                    resources.append(str(candidate.resolve()))
-            discovery_cfg = replace(discovery_cfg, skills_readable_dirs=tuple(dict.fromkeys(
-                (*cfg.skills_readable_dirs, *resources))))
     with task_file_scope(cwd, discovery_cfg, environment=environment,
                          allow_login_shell=allow_login_shell,
                          ignore_policy=ignore_policy):

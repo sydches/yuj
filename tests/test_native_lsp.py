@@ -146,3 +146,64 @@ def test_standalone_sandboxed_lsp_finds_root_through_its_masks(bwrap, tmp_path):
         assert all(secret.as_uri() not in state.versions for state in manager._states.values())
     finally:
         manager.close()
+
+
+def test_lsp_locations_keep_visible_dependencies_and_reject_hidden_host_files(bwrap, tmp_path):
+    task = tmp_path / 'task'
+    task.mkdir()
+    local = task / 'local.py'
+    local.write_text('task')
+    hidden = task / 'hidden.py'
+    hidden.write_text('hidden')
+    outside = tmp_path / 'unrelated.py'
+    outside.write_text('unrelated host project')
+    dependency = tmp_path / 'dependency' / 'installed.py'
+    dependency.parent.mkdir()
+    dependency.write_text('explicitly admitted runtime resource')
+    manager = LspManager.sandboxed(
+        cwd=task, servers=(), bwrap_bin=bwrap,
+        unreadable_paths=(str(hidden),), readable_paths=(str(dependency.parent),),
+        effective_env={'PATH': os.environ['PATH']},
+    )
+    manager._task_files._utility('realpath')
+    operations = []
+    run = manager._task_files.run
+    manager._task_files.run = lambda script, args, data: (operations.append((args, data)), run(script, args, data))[1]
+    valid = [{'uri': local.as_uri()}, {'uri': dependency.as_uri()}, {'uri': local.as_uri()}]
+    response, omitted = manager._visible_locations(
+        [*valid, {'uri': hidden.as_uri()}, {'uri': outside.as_uri()}], None)
+    assert omitted and response == valid
+    assert len(operations) == 1
+    assert len(operations[0][0]) == 1  # Only the utility path is an exec argument.
+    assert len(operations[0][1].split(b'\0')) == 5  # Duplicate URIs are checked once.
+
+
+def test_native_lsp_ignores_canonical_targets_without_requiring_mount_masks(bwrap, tmp_path):
+    from scripts.llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
+    (tmp_path / '.yujignore').write_text('hidden.py\n')
+    (tmp_path / 'hidden.py').write_text('hidden')
+    (tmp_path / 'safe').mkdir()
+    (tmp_path / 'alias.py').symlink_to('hidden.py')
+    manager = LspManager.sandboxed(cwd=tmp_path, servers=(), bwrap_bin=bwrap,
+                                  effective_env={'PATH': '/usr/bin:/bin'})
+    paths = [str(tmp_path) + '/safe/../hidden.py', str(tmp_path / 'alias.py')]
+    for path in paths:
+        assert manager._visible_locations({'uri': 'file://' + path}, load_ignore_policy(tmp_path)) == (None, True)
+
+
+def test_lsp_checks_reuse_the_existing_task_shell_namespace(bwrap, tmp_path):
+    from scripts.llm_solver.harness.sandbox._persistent import PersistentBashSession, set_persistent_runner
+    environment = {'PATH': '/usr/bin:/bin', 'HOME': '/home/task'}
+    runner = PersistentBashSession(cwd=str(tmp_path), bwrap_bin=bwrap,
+                                  sandbox_required=True, effective_env=environment)
+    set_persistent_runner(runner)
+    try:
+        assert runner.run('printf dependency > /tmp/lsp-private-dependency.py',
+                          cwd=str(tmp_path), timeout=10) == ('', 0, False)
+        manager = LspManager.sandboxed(cwd=tmp_path, servers=(), bwrap_bin=bwrap,
+                                       effective_env=environment)
+        location = {'uri': 'file:///tmp/lsp-private-dependency.py'}
+        assert manager._visible_locations(location, None) == (location, False)
+    finally:
+        set_persistent_runner(None)
+        runner.close()

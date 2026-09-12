@@ -541,7 +541,7 @@ def test_new_instruction_surfaces_block_before_model_call(
     (work / "prompt.txt").write_text("Complete the safe task.")
     config_values: dict[str, object] = {}
     if startup_surface == "skill":
-        skill = tmp_path / "unsafe-skill" / "SKILL.md"
+        skill = work / "unsafe-skill" / "SKILL.md"
         skill.parent.mkdir()
         skill.write_text(
             "---\n"

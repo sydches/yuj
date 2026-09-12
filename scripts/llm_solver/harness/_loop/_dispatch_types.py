@@ -47,6 +47,8 @@ class TurnState:
     turn_had_pressure: bool = False
     observations: dict[str, dict] = field(default_factory=dict)
     preexecuted_metadata: dict[str, dict] = field(default_factory=dict)
+    tool_preparation_t0: float | None = None
+    preexecuted_dispatch_ms: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

@@ -24,6 +24,7 @@ mechanism that fired.
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 
 
 # ── Strategy 1: exact ────────────────────────────────────────────────────
@@ -225,29 +226,23 @@ def block_anchor(text: str, old_str: str) -> tuple[int, int] | None:
     for ln in text_lines:
         offsets.append(offsets[-1] + len(ln) + 1)
 
+    last_positions = [i for i, line in enumerate(text_trimmed) if line == last]
     for i in range(len(text_trimmed)):
         if text_trimmed[i] != first:
             continue
-        # Find the earliest j > i whose trimmed content equals the
-        # last anchor.
-        for j in range(i + 2, len(text_trimmed)):
-            if text_trimmed[j] != last:
-                continue
-            text_interior = text_trimmed[i + 1:j]
-            if interior:
-                # Pairwise similarity over min(len), averaged.
-                pair_count = min(len(interior), len(text_interior))
-                if pair_count == 0:
-                    # Old has interior but block between anchors is
-                    # empty — reject.
+        # Later end anchors reuse the same interior prefix. Once that
+        # prefix covers all requested lines, its score cannot change.
+        scores = []
+        for position in range(bisect_left(last_positions, i + 2), len(last_positions)):
+            j = last_positions[position]
+            pair_count = min(len(interior), j - i - 1)
+            while len(scores) < pair_count:
+                k = len(scores)
+                scores.append(_line_similarity(interior[k], text_trimmed[i + 1 + k]))
+            if sum(scores) / pair_count < 0.5:
+                if pair_count == len(interior):
                     break
-                sims = [
-                    _line_similarity(interior[k], text_interior[k])
-                    for k in range(pair_count)
-                ]
-                mean_sim = sum(sims) / pair_count
-                if mean_sim < 0.5:
-                    continue
+                continue
             start = offsets[i]
             end = offsets[j + 1] - 1
             if end > len(text):
@@ -368,10 +363,11 @@ def fuzzy_line_matches(
     )
     for name, normalize in strategies:
         expected = normalize(old_lines)
+        normalized = normalize(file_lines)
         matches = [
             start
             for start in range(len(file_lines) - width + 1)
-            if normalize(file_lines[start:start + width]) == expected
+            if normalized[start:start + width] == expected
             and file_lines[start:start + width] != old_lines
         ]
         if matches:
@@ -399,7 +395,8 @@ def _similarity(old_str: str, candidate_text: str) -> float:
         return 1.0
     if not old_tokens or not cand_tokens:
         return 0.0
-    shared = sum(1 for t in old_tokens if t in cand_tokens)
+    candidate_members = set(cand_tokens)
+    shared = sum(1 for t in old_tokens if t in candidate_members)
     return shared / max(len(old_tokens), len(cand_tokens))
 
 

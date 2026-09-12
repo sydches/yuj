@@ -8,6 +8,29 @@ custom_check_patterns = [
     '''(?:^|[\s/'"])python[0-9.]*\s+(?:-c\b|-\s*<<)''',
 ]
 
+[runtime]
+language = "Python"
+executables = ["python3", "python"]
+environment_executable = "bin/python"
+environment_markers = ["pyvenv.cfg", "conda-meta/history"]
+probe_format = "json"
+command_path_from_runtime = "executable"
+project_arguments = ["pyproject.toml:project.requires-python"]
+command_args = []
+probe_args = ["-I", "-c", '''
+import json, sys
+result = dict(executable=sys.executable, prefix=sys.prefix, version=sys.version.split()[0], available=True, compatible=False)
+try:
+    if not sys.argv[1]:
+        result['compatible'] = True
+    else:
+        from packaging.specifiers import SpecifierSet
+        result['compatible'] = SpecifierSet(sys.argv[1]).contains(result['version'])
+except (ImportError, ValueError):
+    pass
+print(json.dumps(result))
+''']
+
 [advice]
 python_runner_missing = "\n[HARNESS: The output contains a Python runner lookup error. This message alone does not establish which runtime or package is missing. Use the observed runtime facts and the project's declared check command to assess it. Retry only with an available, permitted runtime.]"
 # A missing import alone does not identify its cause or permit environment changes.

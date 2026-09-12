@@ -225,7 +225,8 @@ def _skills_active(cfg) -> bool:
     """Return whether this run has a model-visible Agent Skills catalog."""
     return bool(
         getattr(cfg, "skills_enabled", False)
-        and tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+        and (tuple(getattr(cfg, "skills_readable_dirs", ()) or ())
+             or tuple(getattr(cfg, "skills_native_readable_dirs", ()) or ()))
     )
 
 

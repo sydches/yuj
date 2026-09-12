@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,40 @@ from scripts.llm_solver.harness.process_manager import (
     ReplayProcessManager,
     build_background_sandbox_argv,
 )
+
+
+def test_legacy_background_immediate_kill_waits_for_native_startup_handle(
+    tmp_path, native_process_identity, monkeypatch,
+):
+    from scripts.llm_solver.harness.process_identity import guarded_process_argv
+
+    def delayed_transport(argv, **kwargs):
+        return subprocess.Popen(
+            ['bash', '-c', 'sleep 0.05; exec "$@"', 'transport', *argv[3:]], **kwargs)
+
+    def host_signal_forbidden(*args):
+        raise AssertionError('native work must not be killed using the host transport PID')
+
+    monkeypatch.setattr(os, 'killpg', host_signal_forbidden)
+    marker = tmp_path / 'late-write'
+    with ProcessManager(
+        run_dir=tmp_path / 'run', cwd=tmp_path, max_procs=1, poll_timeout_s=0,
+        terminate_grace_s=0.02, popen_factory=delayed_transport,
+        argv_builder=lambda command: guarded_process_argv(
+            ['docker', 'exec', 'fixture'], ['bash', '-c', command], native_process_identity),
+    ) as manager:
+        started = manager.start('sleep 0.5; printf leaked > late-write')
+        record = manager._records[started.proc_id]
+        group = record.guarded_argv.container_process_group
+        group.cleanup_argv = group.cleanup_argv[3:]
+        result = manager.kill(started.proc_id)
+        assert result.was_running and result.exit_code is not None
+        assert group.handle is not None
+        polled = manager.poll(started.proc_id)
+        assert 'yuj-task-process' not in polled.result
+        assert 'yuj-process-identity' not in polled.result
+    time.sleep(0.55)
+    assert not marker.exists()
 
 
 class FakeClock:

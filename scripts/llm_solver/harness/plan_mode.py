@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .command_redirect import split_shell_fragments
 from .container_binding import container_scoped_session
+from .local_file_access import read_text
 
 
 PLAN_FILE = ".solver/plan.md"
@@ -407,7 +408,7 @@ class PlanModeController:
             )
         try:
             path = _plan_path(self.cwd)
-            plan = path.read_text()
+            plan = read_text(self.cwd, path)
         except FileNotFoundError:
             return render_plan_mode_error(
                 "exit_plan_mode",

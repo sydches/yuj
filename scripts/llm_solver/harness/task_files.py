@@ -14,6 +14,8 @@ from pathlib import Path, PurePosixPath
 import stat
 from typing import Callable
 
+from .task_file_scripts import _DISCOVER, _OPERATE, _DIGEST_BATCH, _RESOLVE_FILES
+
 
 class TaskFileError(OSError):
     """The selected namespace could not complete a file operation."""
@@ -21,220 +23,6 @@ class TaskFileError(OSError):
 
 class TaskUtilityUnavailable(TaskFileError):
     """Discovery completed, but the named utility was absent."""
-
-
-_DISCOVER = r'''
-for utility in "$@"; do
-    location=$(type -P -- "$utility") || location=''
-    printf '%s\0%s\0' "$utility" "$location"
-done
-'''
-
-# Arguments and file bytes stay separate from the executable script. Append a
-# sentinel when capturing realpath output so filenames ending in LF survive.
-_OPERATE = r'''
-root=$1; requested=$2; realpath_bin=$3; operation=$4; utility=$5
-shift 5
-canonical() {
-    local result
-    result=$("$realpath_bin" -m -- "$2"; code=$?; printf '.'; exit "$code") || return
-    result=${result%.}
-    result=${result%$'\n'}
-    printf -v "$1" '%s' "$result"
-}
-change_mode() {
-    # Some chmod implementations skip a symlink without reporting an error.
-    # Do not mistake that skipped change for success or dereference the link.
-    [[ ! -L "$3" ]] || { printf 'task symlink changed before chmod' >&2; return 74; }
-    local error code mode_fd opened expected
-    if ! error=$("$1" --no-dereference "$2" -- "$3" 2>&1); then
-        # Older utilities lack this option. A readable entry can instead be
-        # changed through a checked open descriptor, never a mutable symlink.
-        if [[ $("$1" --help 2>&1) == *--no-dereference* ]]; then
-            printf '%s' "$error" >&2; return 74
-        fi
-        [[ ! -L "$3" ]] || return 74
-        canonical expected "$3" || return 74
-        case "$expected" in "$root"|"${root%/}/"*) ;; *) return 77 ;; esac
-        exec {mode_fd}< "$3" || return 74
-        IFS= read -r -d '' opened < <("$readlink_bin" -z -- "/proc/self/fd/$mode_fd") || return 74
-        [[ "$opened" == "$expected" ]] || return 74
-        "$1" "$2" -- "/proc/self/fd/$mode_fd"
-        code=$?
-        exec {mode_fd}<&-
-        (( code == 0 )) || return "$code"
-    fi
-    [[ ! -L "$3" ]] || { printf 'task symlink changed during chmod' >&2; return 74; }
-}
-enter_directory() {
-    local opened_parent
-    cd -P -- "$1" || return 74
-    IFS= read -r -d '' opened_parent < <("$2" -z -- /proc/self/cwd) || return 74
-    case "$opened_parent" in
-        "$root"|"${root%/}/"*) ;;
-        *) printf 'opened parent escapes task root' >&2; return 77 ;;
-    esac
-}
-canonical root "$root" || exit 74
-entry="$root/$requested"
-case "$operation:${entry##*/}" in
-    *:.|*:..|*:"") canonical target "$entry" || exit 74 ;;
-    symlink:*|readlink:*|lstat:*|unlink:*|replace:*|link:*|create:*|rmdir:*)
-        canonical parent "${entry%/*}" || exit 74
-        target="$parent/${entry##*/}"
-        ;;
-    *) canonical target "$entry" || exit 74 ;;
-esac
-case "$target" in
-    "$root"|"${root%/}/"*) ;;
-    *) printf 'path escapes task root' >&2; exit 77 ;;
-esac
-# Establish absent paths with native predicates, not translated stderr. Search
-# permission on the nearest existing ancestor is required to claim absence.
-ancestor=$target
-while [[ ! -e "$ancestor" && ! -L "$ancestor" && "$ancestor" != / ]]; do
-    ancestor=${ancestor%/*}
-    [[ -n "$ancestor" ]] || ancestor=/
-done
-if [[ -d "$ancestor" && ! -x "$ancestor" &&
-      ( "$ancestor" != "$target" ||
-        ( "$operation" != chmod && "$operation" != stat && "$operation" != lstat && "$operation" != mkdir ) ) ]]; then
-    printf 'directory search denied' >&2; exit 77
-fi
-# These operations use one checked directory and relative names. Metadata
-# and entry operations do not follow the final component at execution.
-case "$operation" in
-    stat|lstat|list|readlink) [[ -e "$target" || -L "$target" ]] || exit 66 ;;
-    symlink) [[ -e "$target" || -L "$target" ]] || { printf false; exit 0; } ;;
-esac
-case "$operation" in
-    write|create|replace|link|unlink|rmdir|stat|lstat|list|readlink|symlink|chmod|search_files)
-        readlink_bin=$1; shift
-        if [[ "$operation" == list || "$target" == "$root" ||
-              ( "$operation" == search_files && -d "$target" ) ]]; then
-            directory=$target
-            target=.
-        else
-            directory=${target%/*}
-            [[ -n "$directory" ]] || directory=/
-            target="./${target##*/}"
-        fi
-        enter_directory "$directory" "$readlink_bin" || exit
-        ;;
-esac
-case "$operation" in
-    resolve) printf '%s\0' "$target" ;;
-    glob) native_glob "$@" ;;
-    search_files)
-        exec "$utility" --files --null --no-follow "$@" -- "$target"
-        ;;
-    symlink)
-        if [[ -L "$target" ]]; then printf true; else printf false; fi
-        ;;
-    read|read_range|search)
-        [[ -e "$target" ]] || exit 66
-        [[ ! -d "$target" ]] || exit 73
-        readlink_bin=$1; shift
-        # Resolve the opened file's kernel path, not the requested name again.
-        # A parent link can change between realpath and open. No file bytes
-        # enter the response until this descriptor passes containment.
-        exec {input_fd}< "$target" || exit 74
-        IFS= read -r -d '' opened_path < <("$readlink_bin" -z -- "/proc/self/fd/$input_fd") || exit 74
-        case "$opened_path" in
-            "$root"|"${root%/}/"*) ;;
-            *) printf 'opened file escapes task root' >&2; exit 77 ;;
-        esac
-        [[ ! -d "/proc/self/fd/$input_fd" ]] || exit 73
-        if [[ "$operation" == search ]]; then
-            exec "$utility" -n --no-filename --color=never -- "$1" - <&"$input_fd"
-        fi
-        if [[ "$operation" == read_range ]]; then
-            exec "$utility" iflag=skip_bytes,count_bytes skip="$1" count="$2" status=none <&"$input_fd"
-        fi
-        exec "$utility" -- <&"$input_fd"
-        ;;
-    write)
-        # Canonical resolution permits existing contained aliases. At the
-        # actual open, refuse a new final symlink instead of following it.
-        # O_WRONLY preserves write-only files; nocreat/excl avoid accepting a
-        # different creation state between this predicate and the open.
-        conversion=excl
-        [[ ! -e "$target" && ! -L "$target" ]] || conversion=nocreat
-        exec "$utility" of="$target" oflag=nofollow conv="$conversion" status=none
-        ;;
-    create)
-        mktemp_bin=$1; ln_bin=$2; rm_bin=$3
-        [[ ! -e "$target" && ! -L "$target" ]] || exit 75
-        temporary=$("$mktemp_bin" --tmpdir="${target%/*}" .yuj-output-XXXXXXXXXX) || exit
-        trap '"$rm_bin" -f -- "$temporary"' EXIT
-        "$utility" of="$temporary" oflag=nofollow conv=nocreat status=none || exit
-        if "$ln_bin" -T -- "$temporary" "$target"; then
-            exit 0
-        fi
-        [[ ! -e "$target" && ! -L "$target" ]] || exit 75
-        exit 74
-        ;;
-    replace)
-        mktemp_bin=$1; mv_bin=$2; rm_bin=$3; chmod_bin=$4; rmdir_bin=$5; mode=$6
-        temporary=$("$mktemp_bin" --tmpdir="${target%/*}" .yuj-restore-XXXXXXXXXX) || exit
-        trap '"$rm_bin" -f -- "$temporary"' EXIT
-        # Flush the writer's open file before applying its final permissions.
-        # A later path-based sync can be redirected or denied by that mode.
-        "$utility" of="$temporary" oflag=nofollow conv=nocreat,fdatasync status=none || exit
-        change_mode "$chmod_bin" "$mode" "$temporary" || exit
-        if [[ -d "$target" && ! -L "$target" ]]; then
-            "$rmdir_bin" -- "$target" || exit
-        fi
-        "$mv_bin" -T -- "$temporary" "$target"
-        ;;
-    link) exec "$utility" -s -T -- "$1" "$target" ;;
-    stat|lstat)
-        [[ -e "$target" || -L "$target" ]] || exit 66
-        export LC_ALL=C
-        exec "$utility" --printf='%f\0%s\0%Y\0%Z\0%i\0%d\0%y\0%z\0' -- "$target"
-        ;;
-    readlink) exec "$utility" -z -- "$target" ;;
-    mkdir)
-        readlink_bin=$1; shift
-        if [[ "$target" == "$root" ]]; then
-            enter_directory "$root" "$readlink_bin" || exit
-            exec "$utility" "$@" -- .
-        fi
-        directory=${target%/*}
-        [[ -n "$directory" ]] || directory=/
-        if [[ "${1:-}" == -p ]]; then
-            while [[ ! -e "$directory" && ! -L "$directory" && "$directory" != / ]]; do
-                directory=${directory%/*}
-                [[ -n "$directory" ]] || directory=/
-            done
-        fi
-        remaining=${target#"$directory"}
-        remaining=${remaining#/}
-        enter_directory "$directory" "$readlink_bin" || exit
-        if [[ "${1:-}" != -p ]]; then
-            exec "$utility" -- "./$remaining"
-        fi
-        while [[ "$remaining" == */* ]]; do
-            component=${remaining%%/*}
-            # Native mkdir -p grants owner write/search on new intermediates.
-            # Preserve every other umask bit, and leave the final directory's
-            # umask unchanged. Existing directory modes are not modified.
-            (umask u+wx; "$utility" -p -- "./$component") || exit
-            enter_directory "./$component" "$readlink_bin" || exit
-            remaining=${remaining#*/}
-        done
-        "$utility" -p -- "./$remaining" || exit
-        [[ ! -L "./$remaining" ]] || { printf 'task symlink changed during mkdir' >&2; exit 74; }
-        ;;
-    chmod)
-        change_mode "$utility" "$1" "$target"
-        ;;
-    rmdir) exec "$utility" -- "$target" ;;
-    unlink) exec "$utility" -- "$target" ;;
-    list) exec "$utility" "$target" -mindepth 1 -maxdepth 1 -print0 ;;
-    *) printf 'unsupported task file operation' >&2; exit 64 ;;
-esac
-'''
 
 
 @dataclass(frozen=True)
@@ -366,8 +154,8 @@ class NamespaceFiles:
         relative = self._relative(path)
         realpath = self._utility('realpath')
         executable = self._utility(utility) if utility else ''
-        if operation in ('read', 'read_range', 'search', 'search_files', 'write', 'create', 'replace',
-                         'link', 'unlink', 'rmdir', 'stat', 'lstat', 'list', 'readlink', 'symlink', 'chmod', 'mkdir'):
+        if operation in ('read', 'read_range', 'search', 'search_files', 'glob', 'write', 'create', 'replace',
+                         'link', 'unlink', 'rmdir', 'stat', 'lstat', 'list', 'scandir', 'readlink', 'symlink', 'chmod', 'mkdir'):
             args = (self._utility('readlink'), *args)
         result = self.run(script_prefix + _OPERATE, [str(self.root), relative, realpath,
                                    operation, executable, *args], data)
@@ -392,8 +180,90 @@ class NamespaceFiles:
             raise TaskFileError('invalid task path response')
         return PurePosixPath(os.fsdecode(output[:-1]))
 
+    def resolve_regular_files(self, paths):
+        """Resolve regular-file rule keys together; exceptional entries raise."""
+        names = tuple(dict.fromkeys(str(self.root / self._relative(path)) for path in paths))
+        if not names:
+            return {}
+        output = self._call('resolve_files', self.root,
+                            data=b''.join(os.fsencode(name) + b'\0' for name in names),
+                            script_prefix=_RESOLVE_FILES)
+        fields = output.split(b'\0')
+        if fields[-1] or len(fields) != len(names) * 2 + 1:
+            raise TaskFileError('invalid task file resolution response')
+        result = {os.fsdecode(name): os.fsdecode(target)
+                  for name, target in zip(fields[0:-1:2], fields[1:-1:2])}
+        if set(result) != set(names):
+            raise TaskFileError('task resolved paths differ from request')
+        return result
+
     def read_bytes(self, path):
         return self._call('read', path, utility='cat')
+
+    def read_entry(self, path):
+        """Read checkpoint bytes and mode together; preserve final symlinks."""
+        output = self._call('read_entry', path, utility='cat',
+                            args=(self._utility('readlink'), self._utility('stat')))
+        header, separator, data = output.partition(b'\0')
+        if not separator or not re.fullmatch(b'[0-9a-f]+', header):
+            raise TaskFileError('invalid task entry mode')
+        mode = int(header, 16)
+        if stat.S_ISLNK(mode):
+            if not data.endswith(b'\0') or b'\0' in data[:-1]:
+                raise TaskFileError('invalid task entry symlink')
+            return mode, data[:-1]
+        if not stat.S_ISREG(mode):
+            raise TaskFileError('unsupported task entry type')
+        return mode, data
+
+    def entry_modes(self, paths):
+        """Inspect only requested entries, batching shared checked parents."""
+        parents = {}
+        for path in paths:
+            name = self.root / self._relative(path)
+            parents.setdefault(name.parent, {})[name.name] = str(name)
+        result = {}
+        for parent, entries in parents.items():
+            names = list(entries)
+            for start in range(0, len(names), 64):
+                batch = names[start:start + 64]
+                try:
+                    output = self._call('entry_modes', parent, utility='stat',
+                                        args=(self._utility('readlink'), *batch))
+                except FileNotFoundError:
+                    continue
+                fields = output.split(b'\0')
+                if fields[-1] or len(fields) % 2 != 1:
+                    raise TaskFileError('invalid task entry modes')
+                remaining = set(batch)
+                for raw_name, raw_mode in zip(fields[0:-1:2], fields[1:-1:2]):
+                    name = os.fsdecode(raw_name)
+                    if name not in remaining or not re.fullmatch(b'[0-9a-f]+', raw_mode):
+                        raise TaskFileError('invalid task entry mode response')
+                    result[entries[name]] = int(raw_mode, 16)
+                    remaining.remove(name)
+        return result
+
+    def sha256_many(self, paths):
+        """Hash current bytes through checked descriptors, in bounded batches."""
+        names = tuple(dict.fromkeys(str(self.root / self._relative(path)) for path in paths))
+        if not names:
+            return {}
+        output = self._call('digest_batch', self.root, utility='sha256sum',
+                            args=(self._utility('readlink'),),
+                            data=b''.join(os.fsencode(name) + b'\0' for name in names),
+                            script_prefix=_DIGEST_BATCH)
+        fields = output.split(b'\0')
+        if fields[-1] or len(fields) != len(names) * 2 + 1:
+            raise TaskFileError('invalid task digest response')
+        result = {}
+        for name, digest in zip(fields[0:-1:2], fields[1:-1:2]):
+            if not re.fullmatch(b'[0-9a-f]{64}', digest):
+                raise TaskFileError('invalid task digest')
+            result[os.fsdecode(name)] = digest.decode('ascii')
+        if set(result) != set(names):
+            raise TaskFileError('task digest paths differ from request')
+        return result
 
     def read_range(self, path, offset, size):
         if offset < 0 or size < 0:
@@ -481,6 +351,19 @@ class NamespaceFiles:
         requested = self.root / self._relative(path)
         return [requested / PurePosixPath(os.fsdecode(value)).name
                 for value in output.split(b'\x00') if value]
+
+    def scandir(self, path='.'):
+        """List immediate names and entry kinds in one checked directory."""
+        output = self._call('scandir', path, utility='find')
+        fields = output.split(b'\x00')
+        if fields[-1] or len(fields) % 2 != 1:
+            raise TaskFileError('invalid task directory metadata')
+        rows = []
+        for name, kind in zip(fields[0:-1:2], fields[1:-1:2]):
+            if not name or b'/' in name or kind not in (b'f', b'd', b'l', b'b', b'c', b'p', b's', b'?'):
+                raise TaskFileError('invalid task directory entry')
+            rows.append((os.fsdecode(name), kind.decode('ascii')))
+        return rows
 
     def search_files(self, path, glob_filter=''):
         """Let native ripgrep select files; subsequent reads remain checked."""

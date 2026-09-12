@@ -223,16 +223,16 @@ def test_downstream_replacement_cannot_keep_admitted_read_credit(rig):
 
 
 def test_read_revision_is_from_bytes_returned_even_if_file_changes(rig):
-    from pathlib import Path
+    from scripts.llm_solver.harness import local_file_access
     root, _, _ = rig
-    original = Path.read_bytes
+    original = local_file_access.read_bytes
     target = root / "checks/cases.py"
-    def changing_read(path):
-        data = original(path)
+    def changing_read(cwd, path):
+        data = original(cwd, path)
         if path == target:
             path.write_text("changed after read\n")
         return data
-    with patch.object(Path, "read_bytes", changing_read):
+    with patch.object(local_file_access, "read_bytes", changing_read):
         _, metadata = call(rig, "read", {"path": "checks/cases.py"})
     assert metadata["inspection_evidence"]["line_count"] == 3
     assert "different file revision" in run(rig).text

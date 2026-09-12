@@ -1,7 +1,6 @@
 """Pipeline integration — system prompt, checkpoint, task enumeration, provenance."""
 import hashlib
 import json
-import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -181,6 +180,7 @@ def collect_provenance(
     run_metadata: dict | None = None,
     thinking_resolution=None,
     fallback_provenance: dict[str, object] | None = None,
+    task_cwd: Path | None = None,
 ) -> dict:
     """Gather reproducibility metadata for a run.
 
@@ -315,39 +315,44 @@ def collect_provenance(
     if quirk_hashes:
         prov["quirk_hashes"] = quirk_hashes
 
-    # Search-tool binary versions. grep_files() prefers `rg` and falls
-    # back to GNU grep (BRE) when rg is absent; the two have different
-    # regex flavours (RE2 vs BRE), so a re-run on a different machine
-    # could see different match shapes. Stamp the resolved binary
-    # version here next to llama_cpp_version.
-    rg_path = shutil.which("rg")
-    if rg_path:
-        try:
-            result = subprocess.run(
-                [rg_path, "--version"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0:
-                # rg --version prints multiple lines; the first is the
-                # canonical "ripgrep X.Y.Z (rev abc)" identifier.
-                prov["rg_version"] = result.stdout.splitlines()[0].strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            pass
-    else:
-        prov["rg_version"] = ""  # explicit absence — fallback path active
-    grep_path = shutil.which("grep")
-    if grep_path:
-        try:
-            result = subprocess.run(
-                [grep_path, "--version"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0:
-                prov["grep_version"] = result.stdout.splitlines()[0].strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            pass
+    # Host binaries describe the harness machine, not the task's search tools.
+    # Without an active task binding, leave these observations unknown.
+    if task_cwd is not None:
+        from .task_path import active_task_files
+        files = active_task_files(task_cwd)
+        if files is not None:
+            prov.update(_task_search_versions(files))
 
     return prov
+
+
+def _task_search_versions(files) -> dict[str, str]:
+    """Observe both search tools in one call through the selected task transport."""
+    from .time_budget import command_time_budget
+    script = r'''
+for tool in "$@"; do
+    location=$(type -P -- "$tool") || location=''
+    if [[ -z "$location" ]]; then
+        printf '%s\0\0' "$tool"
+    elif version=$("$location" --version); then
+        printf '%s\0%s\0' "$tool" "${version%%$'\n'*}"
+    fi
+done
+'''
+    try:
+        with command_time_budget(5):
+            result = files.run(script, ['rg', 'grep'], None)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    fields = result.stdout.split(b'\0')
+    if result.returncode or fields[-1] or len(fields) % 2 != 1:
+        return {}
+    observations = {}
+    for name, version in zip(fields[:-1:2], fields[1:-1:2]):
+        if name not in (b'rg', b'grep') or name in observations:
+            return {}
+        observations[name] = version.decode('utf-8', errors='replace').strip()
+    return {name.decode() + '_version': version for name, version in observations.items()}
 
 
 def write_run_metrics(repo_dir: Path, metrics: dict, provenance: dict, *, overwrite: bool = True) -> None:

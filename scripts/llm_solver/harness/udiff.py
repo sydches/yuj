@@ -13,6 +13,9 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .line_matching import matching_line_starts
+from . import local_file_access as file_access
+
 from .edit_replacers import (
     Candidate,
     format_candidates_block,
@@ -86,6 +89,7 @@ class _PreparedFile:
     target: Path
     data: bytes | None
     fuzzy_mechanisms: tuple[str, ...]
+    cwd: str
 
 
 def _header_path(line: str, prefix: str) -> str:
@@ -262,12 +266,12 @@ def _resolved_target(cwd: Path, path: str) -> Path:
     return target
 
 
-def _verify_parent_directory(target: Path, display_path: str) -> None:
+def _verify_parent_directory(target: Path, display_path: str, cwd: str) -> None:
     """Reject an add whose nearest existing parent is not a directory."""
     parent = target.parent
-    while not parent.exists() and parent != parent.parent:
+    while not file_access.exists(cwd, parent) and parent != parent.parent:
         parent = parent.parent
-    if not parent.is_dir():
+    if not file_access.is_dir(cwd, parent):
         raise UnifiedDiffApplyError(
             f"cannot write {display_path}: parent {parent} is not a directory",
             kind="parent_not_directory",
@@ -354,11 +358,7 @@ def _locate_hunk(
         and file_lines[expected:expected + width] == old_lines
     ):
         return expected, "line_number"
-    exact_starts = [
-        start
-        for start in range(len(file_lines) - width + 1)
-        if file_lines[start:start + width] == old_lines
-    ]
+    exact_starts = list(matching_line_starts(file_lines, old_lines))
     if len(exact_starts) == 1:
         return exact_starts[0], "offset"
     if len(exact_starts) > 1:
@@ -470,7 +470,7 @@ def prepare_unified_diff(
     candidate_count: int = 3,
 ) -> list[_PreparedFile]:
     """Verify and stage every file result without mutating the filesystem."""
-    cwd_path = Path(cwd).resolve()
+    cwd_path = Path(cwd)
     prepared: list[_PreparedFile] = []
     seen: set[Path] = set()
     for patch in patches:
@@ -480,22 +480,22 @@ def prepare_unified_diff(
                 f"duplicate file patch for {patch.path}", kind="duplicate_path"
             )
         seen.add(target)
-        _verify_parent_directory(target, patch.path)
+        _verify_parent_directory(target, patch.path, cwd)
         if patch.kind == "add":
-            if target.exists():
+            if file_access.exists(cwd, target):
                 raise UnifiedDiffApplyError(
                     f"cannot add {patch.path}: file already exists",
                     kind="file_exists",
                 )
             source = ""
         else:
-            if not target.is_file():
+            if not file_access.is_file(cwd, target):
                 raise UnifiedDiffApplyError(
                     f"cannot {patch.kind} {patch.path}: file does not exist",
                     kind="file_not_found",
                 )
             try:
-                raw = target.read_bytes()
+                raw = file_access.read_bytes(cwd, target)
                 source = raw.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise UnifiedDiffApplyError(
@@ -527,6 +527,7 @@ def prepare_unified_diff(
                 target=target,
                 data=None if patch.kind == "delete" else rendered.encode("utf-8"),
                 fuzzy_mechanisms=fuzzy,
+                cwd=cwd,
             )
         )
     return prepared
@@ -537,10 +538,9 @@ def apply_prepared_diff(prepared: list[_PreparedFile]) -> str:
     try:
         for item in prepared:
             if item.operation.kind == "delete":
-                item.target.unlink()
+                file_access.unlink(item.cwd, item.target)
                 continue
-            item.target.parent.mkdir(parents=True, exist_ok=True)
-            item.target.write_bytes(item.data or b"")
+            file_access.write_bytes(item.cwd, item.target, item.data or b"", create_parents=True)
     except OSError as exc:
         raise UnifiedDiffApplyError(
             f"filesystem write failed: {exc}", kind="write_failed"

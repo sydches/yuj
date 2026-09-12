@@ -278,7 +278,7 @@ def _project_search_dirs(cwd: Path, project_root: Path) -> tuple[Path, ...]:
         current = current.parent
 
 
-def _walk_skill_files(root: Path) -> Iterator[Path]:
+def _walk_skill_files(root: Path, *, allowed_root=None) -> Iterator[Path]:
     if not root.exists():
         return
     if not root.is_dir():
@@ -295,6 +295,8 @@ def _walk_skill_files(root: Path) -> Iterator[Path]:
                 f"cannot resolve skills directory {directory} "
                 f"({type(exc).__name__})"
             ) from exc
+        if allowed_root is not None and not canonical.is_relative_to(allowed_root):
+            continue
         if canonical in seen:
             continue
         seen.add(canonical)
@@ -337,6 +339,8 @@ def _candidate_files(
     # first-wins collision handling before discovered directory entries.
     for value in skill_paths:
         candidate = _expand_path(value, base=cwd)
+        if not isinstance(cwd, TaskPath) and not candidate.is_relative_to(cwd):
+            raise SkillError(f"configured skill_path is outside task cwd: {value}")
         if candidate.is_dir():
             candidate = candidate / "SKILL.md"
         if not candidate.is_file():
@@ -363,7 +367,9 @@ def _candidate_files(
                        for directory in project_dirs)
         )
         for root in roots:
-            for path in _walk_skill_files(root):
+            if not root.is_relative_to(cwd):
+                continue
+            for path in _walk_skill_files(root, allowed_root=cwd):
                 yield path, False
 
 
@@ -392,6 +398,10 @@ def discover_skills(
         project_root=project_root,
     ):
         path = raw_path.resolve(strict=True)
+        if not isinstance(work_dir, TaskPath) and not path.is_relative_to(work_dir):
+            if explicit:
+                raise SkillError(f"configured skill_path is outside task cwd: {raw_path}")
+            continue
         if path in seen_files:
             continue
         seen_files.add(path)

@@ -7,6 +7,16 @@ import tempfile
 from .time_budget import execution_deadline, remaining_before
 
 
+def checkpoint_entry_path(root, path):
+    """Resolve existing local parent aliases while preserving the entry itself."""
+    from .task_path import TaskPath
+    if isinstance(path, TaskPath):
+        return path
+    target = path.parent.resolve() / path.name
+    target.relative_to(root)
+    return target
+
+
 def native_entry_matches(path, data, mode):
     """Avoid mutations when a mounted entry already has the captured state."""
     try:
@@ -38,17 +48,17 @@ def native_checkpoint_paths(root, *, shadow_dir, git, excluded):
             directory = pending.pop()
             relative_dir = directory.relative_to(root)
             (mirror / relative_dir).mkdir(parents=True, exist_ok=True)
-            for child in directory.iterdir():
+            for name, kind in directory.files.scandir(str(directory.path)):
                 remaining_before(execution_deadline())
+                child = directory / name
                 relative = child.relative_to(root).as_posix()
                 if excluded(relative):
                     continue
-                mode = child.lstat().st_mode
-                if stat.S_ISDIR(mode):
+                if kind == 'd':
                     pending.append(child)
-                elif stat.S_ISREG(mode) or stat.S_ISLNK(mode):
+                elif kind in ('f', 'l'):
                     paths.append(relative)
-                    if child.name == '.gitignore' and stat.S_ISREG(mode):
+                    if child.name == '.gitignore' and kind == 'f':
                         (mirror / relative).write_bytes(child.read_bytes())
         paths.sort()
         if not paths:

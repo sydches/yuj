@@ -17,6 +17,35 @@ from scripts.llm_solver.harness._loop.trace_output import build_tool_call_trace_
 from scripts.llm_solver.harness.tools import dispatch
 
 
+@pytest.mark.parametrize('tool', ['read', 'grep', 'glob', 'bash'])
+@pytest.mark.parametrize('verified', [False, True])
+def test_non_check_results_do_not_rehash_verification_inputs(monkeypatch, tool, verified):
+    from scripts.llm_solver.harness._guardrails import verification
+    state = GuardrailState(has_mutated=True, verified_since_mutation=verified,
+                           verification_file_revisions={'generated.pyc': 'previous'})
+
+    def unexpected_hash(*args):
+        pytest.fail('an ordinary tool result cannot update verification credit')
+
+    monkeypatch.setattr(verification, 'verification_tree_matches', unexpected_hash)
+    mark_bash_verified(state, make_config(), tc_name=tool, result='ordinary output',
+                       gate_blocked=False, cwd='/task', execution_metadata={
+                           'executed': True, 'exit_status_known': True, 'exit_status': 0,
+                           'file_changes': {'status': 'unchanged_metadata'},
+                       })
+    assert state.verified_since_mutation is verified
+
+
+@pytest.mark.parametrize('status', ['changed', 'incomplete', 'unavailable'])
+def test_non_check_change_observations_still_invalidate_verification(status):
+    state = GuardrailState(has_mutated=True, verified_since_mutation=True)
+    mark_bash_verified(state, make_config(), tc_name='bash', result='ordinary output',
+                       gate_blocked=False, execution_metadata={
+                           'executed': True, 'file_changes': {'status': status},
+                       })
+    assert not state.verified_since_mutation
+
+
 @pytest.mark.parametrize("structured", [True, False])
 @pytest.mark.parametrize("case,status,exit_code", [
     ("pass", "passed", 0), ("fail", "failed", 1),

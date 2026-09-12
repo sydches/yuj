@@ -2,6 +2,7 @@
 from dataclasses import replace
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -39,6 +40,28 @@ def test_guard_preserves_binary_stdin_and_does_not_strip_task_frames():
     result = _execute(guarded_process_argv([], ['cat'], observed()), timeout=None,
                       binary=True, input_bytes=data)
     assert result.stdout == data
+
+
+def test_failed_container_entry_keeps_the_actual_launch_error():
+    from scripts.llm_solver.harness.process_identity import verified_process_result
+    argv = guarded_process_argv(['docker', 'exec', 'fixture'], ['true'], observed())
+    result = subprocess.CompletedProcess(argv, 128, b'', b'OCI runtime exec failed: procReady not received')
+    with pytest.raises(ProcessIdentityError, match='OCI runtime exec failed: procReady not received'):
+        verified_process_result(argv, result)
+
+
+def test_container_deadline_stops_a_child_before_it_can_write(tmp_path):
+    from scripts.llm_solver.harness.process_identity import with_container_deadline
+    marker = tmp_path / 'late-write'
+    argv = guarded_process_argv(['docker', 'exec', 'fixture'],
+        ['bash', '-c', 'sleep 0.6; printf escaped > "$1"', 'fixture', str(marker)], observed())
+    wrapped = with_container_deadline(argv, 0.2)
+    # Run the exact container-side command locally, including its guard.
+    result = subprocess.run(wrapped[3:], capture_output=True, timeout=2)
+    assert result.returncode == 124
+    import time
+    time.sleep(0.65)
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize('field', ['uids', 'gids', 'groups', 'capabilities'])
@@ -106,3 +129,58 @@ def test_stream_verification_rejects_missing_partial_and_invalid_frames(data):
     with pytest.raises(ProcessIdentityError):
         verification.feed(data)
         verification.finish()
+
+
+def supervised_command(command):
+    from scripts.llm_solver.harness.process_identity import with_container_process_group
+    argv = with_container_process_group(
+        guarded_process_argv(['docker', 'exec', 'fixture'], command, observed()))
+    # Execute the exact task-side programs locally, without a Docker daemon.
+    argv.container_process_group.cleanup_argv = argv.container_process_group.cleanup_argv[3:]
+    return argv
+
+
+@pytest.mark.parametrize('start_new_session', [False, True])
+def test_supervised_group_preserves_stdin_output_status_and_split_startup_frame(start_new_session):
+    from scripts.llm_solver.harness.process_identity import ProcessVerification
+    argv = supervised_command(['bash', '-c', 'cat; printf diagnostic >&2; exit 23'])
+    data = VERIFIED + b'\0\xff\r\n'
+    result = subprocess.run(argv[3:], input=data, capture_output=True, timeout=3,
+                            start_new_session=start_new_session)
+    verification = ProcessVerification(argv)
+    output = b''.join(verification.feed(bytes([byte])) for byte in result.stdout)
+    verification.finish()
+    assert output == data
+    assert result.returncode == 23 and result.stderr == b'diagnostic'
+    # Completion and a reused PID must not signal a different process.
+    argv.container_process_group.terminate(grace=0)
+
+
+def test_native_group_cancellation_stops_term_resistant_descendant(tmp_path):
+    from scripts.llm_solver.harness.process_identity import ProcessVerification
+    ready, late = tmp_path / 'ready', tmp_path / 'late'
+    descendant = 'trap "" TERM; printf ready > "$1"; sleep 0.5; printf leaked > "$2"'
+    argv = supervised_command(['bash', '-c',
+        'bash -c "$1" descendant "$2" "$3" & wait',
+        'primary', descendant, str(ready), str(late)])
+    process = subprocess.Popen(argv[3:], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    group = argv.container_process_group
+    try:
+        ProcessVerification(argv).read(process.stdout)
+        deadline = time.monotonic() + 2
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        handle = group.handle
+        group.handle = (handle[0], handle[1] + 1)
+        group.terminate(grace=0)
+        assert process.poll() is None  # The start-time check rejected this PID.
+        group.handle = handle
+        group.terminate(grace=0.02)
+        process.wait(timeout=2)
+        time.sleep(0.55)
+        assert not late.exists()
+    finally:
+        if process.poll() is None:
+            group.terminate(grace=0)
+            process.wait(timeout=2)

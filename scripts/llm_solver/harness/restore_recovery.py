@@ -8,8 +8,9 @@ from pathlib import PurePosixPath
 import shutil
 import stat
 
-from .task_path import TaskPath
 from .time_budget import execution_deadline, remaining_before
+from . import local_file_access
+from .checkpoint_files import checkpoint_entry_path
 
 DIRECTORY = '.restore_recovery'
 
@@ -29,24 +30,22 @@ def restore_lock(store):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def entry_state(path):
+def entry_state(root, path):
     """Read the entry itself; a symlink's target is never the backup source."""
     remaining_before(execution_deadline())
     try:
-        info = path.lstat()
+        mode, data = local_file_access.read_entry(root, checkpoint_entry_path(root, path))
     except (FileNotFoundError, NotADirectoryError):
         return {'kind': 'missing'}, None
-    if stat.S_ISDIR(info.st_mode):
-        return {'kind': 'directory', 'mode': stat.S_IMODE(info.st_mode)}, None
-    if stat.S_ISREG(info.st_mode):
-        kind, data = 'file', path.read_bytes()
-    elif stat.S_ISLNK(info.st_mode):
+    if stat.S_ISDIR(mode):
+        return {'kind': 'directory', 'mode': stat.S_IMODE(mode)}, None
+    if stat.S_ISREG(mode):
+        kind = 'file'
+    elif stat.S_ISLNK(mode):
         kind = 'symlink'
-        data = os.fsencode(path.files.readlink(str(path)) if isinstance(path, TaskPath)
-                           else os.readlink(path))
     else:
         raise OSError(f'unsupported restore recovery entry: {path}')
-    return {'kind': kind, 'mode': stat.S_IMODE(info.st_mode),
+    return {'kind': kind, 'mode': stat.S_IMODE(mode),
             'sha256': hashlib.sha256(data).hexdigest()}, data
 
 
@@ -111,7 +110,7 @@ class RestoreJournal:
             paths = set(paths)
             paths.update(parent for path in tuple(paths) for parent in _parents(path))
             for path in sorted(paths):
-                entry, data = entry_state(root / path)
+                entry, data = entry_state(root, root / path)
                 if data is not None:
                     name = f'blob-{len(state["before"])}'
                     with (directory / name).open('xb') as output:
@@ -173,7 +172,7 @@ class RestoreJournal:
             current = {}
             for path in affected:
                 before = _signature(self.state['before'][path])
-                now, _ = entry_state(self.root / path)
+                now, _ = entry_state(self.root, self.root / path)
                 current[path] = now
                 if now == before or now == operations.get(path):
                     continue
@@ -209,21 +208,25 @@ class RestoreJournal:
                 before, now = self.state['before'][path], current[path]
                 if now['kind'] == 'missing' or now['kind'] == before['kind']:
                     continue
-                target = self.root / path
-                target.rmdir() if now['kind'] == 'directory' else target.unlink()
+                target = checkpoint_entry_path(self.root, self.root / path)
+                if now['kind'] == 'directory':
+                    local_file_access.rmdir(self.root, target)
+                else:
+                    local_file_access.unlink(self.root, target)
 
             created_directories = []
             for path in reversed(deepest):
                 before = self.state['before'][path]
-                if before['kind'] == 'directory' and not (self.root / path).is_dir():
-                    (self.root / path).mkdir()
+                target = checkpoint_entry_path(self.root, self.root / path)
+                if before['kind'] == 'directory' and not local_file_access.is_dir(self.root, target):
+                    local_file_access.mkdir(self.root, target)
                     created_directories.append(path)
             for path in reversed(deepest):
                 before = self.state['before'][path]
                 if before['kind'] in ('missing', 'directory'):
                     continue
                 target = self.root / path
-                now, _ = entry_state(target)
+                now, _ = entry_state(self.root, target)
                 if now == _signature(before):
                     continue
                 data = (self.directory / before['blob']).read_bytes()
@@ -231,14 +234,16 @@ class RestoreJournal:
                     raise WorkspaceCheckpointError(f'restore recovery bytes changed: {path}')
                 if before['kind'] == 'symlink':
                     if now['kind'] != 'missing':
-                        target.unlink()
-                    target.symlink_to(os.fsdecode(data))
+                        local_file_access.unlink(self.root, checkpoint_entry_path(self.root, target))
+                    local_file_access.symlink(self.root, checkpoint_entry_path(self.root, target), os.fsdecode(data))
                 else:
                     self.store._write_regular_file(target, data, before['mode'])
             for path in created_directories:
-                (self.root / path).chmod(self.state['before'][path]['mode'])
+                local_file_access.chmod_created_directory(
+                    self.root, checkpoint_entry_path(self.root, self.root / path),
+                    self.state['before'][path]['mode'])
             for path in affected:
-                now, _ = entry_state(self.root / path)
+                now, _ = entry_state(self.root, self.root / path)
                 if now != _signature(self.state['before'][path]):
                     raise WorkspaceCheckpointError(f'restore recovery incomplete: {path}')
             self.store._require_task_binding(self.state['binding'])

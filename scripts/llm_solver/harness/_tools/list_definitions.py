@@ -36,8 +36,7 @@ def list_definitions(
     matching nesting depth, signature (or class header), and the first
     line of the docstring when present.
 
-    Cost is dominated by ast.parse() — a few ms per file even on large
-    sources. Output is bounded: the resulting string is typically
+    Output is bounded: the resulting string is typically
     100-300 tokens instead of the 5-20k tokens needed to read a whole
     file. Use BEFORE read() to navigate large
     files; use read(offset, limit) to fetch a specific definition once
@@ -76,7 +75,9 @@ def list_definitions(
     except ValueError as e:
         return _list_definitions_error(path, "path_outside_cwd", str(e))
     from ..structural_index import _UnreadableMatcher
-    if _UnreadableMatcher(_resolve(cwd, '.'), cfg.unreadable_paths or ()).blocks(abs_path):
+    if cfg.unreadable_paths and _UnreadableMatcher(
+        _resolve(cwd, '.'), cfg.unreadable_paths
+    ).blocks(abs_path):
         return _list_definitions_error(path, "not_found", f"file not found: {path}")
     policy = active_ignore_policy(cwd)
     if policy is not None and policy.is_ignored(
@@ -97,9 +98,10 @@ def list_definitions(
     # — `cdef`/`cpdef` are not valid Python and `ast.parse` rejects them.
     if suffix not in (".py", ".pyi"):
         from ._single_file_symbols import list_file_symbols
-        return list_file_symbols(abs_path, path, cfg)
+        return list_file_symbols(abs_path, path, cfg, cwd=cwd)
     try:
-        text = abs_path.read_text(errors="replace")
+        from ..local_file_access import read_text
+        text = read_text(cwd, abs_path, errors="replace")
     except OSError as e:
         return _list_definitions_error(path, "os_error", f"could not read {path}: {e}")
     envelope = _list_python_definitions(text, path)
@@ -232,13 +234,14 @@ def _list_repository_symbols(
     except ValueError as exc:
         return _list_definitions_error(path, "path_outside_cwd", str(exc))
     policy = active_ignore_policy(cwd)
+    is_directory = root.is_dir()
     if policy is not None and policy.is_model_hidden(
-        root, is_dir=root.is_dir()
+        root, is_dir=is_directory
     ):
         return _list_definitions_error(
             path, "not_directory", f"repository scope is not a directory: {path}",
         )
-    if not root.is_dir():
+    if not is_directory:
         return _list_definitions_error(
             path, "not_directory", f"repository scope is not a directory: {path}",
         )

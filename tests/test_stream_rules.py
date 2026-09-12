@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -159,3 +160,82 @@ def test_structural_tool_rule_honors_scope_and_repository_glob(tmp_path):
     assert records[0]["scope"] == "tool:write(**/*.py)"
     assert records[0]["path"] == "root.py"
     assert records[0]["interrupt"] is False
+
+
+@pytest.mark.parametrize('suffix', ['', '\nunfinished = ('])
+def test_ast_rules_share_source_parse_preserving_order_and_character_offsets(tmp_path, monkeypatch, suffix):
+    from scripts.llm_solver.harness import _stream_rule_ast as module
+
+    rules = [
+        _rule('name = "later"\nastCondition = "exec($ARG)"\ninterruptMode = "never"'),
+        _rule('name = "earlier"\nastCondition = "eval($ARG)"'),
+    ]
+    text = '# café\neval(value)\nexec(other)' + suffix
+    original = module._parser_for
+    source_parses = []
+
+    def parser_for(language):
+        parser = original(language)
+        def parse(raw):
+            if raw == text.encode():
+                source_parses.append(language)
+            return parser.parse(raw)
+        return SimpleNamespace(parse=parse)
+
+    monkeypatch.setattr(module, '_parser_for', parser_for)
+    runtime = StreamRuleRuntime(rules, repeat_gap=10, cwd=tmp_path)
+    delta = SimpleNamespace(source='tool', delta='', tool_index=0, tool_name='write',
+                            tool_arguments=json.dumps({'path': 'root.py', 'content': text}))
+    with pytest.raises(StreamRuleInterrupt) as caught:
+        runtime.observe(delta, turn=0)
+    assert source_parses == ['python']
+    assert [(r['rule'], r['offset'], r['interrupt']) for r in caught.value.matches] == [
+        ('later', text.index('exec'), False), ('earlier', text.index('eval'), True),
+    ]
+
+
+def test_ast_source_parse_is_fresh_for_each_delta_and_language(tmp_path, monkeypatch):
+    from scripts.llm_solver.harness import _stream_rule_ast as module
+
+    rules = [_rule(f'name = "{language}"\nastCondition = "forbidden($ARG)"\n'
+                   f'scope = "tool:write(*.{extension})"')
+             for language, extension in [('python', 'py'), ('javascript', 'js')]]
+    runtime = StreamRuleRuntime(rules, repeat_gap=10, cwd=tmp_path)
+    original = module._parser_for
+    observed = []
+
+    def parser_for(language):
+        parser = original(language)
+        def parse(raw):
+            if raw in (b'safe(', b'forbidden(value)'):
+                observed.append((language, raw))
+            return parser.parse(raw)
+        return SimpleNamespace(parse=parse)
+
+    monkeypatch.setattr(module, '_parser_for', parser_for)
+    for text in ['safe(', 'forbidden(value)']:
+        delta = SimpleNamespace(source='tool', delta='', tool_index=0, tool_name='write',
+            tool_arguments=json.dumps({'path': 'root.py', 'file': 'root.js', 'content': text}))
+        if text.startswith('safe'):
+            runtime.observe(delta, turn=0)
+        else:
+            with pytest.raises(StreamRuleInterrupt) as caught:
+                runtime.observe(delta, turn=0)
+            assert [r['rule'] for r in caught.value.matches] == ['python', 'javascript']
+    assert observed == [('python', b'safe('), ('javascript', b'safe('),
+                        ('python', b'forbidden(value)'), ('javascript', b'forbidden(value)')]
+
+
+def test_ast_preparation_stays_lazy_for_regex_match_and_unmatched_scope(tmp_path, monkeypatch):
+    from scripts.llm_solver.harness import _stream_rule_ast as module
+
+    rules = [_rule('name = "regex"\ncondition = "safe"\nastCondition = "eval($ARG)"'),
+             _rule('name = "other"\nscope = "tool:edit"\nastCondition = "eval($ARG)"')]
+    def unexpected_parse(language):
+        pytest.fail(f'unneeded parser preparation: {language}')
+    monkeypatch.setattr(module, '_parser_for', unexpected_parse)
+    runtime = StreamRuleRuntime(rules, repeat_gap=10, cwd=tmp_path)
+    with pytest.raises(StreamRuleInterrupt) as caught:
+        runtime.observe(SimpleNamespace(source='tool', delta='', tool_index=0, tool_name='write',
+            tool_arguments=json.dumps({'path': 'root.py', 'content': 'safe()'})), turn=0)
+    assert [r['rule'] for r in caught.value.matches] == ['regex']

@@ -1,4 +1,5 @@
 """grep tool: search file contents with regex via ripgrep or grep fallback."""
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,49 @@ from ..task_path import TaskPath
 # path so the first ":<digits>:" wins; a path containing a colon still parses
 # because a literal colon is not followed by digits-then-colon at that point.
 _MATCH_LINE_RE = re.compile(r'^(.*?):(\d+):')
+
+
+_NATIVE_SEARCH = r'''
+native_search() {
+    local readlink_bin=$1 pattern=$2 input_fd code target index
+    local -a batch targets inputs opened
+    local -A labels
+    while :; do
+        mapfile -d '' -n 64 -t batch
+        (( ${#batch[@]} )) || break
+        mapfile -d '' -t targets < <("$realpath_bin" -m -z -- "${batch[@]}")
+        wait "$!" || return 74
+        (( ${#targets[@]} == ${#batch[@]} )) || return 74
+        inputs=(); labels=()
+        for index in "${!targets[@]}"; do
+            target=${targets[$index]}
+            case "$target" in "$root"|"${root%/}/"*) ;; *) return 77 ;; esac
+            [[ -f "$target" ]] || continue
+            exec {input_fd}< "$target" || return 74
+            inputs+=("/proc/self/fd/$input_fd")
+            labels[$input_fd]=${batch[$index]}
+        done
+        (( ${#inputs[@]} )) || continue
+        mapfile -d '' -t opened < <("$readlink_bin" -z -- "${inputs[@]}")
+        wait "$!" || return 74
+        (( ${#opened[@]} == ${#inputs[@]} )) || return 74
+        for target in "${opened[@]}"; do
+            case "$target" in "$root"|"${root%/}/"*) ;; *) return 77 ;; esac
+        done
+        "$utility" -n --with-filename --color=never -- "$pattern" "${inputs[@]}" |
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                if [[ "$line" =~ ^/proc/self/fd/([0-9]+):(.*)$ ]]; then
+                    printf '%s:%s\n' "${labels[${BASH_REMATCH[1]}]}" "${BASH_REMATCH[2]}"
+                else
+                    printf '%s\n' "$line"
+                fi
+            done
+        code=${PIPESTATUS[0]}
+        for input_fd in "${!labels[@]}"; do exec {input_fd}<&-; done
+        (( code <= 1 )) || return "$code"
+    done
+}
+'''
 
 
 def _sort_key(line: str) -> tuple:
@@ -106,16 +150,6 @@ def grep_files(
     ):
         return "No matches found."
     rg = shutil.which("rg") if not isinstance(resolved, TaskPath) else None
-    if rg:
-        cmd = [rg, "-n", "--no-heading"]
-        if glob_filter:
-            cmd.extend(["--glob", glob_filter])
-        cmd.extend([pattern, resolved_path])
-    else:
-        cmd = ["grep", "-rn"]
-        if glob_filter:
-            cmd.extend(["--include", glob_filter])
-        cmd.extend([pattern, resolved_path])
     try:
         if isinstance(resolved, TaskPath):
             from ..time_budget import command_time_budget
@@ -126,22 +160,27 @@ def grep_files(
                                   resolved.files.search_files(str(resolved), glob_filter)]
                     native_selection = True
                 except TaskUtilityUnavailable:
-                    candidates = [resolved] if resolved.is_file() else resolved.glob('**/*')
+                    candidates = ([resolved] if resolved.is_file()
+                                  else resolved.glob('**/*', files_only=True))
                     native_selection = False
-                parts = []
+                selected = []
                 for candidate in candidates:
-                    if not native_selection and not candidate.is_file():
-                        continue
                     if not native_selection and glob_filter and not candidate.path.match(glob_filter):
                         continue
                     if policy is not None and policy.is_ignored(candidate, is_dir=False):
                         continue
-                    parts.append(candidate.files.search(str(candidate), pattern))
-            result = subprocess.CompletedProcess([], 0, b''.join(parts).decode('utf-8', 'replace'), '')
+                    selected.append(os.fsencode(str(candidate)))
+                files = resolved.files
+                utility = 'rg' if native_selection else 'grep'
+                output = files._call('search_batch', files.root, utility=utility,
+                    args=(files._utility('readlink'), pattern),
+                    data=b''.join(path + b'\0' for path in selected),
+                    script_prefix=_NATIVE_SEARCH)
+            result = subprocess.CompletedProcess([], 0, output.decode('utf-8', 'replace'), '')
         else:
-            result = subprocess.run(
-                cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
-            )
+            from ._local_grep import local_grep
+            result = local_grep(cwd, resolved, pattern, glob_filter, rg=rg,
+                                policy=policy, timeout=timeout)
         # rg/grep exit-code semantics: 0 = matches, 1 = no matches
         # (legitimate empty result), 2+ = error (bad regex, missing
         # path, unreadable file, ...). Surface stderr instead of

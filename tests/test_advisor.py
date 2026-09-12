@@ -643,9 +643,16 @@ def test_default_off_replay_is_run_deterministic_and_has_no_advisor_artifact(
         )
         with patch.object(Session, "_get_server_ctx", return_value=0):
             result = session.run()
-        observed.append((result, trace.getvalue(), session.context.get_messages()))
+        rows = [json.loads(line) for line in trace.getvalue().splitlines()]
+        timing = [row for row in rows if row["event"] == "turn_timing"]
+        assert len(timing) == 1
+        assert timing[0]["boundary"] == "session_end"
+        assert timing[0]["dispatch_executed"] is False
+        # Replay preserves model behaviour; measured wall times vary by run.
+        stable_rows = [row for row in rows if row["event"] != "turn_timing"]
+        observed.append((result, stable_rows, session.context.get_messages()))
         assert session._advisor is None
         assert not (run_dir / "advisor.jsonl").exists()
 
     assert observed[0] == observed[1]
-    assert "advisor_note" not in observed[0][1]
+    assert "advisor_note" not in json.dumps(observed[0][1])

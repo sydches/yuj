@@ -276,6 +276,28 @@ def test_selected_bwrap_never_degrades_without_required(monkeypatch, tmp_path):
     assert "Refusing to substitute another backend or run unsandboxed" in out
 
 
+def test_missing_selected_bwrap_never_starts_an_unrestricted_command(monkeypatch, tmp_path):
+    monkeypatch.delenv("YUJ_CONTAINER", raising=False)
+    out, rc, _ = _run_in_sandbox(
+        "touch must-not-run", cwd=str(tmp_path), timeout=10,
+        sandbox=True, bwrap_bin=NONEXISTENT_BWRAP, sandbox_required=False,
+    )
+    assert rc is None and 'missing' in out
+    assert not (tmp_path / 'must-not-run').exists()
+
+
+def test_explicit_unrestricted_mode_can_use_paths_outside_cwd(monkeypatch, tmp_path):
+    monkeypatch.delenv('YUJ_CONTAINER', raising=False)
+    task = tmp_path / 'task'
+    task.mkdir()
+    (tmp_path / 'outside.txt').write_text('explicit unrestricted process')
+    out, rc, timed_out = _run_in_sandbox(
+        'cat ../outside.txt', cwd=str(task), timeout=10,
+        sandbox=False, bwrap_bin=NONEXISTENT_BWRAP, sandbox_required=True,
+    )
+    assert (out, rc, timed_out) == ('explicit unrestricted process', 0, False)
+
+
 # ----- File ops bypass the sandbox dispatch entirely -----
 # This is documented behavior: write/edit/read tools use path-resolution,
 # not bwrap. Pinning it so a future refactor doesn't accidentally route

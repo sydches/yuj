@@ -85,8 +85,15 @@ def _workspace_coverage(state, cfg, cwd, request, target):
                 record.get('task_view') != request.get('workspace_task_view')):
             return 'file spelling', 'recorded excerpt belongs to a different inspection view', '', False
         # Hash only a previously inspected file, within the invocation's clock.
-        with path.open("rb") as stream:
-            revision = hashlib.file_digest(stream, "sha256").hexdigest()
+        if isinstance(path, TaskPath):
+            from ..task_files import TaskUtilityUnavailable
+            try:
+                revision = path.files.sha256_many([str(path)])[str(path)]
+            except TaskUtilityUnavailable:
+                revision = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            with path.open("rb") as stream:
+                revision = hashlib.file_digest(stream, "sha256").hexdigest()
         if revision != record["sha256"]:
             return "file spelling", "recorded excerpt is from a different file revision", revision, False
         intervals = record["intervals"]

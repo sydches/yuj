@@ -78,12 +78,11 @@ class PersistentBashSession:
         } ) 2>&1
         __EC=$?
         find /tmp -mindepth 1 -delete 2>/dev/null
-        printf '\\n%s %d\\n' '<marker>' "$__EC"
+        printf '%s %d\\n' '<marker>' "$__EC"
 
     The harness reads stdout until it sees the marker line, then
-    parses the exit code that follows on the same line. Trailing
-    newline blank line (from the wrapper's leading `\\n`) is stripped
-    so output matches subprocess.run's stdout+stderr exactly.
+    parses the exit code that follows on the same line. The marker may
+    follow a partial output line; no separator byte is added to task output.
 
     Properties preserved vs the per-call path:
       - cwd remains writable (bwrap mount baked in at start()).
@@ -253,7 +252,7 @@ class PersistentBashSession:
                 "} ) 2>&1\n"
                 "__EC=$?\n"
                 f"{clear_tmp}"
-                f"printf '\\n%s %d\\n' '{marker}' \"$__EC\"\n"
+                f"printf '%s %d\\n' '{marker}' \"$__EC\"\n"
             )
             from ..time_budget import BudgetExhausted, command_timeout
             timeout = command_timeout(timeout)
@@ -300,18 +299,14 @@ class PersistentBashSession:
                             None,
                             False,
                         )
-                    if line.startswith(marker + " "):
-                        exit_str = line[len(marker) + 1:].strip()
+                    output, separator, exit_str = line.rpartition(marker + " ")
+                    if separator:
+                        exit_str = exit_str.strip()
                         try:
                             exit_code = int(exit_str)
                         except ValueError:
                             exit_code = -1
-                        # Wrapper writes `\n<marker> <ec>\n` so the
-                        # buffer's last entry is the inserted blank
-                        # line — strip it so output matches
-                        # subprocess.run's stdout+stderr exactly.
-                        if buf and buf[-1] == "\n":
-                            buf.pop()
+                        buf.append(output)
                         return "".join(buf), exit_code, False
                     buf.append(line)
             finally:

@@ -7,6 +7,7 @@ cause-hint attribute).
 from __future__ import annotations
 
 import re
+import random
 import pytest
 import sys
 from pathlib import Path
@@ -18,6 +19,54 @@ sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 from _config_helpers import make_config
 from llm_solver.harness import edit_replacers as er
 from llm_solver.harness.tools import edit
+
+
+def _original_block_anchor(text, old):
+    """Reference ordering and scoring before the anchor-search optimization."""
+    requested = old.split("\n")
+    if len(requested) < 3 or not requested[0].strip() or not requested[-1].strip():
+        return None
+    lines = text.split("\n")
+    for first, line in enumerate(lines):
+        if line.strip() != requested[0].strip():
+            continue
+        for last in range(first + 2, len(lines)):
+            if lines[last].strip() != requested[-1].strip():
+                continue
+            pairs = list(zip(requested[1:-1], lines[first + 1:last]))
+            score = sum(er._line_similarity(a.strip(), b.strip()) for a, b in pairs)
+            if score / len(pairs) >= 0.5:
+                start = sum(len(line) + 1 for line in lines[:first])
+                return start, min(len(text), sum(len(line) + 1 for line in lines[:last + 1]) - 1)
+    return None
+
+
+def test_candidate_order_matches_original_anchor_search(monkeypatch):
+    rng = random.Random(432)
+    vocabulary = ["anchor", "end", "x = y", "x = z", "other", "", " anchor "]
+    cascade = er.CASCADE
+    reference = [(name, _original_block_anchor if name == "block_anchor" else fn)
+                 for name, fn in cascade]
+    for _ in range(250):
+        text = "\n".join(rng.choices(vocabulary, k=30))
+        old = "\n".join([rng.choice(["anchor", "end"]),
+                         *rng.choices(vocabulary, k=rng.randrange(1, 7)),
+                         rng.choice(["anchor", "end"])])
+        monkeypatch.setattr(er, "CASCADE", reference)
+        expected = er.rank_candidates(text, old)
+        monkeypatch.setattr(er, "CASCADE", cascade)
+        assert er.rank_candidates(text, old) == expected
+
+
+def test_repeated_anchors_keep_the_late_candidate():
+    prefix = "anchor\nwrong_body\nend\n" * 6000
+    tail = "anchor\nx = actual\nend"
+    candidates = er.rank_candidates(prefix + tail, "anchor\nx = expected\nend")
+    assert len(candidates) == 1
+    assert candidates[0].strategy == "block_anchor"
+    assert candidates[0].start == len(prefix)
+    assert candidates[0].end == len(prefix + tail)
+    assert candidates[0].line_number == 18001
 
 
 class TestRankCandidates:

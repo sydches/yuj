@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from .prompt_imports import process_imports
-from .task_path import TaskPath, NativeUnreadableMatcher, startup_task_path, startup_source_path
+from .task_path import TaskPath, NativeUnreadableMatcher, startup_task_path, native_requested_path
 
 
 DEFAULT_PROJECT_DOC_NAMES = ("AGENTS.md", "CLAUDE.md")
@@ -138,6 +138,8 @@ def find_project_root(
     if not current.is_dir():
         raise ValueError(f"project instruction cwd is not a directory: {cwd}")
     marker_names = _validated_names(markers, field="project_root_markers")
+    if not isinstance(current, TaskPath):
+        return current
     for candidate in (current, *current.parents):
         if any((candidate / marker).exists() for marker in marker_names):
             return candidate
@@ -288,8 +290,12 @@ def discover_project_instructions(
     unreadable = _UnreadableMatcher(project_root, unreadable_paths)
     locations: list[tuple[Path, str, Path]] = []
     if global_dir is not None:
-        resolved_global = startup_source_path(global_dir, resolved_cwd).resolve()
-        locations.append((resolved_global, "global", resolved_global))
+        if isinstance(resolved_cwd, TaskPath):
+            resolved_global = native_requested_path(resolved_cwd, str(global_dir), variables=True).resolve()
+        else:
+            resolved_global = (resolved_cwd / Path(global_dir).expanduser()).resolve()
+        if isinstance(resolved_global, TaskPath) or resolved_global.is_relative_to(resolved_cwd):
+            locations.append((resolved_global, "global", resolved_global))
     locations.extend(
         (directory, "project", project_root)
         for directory in _walk_root_to_cwd(project_root, resolved_cwd)

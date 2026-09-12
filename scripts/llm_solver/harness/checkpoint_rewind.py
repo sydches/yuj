@@ -150,7 +150,8 @@ def capture_context_checkpoint(
     tool_log_length: int = 0,
 ) -> ContextCheckpoint:
     """Capture a deep, protocol-safe copy of the context append log."""
-    messages = copy.deepcopy(list(context.snapshot_messages()))
+    # The context contract already returns a detached deep copy of its log.
+    messages = context.snapshot_messages()
     validate_checkpoint_boundary(messages)
     return ContextCheckpoint(
         goal=goal,

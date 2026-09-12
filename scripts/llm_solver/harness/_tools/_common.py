@@ -22,6 +22,7 @@ class ToolExecutionText(str):
         timed_out: bool = False,
         verification_status: str = "",
         runner_request: dict | None = None,
+        runner_command: str = "",
         execution_budget: dict | None = None,
         executed: bool | None = None,
         user_turn_injections: Iterable["UserTurnInjection"] = (),
@@ -31,6 +32,7 @@ class ToolExecutionText(str):
         value.timed_out = bool(timed_out)
         value.verification_status = verification_status
         value.runner_request = runner_request
+        value.runner_command = runner_command
         value.execution_budget = execution_budget
         value.executed = executed
         value.user_turn_injections = tuple(user_turn_injections)
@@ -72,6 +74,13 @@ def _resolve(cwd: str, path: str):
     return target
 
 
+def _skill_readable_roots(cfg) -> tuple[str, ...]:
+    if not cfg.sandbox_bash:
+        return ()
+    return tuple(dict.fromkeys((*cfg.skills_readable_dirs,
+                               *cfg.skills_native_readable_dirs)))
+
+
 def _resolve_read(
     cwd: str,
     path: str,
@@ -96,12 +105,6 @@ def _resolve_read(
                     external = files.readonly_view(root)
                     return TaskPath(external, external.root / value.relative_to(root)).resolve()
         return _resolve(cwd, path)
-    if path.startswith("/") and readonly_roots:
-        target = Path(path).resolve(strict=False)
-        for raw_root in readonly_roots:
-            root = Path(raw_root).resolve(strict=False)
-            if target == root or root in target.parents:
-                return target
     return _resolve(cwd, path)
 
 

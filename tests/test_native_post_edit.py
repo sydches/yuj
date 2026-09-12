@@ -10,6 +10,58 @@ from scripts.llm_solver.harness.task_path import activate_task_files
 from scripts.llm_solver.harness.tools import dispatch
 
 
+def test_run_tests_admission_keeps_native_runner_when_host_disagrees(bwrap, tmp_path, monkeypatch):
+    from scripts.llm_solver.harness import tools
+    from scripts.llm_solver import bash_quirks
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'Cargo.toml').write_text('[package]\nname = "native"\n')
+    host = tmp_path / 'host_alias'
+    host.mkdir()
+    (host / 'pytest.ini').write_text('[pytest]\n')
+    command = 'cargo test --no-fail-fast --quiet'
+    cfg = make_config(sandbox_bash=True, bwrap_bin=bwrap,
+        tools_run_tests_enabled=True, analysis_task_format='auto',
+        runtime_test_selection={'status': 'selected', 'task_root': str(host),
+                                'selected': {'runner': 'cargo', 'base_cmd': command}})
+    submitted, admitted = [], []
+
+    def execute(cmd, **options):
+        submitted.append(cmd)
+        return 'test result: ok. 1 passed', 0, False
+
+    def condense(text, cmd, control):
+        admitted.append(cmd)
+        return text
+
+    monkeypatch.setattr(tools, '_run_in_sandbox', execute)
+    monkeypatch.setattr(bash_quirks, 'condense_output', condense)
+    with activate_task_files(files, host_root=host):
+        result = dispatch('run_tests', {}, cwd=str(host), cfg=cfg, output_control=object())
+    assert 'runner="cargo"' in result
+    assert submitted == [command]
+    assert admitted == submitted
+
+
+def test_udiff_retains_task_binding_when_host_cwd_alias_changes(bwrap, tmp_path):
+    from scripts.llm_solver.harness.udiff import parse_unified_diff, verify_and_apply_unified_diff
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'file.txt').write_text('old\n')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'file.txt').write_text('old\n')
+    alias = tmp_path / 'alias'
+    alias.symlink_to(tmp_path / 'view', target_is_directory=True)
+    patches = parse_unified_diff('--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n')
+    with activate_task_files(files, host_root=alias):
+        alias.unlink()
+        alias.symlink_to(outside, target_is_directory=True)
+        result, _ = verify_and_apply_unified_diff(patches, str(alias))
+    assert result.startswith('OK:')
+    assert (source / 'file.txt').read_text() == 'new\n'
+    assert (outside / 'file.txt').read_text() == 'old\n'
+
+
 @pytest.mark.parametrize('spelling', ['relative', 'host', 'native'])
 @pytest.mark.parametrize('expected', ['EDITED', 'DIFFERENT'])
 def test_edit_validator_uses_native_relative_alias_and_environment(

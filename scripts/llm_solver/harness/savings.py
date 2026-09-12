@@ -21,7 +21,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-import difflib
 import functools
 import hashlib
 import json
@@ -31,15 +30,13 @@ import threading
 from typing import Any
 import uuid
 
+from .savings_debug import write_debug_values
+
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 TRANSFORM_SCHEMA_VERSION = 1
 TRANSFORM_LOG_MODES = ("counts", "debug")
-_DEBUG_CONTEXT_CHARS = 48
-_DEBUG_SNIPPET_MAX_CHARS = 800
-_DEBUG_MAX_CHANGES = 50
-_DEBUG_DIFF_MAX_CHARS = 200_000
 
 
 @dataclass
@@ -311,26 +308,7 @@ class SavingsLedger:
     def _write_debug_values(
         self, event_id: str, before: str, after: str,
     ) -> dict[str, Any]:
-        debug_dir = self._path.parent / f"{self._path.stem}.transform_debug"
-        before_path = debug_dir / f"{event_id}.before.txt"
-        after_path = debug_dir / f"{event_id}.after.txt"
-        debug_fields: dict[str, Any] = {
-            "changes": _changed_snippets(before, after),
-        }
-        try:
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            before_path.write_text(before, encoding="utf-8")
-            after_path.write_text(after, encoding="utf-8")
-            debug_fields["input_full_path"] = str(
-                before_path.relative_to(self._path.parent)
-            )
-            debug_fields["output_full_path"] = str(
-                after_path.relative_to(self._path.parent)
-            )
-        except (OSError, UnicodeError) as exc:
-            log.warning("Transformation debug write failed: %s", exc)
-            debug_fields["debug_write_error"] = str(exc)
-        return debug_fields
+        return write_debug_values(self._path, event_id, before, after)
 
     def _write_record(self, record: dict[str, Any]) -> None:
         try:
@@ -356,80 +334,6 @@ class SavingsLedger:
                 except OSError:
                     pass
                 self._file = None
-
-
-def _changed_snippets(before: str, after: str) -> list[dict[str, Any]]:
-    """Return readable, bounded before/after regions for a debug record."""
-    if len(before) + len(after) > _DEBUG_DIFF_MAX_CHARS:
-        return [_one_changed_region(before, after)]
-    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
-    changes: list[dict[str, Any]] = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            continue
-        changes.append(_change_region(before, after, i1, i2, j1, j2))
-        if len(changes) >= _DEBUG_MAX_CHANGES:
-            break
-    return changes
-
-
-def _one_changed_region(before: str, after: str) -> dict[str, Any]:
-    prefix = 0
-    prefix_limit = min(len(before), len(after))
-    while prefix < prefix_limit and before[prefix] == after[prefix]:
-        prefix += 1
-    before_tail = len(before)
-    after_tail = len(after)
-    while (
-        before_tail > prefix
-        and after_tail > prefix
-        and before[before_tail - 1] == after[after_tail - 1]
-    ):
-        before_tail -= 1
-        after_tail -= 1
-    return _change_region(
-        before, after, prefix, before_tail, prefix, after_tail,
-    )
-
-
-def _change_region(
-    before: str,
-    after: str,
-    i1: int,
-    i2: int,
-    j1: int,
-    j2: int,
-) -> dict[str, Any]:
-    before_start = max(0, i1 - _DEBUG_CONTEXT_CHARS)
-    before_end = min(len(before), i2 + _DEBUG_CONTEXT_CHARS)
-    after_start = max(0, j1 - _DEBUG_CONTEXT_CHARS)
-    after_end = min(len(after), j2 + _DEBUG_CONTEXT_CHARS)
-    return {
-        "input_byte_range": [
-            len(before[:i1].encode("utf-8")),
-            len(before[:i2].encode("utf-8")),
-        ],
-        "output_byte_range": [
-            len(after[:j1].encode("utf-8")),
-            len(after[:j2].encode("utf-8")),
-        ],
-        "before": _bounded_snippet(before[before_start:before_end]),
-        "after": _bounded_snippet(after[after_start:after_end]),
-    }
-
-
-def _bounded_snippet(value: str) -> str:
-    """Keep a debug JSON region readable; full values live in sidecars."""
-    if len(value) <= _DEBUG_SNIPPET_MAX_CHARS:
-        return value
-    head = _DEBUG_SNIPPET_MAX_CHARS // 2
-    tail = _DEBUG_SNIPPET_MAX_CHARS - head
-    omitted = len(value) - head - tail
-    return (
-        value[:head]
-        + f"\n[... {omitted} chars omitted from debug snippet ...]\n"
-        + value[-tail:]
-    )
 
 
 _ledger: SavingsLedger | _NullLedger = _NullLedger()
@@ -460,6 +364,17 @@ def close_ledger() -> None:
     if isinstance(_ledger, SavingsLedger):
         _ledger.close()
     _ledger = _NullLedger()
+
+
+def savings_ledger_scope(function):
+    """Close task accounting on normal exit, failures and signal unwinding."""
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        finally:
+            close_ledger()
+    return wrapped
 
 
 def get_ledger() -> SavingsLedger | _NullLedger:

@@ -57,7 +57,7 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
     tmp_path: Path,
 ) -> None:
     work = tmp_path / "repo"
-    global_dir = tmp_path / "global"
+    global_dir = work / "global"
     work.mkdir()
     global_dir.mkdir()
     (work / ".git").mkdir()

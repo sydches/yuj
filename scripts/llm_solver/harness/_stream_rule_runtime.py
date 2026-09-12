@@ -1,45 +1,17 @@
 """Per-session matching and injection state for mid-stream rules."""
 from __future__ import annotations
 
-import importlib
 import json
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from functools import lru_cache
 from html import escape as xml_escape
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from ._stream_rule_ast import _ast_offset
 from ._stream_rule_loader import (
     StreamRule,
-    StreamRuleError,
-    _METAVAR_RE,
-    _META_PREFIX,
 )
-
-
-_LANGUAGE_BY_SUFFIX = {
-    ".cjs": "javascript",
-    ".go": "go",
-    ".java": "java",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".py": "python",
-    ".pyi": "python",
-    ".rs": "rust",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-}
-_GRAMMARS = {
-    "python": ("tree_sitter_python", "language"),
-    "javascript": ("tree_sitter_javascript", "language"),
-    "typescript": ("tree_sitter_typescript", "language_typescript"),
-    "tsx": ("tree_sitter_typescript", "language_tsx"),
-    "go": ("tree_sitter_go", "language"),
-    "rust": ("tree_sitter_rust", "language"),
-    "java": ("tree_sitter_java", "language"),
-}
 
 
 def _normalize_path(value: str, cwd: Path) -> str:
@@ -119,95 +91,6 @@ def _tool_snapshot(
     if isinstance(value, str):
         return value, paths, tool_name in {"edit", "write"}
     return json.dumps(arguments, sort_keys=True, ensure_ascii=False), paths, False
-
-
-@lru_cache(maxsize=16)
-def _parser_for(language: str):
-    try:
-        module_name, function_name = _GRAMMARS[language]
-        module = importlib.import_module(module_name)
-        from tree_sitter import Language, Parser
-        grammar = Language(getattr(module, function_name)())
-        try:
-            parser = Parser(grammar)
-        except TypeError:  # tree-sitter < 0.25
-            parser = Parser()
-            if hasattr(parser, "set_language"):
-                parser.set_language(grammar)
-            else:
-                parser.language = grammar
-        return parser
-    except (KeyError, ImportError, AttributeError) as exc:
-        raise StreamRuleError(
-            f"stream-rule structural backend unavailable for {language!r}; "
-            "reinstall Yuj with its tree-sitter dependencies"
-        ) from exc
-
-
-def _node_text(node, source: bytes) -> str:
-    return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-
-
-def _match_ast_node(pattern_node, candidate_node, pattern: bytes, candidate: bytes,
-                    bindings: dict[str, str]) -> bool:
-    pattern_text = _node_text(pattern_node, pattern)
-    if pattern_node.type == "identifier" and pattern_text.startswith(_META_PREFIX):
-        name = pattern_text[len(_META_PREFIX):]
-        value = _node_text(candidate_node, candidate)
-        prior = bindings.get(name)
-        if prior is not None:
-            return prior == value
-        bindings[name] = value
-        return True
-    if pattern_node.type != candidate_node.type:
-        return False
-    pattern_children = list(pattern_node.children)
-    candidate_children = list(candidate_node.children)
-    if len(pattern_children) != len(candidate_children):
-        return False
-    if not pattern_children:
-        return pattern_text == _node_text(candidate_node, candidate)
-    return all(
-        _match_ast_node(p_child, c_child, pattern, candidate, bindings)
-        for p_child, c_child in zip(pattern_children, candidate_children)
-    )
-
-
-def _walk_nodes(node):
-    yield node
-    for child in node.children:
-        yield from _walk_nodes(child)
-
-
-@lru_cache(maxsize=256)
-def _compiled_ast_pattern(language: str, source_pattern: str):
-    parser = _parser_for(language)
-    substituted = _METAVAR_RE.sub(
-        lambda match: _META_PREFIX + match.group(1), source_pattern
-    )
-    raw = substituted.encode("utf-8")
-    tree = parser.parse(raw)
-    root = tree.root_node
-    if root.has_error:
-        raise StreamRuleError(
-            f"invalid astCondition {source_pattern!r} for {language}: parse error"
-        )
-    node = root.named_children[0] if len(root.named_children) == 1 else root
-    return raw, node
-
-
-def _ast_offset(snapshot: str, path: str, patterns: Sequence[str]) -> int | None:
-    language = _LANGUAGE_BY_SUFFIX.get(Path(path).suffix.lower())
-    if language is None:
-        return None
-    raw = snapshot.encode("utf-8")
-    tree = _parser_for(language).parse(raw)
-    for source_pattern in patterns:
-        pattern, pattern_node = _compiled_ast_pattern(language, source_pattern)
-        for candidate_node in _walk_nodes(tree.root_node):
-            if _match_ast_node(pattern_node, candidate_node, pattern, raw, {}):
-                return len(raw[:candidate_node.start_byte].decode("utf-8", errors="ignore"))
-    return None
 
 
 def _record_body(record: Mapping[str, object]) -> str:
@@ -352,6 +235,9 @@ class StreamRuleRuntime:
             structural = False
 
         batch: list[dict[str, object]] = []
+        # Every rule below sees this same snapshot. Reuse only its source parse;
+        # a later delta, including incomplete syntax, must get a fresh tree.
+        parsed_by_language: dict = {}
         for rule in self.rules:
             if not self._eligible(rule, turn):
                 continue
@@ -372,7 +258,8 @@ class StreamRuleRuntime:
                 and path
                 and rule.ast_conditions
             ):
-                offset = _ast_offset(snapshot, path, rule.ast_conditions)
+                offset = _ast_offset(snapshot, path, rule.ast_conditions,
+                                     parsed_by_language=parsed_by_language)
             if offset is None:
                 continue
             interrupt = (

@@ -124,6 +124,90 @@ def make_manager(tmp_path: Path, **overrides):
     return manager, popen, events, warnings
 
 
+def test_local_lsp_definition_does_not_disclose_outside_task_location(tmp_path):
+    import json
+    task = tmp_path / 'task'
+    task.mkdir()
+    (task / 'app.py').write_text('symbol\n')
+    outside = tmp_path / 'unrelated.py'
+    outside.write_text('PRIVATE_OUTSIDE_BYTES\n')
+    spec = fake_spec(task)
+    server = Path(spec.command[-1])
+    manager, _popen, _events, _warnings = make_manager(task, spec=spec, tool_enabled=True)
+    needle = '"result":{"uri":message["params"]["textDocument"]["uri"]'
+    server.write_text(_FAKE_SERVER.replace(needle, '"result":{"uri":' + json.dumps(outside.as_uri())))
+    try:
+        response = manager.query('definition', path='app.py', line=0, character=0)
+        assert 'PRIVATE_OUTSIDE_BYTES' not in response.result
+        assert outside.as_uri() not in response.result
+        assert response.status == 'outside_locations_removed'
+    finally:
+        manager.close()
+
+
+def test_lsp_filters_location_shapes_preserving_valid_and_virtual_results(tmp_path):
+    import json
+    task = tmp_path / 'task'
+    task.mkdir()
+    local = task / 'local # file.py'
+    local.write_text('local')
+    outside = tmp_path / 'outside.py'
+    outside.write_text('outside')
+    link = task / 'escape.py'
+    link.symlink_to(outside)
+    manager, *_ = make_manager(task)
+    span = {'start': {'line': 1, 'character': 2}, 'end': {'line': 3, 'character': 4}}
+    valid = [{'uri': local.as_uri(), 'range': span},
+             {'targetUri': 'git:/history/file.py', 'targetRange': span},
+             {'name': 'local', 'kind': 12, 'location': {'uri': local.as_uri(), 'range': span}}]
+    invalid = [{'uri': outside.as_uri(), 'range': span},
+               {'targetUri': link.as_uri(), 'targetRange': span},
+               {'name': 'outside', 'location': {'uri': outside.as_uri(), 'range': span}},
+               {'uri': 'file://other-host/task/file.py', 'range': span}]
+    result, omitted = manager._visible_locations(valid + invalid, None)
+    assert omitted and result == valid
+    assert 'outside' not in json.dumps(result)
+    assert manager._visible_locations(valid, None) == (valid, False)
+
+
+def test_unsandboxed_lsp_task_transport_does_not_grant_external_locations(tmp_path):
+    task = tmp_path / 'task'
+    task.mkdir()
+    outside = tmp_path / 'outside.py'
+    outside.write_text('outside')
+    manager = LspManager.sandboxed(cwd=task, servers=(), bwrap_bin='unused', sandbox=False)
+    result, omitted = manager._visible_locations({'uri': outside.as_uri()}, None)
+    assert omitted and result is None
+
+
+@pytest.mark.parametrize('launcher', ['lsp', 'background'])
+def test_selected_process_backend_never_falls_back_to_host(monkeypatch, tmp_path, launcher):
+    from scripts.llm_solver.harness.lsp_support import build_lsp_sandbox_argv
+    from scripts.llm_solver.harness.process_manager import build_background_sandbox_argv
+    from scripts.llm_solver.harness.sandbox.container_backend import ContainerRuntimeUnavailable
+    monkeypatch.delenv('YUJ_CONTAINER', raising=False)
+    monkeypatch.setattr('scripts.llm_solver.harness.sandbox.container_backend.shutil.which', lambda _name: None)
+    build = build_lsp_sandbox_argv if launcher == 'lsp' else build_background_sandbox_argv
+    command = ['command-that-must-not-run'] if launcher == 'lsp' else 'command-that-must-not-run'
+    with pytest.raises(ContainerRuntimeUnavailable):
+        build(command, cwd=str(tmp_path), bwrap_bin='absent', sandbox=True,
+              sandbox_required=False, sandbox_backend='container', container_image='prepared:latest')
+    argv = build(command, cwd=str(tmp_path), bwrap_bin='absent', sandbox=False,
+                 sandbox_required=True, sandbox_backend='container')
+    assert 'command-that-must-not-run' in argv
+
+
+def test_local_lsp_locations_respect_ignored_symlink_targets(tmp_path):
+    from scripts.llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
+    (tmp_path / '.yujignore').write_text('hidden.py\n')
+    hidden = tmp_path / 'hidden.py'
+    hidden.write_text('hidden')
+    link = tmp_path / 'alias.py'
+    link.symlink_to(hidden)
+    manager, *_ = make_manager(tmp_path)
+    assert manager._visible_locations({'uri': link.as_uri()}, load_ignore_policy(tmp_path)) == (None, True)
+
+
 @pytest.mark.parametrize('mismatch', [False, True])
 def test_guarded_lsp_startup_preserves_rpc_and_refuses_changed_credentials(tmp_path, native_process_identity, mismatch):
     from dataclasses import replace

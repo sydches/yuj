@@ -23,11 +23,19 @@ def test_explicit_ceiling_refuses_incomplete_instruction_chain(tmp_path, defer):
     (tmp_path / ".git").mkdir()
     child = tmp_path / "child"
     child.mkdir()
-    (tmp_path / "AGENTS.md").write_text("ROOT")
+    guidance = child / "guidance"
+    guidance.mkdir()
+    (guidance / "AGENTS.md").write_text("ROOT")
     (child / "AGENTS.md").write_text("ééé")
     with pytest.raises(ValueError, match="instruction.*byte.*ceiling"):
-        project = discover_project_instructions(child, max_bytes=9, defer_byte_cap=defer)
+        project = discover_project_instructions(child, global_dir=guidance,
+                                               max_bytes=9, defer_byte_cap=defer)
         resolve_project_instruction_imports(project, enabled=False, max_depth=1)
+    project = discover_project_instructions(child, global_dir=guidance,
+                                           max_bytes=10, defer_byte_cap=defer)
+    complete = resolve_project_instruction_imports(project, enabled=False, max_depth=1)
+    assert [document.content for document in complete.documents] == ["ROOT", "ééé"]
+    assert complete.resolved_bytes == 10
 
 
 def test_import_expansion_is_checked_before_returning_any_prefix(tmp_path):

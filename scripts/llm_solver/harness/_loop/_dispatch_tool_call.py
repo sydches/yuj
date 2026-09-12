@@ -32,6 +32,7 @@ from .._guardrails.extractors import MUTATION_TOOLS
 from ..security_scan import security_block_stage
 from ..injections import UserTurnInjection
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
+from .timing import timed_dispatch
 from ._dispatch_types import TCOutcome, TurnState
 from .trace_output import build_tool_call_trace_fields
 
@@ -375,12 +376,28 @@ def _run_automatic_component_verification(
 
 
 def _tool_call_transform_scope(function):
-    """Keep every text change under the current tool-call ID."""
+    """Keep transform attribution and time completion without moving result rows."""
     @functools.wraps(function)
     def wrapped(tc, *args, **kwargs):
         from ..savings import transform_scope
-        with transform_scope(str(getattr(tc, "id", "") or "")):
-            return function(tc, *args, **kwargs)
+        state = args[0] if args else kwargs['state']
+        started = state.tool_preparation_t0
+        if started is None:
+            started = time.perf_counter()
+        completed = False
+        try:
+            with transform_scope(str(getattr(tc, "id", "") or "")):
+                result = function(tc, *args, **kwargs)
+            completed = True
+            return result
+        finally:
+            state.session._emit(
+                'tool_timing', tool_call_id=tc.id, tool_name=tc.name,
+                session_number=state.session._session_number, turn_number=state.turn,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                scope='turn_tool_preparation_through_call_postprocessing',
+                includes_queue_wait=True, completed=completed,
+            )
     return wrapped
 
 
@@ -569,6 +586,7 @@ def _emit_done(
     )
     session._emit(
         "tool_call",
+        tool_call_id=tc.id,
         session_number=session._session_number,
         turn_number=state.turn,
         tool_name="done",
@@ -618,6 +636,7 @@ def _emit_gate_block(tc, decision, state: "TurnState", args_summary: str) -> Non
                                     tool_name=tc.name, gate_blocked=True)
     session._emit(
         "tool_call",
+        tool_call_id=tc.id,
         session_number=session._session_number,
         turn_number=state.turn,
         tool_name=tc.name,
@@ -1370,6 +1389,16 @@ def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) ->
             apply_observed_metadata(metadata, inner_execution)
             gate_blocked = bool(inner_execution.get("gate_blocked", False))
             index = int(raw_call.get("index") or 0)
+            if raw_call.get("ended_at"):
+                state.session._emit(
+                    "tool_end", tool_call_id=f"{tc.id}:cell:{index}",
+                    parent_tool_call_id=tc.id, cell_inner_index=index,
+                    session_number=state.session._session_number, turn_number=state.turn,
+                    tool_name=name, ended_at=raw_call["ended_at"],
+                    duration_ms=float(raw_call.get("duration_ms") or 0.0),
+                    scope="cell_inner_dispatch", includes_queue_wait=False,
+                    dispatch_executed=True, completed=raw_call["dispatch_completed"],
+                )
             state.session._emit(
                 "tool_call",
                 tool_call_id=f"{tc.id}:cell:{index}",
@@ -1395,6 +1424,8 @@ def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) ->
                 prompt_tokens=0,
                 completion_tokens=0,
                 tool_dispatch_ms=float(raw_call.get("duration_ms") or 0.0),
+                duration_ms=float(raw_call.get("duration_ms") or 0.0),
+                dispatch_executed=True,
             )
         execution_metadata["_exec_cell_children_emitted"] = True
     return {
@@ -1439,7 +1470,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
 
     # Per-tc phase timing for the bottom emit. Counts dispatch
     # only; gate-blocked tcs leave this at 0.
-    _tc_dispatch_ms = 0.0
+    _tc_dispatch_ms = state.preexecuted_dispatch_ms.get(tc.id, 0.0)
     args_summary = _summarize_args(tc.arguments, cfg.args_summary_chars)
     trace_args_summary = _summarize_args(tc.arguments, cfg.trace_args_summary_chars)
     metadata = _tool_action_metadata(tc, session)
@@ -1639,8 +1670,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             if result is None:
                 record_tool_start(tc, state)
                 dispatch_started = True
-                _disp_t0 = time.perf_counter()
-                result = dispatch(tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
+                result = timed_dispatch(state, tc, dispatch, tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
                                   output_control=effective_output_control,
                                   universal_rewrites=effective_universal_rewrites,
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
@@ -1660,7 +1690,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   execution_metadata=execution_metadata,
                                   observation_owned_paths=_observation_owned_paths(session),
                                   tool_call_id=tc.id)
-                _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+                _tc_dispatch_ms += state.preexecuted_dispatch_ms[tc.id]
             _apply_dispatch_effects(tc, state, metadata, execution_metadata, result)
             if execution_metadata.get("native_test_report") is not None:
                 from .state_projection import update_parity_from_report
@@ -1736,8 +1766,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
             if result is None:
                 record_tool_start(tc, state)
                 dispatch_started = True
-                _disp_t0 = time.perf_counter()
-                result = dispatch(tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
+                result = timed_dispatch(state, tc, dispatch, tc.name, tc.arguments, cwd=session.cwd, cfg=cfg,
                                   output_control=effective_output_control,
                                   universal_rewrites=effective_universal_rewrites,
                                   forbidden_rules=session.forbidden_rules if cfg.bash_quirks_forbidden_enabled else None,
@@ -1757,7 +1786,7 @@ def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
                                   execution_metadata=execution_metadata,
                                   observation_owned_paths=_observation_owned_paths(session),
                                   tool_call_id=tc.id)
-                _tc_dispatch_ms += (time.perf_counter() - _disp_t0) * 1000
+                _tc_dispatch_ms += state.preexecuted_dispatch_ms[tc.id]
             _apply_dispatch_effects(tc, state, metadata, execution_metadata, result)
             session._queue_execution_user_turn_injections(
                 execution_metadata, tool_call_id=tc.id

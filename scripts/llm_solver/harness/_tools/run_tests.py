@@ -172,7 +172,7 @@ def run_tests(
     )
 
     def execution_result(*args, **kwargs):
-        return ToolExecutionText(*args, runner_request=request, **kwargs)
+        return ToolExecutionText(*args, runner_request=request, runner_command=cmd, **kwargs)
 
     timeout = command_timeout()
     timeout_message = (f"ERROR: command timed out after {timeout:g}s" if timeout is not None

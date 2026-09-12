@@ -2,6 +2,7 @@
 from collections import deque
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import json
 import logging
 import os
@@ -1668,7 +1669,8 @@ class Session:
             diagnostics = ExitDiagnostics(
                 self._trace_path,
                 session_number=self._session_number,
-                sync_before=self._async_trace_writer.barrier,
+                # The diagnostic append fsyncs both the flushed prefix and its row.
+                sync_before=partial(self._async_trace_writer.barrier, require_fsync=False),
             )
         try:
             if diagnostics is not None:

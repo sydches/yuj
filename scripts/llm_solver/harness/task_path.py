@@ -108,9 +108,10 @@ class TaskPath:
     def walk(self):
         """Yield a mutable directory list like os.walk, without host access."""
         directories, filenames = [], []
-        for child in self.iterdir():
+        for name, kind in self.files.scandir(str(self.path)):
+            child = self / name
             try:
-                if child.is_dir():
+                if kind == 'd' or (kind == 'l' and child.is_dir()):
                     directories.append(child.name)
                 else:
                     filenames.append(child.name)

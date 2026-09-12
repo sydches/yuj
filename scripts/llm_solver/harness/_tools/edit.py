@@ -4,6 +4,7 @@ from ._common import (
     _is_external_readonly_path,
     _path_hint,
     _resolve,
+    _skill_readable_roots,
     _xml_attr,
 )
 
@@ -68,14 +69,13 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
     """
     from ..edit_replacers import find_span, rank_candidates
     from ..post_edit import run_post_edit_actions
+    from .. import local_file_access as file_access
     if "\n" in path or "\x00" in path:
         return f"ERROR: path contains forbidden character (newline or NUL)"
     if cfg is not None and _is_external_readonly_path(
         cwd,
         path,
-        readonly_roots=tuple(
-            getattr(cfg, "skills_readable_dirs", ()) or ()
-        ),
+        readonly_roots=_skill_readable_roots(cfg),
     ):
         return f"ERROR: skill path is read-only: {path}"
     if old_str == "":
@@ -87,7 +87,7 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
     try:
         target = _resolve(cwd, path)
         try:
-            previous_bytes = target.read_bytes()
+            previous_bytes = file_access.read_bytes(cwd, target)
         except FileNotFoundError:
             return f"ERROR: file not found: {path}" + _path_hint(cwd, path)
         try:
@@ -108,14 +108,14 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
         new_text: str | None = None
         head = ""
         # Pass 1: exact.
-        if old_str in text:
-            first = text.find(old_str)
+        first = text.find(old_str)
+        if first >= 0:
             if text.find(old_str, first + 1) >= 0:
                 return (
                     f"ERROR: old_str matches more than once in {path}. "
                     "No changes made. Include unique surrounding text in old_str."
                 )
-            new_text = text.replace(old_str, new_str, 1)
+            new_text = text[:first] + new_str + text[first + len(old_str):]
             head = "OK"
         elif cfg is not None and cfg.edit_fuzzy_cascade_enabled:
             # Optional cascade: auto-apply the first matching strategy.
@@ -134,10 +134,10 @@ def edit(path: str, old_str: str, new_str: str, *, cwd: str,
             block = _format_candidates_block(text, candidates, path)
             return f"{head}\n{block}" if block else head
         out_text = new_text.replace("\n", "\r\n") if is_crlf else new_text
-        target.write_bytes(out_text.encode("utf-8"))
+        file_access.write_bytes(cwd, target, out_text.encode("utf-8"))
         res = run_post_edit_actions(path, cwd=cwd, cfg=cfg, trigger="edit")
         if res.action == "block":
-            target.write_bytes(previous_bytes)
+            file_access.write_bytes(cwd, target, previous_bytes)
             return (
                 f"ERROR: edit blocked by post-edit check "
                 f"'{res.check_name}' for {path}{res.output}"

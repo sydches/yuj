@@ -15,6 +15,7 @@ from .._shared.paths import package_data_path
 from ._tools._common import _resolve
 from ._tools._run_in_sandbox import _run_in_sandbox
 from .prompt_imports import _UnreadableMatcher
+from .task_path import TaskPath
 
 MAX_PROBES = 12
 MAX_SOURCE_BYTES = 65536
@@ -33,6 +34,8 @@ def bind_command_environment(cfg, report, environment):
 
     environment = {**environment, **report.get("filesystem_view", {}).get("runtime_bindings", {})}
     selection = report.get("runner_selection", {})
+    if selection.get('status') != 'selected':
+        selection = report.get('language_runtime', selection)
     selected = selection.get("selected", {})
     if selection.get("status") != "selected" or selected.get("status") != "available":
         return dict(environment)
@@ -79,35 +82,46 @@ def _inspect_layout(cwd, spec, blocked, deadline):
             break
         try:
             entries = []
-            with os.scandir(directory) as stream:
-                for entry in stream:
-                    if (depth > 0 and scanned >= MAX_LAYOUT_ENTRIES) or time.monotonic() >= deadline:
-                        limited = True
-                        break
-                    scanned += 1
-                    entries.append(entry)
-                else:
-                    if depth == 0:
-                        root_inventory_complete = True
-            for entry in sorted(entries, key=lambda item: item.name):
-                path = Path(entry.path)
+            if isinstance(directory, TaskPath):
+                stream = directory.files.scandir(directory.path)
+            else:
+                with os.scandir(directory) as scan:
+                    stream = [(entry.name, 'l' if entry.is_symlink() else
+                               'd' if entry.is_dir(follow_symlinks=False) else
+                               'f' if entry.is_file(follow_symlinks=False) else '?')
+                              for entry in scan]
+            for name, kind in stream:
+                if (depth > 0 and scanned >= MAX_LAYOUT_ENTRIES) or time.monotonic() >= deadline:
+                    limited = True
+                    break
+                scanned += 1
+                entries.append((name, kind))
+            else:
+                if depth == 0:
+                    root_inventory_complete = True
+            for name, kind in sorted(entries):
+                path = directory / name
                 try:
                     # Layout sampling never follows links. An excluded link
                     # does not make the inventory of root directories unknown.
-                    if entry.is_symlink():
+                    if kind == 'l':
                         continue
-                    target = _resolve(str(cwd), str(path))
-                    if blocked.blocks(target):
+                    # Entries are beneath checked directories and this walk
+                    # never follows links. Compare the compiled native masks
+                    # directly instead of launching a resolver for each name.
+                    hidden = (any(path.is_relative_to(root) for root in blocked._native.blocked)
+                              if isinstance(path, TaskPath) else blocked.blocks(path))
+                    if hidden:
                         continue
-                    if entry.is_dir(follow_symlinks=False):
+                    if kind == 'd':
                         if depth == 0:
-                            folders.append(entry.name)
-                        if entry.name not in spec.get("skip_descent", []):
+                            folders.append(name)
+                        if name not in spec.get("skip_descent", []):
                             if depth < MAX_LAYOUT_DEPTH:
                                 pending.append((path, depth + 1))
                             else:
                                 limited = True
-                    elif entry.is_file(follow_symlinks=False):
+                    elif kind == 'f':
                         language = spec.get("source_suffixes", {}).get(path.suffix)
                         if language:
                             observed = languages.setdefault(language, {"files": 0, "examples": []})
@@ -161,6 +175,7 @@ def selection_inputs(cwd, names, unreadable_paths=()):
     """Fingerprint permitted declaration inputs, including absent sources."""
     from ..language_quirks._discovery import read_declaration
     from .time_budget import execution_deadline, remaining_before
+    cwd = _resolve(str(cwd), '.')
     blocked = _UnreadableMatcher(cwd, unreadable_paths)
     result = {}
     for name in sorted(names):
@@ -176,6 +191,15 @@ def selection_inputs(cwd, names, unreadable_paths=()):
 
 
 def discover_runtime(cwd: Path, cfg, *, effective_env, unreadable_paths=(), selection_only=False):
+    from .task_file_runtime import task_file_scope
+    with task_file_scope(cwd, cfg, environment=effective_env,
+                         allow_login_shell=cfg.sandbox_env_allow_login_shell):
+        return _discover_runtime(cwd, cfg, effective_env=effective_env,
+                                 unreadable_paths=unreadable_paths,
+                                 selection_only=selection_only)
+
+
+def _discover_runtime(cwd, cfg, *, effective_env, unreadable_paths=(), selection_only=False):
     """Return candidate briefing facts and complete probe/cost provenance.
 
     Tool and project knowledge lives in descriptor data. No probe installs,
@@ -184,6 +208,7 @@ def discover_runtime(cwd: Path, cfg, *, effective_env, unreadable_paths=(), sele
     The caller runs this once before prompt assembly, inside the solve budget.
     """
     started = time.monotonic()
+    command_cwd = str(cwd)
     from .time_budget import execution_deadline
     caller_deadline = execution_deadline()
     deadline = caller_deadline if caller_deadline is not None else float("inf")
@@ -250,6 +275,7 @@ def discover_runtime(cwd: Path, cfg, *, effective_env, unreadable_paths=(), sele
         for selection in view.native_selections:
             add_fact({"source": "native_toolchain_selection", **selection})
 
+    cwd = _resolve(str(cwd), '.')
     blocked = _UnreadableMatcher(cwd, unreadable_paths)
     source_cache = {}
 
@@ -318,7 +344,7 @@ def discover_runtime(cwd: Path, cfg, *, effective_env, unreadable_paths=(), sele
         probe_started = time.monotonic()
         from .sandbox.policy import sandbox_execution_kwargs
         output, code, timed_out = _run_in_sandbox(
-            command, cwd=str(cwd), timeout=remaining if caller_deadline is not None else None,
+            command, cwd=command_cwd, timeout=remaining if caller_deadline is not None else None,
             bwrap_bin=cfg.bwrap_bin,
             **sandbox_execution_kwargs(cfg),
             unreadable_paths=tuple(unreadable_paths),
@@ -371,6 +397,11 @@ def discover_runtime(cwd: Path, cfg, *, effective_env, unreadable_paths=(), sele
                 inspect=inspect, folders=layout["folders"],
             )
             report["runner_selection"] = selection
+            if selection['status'] != 'selected' and 'Python' in observed_languages:
+                report['language_runtime'] = observe_runner_runtime(
+                    {'candidates': []}, report['observations'], requested='python',
+                    inspect=inspect, folders=layout['folders'])
+                report['language_runtime']['request_source'] = 'observed_language'
             if time.monotonic() < deadline:
                 selection["declaration_inputs"] = selection_inputs(
                     cwd, set(source_cache) | {f["path"] for f in spec.get("files", [])}, unreadable_paths)

@@ -89,3 +89,33 @@ def test_search_preserves_alias_labels_and_no_match(bwrap, tmp_path, monkeypatch
     assert files.search('alias', 'absent') == b''
     with pytest.raises(TaskFileError, match='search failed'):
         files.search('alias', '[unclosed')
+
+
+@pytest.mark.parametrize('change_at', ['resolution', 'opened_file'])
+def test_batch_hashes_validate_opened_files_during_parent_changes(bwrap, tmp_path, change_at):
+    import hashlib
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'folder').mkdir()
+    (source / 'folder/file').write_bytes(b'SELECTED')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'file').write_bytes(b'OUTSIDE')
+    root = str(files.root)
+    name = root + '/folder/file'
+    utility = 'realpath' if change_at == 'resolution' else 'readlink'
+    executable = files._utility(utility)
+    swap = (f'mv -- {shlex.quote(root + "/folder")} {shlex.quote(root + "/saved")}; '
+            f'ln -s -- {shlex.quote(str(outside))} {shlex.quote(root + "/folder")}')
+    wrapper = source / 'controlled-hash-observer'
+    condition = f'[[ "${{@: -1}}" == {shlex.quote(name)} ]]' if change_at == 'resolution' else 'true'
+    wrapper.write_text('#!/bin/bash\n' + f'{shlex.quote(executable)} "$@" || exit\n'
+                       f'if {condition}; then {swap}; fi\n')
+    wrapper.chmod(0o755)
+    files._utilities[utility] = root + '/controlled-hash-observer'
+    if change_at == 'resolution':
+        with pytest.raises(PermissionError):
+            files.sha256_many([name])
+    else:
+        assert files.sha256_many([name]) == {name: hashlib.sha256(b'SELECTED').hexdigest()}
+    assert (source / 'folder').is_symlink()
+    assert (outside / 'file').read_bytes() == b'OUTSIDE'

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
 from typing import Any
 
@@ -24,8 +24,14 @@ from .custom_execution import (
 
 def _file_revision(cwd: str | Path, path: str) -> str:
     try:
-        from ..task_path import resolve_task_path
+        from ..task_path import TaskPath, resolve_task_path
         target = resolve_task_path(cwd, path)
+        if isinstance(target, TaskPath):
+            from ..task_files import TaskUtilityUnavailable
+            try:
+                return target.files.sha256_many([str(target)])[str(target)]
+            except TaskUtilityUnavailable:
+                return hashlib.sha256(target.read_bytes()).hexdigest()
         with target.open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
     except FileNotFoundError:
@@ -34,15 +40,43 @@ def _file_revision(cwd: str | Path, path: str) -> str:
         return ""
 
 
+def _file_revisions(cwd, paths) -> dict[str, str]:
+    """Observe tracked bytes together, retaining scalar exceptional-path results."""
+    paths = tuple(paths)
+    if not paths:
+        return {}
+    from ..task_path import TaskPath, active_task_files, native_requested_path
+    from ..sandbox.ignore_policy import active_ignore_policy
+    files = cwd.files if isinstance(cwd, TaskPath) else active_task_files(str(cwd))
+    if files is not None:
+        try:
+            base = cwd if isinstance(cwd, TaskPath) else TaskPath(files, files.root)
+            requested = {path: str(native_requested_path(base, path, expand=False)) for path in paths}
+            resolved = files.resolve_regular_files(requested.values())
+            policy = active_ignore_policy() if isinstance(cwd, TaskPath) else active_ignore_policy(str(cwd))
+            if policy is not None and not policy.contains(base):
+                policy = None
+            visible = {}
+            for path, request in requested.items():
+                target = TaskPath(files, PurePosixPath(resolved[request]))
+                target.relative_to(base)
+                if policy is None or not policy.is_model_hidden(target, is_dir=False):
+                    visible[path] = str(target)
+            digests = files.sha256_many(visible.values())
+            return {path: digests[visible[path]] if path in visible else 'missing' for path in paths}
+        except (OSError, RuntimeError, ValueError):
+            # Missing, non-regular, denied and unsupported entries keep the
+            # established per-file missing/unknown decisions.
+            pass
+    return {path: _file_revision(cwd, path) for path in paths}
+
+
 def verification_tree_matches(state: GuardrailState, cwd: str | Path | None) -> bool:
     """Check only the files observed in successful edits, not task semantics."""
     revisions = state.verification_file_revisions
     if not revisions:
         return True
-    return bool(cwd) and all(
-        digest and _file_revision(cwd, path) == digest
-        for path, digest in revisions.items()
-    )
+    return bool(cwd) and all(revisions.values()) and _file_revisions(cwd, revisions) == revisions
 
 
 def verification_changes_tree(tc_name: str, tc_args: dict | None) -> bool:
@@ -338,9 +372,7 @@ def record_verification_mutation(
         paths = set(state.verification_file_revisions)
         paths.update(normalize_trace_path(path) for path in source_write_paths
                      if is_workspace_path(path))
-        state.verification_file_revisions = {
-            path: _file_revision(cwd, path) for path in sorted(paths)
-        }
+        state.verification_file_revisions = _file_revisions(cwd, sorted(paths))
     state.post_mutation_non_test_bash_count = 0
     state.post_mutation_verification_gate_armed = False
     state.formal_verification_passed_since_mutation = False
