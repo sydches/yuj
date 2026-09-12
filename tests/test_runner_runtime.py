@@ -118,16 +118,22 @@ def test_driver_briefs_and_executes_the_same_discovered_python(tmp_path, monkeyp
     (task / "prompt.txt").write_text("Check the runtime")
     client = MagicMock()
     calls = []
+    startup_system = []
     def chat(*args, **kwargs):
         visible = str(args) + str(kwargs)
         calls.append(visible)
+        system = next(message["content"] for message in args[0] if message["role"] == "system")
         if len(calls) == 1:
-            assert "command_runtime_binding" in visible
+            startup_system.append(system)
+            assert "Runtime executable: " + str(selected / "bin" / "python") in system
+            assert "Run tests with:" in system
+            assert "command_runtime_binding" not in system
             assert str(selected / "bin") in visible
             command = "python -I -c " + shlex.quote(
                 f"import sys, pytest; print('RUNTIME_MATCH=' + str(sys.prefix == {str(selected)!r}))")
             return TurnResult(None, [ToolCall("runtime", "bash", {"cmd": command})],
                               "tool_calls", Usage(100, 10))
+        assert system == startup_system[0]
         assert "RUNTIME_MATCH=True" in visible
         return TurnResult("done", [], "stop", Usage(100, 10))
     client.chat.side_effect = chat

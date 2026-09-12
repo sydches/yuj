@@ -76,6 +76,8 @@ def observe_runner_runtime(declarations, facts, *, requested, inspect, folders):
                              shlex.join([executable, *args]), spec.get("environment"))
             candidate = {"runner": runner, "executable": executable, "source": source, "status": "not_established",
                          "runtime_spec_sha256": hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()}
+            if spec.get("language"):
+                candidate["language"] = spec["language"]
             if output is not None:
                 available = True
                 if spec.get("probe_format") == "json":

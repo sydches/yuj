@@ -235,22 +235,30 @@ def test_prompt_and_provenance_share_exact_observations_and_count_the_cost(tmp_p
         runtime_observations=report,
     )
     prefix, observations = prompt.split("\n\nTask environment (observed at startup):\n")
-    facts = json.loads(observations.splitlines()[0])
-    assert facts["runtime_observations"] == report["facts"]
-    assert "verification_runner" not in facts
+    facts = metadata.runtime_briefing
+    assert facts == {"working_directory": str(tmp_path), "test_runner_status": "no_declared_check"}
+    assert observations == f"Working directory: {tmp_path}\nTest runner: no declared check"
+    assert metadata.trace_fields()["runtime_briefing"] == facts
+    assert provenance["runtime_briefing"] == facts
     assert provenance["configured_analysis_runner"] == "pytest"
     assert provenance["runtime_discovery"] is report
     assert metadata.task_environment_chars == len(prompt) - len(prefix)
 
 
 def test_driver_discovers_before_first_model_call_once_for_the_solve(tmp_path, monkeypatch):
-    from scripts.llm_solver.harness.loop import solve_task
+    from scripts.llm_solver.harness.loop import Session, solve_task
     from scripts.llm_solver.server.types import TurnResult, Usage
     events = []
-    report = {"facts": [{"source": "fixture", "value": "observed-runtime"}], "omitted_facts": 0}
+    report = {"facts": [{"source": "fixture", "value": "DO-NOT-INCLUDE"}],
+              "omitted_facts": 0,
+              "runner_selection": {"status": "selected", "selected": {
+                  "runner": "go", "language": "Go", "executable": "/task-tools/go",
+                  "version_output": "go version fixture",
+                  "base_cmd": "/task-tools/go test"}}}
     def discover(*args, **kwargs):
         events.append("discover")
         assert kwargs["effective_env"]["PATH"] == "/usr/bin:/bin"
+        assert kwargs["selection_only"] is True
         return report
     monkeypatch.setattr(discovery, "discover_runtime", discover)
     class Counter:
@@ -259,9 +267,25 @@ def test_driver_discovers_before_first_model_call_once_for_the_solve(tmp_path, m
             return 10
     monkeypatch.setattr("scripts.llm_solver.harness.request_counting.resolve_counter", lambda *a, **kw: Counter())
     client = MagicMock()
+    sessions = []
+    class ObservedSession(Session):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            sessions.append(self)
+    monkeypatch.setattr("scripts.llm_solver.harness.loop.Session", ObservedSession)
     def chat(*args, **kwargs):
         events.append("model")
-        assert "observed-runtime" in str(args) + str(kwargs)
+        sent = str(args) + str(kwargs)
+        assert "Run tests with: /task-tools/go test" in sent
+        assert "DO-NOT-INCLUDE" not in sent
+        from scripts.llm_solver._shared.telemetry_paths import trace_path
+        starts = [json.loads(line) for line in trace_path(tmp_path).read_text().splitlines()
+                  if json.loads(line).get("event") == "session_start"]
+        assert len(starts) == events.count("model")
+        assert sessions[-1]._runtime_briefing == starts[-1]["runtime_briefing"]
+        from scripts.llm_solver.harness.runtime_briefing import render_runtime_briefing
+        system = next(message["content"] for message in args[0] if message["role"] == "system")
+        assert render_runtime_briefing(starts[-1]["runtime_briefing"]) in system
         return TurnResult(content="continue", tool_calls=[], finish_reason="stop", usage=Usage(prompt_tokens=10, completion_tokens=2))
     client.chat.side_effect = chat
     client.build_assistant_message.return_value = {"role": "assistant", "content": "continue"}

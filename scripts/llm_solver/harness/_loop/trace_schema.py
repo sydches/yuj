@@ -68,7 +68,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (TraceEventSpec("completed_obser
             "project_instructions_truncated", "prompt_import_tree",
             "ignore_file_names", "stream_rule_files",
             "tool_lazy_loading_enabled", "tool_active_limit", "registered_tools",
-            "active_tools", "resume_mode", "task_environment",
+            "active_tools", "resume_mode", "task_environment", "runtime_briefing",
             "task_identity", "instance_id", "attempt_id",
             "loaded_skills",
             "sandbox_selected", "sandbox_resolved", "sandbox_engaged",

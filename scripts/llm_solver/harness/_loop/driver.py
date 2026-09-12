@@ -247,6 +247,7 @@ def solve_task(
     runtime_observations = discover_runtime(
         work_dir, cfg, effective_env=effective_env,
         unreadable_paths=prompt_unreadable_paths,
+        selection_only=True,
     )
     effective_env = MappingProxyType(bind_command_environment(cfg, runtime_observations, effective_env))
     cfg = resolve_task_format(cfg, work_dir, runtime_observations=runtime_observations)

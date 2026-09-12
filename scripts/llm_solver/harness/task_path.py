@@ -9,7 +9,7 @@ import fnmatch
 import io
 import os
 
-from .task_files import NamespaceFiles
+from .task_files import NamespaceFiles, TaskFileError
 
 
 from ._task_host_root import HostTaskRoot, capture_host_task_root
@@ -178,50 +178,18 @@ class TaskPath:
     def iterdir(self):
         return iter(TaskPath(self.files, p) for p in self.files.iterdir(str(self.path)))
 
-    def glob(self, pattern):
-        """Match names locally; check native directories before enumeration."""
+    def glob(self, pattern, *, files_only=False):
+        """Expand within the selected namespace, without per-path launches."""
+        from ._tools.glob import _NATIVE_GLOB
         parts = PurePosixPath(pattern).parts
         if not parts or PurePosixPath(pattern).is_absolute():
             raise ValueError('glob pattern must be nonempty and relative')
-        directories_only = pattern.endswith('/')
-        root = TaskPath(self.files, self.files.root).resolve()
-        def expand(directory, index, ancestors=frozenset()):
-            try:
-                resolved = directory.resolve()
-                if not resolved.is_relative_to(root) or not resolved.is_dir():
-                    return
-            except PermissionError:
-                return
-            if index == len(parts):
-                yield directory
-                return
-            key = (str(resolved), index)
-            if key in ancestors:
-                return
-            ancestors = ancestors | {key}
-            part = parts[index]
-            if part == '..':
-                yield from expand(directory / '..', index + 1, ancestors)
-                return
-            if part == '**':
-                yield from expand(directory, index + 1, ancestors)
-                for child in directory.iterdir():
-                    yield from expand(child, index, ancestors)
-                return
-            for child in directory.iterdir():
-                if fnmatch.fnmatchcase(child.name, part):
-                    if index + 1 == len(parts):
-                        try:
-                            child.resolve()
-                        except PermissionError:
-                            continue
-                        if directories_only and not child.is_dir():
-                            continue
-                        yield child
-                    else:
-                        yield from expand(child, index + 1, ancestors)
-
-        return expand(self, 0)
+        output = self.files._call('glob', str(self.path), script_prefix=_NATIVE_GLOB,
+                                 args=(str(int(files_only)), str(int(pattern.endswith('/'))), *parts))
+        if output and not output.endswith(b'\x00'):
+            raise TaskFileError('invalid task glob response')
+        return iter(TaskPath(self.files, PurePosixPath(os.fsdecode(value)))
+                    for value in output.split(b'\x00') if value)
 
 
 _ACTIVE = ContextVar('task_file_access', default=None)

@@ -25,6 +25,7 @@ format = "toml"
 section = ["workspace"]
 
 [runtime]
+language = "Rust"
 executables = ["cargo"]
 probe_args = ["--version"]
 command_args = ["test", "--no-fail-fast", "--quiet"]

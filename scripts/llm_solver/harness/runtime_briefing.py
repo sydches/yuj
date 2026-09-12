@@ -1,71 +1,75 @@
-"""Admit optional startup observations after essential runtime guidance."""
-import json
-
-from .plan_mode import effective_model_tool_schemas
-from .request_counting import has_reported_count
-from .time_budget import BudgetExhausted
+"""The task's usable startup environment, without an infrastructure inventory."""
 
 
-def admit_runtime_briefing(session):
-    """Fit whole optional facts using the actual first-request projection."""
-    briefing = session._runtime_briefing
-    facts = briefing["facts"]
-    optional = facts["runtime_observations"]
-    source = json.dumps(facts, ensure_ascii=True)
-    history = session.context.snapshot_messages()
-    if not any(message.get("role") == "system" and source in str(message.get("content", ""))
-               for message in history):
-        return  # This context does not contain the startup briefing.
-    counter = getattr(session, "_tokenizer", None)
-    limit = int(session.cfg.context_size * session.cfg.context_fill_ratio)
-    if limit <= 0:
-        return  # No positive context allocation was declared.
-    count_record = {}
+def build_runtime_briefing(working_directory, report):
+    """Select briefing fields from existing task observations; perform no I/O."""
+    briefing = {"working_directory": working_directory}
+    if report is None:
+        return briefing
+    observations = report.get("observations", report.get("facts", []))
+    declarations = [fact for fact in observations
+                    if fact.get("source") == "project_file"
+                    and fact.get("status") in ("observed", "present")]
+    languages = sorted({fact["language_hint"] for fact in declarations
+                        if fact.get("language_hint")})
+    if languages:
+        briefing["language"] = ", ".join(languages)
+    selection = report.get("runner_selection", {})
+    if selection.get("status") != "selected":
+        briefing["test_runner_status"] = selection.get("status", "not established")
+        return briefing
+    selected = selection["selected"]
+    runtime = selected.get("runtime", {})
+    runner = selected["runner"]
+    if selected.get("language"):
+        briefing.setdefault("language", selected["language"])
+    if runtime.get("version"):
+        briefing["runtime_version"] = runtime["version"]
+    if runtime.get("executable"):
+        briefing["runtime_executable"] = runtime["executable"]
+    else:
+        briefing["test_runner_executable"] = selected["executable"]
+    prefix = runtime.get("prefix")
+    if prefix:
+        briefing["environment_path"] = prefix
+        for fact in observations:
+            if (fact.get("source") == "conda_environments"
+                    and fact.get("status") == "observed"
+                    and prefix in fact.get("environment_candidates", [])):
+                briefing["environment_manager"] = "conda"
+                break
+    briefing["test_runner"] = runner
+    version = runtime.get("runner_version") or selected.get("version_output")
+    if version:
+        briefing["test_runner_version"] = version
+    briefing["test_command"] = selected["base_cmd"]
+    return briefing
 
-    def measure(keep):
-        nonlocal count_record
-        admitted = {**facts, "runtime_observations": optional[:keep],
-                    "omitted_observations": len(optional) - keep}
-        target = json.dumps(admitted, ensure_ascii=True)
-        messages = [
-            {**message, "content": message["content"].replace(source, target)}
-            if message.get("role") == "system" and isinstance(message.get("content"), str)
-            else message for message in history
-        ]
-        # Use canonical history so changing a system fact preserves prior
-        # turns and lets the existing strategy rebuild its normal projection.
-        if messages != session.context.snapshot_messages() and not session.context.rewind_messages(messages):
-            raise RuntimeError("context cannot apply startup briefing admission")
-        if counter is None:
-            return False
-        try:
-            count = counter.count(list(session.context.get_messages()),
-                                  tools=effective_model_tool_schemas(session))
-        except BudgetExhausted:
-            raise
-        except Exception as exc:
-            count_record = {"count_precision": "unknown", "count_reason": type(exc).__name__}
-            return False
-        count_record = dict(getattr(counter, "last", {}) or {})
-        return has_reported_count(counter, count) and count <= limit
 
-    keep = len(optional)
-    if not measure(keep):
-        keep = 0
-        if measure(0):
-            low, high = 0, len(optional)
-            while low < high:
-                candidate = (low + high + 1) // 2
-                if measure(candidate):
-                    low = candidate
-                else:
-                    high = candidate - 1
-            keep = low
-        measure(keep)
-    # Essential selection is retained even if its fit cannot be established.
-    # The existing preflight and transport gates own request refusal.
-    record = {"session_number": session._session_number, "optional_facts_kept": keep,
-              "omitted_observations": len(optional) - keep,
-              "context_allocation_tokens": limit, "request_token_count": count_record}
-    briefing["report"].setdefault("briefing_admissions", []).append(record)
-    session._emit("runtime_briefing_admission", **record)
+def render_runtime_briefing(briefing):
+    """Render the saved record directly into the retained system message."""
+    lines = ["\n\nTask environment (observed at startup):",
+             "Working directory: " + briefing["working_directory"]]
+    if briefing.get("language"):
+        language = briefing["language"]
+        lines.append("Language: " + language)
+    if briefing.get("runtime_version"):
+        lines.append("Runtime version: " + briefing["runtime_version"])
+    if briefing.get("runtime_executable"):
+        lines.append("Runtime executable: " + briefing["runtime_executable"])
+    if briefing.get("environment_path"):
+        label = "Environment"
+        if briefing.get("environment_manager"):
+            label += " (" + briefing["environment_manager"] + ")"
+        lines.append(label + ": " + briefing["environment_path"])
+    if briefing.get("test_runner"):
+        runner = briefing["test_runner"]
+        if briefing.get("test_runner_version"):
+            runner += " " + briefing["test_runner_version"]
+        lines.append("Test runner: " + runner)
+        if briefing.get("test_runner_executable"):
+            lines.append("Test runner executable: " + briefing["test_runner_executable"])
+        lines.append("Run tests with: " + briefing["test_command"])
+    elif briefing.get("test_runner_status"):
+        lines.append("Test runner: " + briefing["test_runner_status"].replace("_", " "))
+    return "\n".join(lines)

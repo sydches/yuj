@@ -9,6 +9,7 @@ field = ["scripts", "test"]
 pattern = '\S'
 
 [runtime]
+language = "JavaScript"
 executables = ["npm"]
 manager_declaration = "packageManager"
 manager_file = "package.json"

@@ -92,6 +92,10 @@ def _inspect_layout(cwd, spec, blocked, deadline):
             for entry in sorted(entries, key=lambda item: item.name):
                 path = Path(entry.path)
                 try:
+                    # Layout sampling never follows links. An excluded link
+                    # does not make the inventory of root directories unknown.
+                    if entry.is_symlink():
+                        continue
                     target = _resolve(str(cwd), str(path))
                     if blocked.blocks(target):
                         continue

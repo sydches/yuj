@@ -124,6 +124,7 @@ case "$operation" in
 esac
 case "$operation" in
     resolve) printf '%s\0' "$target" ;;
+    glob) native_glob "$@" ;;
     search_files)
         exec "$utility" --files --null --no-follow "$@" -- "$target"
         ;;
@@ -359,7 +360,7 @@ class NamespaceFiles:
                 raise ValueError(f'path escapes task root: {value}') from None
         return value
 
-    def _call(self, operation, path, *, utility='', args=(), data=None, success=(0,)):
+    def _call(self, operation, path, *, utility='', args=(), data=None, success=(0,), script_prefix=''):
         if self.readonly and operation in ('write', 'create', 'mkdir', 'chmod', 'unlink', 'replace', 'link', 'rmdir'):
             raise PermissionError(errno.EROFS, 'external task resource is read-only', str(path))
         relative = self._relative(path)
@@ -368,7 +369,7 @@ class NamespaceFiles:
         if operation in ('read', 'read_range', 'search', 'search_files', 'write', 'create', 'replace',
                          'link', 'unlink', 'rmdir', 'stat', 'lstat', 'list', 'readlink', 'symlink', 'chmod', 'mkdir'):
             args = (self._utility('readlink'), *args)
-        result = self.run(_OPERATE, [str(self.root), relative, realpath,
+        result = self.run(script_prefix + _OPERATE, [str(self.root), relative, realpath,
                                    operation, executable, *args], data)
         if result.returncode not in success:
             if result.returncode == 77:

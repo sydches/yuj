@@ -83,6 +83,18 @@ Yuj obtains runtime paths from permitted environment facts and installed
 metadata. An unavailable or ambiguous runtime stays unresolved. This discovery
 does not repair the task's dependencies.
 
+Before the first model call, Yuj records the task's working directory, selected
+language and runtime, environment or package manager, and test command when
+observed. It keeps this small record in session memory, writes it to the
+`session_start` trace event, and shows it in the system message. The briefing
+excludes host and container details, file inventories, hashes, unrelated tool
+versions, and missing-tool lists.
+
+Startup observations are reused during the solve. A supplied container keeps
+its captured identity; file tools do not rediscover it on each access. Each glob
+expands in one native operation, checks containment before descending, and
+reads the current tree.
+
 When you enable Agent Skills, Yuj adds validated external skill directories
 to the read-only set. `read` can open their `SKILL.md` files and resources, and
 `bwrap` mounts those directories read-only. File mutation tools still reject

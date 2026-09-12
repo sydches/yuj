@@ -43,6 +43,7 @@ path = "conftest.py"
 format = "presence"
 
 [runtime]
+language = "Python"
 executables = ["python3", "python"]
 environment_executable = "bin/python"
 environment_markers = ["pyvenv.cfg", "conda-meta/history"]

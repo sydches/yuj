@@ -75,10 +75,10 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
     )
     base_prompt, facts = prompt.split("\n\nTask environment (observed at startup):\n")
     assert base_prompt == "PROFILE\n\nARM\n\nHEADER"
-    assert json.loads(facts.splitlines()[0]) == {"working_directory": str(work)}
-    assert "Configured analysis runner (availability and project suitability are not established): generic" in facts
+    assert facts == "Working directory: " + str(work)
     assert metadata.task_environment_chars == len(prompt) - len(base_prompt)
     assert metadata.trace_fields() == {
+        "runtime_briefing": {"working_directory": str(work)},
         "project_instruction_files": [],
         "project_instruction_bytes": 0,
         "project_instruction_imported_bytes": 0,
@@ -126,7 +126,10 @@ def test_prompt_assembly_order_provenance_and_default_off_identity(
     assert [
         item["owner"] for item in metadata.prompt_import_tree
     ] == ["system_prompt", "project_instruction", "project_instruction"]
-    assert str(tmp_path) not in json.dumps(metadata.trace_fields())
+    assert str(tmp_path) not in json.dumps({
+        key: value for key, value in metadata.trace_fields().items()
+        if key != "runtime_briefing"
+    })
 
 
 def test_solve_task_traces_project_docs_and_costs_resolved_blocks(
@@ -180,14 +183,15 @@ def test_solve_task_traces_project_docs_and_costs_resolved_blocks(
     assert start["project_instruction_resolved_bytes"] == len("TASK RULE")
     assert start["project_instructions_truncated"] is False
     # The native environment record deliberately carries the observed root.
-    # Project instruction metadata and every other field still use safe paths.
+    # The briefing also carries that root. Instruction metadata uses safe paths.
     assert start["task_environment"] == {
         "host_root": str(work.resolve()),
         "working_directory": str(work.resolve()),
         "aliases": [],
     }
     assert str(tmp_path) not in json.dumps({
-        key: value for key, value in start.items() if key != "task_environment"
+        key: value for key, value in start.items()
+        if key not in {"task_environment", "runtime_briefing"}
     })
 
     ledger = [

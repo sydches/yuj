@@ -49,7 +49,10 @@ def test_arm_import_switch_order_allowed_roots_and_final_hash(tmp_path: Path) ->
     assert [
         node["status"] for node in metadata.prompt_import_tree[0]["imports"]
     ] == ["loaded", "outside_allowed_dirs"]
-    assert str(tmp_path) not in json.dumps(metadata.trace_fields())
+    assert str(tmp_path) not in json.dumps({
+        key: value for key, value in metadata.trace_fields().items()
+        if key != "runtime_briefing"
+    })
 
     disabled = make_config(system_header="HEADER", imports_enabled=False)
     literal, _provenance, _contract, literal_metadata = (
@@ -116,7 +119,10 @@ def test_global_document_import_cannot_escape_global_root(tmp_path: Path) -> Non
     assert "GLOBAL ESCAPE" not in prompt
     assert 'status="outside_allowed_dirs"' in prompt
     assert metadata.prompt_import_tree[0]["source"] == "global/AGENTS.md"
-    assert str(tmp_path) not in json.dumps(metadata.trace_fields())
+    assert str(tmp_path) not in json.dumps({
+        key: value for key, value in metadata.trace_fields().items()
+        if key != "runtime_briefing"
+    })
 
 
 def test_injection_is_parsed_after_expansion_and_disabled_mode_is_literal(

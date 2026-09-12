@@ -712,9 +712,6 @@ def run_session_loop(session: "Session") -> "SessionResult":
         # Refresh the local config after applying shared capacity constraints.
         session._get_server_ctx()
         cfg = session.cfg
-        if local_turn == 0 and getattr(session, "_runtime_briefing", None):
-            from ..runtime_briefing import admit_runtime_briefing
-            admit_runtime_briefing(session)
         # Use the backend's current request count when available. Only an
         # explicitly selected estimator retains the legacy density policy.
         if cfg.context_size > 0:

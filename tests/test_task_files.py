@@ -580,6 +580,33 @@ def test_search_uses_namespace_bytes_and_keeps_aliases(bwrap, tmp_path):
         assert grep_files('absent', cwd=str(source)) == 'No matches found.'
 
 
+def test_glob_uses_one_operation_for_a_tree_and_sees_later_changes(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_path import activate_task_files
+    from scripts.llm_solver.harness._tools.glob import glob_files
+    source, files = namespace_files(bwrap, tmp_path)
+    for index in range(40):
+        folder = source / f'folder-{index:02}' / 'units'
+        folder.mkdir(parents=True)
+        (folder / 'example.py').write_text('')
+        (folder / 'unrelated.txt').write_text('')
+    operations = []
+    run = files.run
+    def observed(script, args, data):
+        operations.append(args)
+        return run(script, args, data)
+    files.run = observed
+    with activate_task_files(files, host_root=source):
+        first = glob_files('**/units/*.py', cwd=str(source)).splitlines()
+        assert len(first) == 40
+        # Utility discovery and scope resolution are constant startup costs.
+        assert len(operations) < 10
+        assert sum(len(args) > 3 and args[3] == 'glob' for args in operations) == 1
+        (source / 'folder-00' / 'units' / 'later.py').write_text('')
+        second = glob_files('**/units/*.py', cwd=str(source)).splitlines()
+        assert len(second) == 41
+        assert 'folder-00/units/later.py' in second
+
+
 @pytest.mark.parametrize('readonly', [False, True])
 def test_patch_formats_use_task_view_and_preserve_readonly_mount(bwrap, tmp_path, readonly):
     from scripts.llm_solver.harness.task_path import activate_task_files

@@ -27,6 +27,15 @@ def test_public_glob_preserves_parent_and_directory_patterns(bwrap, tmp_path, pa
             TaskPath(files, files.root / 'nested')]
 
 
+@pytest.mark.parametrize('pattern', ['[^a].txt', '[!a].txt', r'back\*.txt', '[[]*.txt'])
+def test_native_glob_preserves_literal_pattern_characters(bwrap, tmp_path, pattern):
+    source, files = namespace_files(bwrap, tmp_path)
+    for name in ('a.txt', 'b.txt', '^.txt', r'back\slash.txt', '[literal].txt'):
+        (source / name).write_text('')
+    local, native = outputs(files, source, 'glob', {'pattern': pattern})
+    assert native == local
+
+
 @pytest.mark.parametrize('path', ['.', 'nested'])
 @pytest.mark.parametrize('glob_filter', ['', '!*.py', '*.py', '*.txt'])
 def test_public_grep_uses_native_rg_selection(bwrap, tmp_path, glob_filter, path):

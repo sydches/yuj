@@ -17,6 +17,7 @@ format = "text"
 pattern = '(?m)^\s*module\s+\S+'
 
 [runtime]
+language = "Go"
 executables = ["go"]
 probe_args = ["version"]
 command_args = ["test"]

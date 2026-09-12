@@ -59,6 +59,22 @@ def test_discovered_root_is_shared_by_shell_files_and_trace_paths(tmp_path, monk
     assert inspect.call_count == 1
 
 
+def test_reusing_startup_binding_does_not_repeat_docker_probes(tmp_path, monkeypatch):
+    monkeypatch.setenv("YUJ_CONTAINER", "task-container")
+    inspect = Mock(return_value=SimpleNamespace(stdout=json.dumps(metadata(tmp_path, '/work', workdir='/work'))))
+    engine = Mock(wraps=env.observe_docker_identity)
+    process = Mock(wraps=env.observe_container_process)
+    monkeypatch.setattr(env.subprocess, 'run', inspect)
+    monkeypatch.setattr(env, 'observe_docker_identity', engine)
+    monkeypatch.setattr(env, 'observe_container_process', process)
+    first = env.discover_task_environment(tmp_path, refresh=True)
+    with env.use_task_environment(first):
+        for _ in range(20):
+            assert env.discover_task_environment(tmp_path) is first
+            assert first.container_id in _build_bwrap_argv('pwd', str(tmp_path))
+    assert inspect.call_count == engine.call_count == process.call_count == 1
+
+
 def test_multiple_mount_aliases_use_declared_workdir(tmp_path):
     discovered = env.from_container_metadata(tmp_path, metadata(tmp_path, "/app", "/worktree", workdir="/worktree/src"), container="task")
     assert discovered.working_directory == "/worktree"
@@ -116,8 +132,7 @@ def test_effective_task_mount_supplies_both_command_and_startup_directory(
         None, None, None, None,
         skill_catalog=SimpleNamespace(format_prompt_block=lambda: "", trace_records=lambda: ()),
     )
-    facts = json.loads(prompt.split("Task environment (observed at startup):\n")[1].splitlines()[0])
-    assert facts["working_directory"] == expected
+    assert prompt.split("Task environment (observed at startup):\n")[1] == "Working directory: " + expected
     assert provenance["task_environment"]["working_directory"] == expected
     assert inspect.call_count == 1
 

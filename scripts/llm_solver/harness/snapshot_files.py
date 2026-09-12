@@ -17,7 +17,7 @@ STORE_NAME = '.turn_snapshot_git'
 
 def legacy_container_snapshot_files(workspace):
     """Bind the standalone legacy API to its inspected container, once."""
-    from .task_environment import discover_task_environment, docker_client_fingerprint, TaskEnvironmentUnavailable, verify_docker_identity
+    from .task_environment import discover_task_environment, docker_client_fingerprint, TaskEnvironmentUnavailable
     from ._tools._run_in_sandbox import _execute
     from .time_budget import execution_deadline, remaining_before
     from .process_identity import guarded_process_argv
@@ -30,7 +30,6 @@ def legacy_container_snapshot_files(workspace):
     def run(script, args, data):
         if os.environ.get('YUJ_CONTAINER', '') != selector or docker_client_fingerprint() != client:
             raise TaskEnvironmentUnavailable('snapshot container selection changed after binding')
-        verify_docker_identity(task)
         command = guarded_process_argv(
             ['docker', 'exec', '-i', '--workdir', task.working_directory, task.container_id],
             ['bash', '--noprofile', '--norc', '-c', script, 'yuj-snapshot', *args], task.process_identity)

@@ -5,6 +5,61 @@ from ..sandbox.ignore_policy import active_ignore_policy
 from ._common import _paginated_envelope, _resolve
 
 
+_NATIVE_GLOB = r'''
+native_glob() {
+    files_only=$1; directories_only=$2; shift 2
+    parts=("$@")
+    declare -A visiting=()
+    shopt -s nullglob dotglob
+    emit_match() {
+        local resolved
+        canonical resolved "$1" || return 0
+        case "$resolved" in "$root"|"${root%/}/"*) ;; *) return 0 ;; esac
+        [[ "$files_only" != 1 || -f "$resolved" ]] || return 0
+        [[ "$directories_only" != 1 || -d "$resolved" ]] || return 0
+        printf '%s\0' "$1"
+    }
+    expand() {
+        local directory=$1 index=$2 resolved key part child
+        [[ -d "$directory" ]] || return 0
+        canonical resolved "$directory" || return 0
+        case "$resolved" in "$root"|"${root%/}/"*) ;; *) return 0 ;; esac
+        if (( index == ${#parts[@]} )); then
+            emit_match "$directory"
+            return
+        fi
+        key="$resolved/$index"
+        [[ ! ${visiting[$key]:-} ]] || return 0
+        visiting[$key]=1
+        part=${parts[index]}
+        if [[ "$part" == .. ]]; then
+            expand "$directory/.." "$((index + 1))"
+        elif [[ "$part" == '**' ]]; then
+            expand "$directory" "$((index + 1))"
+            for child in "$directory"/*; do
+                expand "$child" "$index"
+            done
+        else
+            # Keep fnmatch's literal backslash and bracket-caret behavior.
+            part=${part//\\/\\\\}
+            part=${part//\[\^/[\\^}
+            for child in "$directory"/*; do
+                [[ "${child##*/}" == $part ]] || continue
+                if (( index + 1 == ${#parts[@]} )); then
+                    emit_match "$child"
+                else
+                    expand "$child" "$((index + 1))"
+                fi
+            done
+        fi
+        visiting[$key]=''
+        return 0
+    }
+    expand "${root%/}/$requested" 0
+}
+'''
+
+
 def glob_files(pattern: str, path: str = ".", *, cwd: str,
                page: int = 1, cfg: Config | None = None) -> str:
     """Find files matching a glob pattern.
@@ -32,19 +87,22 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         # Stable ordering is part of the harness contract, not an ablated
         # cleanup transform. Filesystem enumeration order varies across
         # byte-identical worktree copies.
-        matches = sorted(base.glob(pattern))
+        from ..task_path import TaskPath
+        native = isinstance(base, TaskPath)
+        matches = (sorted(base.glob(pattern, files_only=True))
+                   if native else sorted(base.glob(pattern)))
         # An outside directory can contain aliases back into the task.
         # Its entry names are still outside the permitted discovery scope.
         rel = [
             str(m.relative_to(root))
             for m in matches
-            if m.is_file()
+            if (native or (m.is_file()
             and m.resolve().is_relative_to(root)
             and all(
                 parent.resolve().is_relative_to(root)
                 for parent in m.parents
                 if parent.is_relative_to(root)
-            )
+            )))
             and (
                 policy is None
                 or not policy.is_ignored(m, is_dir=False)

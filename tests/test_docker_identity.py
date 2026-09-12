@@ -1,4 +1,4 @@
-"""Backend responses govern container binding; unchanged names prove nothing."""
+"""Observe the backend at startup and retain that binding for task operations."""
 import json
 import subprocess
 from dataclasses import asdict
@@ -52,37 +52,41 @@ def test_binding_records_engine_identity_and_a_private_context_digest(backend):
     assert bound.docker_engine_id == 'engine-one'
     assert len(bound.docker_context_fingerprint) == 64
     assert 'do-not-record-this' not in json.dumps(asdict(bound))
-    assert [argv[1] for argv, _ in backend.calls] == ['context', 'info', 'inspect', 'context', 'info', 'context', 'info']
+    assert [argv[1] for argv, _ in backend.calls] == ['context', 'info', 'inspect']
 
 
 @pytest.mark.parametrize('change', ['engine', 'context_endpoint'])
-def test_changed_backend_refuses_execution_with_unchanged_container_name(backend, monkeypatch, change):
+def test_task_execution_reuses_startup_without_backend_rediscovery(backend, monkeypatch, change):
     import importlib
     execution = importlib.import_module('scripts.llm_solver.harness._tools._run_in_sandbox')
-    environment.discover_task_environment(backend.root)
+    bound = environment.discover_task_environment(backend.root)
+    startup_calls = list(backend.calls)
     if change == 'engine':
         backend.engine = 'engine-two'
     else:
         backend.context['Endpoints']['docker']['Host'] = 'unix:///replacement.sock'
-    execute = Mock(side_effect=AssertionError('task command must not execute'))
+    execute = Mock(return_value=subprocess.CompletedProcess([], 0, '', ''))
     monkeypatch.setattr(execution, '_execute', execute)
-    with pytest.raises(execution.SandboxUnavailableError, match='backend changed'):
-        execution._run_in_sandbox('touch unwanted', cwd=str(backend.root), timeout=1,
-                                 sandbox=True, bwrap_bin='unused')
-    execute.assert_not_called()
-    assert not (backend.root / 'unwanted').exists()
+    result = execution._run_in_sandbox('true', cwd=str(backend.root), timeout=1,
+                                      sandbox=True, bwrap_bin='unused')
+    assert result == ('', 0, False)
+    assert backend.calls == startup_calls
+    assert bound.container_id in execute.call_args.args[0]
+    assert 'reusable-container-name' not in execute.call_args.args[0]
 
 
-def test_backend_change_during_container_inspection_is_not_bound(backend):
-    backend.after_inspect = lambda: setattr(backend, 'engine', 'engine-two')
-    with pytest.raises(environment.TaskEnvironmentUnavailable, match='backend changed'):
-        environment.discover_task_environment(backend.root)
-    assert environment._ACTIVE.get() is None
+def test_explicit_startup_refresh_observes_the_backend_again(backend):
+    first = environment.discover_task_environment(backend.root)
+    backend.engine = 'engine-two'
+    second = environment.discover_task_environment(backend.root, refresh=True)
+    assert first.docker_engine_id == 'engine-one'
+    assert second.docker_engine_id == 'engine-two'
+    assert [argv[1] for argv, _ in backend.calls] == ['context', 'info', 'inspect'] * 2
 
 
 @pytest.mark.parametrize('consumer', ['background', 'lsp'])
 @pytest.mark.parametrize('change', ['engine', 'context_endpoint'])
-def test_retained_manager_checks_its_original_backend(backend, consumer, change):
+def test_retained_manager_reuses_its_startup_binding(backend, consumer, change):
     from scripts.llm_solver.harness.process_manager import ProcessManager
     from scripts.llm_solver.harness.lsp_support import LspManager, LspServerSpec
 
@@ -96,13 +100,16 @@ def test_retained_manager_checks_its_original_backend(backend, consumer, change)
         manager = LspManager.sandboxed(servers=(spec,), **options)
         prepare = lambda: manager.argv_builder(spec, backend.root)
     try:
+        startup_calls = list(backend.calls)
         environment._ACTIVE.set(None)
         if change == 'engine':
             backend.engine = 'engine-two'
         else:
             backend.context['Endpoints']['docker']['Host'] = 'unix:///replacement.sock'
-        with pytest.raises(environment.TaskEnvironmentUnavailable, match='backend changed'):
-            prepare()
+        argv = prepare()
+        assert 'a' * 64 in argv
+        assert 'reusable-container-name' not in argv
+        assert backend.calls == startup_calls
         assert sum(argv[1] == 'inspect' for argv, _ in backend.calls) == 1
     finally:
         manager.close()

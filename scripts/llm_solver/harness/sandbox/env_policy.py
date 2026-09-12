@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import fnmatch
+import logging
 import os
 import subprocess
 from types import MappingProxyType
@@ -121,8 +122,9 @@ def discover_execution_environment(*, sandbox: bool = True, cwd=None,
             if result.returncode:
                 raise EnvironmentPolicyError('container environment probe failed')
     except (OSError, subprocess.SubprocessError, TaskEnvironmentUnavailable,
-            ProcessIdentityError, EnvironmentPolicyError, ContainerBackendError):
+            ProcessIdentityError, EnvironmentPolicyError, ContainerBackendError) as error:
         # Errors can contain command output, including environment secrets.
+        logging.getLogger(__name__).warning("Container environment discovery failed: %s", type(error).__name__)
         raise EnvironmentPolicyError(
             "cannot inspect the selected container's execution environment"
         ) from None

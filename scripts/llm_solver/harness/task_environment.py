@@ -169,19 +169,6 @@ def from_container_metadata(cwd: str | Path, metadata: dict, *, container: str,
                            docker_identity.context_fingerprint if docker_identity else '')
 
 
-def verify_docker_identity(environment, *, timeout=None):
-    """Reject a changed backend before using already discovered container facts."""
-    if not environment.docker_engine_id:
-        return
-    try:
-        observed = observe_docker_identity(timeout=timeout)
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError) as error:
-        raise TaskEnvironmentUnavailable('cannot verify the selected Docker backend') from error
-    if (observed.engine_id != environment.docker_engine_id or
-            observed.context_fingerprint != environment.docker_context_fingerprint):
-        raise TaskEnvironmentUnavailable('Docker backend changed after task binding')
-
-
 def discover_task_environment(cwd: str | Path, *, refresh: bool = False,
                               timeout: float | None = None) -> TaskEnvironment:
     from .sandbox import AMBIENT_CONTAINER, container_mode
@@ -196,7 +183,8 @@ def discover_task_environment(cwd: str | Path, *, refresh: bool = False,
     ) == (host, mode, docker_host) and (
         not existing.docker_client_fingerprint or existing.docker_client_fingerprint == fingerprint
     ):
-        verify_docker_identity(existing, timeout=timeout)
+        # The solve retains the observed container ID and process identity.
+        # Reusing a task path must not launch another Docker discovery probe.
         return existing
     if not refresh and existing is not None and _LIVE_SCOPE.get():
         raise TaskEnvironmentUnavailable('task execution selection changed within the solve')
@@ -216,12 +204,10 @@ def discover_task_environment(cwd: str | Path, *, refresh: bool = False,
                                                        container=mode, docker_host=docker_host,
                                                        client_fingerprint=fingerprint,
                                                        docker_identity=identity)
-                verify_docker_identity(environment)
                 if not environment.container_id or environment.container_id.startswith('-'):
                     raise TaskEnvironmentUnavailable('selected container has no inspected identity')
                 environment = replace(environment, process_identity=observe_container_process(
                     environment.container_id, environment.working_directory))
-                verify_docker_identity(environment)
         except (OSError, subprocess.SubprocessError, ValueError, TypeError, ProcessIdentityError) as exc:
             raise TaskEnvironmentUnavailable("cannot discover the selected container's task mount") from exc
     else:
