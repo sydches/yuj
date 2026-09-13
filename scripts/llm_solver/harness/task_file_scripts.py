@@ -199,7 +199,7 @@ case "$operation" in
         "$1" -L --printf='%f\0' -- "/proc/self/fd/$input_fd" || exit 74
         exec "$utility" -- <&"$input_fd"
         ;;
-    read|read_range|search)
+    read|read_observation|read_range|search)
         [[ -e "$target" ]] || exit 66
         [[ ! -d "$target" ]] || exit 73
         readlink_bin=$1; shift
@@ -214,6 +214,16 @@ case "$operation" in
             *) printf 'opened file escapes task root' >&2; exit 77 ;;
         esac
         [[ ! -d "/proc/self/fd/$input_fd" ]] || exit 73
+        if [[ "$operation" == read_observation ]]; then
+            [[ -f "/proc/self/fd/$input_fd" ]] || exit 74
+            export LC_ALL=C
+            printf '%s\0' "$opened_path"
+            "$1" -L --printf='%f\0%s\0%Y\0%Z\0%i\0%d\0%y\0%z\0' -- "/proc/self/fd/$input_fd" || exit 74
+            "$utility" -- <&"$input_fd" || exit 74
+            printf '\0'
+            "$1" -L --printf='%f\0%s\0%Y\0%Z\0%i\0%d\0%y\0%z\0' -- "/proc/self/fd/$input_fd" || exit 74
+            exit 0
+        fi
         if [[ "$operation" == search ]]; then
             exec "$utility" -n --no-filename --color=never -- "$1" - <&"$input_fd"
         fi

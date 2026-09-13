@@ -154,7 +154,7 @@ class NamespaceFiles:
         relative = self._relative(path)
         realpath = self._utility('realpath')
         executable = self._utility(utility) if utility else ''
-        if operation in ('read', 'read_range', 'search', 'search_files', 'glob', 'write', 'create', 'replace',
+        if operation in ('read', 'read_observation', 'read_range', 'search', 'search_files', 'glob', 'write', 'create', 'replace',
                          'link', 'unlink', 'rmdir', 'stat', 'lstat', 'list', 'scandir', 'readlink', 'symlink', 'chmod', 'mkdir'):
             args = (self._utility('readlink'), *args)
         result = self.run(script_prefix + _OPERATE, [str(self.root), relative, realpath,
@@ -199,6 +199,25 @@ class NamespaceFiles:
 
     def read_bytes(self, path):
         return self._call('read', path, utility='cat')
+
+    def read_observation(self, path):
+        """Read bytes and stable descriptor metadata in one namespace call."""
+        for _attempt in range(3):
+            output = self._call('read_observation', path, utility='cat',
+                                args=(self._utility('stat'),))
+            try:
+                fields = output.split(b'\0', 9)
+                opened = PurePosixPath(os.fsdecode(fields[0]))
+                opened.relative_to(self.root)
+                before = self._parse_metadata(b'\0'.join(fields[1:9]) + b'\0')
+                tail = fields[9].rsplit(b'\0', 9)
+                data = tail[0]
+                after = self._parse_metadata(b'\0'.join(tail[1:]))
+            except (ValueError, IndexError):
+                raise TaskFileError('invalid task read observation') from None
+            if before == after and len(data) == after.size and after.is_file:
+                return data, after
+        raise TaskFileError('file changed while being read')
 
     def read_entry(self, path):
         """Read checkpoint bytes and mode together; preserve final symlinks."""
@@ -303,7 +322,15 @@ class NamespaceFiles:
         return len(data)
 
     def metadata(self, path, *, follow_symlinks=True):
-        output = self._call('stat' if follow_symlinks else 'lstat', path, utility='stat').split(b'\x00')
+        value = self._parse_metadata(self._call(
+            'stat' if follow_symlinks else 'lstat', path, utility='stat'))
+        if follow_symlinks and stat.S_ISLNK(value.mode):
+            raise TaskFileError('task symlink changed after resolution')
+        return value
+
+    @staticmethod
+    def _parse_metadata(output):
+        output = output.split(b'\x00')
         try:
             if len(output) != 9 or output[-1]:
                 raise ValueError
@@ -315,8 +342,6 @@ class NamespaceFiles:
             value = FileMetadata(int(output[0], 16), *(int(v) for v in output[1:6]),
                                  nanoseconds(output[2], output[6]),
                                  nanoseconds(output[3], output[7]))
-            if follow_symlinks and stat.S_ISLNK(value.mode):
-                raise TaskFileError('task symlink changed after resolution')
             return value
         except (ValueError, IndexError):
             raise TaskFileError('unsupported task stat response') from None

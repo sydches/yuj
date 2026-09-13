@@ -25,7 +25,7 @@ def _record_read_reminder(
 
 
 def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
-         cfg: Config | None = None) -> str:
+         cfg: Config | None = None, capture_observation: bool = False) -> str:
     """Read a file, return contents with line numbers.
 
     When ``cfg`` is provided, appends a ``<system-reminder>`` block to
@@ -69,12 +69,16 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
                 f"ERROR: {path} is a directory — "
                 f"use glob to list contents."
             )
-        from ..local_file_access import read_bytes
-        data = read_bytes(cwd, target)
+        from ..local_file_access import read_bytes, read_observation
+        mtime_ns = None
+        if capture_observation:
+            data, mtime_ns = read_observation(cwd, target)
+        else:
+            data = read_bytes(cwd, target)
 
         def inspected(text, body, count, total):
             return InspectedText(text, path=target, data=data, body=body,
-                                 start=offset + 1, count=count, total=total)
+                                 start=offset + 1, count=count, total=total, mtime_ns=mtime_ns)
 
         cleanup_enabled = cfg is None or output_cleanup_enabled(cfg)
         if not cleanup_enabled:

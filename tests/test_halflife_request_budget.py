@@ -189,3 +189,39 @@ def test_real_session_uses_prepared_request_with_mock_backend(tmp_path, status):
             assert ctx._retention_count_evidence["prompt_tokens"] == 1600
     finally:
         client.client.close()
+
+
+def test_scoped_reuse_keeps_halflife_before_and_after_counts_distinct(tmp_path):
+    import json
+    import httpx
+    from _config_helpers import make_config
+    from scripts.llm_solver.harness.loop import Session
+    from scripts.llm_solver.harness._loop.run_step import _preflight_estimate
+    from scripts.llm_solver.server.client import LlamaClient
+    from scripts.llm_solver.server.token_counting import request_count_reuse
+    from test_backend_token_counting import attach_transport, completion
+
+    cfg = make_config(tokenizer_id="auto", context_size=4000, max_tokens=1000)
+    client = LlamaClient(cfg)
+    counted, generated = [], []
+    def handler(request):
+        body = json.loads(request.content)
+        if request.url.path.endswith("/input_tokens"):
+            counted.append(body)
+            return httpx.Response(200, json={"input_tokens": 1600 if
+                len(body["messages"][-1]["content"]) > 200 else 100})
+        generated.append(body)
+        return completion(100)
+    attach_transport(client, handler)
+    ctx = HalfLifeContext(context_size=4000, verbatim_tool_results=0, cap_7_chars=200)
+    session = Session(cfg, client, "system", "task", str(tmp_path), context_manager=ctx)
+    ctx.add_assistant({"role": "assistant", "content": None, "tool_calls": [
+        {"id": "read-1", "type": "function", "function": {
+            "name": "read", "arguments": '{"path":"x"}'}}]})
+    ctx.add_tool_result("read-1", "HEAD" + "x" * 5992 + "TAIL")
+    with request_count_reuse():
+        assert _preflight_estimate(session) == 100
+        client.chat(ctx.get_messages(), session.model_tool_schemas, turn=0)
+    assert len(counted) == 2
+    assert [len(body["messages"][-1]["content"]) for body in counted] == [6000, 200]
+    assert generated == [counted[1]]

@@ -5,7 +5,7 @@ import hashlib
 class InspectedText(str):
     """Keep the selected body transient until output admission has finished."""
 
-    def __new__(cls, text, *, path, data, body, start, count, total):
+    def __new__(cls, text, *, path, data, body, start, count, total, mtime_ns=None):
         value = super().__new__(cls, text)
         value.inspection_evidence = {
             "path": str(path), "namespace": "local_filesystem",
@@ -18,6 +18,9 @@ class InspectedText(str):
                 namespace='task_execution', task_view=dict(path.files.binding),
             )
         value.inspection_body = body
+        # Private, transient evidence from the checked read, never model text.
+        value.read_observation = ((path, mtime_ns, len(data), value.inspection_evidence['sha256'])
+                                  if mtime_ns is not None else None)
         return value
 
 

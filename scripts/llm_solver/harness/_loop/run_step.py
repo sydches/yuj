@@ -41,6 +41,7 @@ from ..tool_validation import SchemaViolation, ToolArgumentValidation
 from .._tool_filters import resolve_tool_permission
 from ..system_log import get_system_log, provenance_for
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
+from ...server.token_counting import request_count_reuse, clear_request_count_reuse
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
 from ._dispatch_tool_call import (
     TurnState,
@@ -546,6 +547,7 @@ def _observe_token_density(session, live_pt_at_gate: int,
 
 
 @record_turn_timings
+@request_count_reuse()
 def run_session_loop(session: "Session") -> "SessionResult":
     """Drive one session's turn loop.
 
@@ -617,6 +619,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
             total_completion_tokens=0,
         )
     for local_turn in range(session.cfg.max_turns):
+        clear_request_count_reuse()
         consumed_turns = local_turn + 1
         turn = turn_start + local_turn
         # Session-owned services (for example the lazy LSP manager) emit

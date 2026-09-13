@@ -73,6 +73,29 @@ def read_bytes(cwd, target):
             return stream.read()
 
 
+def read_observation(cwd, target):
+    """Return bytes and metadata from the same stable, checked open file."""
+    if _native(target):
+        data, metadata = target.files.read_observation(str(target))
+        return data, metadata.mtime_ns
+    for _attempt in range(3):
+        with open_local_file(cwd, target, os.O_RDONLY | os.O_NONBLOCK) as descriptor:
+            before = os.fstat(descriptor)
+            if stat_module.S_ISDIR(before.st_mode):
+                raise IsADirectoryError(str(target))
+            if not stat_module.S_ISREG(before.st_mode):
+                raise OSError(f'unsupported task entry: {target}')
+            with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+                data = stream.read()
+            after = os.fstat(descriptor)
+        def revision(info):
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                    info.st_mtime_ns, info.st_ctime_ns)
+        if revision(before) == revision(after) and len(data) == after.st_size:
+            return data, after.st_mtime_ns
+    raise OSError(f'file changed while being read: {target}')
+
+
 def read_text(cwd, target, *, encoding=None, errors=None):
     if _native(target):
         return target.read_text(encoding=encoding, errors=errors)

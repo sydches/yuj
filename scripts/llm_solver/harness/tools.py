@@ -11,6 +11,7 @@ import hashlib
 import logging
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Callable
 
@@ -204,6 +205,12 @@ def _dispatch_get_function_details(args, cwd, cfg):
 
 
 def _dispatch_exec_cell(args, cwd, cfg):
+    if not bool(getattr(cfg, "tools_exec_cell_enabled", False)):
+        return execute_cell(
+            args["source"], cwd=cwd, cfg=cfg, inner_dispatch=None,
+            unreadable_paths=(), readable_paths=(), effective_env={},
+            allow_login_shell=False,
+        )
     effective_env, allow_login_shell = active_environment()
     if effective_env is None:
         effective_env, allow_login_shell = _effective_command_environment(cfg, cwd=cwd)
@@ -262,6 +269,7 @@ _DISPATCH = {
     "read": lambda args, cwd, cfg: read(
         args["path"], cwd=cwd, offset=args.get("offset", 0),
         limit=args.get("limit", 0), cfg=cfg,
+        capture_observation=(_ACTIVE_DISPATCH_OPTIONS.get() or {}).get("stale_guard") is not None,
     ),
     "write": lambda args, cwd, cfg: write(
         args["path"], args["content"], cwd=cwd, cfg=cfg,
@@ -378,6 +386,47 @@ def build_tool_registry(
     if overrides:
         handlers.update(overrides)
     return ToolRegistry(handlers=handlers)
+
+
+def _unavailable_builtin(name, cfg, handler):
+    """Only native disabled handlers and session-only stubs skip execution setup."""
+    if handler is None or handler is not _DISPATCH.get(name):
+        return False
+    if name in {
+        "bash_poll", "bash_kill", "checkpoint", "rewind", "lsp",
+        "exit_plan_mode", "load_tools", "task",
+    }:
+        return True
+    flag = {
+        "run_tests": "tools_run_tests_enabled",
+        "list_definitions": "tools_list_definitions_enabled",
+        "think": "tools_think_enabled",
+        "write_todos": "tools_todos_enabled",
+        "exec_cell": "tools_exec_cell_enabled",
+        "list_functions": "tools_exec_cell_enabled",
+        "get_function_details": "tools_exec_cell_enabled",
+    }.get(name)
+    if flag is not None:
+        return not bool(getattr(cfg, flag, False))
+    if name in {"apply_patch", "udiff"}:
+        from ._tools.udiff import _runtime_edit_format
+        return _runtime_edit_format(cfg) != name
+    return False
+
+
+def _available_file_dispatch(function):
+    scoped = file_scoped_dispatch(observed_dispatch(function))
+
+    @wraps(function)
+    def wrapped(name, arguments, **kwargs):
+        reg = kwargs.get("tool_registry")
+        handler = (reg.handlers if reg is not None else _DISPATCH).get(name)
+        if _unavailable_builtin(name, kwargs["cfg"], handler):
+            kwargs.pop("observation_owned_paths", None)
+            return function(name, arguments, _unavailable=True, **kwargs)
+        return scoped(name, arguments, **kwargs)
+
+    return wrapped
 
 
 def validate_tool_handlers(schema_names: list[str], *,
@@ -530,8 +579,7 @@ def admit_tool_output(
 
 @transformation_scoped
 @budgeted_test_dispatch
-@file_scoped_dispatch
-@observed_dispatch
+@_available_file_dispatch
 def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              output_control=None, universal_rewrites=None,
              forbidden_rules=None, redirect_rules=None, redactions=None,
@@ -544,7 +592,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
              ignore_policy: IgnorePolicy | None = None,
              effective_env=None,
              allow_login_shell: bool | None = None,
-             tool_call_id: str = "") -> str:
+             tool_call_id: str = "",
+             _unavailable: bool = False) -> str:
     """Route a tool call to its implementation, truncate output.
 
     output_control: optional OutputControl from bash_quirks, loaded
@@ -754,6 +803,11 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     executed = False
     if redirected:
         pass
+    elif _unavailable:
+        try:
+            result = handler(arguments, cwd, cfg)
+        except (KeyError, TypeError) as e:
+            result = f"ERROR: bad arguments for {name}: {e}"
     elif stale_precheck_error:
         result = stale_precheck_error
         from .savings import get_ledger
@@ -840,6 +894,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     raw_execution_budget = getattr(result, "execution_budget", None)
     raw_observation = getattr(result, "observation_receipt", None)
     raw_inspection = getattr(result, "inspection_evidence", None)
+    raw_read_observation = getattr(result, "read_observation", None)
     inspection_body = getattr(result, "inspection_body", "")
     if getattr(result, "executed", None) is False:
         executed = False
@@ -893,15 +948,18 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
         succeeded = not is_error_result(raw_result)
         try:
             if succeeded and name == "read":
-                read_path = str(arguments.get("path", ""))
-                from ._tools._common import _resolve_read, _skill_readable_roots
-                candidate = _resolve_read(
-                    cwd, read_path,
-                    readonly_roots=_skill_readable_roots(cfg),
-                )
-                from .task_path import resolve_task_path
-                if resolve_task_path(cwd, '.') in candidate.parents:
-                    stale_guard.observe_read(str(candidate))
+                if raw_read_observation is not None:
+                    stale_guard.observe_inspection(*raw_read_observation)
+                else:
+                    # Custom handlers without a checked observation retain
+                    # the existing independent fingerprint path.
+                    read_path = str(arguments.get("path", ""))
+                    from ._tools._common import _resolve_read, _skill_readable_roots
+                    candidate = _resolve_read(
+                        cwd, read_path, readonly_roots=_skill_readable_roots(cfg))
+                    from .task_path import resolve_task_path
+                    if resolve_task_path(cwd, '.') in candidate.parents:
+                        stale_guard.observe_read(str(candidate))
             elif succeeded and name in {
                 "write", "edit", "notebook_edit", "structural_edit",
             }:

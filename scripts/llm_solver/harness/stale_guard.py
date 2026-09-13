@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Literal, Mapping
 
-from .task_path import resolve_task_path, TaskPath
+from .task_path import active_task_files, resolve_task_path, TaskPath
 
 
 StaleGuardMode = Literal["off", "warn", "block"]
@@ -87,7 +87,8 @@ class StaleFileGuard:
 
     def _target(self, path: str):
         try:
-            root = resolve_task_path(self.cwd, '.')
+            files = active_task_files(self.cwd)
+            root = TaskPath(files, files.root) if files is not None else self.cwd
             target = resolve_task_path(self.cwd, path)
             relative = target.relative_to(root).as_posix()
         except ValueError as exc:
@@ -100,21 +101,28 @@ class StaleFileGuard:
     def _view(target):
         return dict(target.files.binding) if isinstance(target, TaskPath) else None
 
-    @staticmethod
-    def _fingerprint(target: Path) -> FileFingerprint:
-        for _attempt in range(3):
-            before = target.stat()
-            data = target.read_bytes()
-            after = target.stat()
-            before_key = (before.st_ino, before.st_mtime_ns, before.st_size)
-            after_key = (after.st_ino, after.st_mtime_ns, after.st_size)
-            if before_key == after_key and len(data) == after.st_size:
-                return FileFingerprint(
-                    mtime_ns=after.st_mtime_ns,
-                    size=after.st_size,
-                    sha256=hashlib.sha256(data).hexdigest(),
-                )
-        raise StaleGuardError(f"file changed while being fingerprinted: {target.name}")
+    def _fingerprint(self, target: Path) -> FileFingerprint:
+        from .local_file_access import read_observation
+        data, mtime_ns = read_observation(self.cwd, target)
+        return FileFingerprint(mtime_ns=mtime_ns, size=len(data),
+                               sha256=hashlib.sha256(data).hexdigest())
+
+    def observe_inspection(self, target, mtime_ns, size, sha256):
+        """Reuse a typed read's observation only within this active task view."""
+        files = active_task_files(self.cwd)
+        if isinstance(target, TaskPath):
+            if files is not target.files:
+                return  # An explicitly readable external resource is not editable.
+            root = TaskPath(files, files.root)
+        else:
+            if files is not None:
+                return
+            root = self.cwd
+        relative = target.relative_to(root).as_posix()
+        if relative in {'', '.'}:
+            raise StaleGuardError('stale guard path must name a file')
+        return self._record(target, relative, FileFingerprint(mtime_ns, size, sha256),
+                            source='read')
 
     def observe(self, path: str, *, source: str) -> FileFingerprint:
         """Record a successful read or mutation and emit reconstruction data."""
@@ -123,6 +131,9 @@ class StaleFileGuard:
             fingerprint = self._fingerprint(target)
         except FileNotFoundError as exc:
             raise StaleGuardError(f"file not found: {relative}") from exc
+        return self._record(target, relative, fingerprint, source=source)
+
+    def _record(self, target, relative, fingerprint, *, source):
         with self._lock:
             self._ledger[relative] = fingerprint
             view = self._view(target)

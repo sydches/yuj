@@ -5,10 +5,37 @@ import hashlib
 import json
 import logging
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from urllib.parse import urlsplit, urlunsplit
 
 log = logging.getLogger(__name__)
 _SDK_OPTIONS = {"extra_body", "extra_headers", "extra_query", "timeout"}
+_request_count_reuse = ContextVar("request_count_reuse", default=None)
+
+
+@contextmanager
+def request_count_reuse():
+    """Allow one exact successful count to be reused during request assembly."""
+    token = _request_count_reuse.set(())
+    try:
+        yield
+    finally:
+        _request_count_reuse.reset(token)
+
+
+def clear_request_count_reuse():
+    """Discard evidence at a turn boundary or after a generation attempt."""
+    if _request_count_reuse.get() is not None:
+        _request_count_reuse.set(())
+
+
+@contextmanager
+def finish_request_count():
+    try:
+        yield
+    finally:
+        clear_request_count_reuse()
 
 
 class UncountableRequest(ValueError):
@@ -79,7 +106,9 @@ class BackendTokenCounter:
     The llama chat input_tokens extension parses and tokenizes in one request.
     Other dialects remain explicit estimates until their adapters provide a
     counting contract. No vocabulary is inferred from a model name. Counts are
-    not cached: a serving process can change behind an unchanged URL or alias.
+    reused only within an explicit request-assembly scope, which ends at each
+    generation attempt. Later turns recount because the serving process can
+    change behind an unchanged URL or alias.
     """
 
     count_precision = "backend_reported"
@@ -135,18 +164,29 @@ class BackendTokenCounter:
         cfg = self.client.cfg
         # Use the SDK route, not a separately constructed server URL or client.
         endpoint = self.endpoint
-        binding = (endpoint, payload.get("model"), cfg.request_dialect, id(self.client.profile))
+        binding = (endpoint, payload.get("model"), cfg.request_dialect,
+                   id(self.client.profile), id(self.client.client))
         if binding != self._binding:
             self._binding = binding
             self._retry_at = 0.0
             self._unavailable_reason = ""
             self._usage_mismatch = False
+            clear_request_count_reuse()
         body = {k: v for k, v in payload.items() if k not in _SDK_OPTIONS}
         extra_body = payload.get("extra_body") or {}
         fingerprint = hashlib.sha256(json.dumps(
             {"body": body, "extra_body": extra_body}, sort_keys=True,
             ensure_ascii=False, default=str,
         ).encode()).hexdigest()
+        reuse_key = None
+        if _request_count_reuse.get() is not None:
+            try:
+                # Include SDK headers/query and all controls, not only the
+                # message body. Unsupported objects must never alias via str().
+                reuse_key = (self, binding, self.count_precision, json.dumps(
+                    payload, sort_keys=True, ensure_ascii=False, allow_nan=False))
+            except (TypeError, ValueError):
+                pass
         count = None
         basis = "character_estimate"
         reason = "unsupported_request_dialect"
@@ -164,7 +204,11 @@ class BackendTokenCounter:
             reason = "counting_allowance_exhausted"
         elif self.supported:
             reason = self._unavailable_reason
-            if started >= self._retry_at:
+            reused = _request_count_reuse.get()
+            if (reuse_key is not None and reused and reused[0] == reuse_key
+                    and not self._usage_mismatch):
+                count, basis, reason = reused[1], "backend_input_tokens", ""
+            elif started >= self._retry_at:
                 # These bound transport phases, not total wall-clock duration.
                 # The caller can cap them by its remaining invocation allowance.
                 calls = 1
@@ -198,6 +242,12 @@ class BackendTokenCounter:
                     log.warning("backend token counting unavailable (%s); using character estimate", reason)
         if count is None:
             count = estimate_payload(payload)
+        if _request_count_reuse.get() is not None:
+            _request_count_reuse.set(
+                (reuse_key, count)
+                if reuse_key is not None and basis == "backend_input_tokens"
+                and self.count_precision == "backend_reported"
+                else ())
         elapsed = time.monotonic() - started
         self.calls += calls
         self.elapsed_seconds += elapsed
@@ -240,5 +290,6 @@ class BackendTokenCounter:
         if (record["count_basis"] == "backend_input_tokens"
                 and record.get("count_precision") != "estimate" and fields["count_delta"]):
             self._usage_mismatch = True
+            clear_request_count_reuse()
             log.warning("backend count differs from response usage: count=%d reported=%d",
                         record["prompt_tokens"], usage.prompt_tokens)

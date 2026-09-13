@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from ._streaming import StreamRuleInterrupt, assemble_stream
 from . import request_controls
+from .token_counting import finish_request_count
 from .types import ImageInput, SideRequestResult, ToolCall, TurnResult, Usage
 
 
@@ -263,6 +264,7 @@ class LlamaClient:
         # observer support before autonomous execution can rely on it.
         return type(self)._call_api is LlamaClient._call_api
 
+    @finish_request_count()
     def _call_api(self, payload: dict, *, record_transcript: bool = True):
         """Send one HTTP request and save its payload and response.
 

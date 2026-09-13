@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import replace
+from contextlib import nullcontext
 from io import StringIO
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from scripts.llm_solver.harness.request_counting import resolve_counter
 from scripts.llm_solver.server.client import LlamaClient
 from scripts.llm_solver.server.profile_loader import load_profile
 from scripts.llm_solver.server.types import ContextBudgetExceeded
+from scripts.llm_solver.server.token_counting import request_count_reuse, clear_request_count_reuse
 
 
 MESSAGES = [{"role": "user", "content": "Count this sentence."}]
@@ -45,7 +47,8 @@ def completion(prompt_tokens):
 
 
 @pytest.mark.parametrize("with_profile", [False, True])
-def test_count_uses_generation_preparation_and_authenticated_sdk_transport(with_profile, monkeypatch):
+@pytest.mark.parametrize("reuse_enabled", [False, True])
+def test_count_uses_generation_preparation_and_authenticated_sdk_transport(with_profile, reuse_enabled, monkeypatch):
     cfg = make_config(tokenizer_id="auto", model="served-alias", context_size=100,
                       max_tokens=80, server_request_extra={"temperature": 0.2})
     profile = load_profile("_base", Path("profiles")) if with_profile else None
@@ -70,11 +73,13 @@ def test_count_uses_generation_preparation_and_authenticated_sdk_transport(with_
     attach_transport(client, handler)
     counter = resolve_counter(client, cfg, event_sink=lambda event, **row: events.append((event, row)))
     original = copy.deepcopy(MESSAGES)
-    assert counter.count(MESSAGES, TOOLS) == 27
-    client.chat(MESSAGES, TOOLS, turn=0)
+    with request_count_reuse() if reuse_enabled else nullcontext():
+        assert counter.count(MESSAGES, TOOLS) == 27
+        client.chat(MESSAGES, TOOLS, turn=0)
     assert MESSAGES == original
-    counted, recounted, generated = [row[1] for row in requests]
-    assert counted == recounted
+    counted, generated = requests[0][1], requests[-1][1]
+    assert len(requests) == (2 if reuse_enabled else 3)
+    assert all(row[1] == counted for row in requests[:-1])
     assert generated == {**counted, "max_tokens": 72}
     assert counted["model"] == "served-alias"
     assert counted["tools"] == TOOLS
@@ -85,7 +90,7 @@ def test_count_uses_generation_preparation_and_authenticated_sdk_transport(with_
         assert counted["messages"][0]["content"].count("[wire]") == 1
     assert events[-1][0] == "request_token_count_usage"
     assert events[-1][1]["count_delta"] == 0
-    assert counter.calls == 2
+    assert counter.calls == (1 if reuse_enabled else 2)
     assert counter.elapsed_seconds > 0
 
 
@@ -99,13 +104,14 @@ def test_side_and_continued_requests_count_their_own_controls_and_messages():
         return (httpx.Response(200, json={"input_tokens": 20})
                 if request.url.path.endswith("/input_tokens") else completion(20))
     attach_transport(client, handler)
-    client.chat(MESSAGES, TOOLS, turn=0)
-    client.complete_side_request({"messages": MESSAGES, "max_tokens": 10})
-    client.complete_tool_side_request(MESSAGES, TOOLS)
-    continued = client.prepare_chat_request(
-        MESSAGES + [{"role": "assistant", "content": "continuing"}], TOOLS,
-    )
-    client._call_api(continued)
+    with request_count_reuse():
+        client.chat(MESSAGES, TOOLS, turn=0)
+        client.complete_side_request({"messages": MESSAGES, "max_tokens": 10})
+        client.complete_tool_side_request(MESSAGES, TOOLS)
+        continued = client.prepare_chat_request(
+            MESSAGES + [{"role": "assistant", "content": "continuing"}], TOOLS,
+        )
+        client._call_api(continued)
     for index in range(0, len(requests), 2):
         assert requests[index][1] == requests[index + 1][1]
     assert requests[0][1]["chat_template_kwargs"]["enable_thinking"] is True
@@ -244,6 +250,123 @@ def test_counts_are_not_cached_across_server_changes_at_the_same_alias():
     attach_transport(client, lambda request: httpx.Response(200, json={"input_tokens": next(answers)}))
     counter = client.get_request_token_counter()
     assert [counter.count(MESSAGES), counter.count(MESSAGES)] == [31, 49]
+
+
+def test_reuse_ends_at_turn_scope_and_generation_boundaries():
+    client = LlamaClient(make_config(tokenizer_id="auto"))
+    attach_transport(client, lambda request: (
+        httpx.Response(200, json={"input_tokens": 31})
+        if request.url.path.endswith("/input_tokens") else completion(31)))
+    counter = client.get_request_token_counter()
+    with request_count_reuse():
+        assert counter.count(MESSAGES, TOOLS) == counter.count(MESSAGES, TOOLS) == 31
+        assert counter.calls == 1
+        assert counter.last["counting_calls"] == 0
+        clear_request_count_reuse()  # next turn, even with identical input
+        counter.count(MESSAGES, TOOLS)
+        assert counter.calls == 2
+        client.chat(MESSAGES, TOOLS, turn=0)
+        assert counter.calls == 2
+        client.chat(MESSAGES, TOOLS, turn=1)
+        assert counter.calls == 3
+    with request_count_reuse():
+        counter.count(MESSAGES, TOOLS)
+    assert counter.calls == 4
+
+
+@pytest.mark.parametrize("changed", [
+    {"messages": [{"role": "user", "content": "changed"}]},
+    {"tools": []}, {"extra_body": {"temperature": .7}},
+    {"extra_headers": {"x-model-route": "other"}},
+    {"extra_query": {"revision": "other"}}, {"model": "other"},
+])
+def test_reuse_requires_the_exact_prepared_request(changed):
+    client = LlamaClient(make_config(tokenizer_id="auto"))
+    answers = iter([31, 49])
+    attach_transport(client, lambda request: httpx.Response(200, json={"input_tokens": next(answers)}))
+    counter = client.get_request_token_counter()
+    payload = client.prepare_chat_request(MESSAGES, TOOLS)
+    with request_count_reuse():
+        assert counter.count_payload(payload) == 31
+        assert counter.count_payload({**payload, **changed}) == 49
+    assert counter.calls == 2
+
+
+def test_transport_replacement_at_same_url_recounts_within_scope():
+    client = LlamaClient(make_config(tokenizer_id="auto"))
+    attach_transport(client, lambda request: httpx.Response(200, json={"input_tokens": 31}))
+    counter = client.get_request_token_counter()
+    with request_count_reuse():
+        assert counter.count(MESSAGES) == 31
+        attach_transport(client, lambda request: httpx.Response(200, json={"input_tokens": 49}))
+        assert counter.count(MESSAGES) == 49
+    assert counter.calls == 2
+
+
+def test_reuse_checks_remaining_budget_and_does_not_retain_failed_evidence():
+    client = LlamaClient(make_config(tokenizer_id="auto"))
+    attach_transport(client, lambda request: httpx.Response(200, json={"input_tokens": 31}))
+    counter = client.get_request_token_counter()
+    with request_count_reuse():
+        assert counter.count(MESSAGES) == 31
+        def expired(cap):
+            raise TimeoutError("expired")
+        counter.count_timeout = expired
+        with pytest.raises(TimeoutError, match="expired"):
+            counter.count(MESSAGES)
+        assert counter.calls == 1
+        assert counter.last["count_basis"] == "character_estimate"
+        counter.count_timeout = None
+        assert counter.count(MESSAGES) == 31
+        assert counter.calls == 2
+        counter.count_precision = "estimate"
+        counter.count(MESSAGES)
+        counter.count(MESSAGES)
+        assert counter.calls == 4
+
+
+def test_failed_generation_discards_preflight_count():
+    client = LlamaClient(make_config(tokenizer_id="auto"))
+    attach_transport(client, lambda request: (
+        httpx.Response(200, json={"input_tokens": 31})
+        if request.url.path.endswith("/input_tokens") else httpx.Response(503, json={"error": "down"})))
+    counter = client.get_request_token_counter()
+    with request_count_reuse():
+        counter.count(MESSAGES, TOOLS)
+        with pytest.raises(openai.APIStatusError):
+            client.chat(MESSAGES, TOOLS, turn=0)
+        assert counter.calls == 1
+        counter.count(MESSAGES, TOOLS)
+        assert counter.calls == 2
+
+
+def test_reused_count_still_enforces_completion_budget():
+    client = LlamaClient(make_config(tokenizer_id="auto", context_size=100, max_tokens=15))
+    def handler(request):
+        assert request.url.path.endswith("/input_tokens"), "exhausted request reached generation"
+        return httpx.Response(200, json={"input_tokens": 100})
+    attach_transport(client, handler)
+    counter = client.get_request_token_counter()
+    with request_count_reuse():
+        assert counter.count(MESSAGES, TOOLS) == 100
+        with pytest.raises(ContextBudgetExceeded) as failure:
+            client.chat(MESSAGES, TOOLS, turn=0)
+        assert failure.value.count_record["counting_calls"] == 0
+        assert counter.calls == 1
+
+
+def test_usage_disagreement_invalidates_scoped_evidence():
+    client = LlamaClient(make_config(tokenizer_id="auto"))
+    attach_transport(client, lambda request: httpx.Response(200, json={"input_tokens": 31}))
+    counter = client.get_request_token_counter()
+    with request_count_reuse():
+        counter.count(MESSAGES)
+        counter.observe_usage({"usage": {"prompt_tokens": 40}}, dict(counter.last))
+        assert counter.count(MESSAGES) == 31
+        assert counter.calls == 2
+        assert counter.last["count_basis"] == "backend_input_tokens_unverified"
+        counter.count(MESSAGES)
+        assert counter.calls == 3
 
 
 def test_rejected_fragment_does_not_disable_counting_the_next_complete_request():
@@ -400,9 +523,10 @@ def test_replay_handover_binds_live_backend_counter(tmp_path):
 def test_current_backend_count_supersedes_stale_usage_in_the_session_loop(tmp_path):
     cfg = make_config(tokenizer_id="auto", max_turns=1, reply_mode="conversation")
     client = LlamaClient(cfg)
-    generated = []
+    generated, counted = [], []
     def handler(request):
         if request.url.path.endswith("/input_tokens"):
+            counted.append(json.loads(request.content))
             return httpx.Response(200, json={"input_tokens": 100})
         generated.append(json.loads(request.content))
         return completion(100)
@@ -414,6 +538,7 @@ def test_current_backend_count_supersedes_stale_usage_in_the_session_loop(tmp_pa
     session._preflight_density = 2.0
     session.run()
     assert len(generated) == 1
+    assert len(counted) == 1  # preflight and generation share the same evidence
     assert not getattr(session, "_compacted", False)
     assert any(message["content"] == "task" for message in generated[0]["messages"])
 
