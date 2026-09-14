@@ -110,7 +110,7 @@ plan_mode_max_turns = 15     # model turns allowed for inspection before only th
 rewind_enabled = false
 rewind_max_per_session = 1
 interrupted_turn_mode = "mechanical"  # off | mechanical; repair non-terminal trace tails before resume
-length_continue_max = 1     # same-turn follow-ups after finish_reason=length; 0 disables
+length_continue_max = 1     # same-turn text follow-ups; positive also enables next-turn truncation advice; 0 disables both
 # Measurement runs default to autonomous replies; assistant runs default to
 # conversation. Set reply_mode="autonomous" for unattended assistant coding,
 # or "conversation" for prose tasks. Autonomous mode requires a transport
@@ -727,7 +727,7 @@ sink_body_marker = "... [body truncated — full output available via full_path 
 resume_duplicate_abort = "Previous session reached its declared repetition limit. Recent request: {call}. Review whether that work needs repeating."
 resume_context_full = "Context {pct}% full. Fresh session."
 resume_max_turns = "Last {n} actions: {actions}. Budget exhausted — finish the most critical work."
-resume_length = "Response truncated. Use shorter responses."
+resume_length = "Use shorter responses. Split large writes or edits into smaller tool calls."
 resume_gate_escalation = "{n} calls blocked by gate. Code preserved. Make targeted edits."
 
 # Number of recent actions shown in the max_turns resume message.

@@ -113,6 +113,104 @@ def test_usage_aggregation_preserves_unknown_cache_counts() -> None:
     } <= TRACE_EVENT_REQUIRED_FIELDS["length_continue"]
 
 
+@pytest.mark.parametrize("supported", [False, True])
+@pytest.mark.parametrize("context_mode", ["full", "halflife"])
+def test_cut_write_recovers_with_smaller_calls_through_transport(
+    tmp_path, monkeypatch, supported, context_mode,
+):
+    from openai.types.chat import ChatCompletion
+    from scripts.llm_solver.harness.context import FullTranscript
+    from scripts.llm_solver.harness.context_strategies.halflife_context import HalfLifeContext
+
+    monkeypatch.delenv("YUJ_STREAMING", raising=False)
+    cfg = make_config(
+        max_turns=4, max_tokens=64, length_continue_max=1,
+        reply_mode="conversation", resume_length=load_config().resume_length,
+        tokenizer_id="", sandbox_bash=False,
+    )
+    client = _client(cfg, supports_prefill=supported, normalize=lambda value: value)
+    target = tmp_path / "module.py"
+    target.write_text("original\n")
+    payloads = []
+
+    def create(**payload):
+        payloads.append(payload)
+        number = len(payloads)
+        response = _response(
+            "Now writing." if number == 1 else "Done" if number == 4 else None,
+            "length" if number == 1 else "stop" if number == 4 else "tool_calls",
+            prompt_tokens=20, completion_tokens=64 if number == 1 else 5,
+        )
+        if number == 1:
+            name, arguments = "write", '{"path":"module.py","content":"unfinished'
+        elif number == 2:
+            assert target.read_text() == "original\n"
+            assert payload["messages"][-1]["role"] == "user"
+            text = payload["messages"][-1]["content"]
+            assert "No tool calls from that response were executed" in text
+            assert "smaller tool calls" in text
+            assert "unfinished" not in json.dumps(payload["messages"])
+            name, arguments = "write", json.dumps({"path": "module.py", "content": "first\n"})
+        elif number == 3:
+            assert target.read_text() == "first\n"
+            name, arguments = "edit", json.dumps({
+                "path": "module.py", "old_str": "first\n", "new_str": "first\nsecond\n",
+            })
+        else:
+            assert target.read_text() == "first\nsecond\n"
+        if number < 4:
+            response["choices"][0]["message"]["tool_calls"] = [{
+                "id": f"server-{number}", "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            }]
+        response["choices"][0].update(index=0)
+        response["choices"][0]["message"]["role"] = "assistant"
+        response["usage"]["total_tokens"] = 20 + (64 if number == 1 else 5)
+        response.update(id=f"reply-{number}", created=0, model="test", object="chat.completion")
+        return ChatCompletion.model_validate(response)
+
+    trace = tmp_path / "trace.jsonl"
+    with (
+        trace.open("w") as trace_file,
+        patch.object(client.client.chat.completions, "create", side_effect=create),
+        patch.object(Session, "_get_server_ctx", return_value=cfg.context_size),
+    ):
+        session = Session(cfg, client, "system", "task", str(tmp_path),
+                          trace_file=trace_file, trace_path=trace,
+                          context_manager=(FullTranscript() if context_mode == "full"
+                                           else HalfLifeContext()))
+        result = session.run()
+    assert result.done
+    assert result.turns == 4
+    assert result.total_prompt_tokens == 80
+    assert result.total_completion_tokens == 79
+    assert all(p["max_tokens"] == 64 for p in payloads)
+    assert all(not p.get("extra_body", {}).get("continue_final_message") for p in payloads)
+    events = _events(trace)
+    assert not any(e["event"] == "length_continue" for e in events)
+    notices = [e for e in events if e.get("mechanism") == "length_recovery"]
+    assert len(notices) == 1
+    assert notices[0]["tool_call_id"] == ""
+    calls = [e for e in events if e["event"] == "tool_call"]
+    assert [e["tool_name"] for e in calls] == ["write", "edit"]
+
+
+def test_repeated_cuts_consume_normal_turns(tmp_path):
+    cfg = make_config(max_turns=3, length_continue_max=1, sandbox_bash=False)
+    client = _client(cfg, supports_prefill=False, normalize=lambda value: value)
+    client._call_api = MagicMock(return_value=_response(
+        None, "length", prompt_tokens=10, completion_tokens=4,
+    ))
+    with patch.object(Session, "_get_server_ctx", return_value=cfg.context_size):
+        session = Session(cfg, client, "system", "task", str(tmp_path))
+        result = session.run()
+    assert result.finish_reason == "max_turns"
+    assert result.turns == client._call_api.call_count == 3
+    assert result.total_completion_tokens == 12
+    for call in client._call_api.call_args_list[1:]:
+        assert "output limit" in call.args[0]["messages"][-1]["content"]
+
+
 def test_continuation_occupancy_uses_last_call_but_totals_keep_both(tmp_path):
     cfg = make_config(max_turns=1, context_size=43008, sandbox_bash=False)
     client = _client(cfg, supports_prefill=True, normalize=lambda value: value)
@@ -126,7 +224,7 @@ def test_continuation_occupancy_uses_last_call_but_totals_keep_both(tmp_path):
     ):
         session = Session(cfg, client, "system", "task", str(tmp_path))
         result = session.run()
-    assert result.finish_reason == "length"
+    assert result.finish_reason == "max_turns"
     assert result.total_prompt_tokens == 77324
     assert result.total_completion_tokens == 8691
     assert session._last_actual_prompt_tokens == 43007
@@ -182,13 +280,13 @@ supports_prefill = "yes"
     ("limit", "supported"),
     [(0, True), (2, False)],
 )
-def test_off_or_unsupported_keeps_one_call_and_length_fallback(
+def test_off_or_unsupported_skips_raw_continuation(
     tmp_path: Path,
     limit: int,
     supported: bool,
 ) -> None:
     cfg = make_config(
-        max_turns=2,
+        max_turns=1,
         length_continue_max=limit,
         sandbox_bash=False,
     )
@@ -222,7 +320,7 @@ def test_off_or_unsupported_keeps_one_call_and_length_fallback(
         )
         result = session.run()
 
-    assert result.finish_reason == "length"
+    assert result.finish_reason == ("length" if limit == 0 else "max_turns")
     assert client._call_api.call_count == 1
     initial_request = client._call_api.call_args.args[0]
     assert "continue_final_message" not in initial_request["extra_body"]
@@ -384,7 +482,7 @@ def test_split_thinking_tool_call_joins_once_in_the_real_session(
     assert session._length_continuation_count == 2
 
 
-def test_exhausted_attempts_feed_existing_metrics_and_length_rollover(
+def test_exhausted_attempts_feed_existing_metrics_and_turn_budget(
     tmp_path: Path,
 ) -> None:
     from scripts.llm_solver._shared.telemetry_paths import trace_path
@@ -393,7 +491,7 @@ def test_exhausted_attempts_feed_existing_metrics_and_length_rollover(
     (tmp_path / "prompt.txt").write_text("Finish the task")
     cfg = make_config(
         max_sessions=1,
-        max_turns=2,
+        max_turns=1,
         length_continue_max=1,
         sandbox_bash=False,
         state_writer_enabled=True,
@@ -425,12 +523,11 @@ def test_exhausted_attempts_feed_existing_metrics_and_length_rollover(
     assert continuation["tokens"] == 3
     assert not ({"content", "messages", "request"} & set(continuation))
     end = next(event for event in events if event["event"] == "session_end")
-    assert end["finish_reason"] == "length"
+    assert end["finish_reason"] == "max_turns"
     exit_event = next(
         event for event in events if event["event"] == "session_exit"
     )
-    assert exit_event["kind"] == "truncated"
-    assert exit_event["reason"] == "length"
+    assert exit_event["kind"] != "truncated"
     state = json.loads((tmp_path / ".solver" / "state.json").read_text())
     assert "length_continue" not in json.dumps(state)
 

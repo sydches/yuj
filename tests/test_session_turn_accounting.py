@@ -16,6 +16,7 @@ def test_result_counts_entered_iterations(tmp_path, offset, exit_kind):
         allow_implicit_done=exit_kind != "no_tool_call",
         duplicate_guard_enabled=False,
         loop_detect_enabled=False,
+        length_continue_max=0,
     )
     tools = ([ToolCall(id="read-1", name="read", arguments={"path": "app.py"})]
              if exit_kind == "max_turns" else [])

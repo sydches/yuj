@@ -1997,10 +1997,11 @@ in place, so normal trace loading may reject the trace or stop at that suffix.
 
 ### Continue a length-limited response
 
-The default, `[loop].length_continue_max = 1`, allows one same-turn follow-up
-when the server returns `finish_reason = "length"`. The active profile must
-also set `[model].supports_prefill = true`. Set the limit to `0` to disable
-follow-ups.
+The default, `[loop].length_continue_max = 1`, allows one same-turn text
+follow-up when the server returns `finish_reason = "length"`. The active
+profile must also set `[model].supports_prefill = true` for text continuation.
+Positive values also enable next-turn recovery advice, including on profiles
+without prefill support. Set the limit to `0` to disable both recovery paths.
 
 Each follow-up starts from the original prepared request and adds the full
 partial assistant response. Yuj removes only an exact overlap between pieces.
@@ -2009,15 +2010,22 @@ request uses `continue_final_message = true` and
 `add_generation_prompt = false`. Yuj never sends those fields through the
 default path, an unsupported profile, a legacy client, or replay.
 
-Some providers return an incomplete function call as structured `tool_calls`.
-For that shape, Yuj may repeat the exact prefix with a larger cumulative output
-cap until the argument becomes complete. It never exceeds the context room
-reported by the previous call.
+Some providers return incomplete arguments as structured `tool_calls`.
+Those arguments are separate from the text field, so Yuj skips text
+continuation for that shape. It never raises the configured output allowance
+or executes incomplete arguments.
 
-If the allowed follow-ups still do not complete the response, the turn remains
-length-limited and uses the normal fresh-session rollover. The trace records
-attempt numbers and completion-token counts, not request or response text.
-Metrics count the extra requests, while normal token totals include them.
+If a cut response still has no executable call, enabled recovery tells the
+model that no calls from that response executed and adds `prompts.resume_length`
+as advice. The default asks for shorter responses and smaller write or edit
+calls. The next ordinary turn stays in the same session, under its existing
+turn, time and context limits. Repeated cuts do not introduce another stop rule.
+With recovery disabled, the response retains its `length` session exit.
+
+The trace records raw follow-ups as `length_continue`, with attempt numbers
+and token counts. Next-turn advice uses `user_turn_injection` with mechanism
+`length_recovery` and no tool-call ID. Metrics retain the request usage;
+recovery turns consume the ordinary turn budget.
 
 ### Load conditional injection rules
 

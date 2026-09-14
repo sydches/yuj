@@ -263,9 +263,9 @@ class TestSessionRun:
             for message in session.context.get_messages()
         )
 
-    def test_session_length_response(self):
+    def test_session_length_response_with_recovery_disabled(self):
         from llm_solver.harness.loop import Session
-        cfg = make_config(max_turns=10)
+        cfg = make_config(max_turns=10, length_continue_max=0)
         client = MagicMock()
         client.chat.return_value = make_turn_result(content="truncated...", finish_reason="length")
         client.build_assistant_message.return_value = {"role": "assistant", "content": "truncated..."}

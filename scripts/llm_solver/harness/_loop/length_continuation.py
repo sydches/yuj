@@ -2,9 +2,9 @@
 
 This leaf owns only continuation request construction, exact text joining, and
 the normalize-once boundary.  It does not call the trace writer, update run
-metrics, or decide whether a session rolls over.  The loop integration passes
-it raw (pre-normalize) response mappings and keeps the existing length-session
-fallback whenever :class:`LengthContinuationResult` reports one.
+metrics, or decide whether a session continues. The loop integration passes
+it raw (pre-normalize) response mappings and owns recovery advice when a
+complete response cannot be recovered here.
 
 The ``base_request`` is the exact first-call payload after profile
 denormalization and ordinary request controls.  Every follow-up reuses that
@@ -26,6 +26,7 @@ FALLBACK_DISABLED = "disabled"
 FALLBACK_PREFILL_UNSUPPORTED = "prefill_unsupported"
 FALLBACK_NO_PARTIAL_CONTENT = "no_partial_content"
 FALLBACK_ATTEMPT_LIMIT = "attempt_limit"
+FALLBACK_STRUCTURED_TOOL_CALL = "structured_tool_call"
 
 _CONTINUATION_REQUEST_EXTRA: Mapping[str, object] = {
     "continue_final_message": True,
@@ -182,8 +183,10 @@ def continue_length_response(
     chat loop.  ``normalize`` receives only the final joined raw mapping.
 
     A false capability flag, a zero attempt limit, or missing partial text
-    makes no follow-up call and leaves the raw length response available for
-    the existing fresh-session fallback.  If the last response still reports
+    makes no follow-up call and leaves the raw length response for the loop's
+    recovery policy. Structured arguments cannot be continued by prefilling
+    the separate content string, so those responses also return to the loop.
+    If the last response still reports
     ``length``, a truthy normalized ``tool_calls`` value counts as recovered;
     otherwise the attempt limit is exhausted.
     """
@@ -213,6 +216,8 @@ def continue_length_response(
     if initial_reason == LENGTH_FINISH_REASON:
         if max_attempts == 0:
             fallback_reason = FALLBACK_DISABLED
+        elif _has_structured_tool_calls(current):
+            fallback_reason = FALLBACK_STRUCTURED_TOOL_CALL
         elif not supports_prefill:
             fallback_reason = FALLBACK_PREFILL_UNSUPPORTED
         elif not joined_content:
@@ -223,24 +228,6 @@ def continue_length_response(
                     base_request,
                     joined_content,
                 )
-                if _has_structured_tool_calls(current):
-                    base_max_tokens = request.get("max_tokens")
-                    if (
-                        isinstance(base_max_tokens, int)
-                        and not isinstance(base_max_tokens, bool)
-                        and base_max_tokens > 0
-                    ):
-                        grown_max_tokens = base_max_tokens * (
-                            attempt_number + 1
-                        )
-                        if context_size is not None:
-                            prior_prompt_tokens, _ = _usage_tokens(current)
-                            if prior_prompt_tokens > 0:
-                                grown_max_tokens = min(
-                                    grown_max_tokens,
-                                    max(1, context_size - prior_prompt_tokens - 1),
-                                )
-                        request["max_tokens"] = grown_max_tokens
                 received = _copy_response(
                     call_model(request),
                     field=f"continuation response {attempt_number}",
@@ -262,7 +249,7 @@ def continue_length_response(
                         finish_reason=reason,
                     )
                 )
-                if reason != LENGTH_FINISH_REASON:
+                if reason != LENGTH_FINISH_REASON or _has_structured_tool_calls(current):
                     break
 
     candidate = copy.deepcopy(current)
@@ -381,6 +368,7 @@ __all__ = [
     "FALLBACK_DISABLED",
     "FALLBACK_NO_PARTIAL_CONTENT",
     "FALLBACK_PREFILL_UNSUPPORTED",
+    "FALLBACK_STRUCTURED_TOOL_CALL",
     "LENGTH_FINISH_REASON",
     "LengthContinuationAttempt",
     "LengthContinuationResult",

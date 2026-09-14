@@ -157,51 +157,23 @@ def test_continuation_template_controls_override_conflicting_extras() -> None:
     assert base["extra_body"]["add_generation_prompt"] is True
 
 
-def test_structured_tool_call_grows_bounded_cap_and_recovers() -> None:
-    initial = _raw(
-        "<think>\n\n</think>\n\n", "length", prompt_tokens=3_000
-    )
+@pytest.mark.parametrize("content", [None, "Now writing the file."])
+def test_structured_tool_call_returns_to_loop_without_text_retry(content) -> None:
+    initial = _raw(content, "length", prompt_tokens=3_000)
     initial["tool_calls"] = [{
-        "id": "initial-call",
-        "type": "function",
-        "function": {
-            "name": "read",
-            "arguments": '{"path":"marker.txt',
-        },
+        "id": "initial-call", "type": "function",
+        "function": {"name": "write", "arguments": '{"path":"marker.txt'},
     }]
-    continuation = _raw("<think>\n\n</think>\n\n", "length")
-    continuation["tool_calls"] = [{
-        "id": "replacement-id",
-        "type": "function",
-        "function": {
-            "name": "read",
-            "arguments": '{"path":"marker.txt"}',
-        },
-    }]
-    client = FakeSplitClient([continuation])
-
+    client = FakeSplitClient([])
     result = continue_length_response(
-        base_request=_base_request(),
-        initial_response=initial,
-        max_attempts=1,
-        supports_prefill=True,
-        call_model=client.chat,
+        base_request=_base_request(), initial_response=initial,
+        max_attempts=3, supports_prefill=True, call_model=client.chat,
         normalize=lambda response: response,
-        context_size=10_000,
     )
-
-    prefill = client.requests[0]["messages"][-1]
-    assert prefill["content"] == "<think>\n\n</think>\n\n"
-    assert "tool_calls" not in prefill
-    assert client.requests[0]["max_tokens"] == 6_999
-    tool_call = result.response["tool_calls"][0]
-    assert tool_call["id"] == "replacement-id"
-    assert json.loads(tool_call["function"]["arguments"]) == {
-        "path": "marker.txt"
-    }
-    assert result.response["finish_reason"] == "tool_calls"
-    assert result.fallback_reason is None
-    assert result.exhausted is False
+    assert client.requests == []
+    assert result.fallback_reason == "structured_tool_call"
+    assert result.response["finish_reason"] == "length"
+    assert result.response["tool_calls"] == initial["tool_calls"]
 
 
 def test_each_follow_up_uses_original_messages_plus_full_joined_prefill() -> None:

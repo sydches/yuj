@@ -1087,6 +1087,20 @@ def run_session_loop(session: "Session") -> "SessionResult":
             if process_rewind_turn_boundary(session, turn):
                 continue
             if reason == "length":
+                from .chat_io import _length_continue_max
+                if _length_continue_max(cfg) > 0:
+                    session._queue_user_turn_injection(UserTurnInjection(
+                        text=(
+                            "Your response reached its output limit. No tool calls "
+                            "from that response were executed. " + cfg.resume_length
+                        ),
+                        bucket="guardrail",
+                        mechanism="length_recovery",
+                        ctx={"originating_turn": turn},
+                    ))
+                    log.info("Response truncated at turn %d; continuing with advice", turn)
+                    _run_post_turn_hooks(session, turn)
+                    continue
                 session._maybe_run_advisor(turn)
                 log.info("Response truncated at turn %d (max_tokens hit), ending session", turn)
                 return SessionResult(consumed_turns, "length", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
