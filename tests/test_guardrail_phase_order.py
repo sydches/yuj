@@ -107,7 +107,8 @@ def test_run_loop_guardrail_call_order_matches_specs():
 
     assert _literal_subscript_names(run_step, "turn_pre") == TURN_PRE_DISPATCH_ORDER
     assert _literal_subscript_names(run_step, "turn_post") == TURN_POST_DISPATCH_ORDER
-    assert _literal_subscript_names(dispatch_tool_call, "tool_pre") == TOOL_PRE_DISPATCH_ORDER
+    # The prose-finish helper shares the done guard with explicit dispatch.
+    assert _literal_subscript_names(dispatch_tool_call, "tool_pre") == ("done_guard",) + TOOL_PRE_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "tool_post") == TOOL_POST_DISPATCH_ORDER
     assert _literal_subscript_names(dispatch_tool_call, "observers") == OBSERVER_ORDER
 

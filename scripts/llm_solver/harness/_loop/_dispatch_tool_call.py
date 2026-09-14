@@ -323,6 +323,7 @@ def _run_automatic_component_verification(
         gate_blocked=False,
         execution_metadata=auto_execution_metadata,
         tc_args={"path": target.path},
+        cwd=session.cwd,
     )
     # A test that changes source invalidates its pass, but does not earn
     # unbounded automatic retries on successive done calls.
@@ -475,6 +476,46 @@ def _pre_tool_context(tc, state: "TurnState") -> str:
     return effect.context_block() if effect is not None else ""
 
 
+def _check_done_verification(tc, state: "TurnState") -> tuple[str, float, dict]:
+    """Apply the same automatic check policy to explicit and implicit finishes."""
+    from .._guardrails.ladder import threshold
+    metadata = {}
+    check_at = threshold(state.cfg, "done_without_check", 3, 1)
+    if (state.cfg.done_guard_enabled and state.cfg.done_require_verify and check_at
+            and state.session._guards.done_blocked_count + 1 >= check_at):
+        result, elapsed_ms = _run_automatic_component_verification(
+            tc, state, "Review this check before finishing again.", metadata, on_done=True,
+        )
+        return result, elapsed_ms, metadata
+    return "", 0.0, metadata
+
+
+def check_implicit_completion(*, session, cfg, turn, content, dispatch, log,
+                              tool_pre, tool_post, observers, prompt_tokens,
+                              completion_tokens, turn_t0):
+    """Check a prose finish without inventing a model-issued tool call."""
+    from ...server.types import ToolCall
+    from ..guardrails import Decision
+    state = TurnState(session=session, cfg=cfg, turn=turn, content=content,
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        turn_warn_text="", phase_chat_ms=0, phase_token_ms=0, turn_t0=turn_t0,
+        preexecuted={}, pre_tool_hooks={}, inactive_tool_call_ids=frozenset(),
+        schema_validations={}, permission_resolutions={}, dispatch=dispatch,
+        log=log, tool_pre=tool_pre, tool_post=tool_post, observers=observers,
+        plan_mode_active=False)
+    # This identity belongs to the harness check, not the assistant transcript.
+    origin = ToolCall(id=f"implicit-finish-{turn}", name="done", arguments={})
+    result, _, metadata = _check_done_verification(origin, state)
+    if metadata:
+        session._queue_user_turn_injection(UserTurnInjection(
+            text=result, bucket="guardrail_intervention",
+            mechanism="implicit_done_verification",
+            ctx={"turn": turn, "execution": metadata},
+        ))
+        return Decision.warn(result, reason="implicit_done_verification")
+    return tool_pre["done_guard"](session._guards, cfg, tc_name="done", cwd=session.cwd)
+
+
 def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     """Resolve the ``done`` tool call's pre-dispatch gate.
 
@@ -484,20 +525,13 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     """
     session = state.session
     pre_context = _pre_tool_context(tc, state)
-    from .._guardrails.ladder import threshold
-    check_at = threshold(state.cfg, "done_without_check", 3, 1)
-    if (state.cfg.done_guard_enabled and state.cfg.done_require_verify and check_at
-            and session._guards.done_blocked_count + 1 >= check_at):
-        metadata = {}
-        result, elapsed_ms = _run_automatic_component_verification(
-            tc, state, "Review this check before calling done again.", metadata, on_done=True,
-        )
-        if metadata:
-            result = _route_hook_context(result, pre_context, session=session, tool_call_id=tc.id)
-            session.context.add_tool_result(tc.id, result, tool_name="done")
-            _emit_done(tc, state, result, gate_reason="done_verification",
-                       execution_metadata=metadata, elapsed_ms=elapsed_ms)
-            return TCOutcome(end=False)
+    result, elapsed_ms, metadata = _check_done_verification(tc, state)
+    if metadata:
+        result = _route_hook_context(result, pre_context, session=session, tool_call_id=tc.id)
+        session.context.add_tool_result(tc.id, result, tool_name="done")
+        _emit_done(tc, state, result, gate_reason="done_verification",
+                   execution_metadata=metadata, elapsed_ms=elapsed_ms)
+        return TCOutcome(end=False)
     done_decision = state.tool_pre["done_guard"](
         session._guards, state.cfg, tc_name=tc.name, cwd=session.cwd,
     )

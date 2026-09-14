@@ -442,6 +442,10 @@ def observe_post_mutation_verification(
         state.post_mutation_verification_gate_armed = False
         passed = verification_result_passed(tc_name, result, execution_metadata)
         state.formal_verification_passed_since_mutation = passed
+        if passed:
+            state.formal_verification_failure_pending = False
+        elif facts.get("verification_status") in {"failed", "timed_out", "error"}:
+            state.formal_verification_failure_pending = True
         state.verified_since_mutation = passed
         if not verification_runner_unavailable(result, tc_name=tc_name,
                                                execution_metadata=execution_metadata):

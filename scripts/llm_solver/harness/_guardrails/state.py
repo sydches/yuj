@@ -211,6 +211,8 @@ class GuardrailState:
     post_mutation_non_test_bash_count: int = 0
     post_mutation_verification_gate_armed: bool = False
     formal_verification_passed_since_mutation: bool = False
+    # A mutation invalidates a pass, but does not discharge a failed check.
+    formal_verification_failure_pending: bool = False
     post_mutation_source_paths: tuple[str, ...] = ()
     post_mutation_automatic_verification_attempted: bool = False
     post_mutation_automatic_verification_target: str = ""

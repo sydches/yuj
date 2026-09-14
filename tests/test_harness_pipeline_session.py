@@ -466,7 +466,7 @@ class TestSessionRun:
         from llm_solver.harness.loop import Session
 
         cfg = make_config(
-            max_turns=3,
+            max_turns=2,
             duplicate_abort=10,
             done_guard_enabled=False,
             adaptive_policy_enabled=True,
@@ -486,7 +486,9 @@ class TestSessionRun:
             session = Session(cfg, client, "sys", "prompt", "/tmp")
             result = session.run()
 
-        assert result.finish_reason == "stop"
+        assert result.finish_reason == "max_turns"
+        assert not result.done
+        assert not session._guards.verified_since_mutation
         assert session._adaptive_switched is True
         assert session.cfg.done_guard_enabled is True
 
@@ -553,7 +555,11 @@ class TestSessionRun:
             session = Session(cfg, client, "sys", "prompt", "/tmp")
             result = session.run()
 
-        assert result.finish_reason == "stop"
+        # Displayed "passed" text can trigger the adaptive policy, but it
+        # supplies no private execution evidence for completion.
+        assert result.finish_reason == "max_turns"
+        assert not result.done
+        assert not session._guards.verified_since_mutation
         assert session._observed_test_signal is True
         assert session._adaptive_switched is True
         assert session.cfg.done_guard_enabled is True

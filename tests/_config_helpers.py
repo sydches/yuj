@@ -31,6 +31,10 @@ def _defaults() -> dict:
         model="test-model", profile_name="test-model", context_size=8192, context_fill_ratio=0.85,
         max_tokens_fraction=0.5, max_tokens=4096, tokenizer_id="",
         max_turns=5, max_sessions=2, duplicate_abort=3,
+        # Generic scripted sessions test tools, timing or context and often
+        # finish without a coding task. Completion-policy tests enable this
+        # explicitly; production Config defaults remain unchanged.
+        done_guard_enabled=False,
         error_nudge_threshold=3, rumination_nudge_threshold=200, require_intent=False,
         intent_grace_turns=3,
         min_turns_before_context=2,

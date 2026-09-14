@@ -132,6 +132,8 @@ def pre_mutation_gate(
         return PASS
     if state.rumination_released:
         return PASS
+    if _is_test_command(tc_name, tc_args):
+        return PASS
     if turn_number < cap:
         return PASS
     if (
@@ -207,6 +209,15 @@ def done_guard(
                  or int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0)
             and not verification_tree_matches(state, cwd)):
         return _done_block_or_abort(state, cfg, cfg.done_reject_no_verify)
+    verification_required = (
+        cfg.done_guard_enabled and cfg.done_require_verify
+        or int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
+    )
+    if verification_required and state.formal_verification_failure_pending:
+        return _done_block_or_abort(state, cfg,
+            "REJECTED: A formal check failed and has not been followed by a formal pass. "
+            "An edit or successful custom probe does not clear that failure. "
+            "Inspect the failure, repair the cause, and rerun the relevant check.")
     if (
         int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
         and state.has_mutated
@@ -454,6 +465,8 @@ def rumination_gate(state: GuardrailState, cfg: Any, *,
         return PASS
     from .ladder import release_after
     if state.rumination_released:
+        return PASS
+    if _is_test_command(tc_name, tc_args):
         return PASS
     if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
         return PASS

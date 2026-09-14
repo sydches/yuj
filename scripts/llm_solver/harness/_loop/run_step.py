@@ -47,6 +47,7 @@ from ._dispatch_tool_call import (
     TurnState,
     dispatch_one_tool_call,
     record_tool_start,
+    check_implicit_completion,
 )
 from .compaction import (
     CompactionOverflowError,
@@ -1133,32 +1134,26 @@ def run_session_loop(session: "Session") -> "SessionResult":
             # silently fell off the conversation".
             allow_implicit = bool(getattr(cfg, "allow_implicit_done", True))
             if allow_implicit:
-                verification_gate_active = (
-                    int(
-                        getattr(
-                            cfg,
-                            "post_mutation_verification_gate_after",
-                            0,
-                        )
-                        or 0
-                    )
-                    > 0
-                    and session._guards.has_mutated
-                )
+                verification_gate_active = (cfg.done_guard_enabled or
+                    int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0)
                 if verification_gate_active:
-                    implicit_done_decision = tool_pre["done_guard"](
-                        session._guards,
-                        cfg,
-                        tc_name="done",
-                        cwd=session.cwd,
+                    implicit_done_decision = check_implicit_completion(
+                        session=session, cfg=cfg, turn=turn, content=content,
+                        dispatch=dispatch, log=log, tool_pre=tool_pre,
+                        tool_post=tool_post, observers=observers,
+                        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                        turn_t0=_turn_t0,
                     )
+                    if implicit_done_decision.action == Action.WARN:
+                        _run_post_turn_hooks(session, turn)
+                        continue
                     if implicit_done_decision.action == Action.BLOCK:
                         session.context.add_injected_fragment(
                             implicit_done_decision.text
                         )
                         session._record_pressure_event(True)
                         log.info(
-                            "post-mutation verification gate rejected implicit "
+                            "completion guard rejected implicit "
                             "done at turn %d",
                             turn,
                         )
@@ -1190,6 +1185,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                     _run_post_turn_hooks(session, turn)
                     continue
                 log.info("Model stopped at turn %d (reason=%s) — implicit done", turn, reason)
+                session._final_text = content or ""
                 return SessionResult(consumed_turns, "stop", done=True, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
             log.warning(
                 "Model stopped at turn %d (reason=%s) without calling done() — "

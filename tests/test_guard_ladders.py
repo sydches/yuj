@@ -1,6 +1,8 @@
 """Ladder actions preserve execution and have bounded advisory episodes."""
 import io
 import json
+import shlex
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -146,3 +148,118 @@ def test_done_reports_missing_target_once_without_inventing_pass(tmp_path, enabl
     rows = [json.loads(line) for line in trace.getvalue().splitlines()]
     assert sum(r.get("gate_reason") == "done_verification" for r in rows) == int(enabled)
     assert not session._guards.verified_since_mutation
+
+
+def _completion_session(tmp_path, calls, **overrides):
+    cfg = make_config(max_turns=len(calls), sandbox_bash=False, auto_commit=False,
+        done_guard_enabled=True, done_require_mutation=True, done_require_verify=True,
+        done_require_pretest_parity=False, done_loop_abort_after=0,
+        allow_implicit_done=True, reply_mode="conversation", analysis_task_format="pytest",
+        **overrides)
+    client = MagicMock()
+    client.is_replay = False
+    client.chat.side_effect = [TurnResult(
+        content=call if isinstance(call, str) else None,
+        tool_calls=[] if isinstance(call, str) else [call],
+        finish_reason="stop" if isinstance(call, str) else "tool_calls",
+        usage=Usage(prompt_tokens=10, completion_tokens=5)) for call in calls]
+    client.build_assistant_message.side_effect = lambda content, tools, **kwargs: {
+        "role": "assistant", "content": content,
+        **({"tool_calls": [{"id": tc.id, "type": "function", "function": {
+            "name": tc.name, "arguments": json.dumps(tc.arguments)}} for tc in tools]} if tools else {})}
+    session = Session(cfg, client, "system", "Repair the implementation", str(tmp_path))
+    return session, client
+
+
+@pytest.mark.parametrize("implicit", [False, True])
+def test_both_finishes_require_observed_work(tmp_path, implicit):
+    finish = "All tests pass" if implicit else ToolCall(
+        id="done", name="done", arguments={"message": "All tests pass"})
+    session, _ = _completion_session(tmp_path, [finish])
+    assert not session.run().done
+    assert not session._guards.has_mutated
+    assert session._guards.done_blocked_count == 1
+
+
+@pytest.mark.parametrize("passes", [False, True])
+def test_implicit_finish_runs_component_and_delivers_result(tmp_path, passes):
+    (tmp_path / "core.py").write_text("VALUE = 0\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_core.py").write_text(f"def test_core():\n    assert {passes}\n")
+    calls = [ToolCall(id="edit", name="write", arguments={
+        "path": "core.py", "content": "VALUE = 1\n"}), "Finished", "Finished"]
+    session, client = _completion_session(tmp_path, calls)
+    assert session.run().done is passes
+    request = client.chat.call_args_list[-1].args[0]
+    assert "automatic_verification" in str(request)
+    # Only the actual edit is recorded as an assistant tool request.
+    assert all(tc["function"]["name"] != "done" for msg in request
+               for tc in msg.get("tool_calls", []))
+    assert session._guards.formal_verification_passed_since_mutation is passes
+
+
+@pytest.mark.parametrize("implicit", [False, True])
+@pytest.mark.parametrize("probe", ["print(1)", "import core; print(1)"])
+def test_custom_probe_cannot_clear_failed_component(tmp_path, implicit, probe):
+    (tmp_path / "core.py").write_text("VALUE = 0\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_core.py").write_text("def test_core():\n    assert False\n")
+    finish = "All tests pass" if implicit else ToolCall(
+        id="done", name="done", arguments={"message": "All tests pass"})
+    calls = [ToolCall(id="edit", name="write", arguments={
+        "path": "core.py", "content": "VALUE = 1\n"}), finish,
+        ToolCall(id="probe", name="bash", arguments={
+            "cmd": shlex.join([sys.executable, "-c", probe])}), finish, finish]
+    session, _ = _completion_session(tmp_path, calls,
+        post_mutation_verification_gate_after=3)
+    assert not session.run().done
+    assert session._guards.formal_verification_failure_pending
+    assert not session._guards.verified_since_mutation
+
+
+def test_formal_failure_survives_custom_probe_and_unavailable_runner():
+    from scripts.llm_solver.harness._guardrails.checks_post import mark_bash_verified
+    from scripts.llm_solver.harness._guardrails.verification import observe_post_mutation_verification
+    cfg = make_config()
+    state = init_guardrail_state(cfg)
+    record_mutation(state)
+    for status, code in [("failed", 1), ("custom_passed", 0), ("runner_unavailable", 127), ("passed", 0)]:
+        metadata = {"executed": True, "exit_status_known": True,
+                    "exit_status": code, "verification_status": status}
+        mark_bash_verified(state, cfg, tc_name="bash", result="", gate_blocked=False,
+                           execution_metadata=metadata)
+        observe_post_mutation_verification(state, cfg, tc_name="bash", result="",
+            gate_blocked=False, execution_metadata=metadata)
+        assert state.verified_since_mutation is (status == "passed")
+        assert state.formal_verification_failure_pending is (status != "passed")
+        if status == "failed":
+            record_mutation(state)
+            assert state.formal_verification_failure_pending
+
+
+@pytest.mark.parametrize("done_enabled,post_gate", [(True, 0), (False, 3)])
+def test_unavailable_runner_does_not_release_an_existing_failure(done_enabled, post_gate):
+    from scripts.llm_solver.harness._guardrails.checks_pre import done_guard
+    cfg = make_config(done_guard_enabled=done_enabled,
+                      post_mutation_verification_gate_after=post_gate,
+                      done_loop_abort_after=0)
+    state = init_guardrail_state(cfg)
+    record_mutation(state)
+    state.formal_verification_failure_pending = True
+    state.post_mutation_automatic_verification_unavailable = True
+    assert done_guard(state, cfg, tc_name="done").action == Action.BLOCK
+
+
+@pytest.mark.parametrize("name,args", [("run_tests", {"path": "tests"}),
+                                      ("bash", {"cmd": "pytest tests/test_core.py"})])
+def test_no_edit_gates_allow_verification_without_releasing_inspection(name, args):
+    from scripts.llm_solver.harness._guardrails.checks_pre import pre_mutation_gate
+    cfg = make_config(rumination_enabled=True, pre_mutation_turn_cap=1)
+    state = init_guardrail_state(cfg)
+    state.rumination_gate = True
+    state.rumination_gate_grace = 0
+    assert pre_mutation_gate(state, cfg, tc_name=name, tc_args=args,
+                             turn_number=20).action == Action.PASS
+    assert rumination_gate(state, cfg, tc_name=name, tc_args=args).action == Action.PASS
+    assert state.gate_block_count == 0
+    assert rumination_gate(state, cfg, tc_name="read", tc_args={"path": "core.py"}).action == Action.BLOCK

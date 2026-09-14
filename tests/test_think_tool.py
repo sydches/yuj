@@ -193,6 +193,7 @@ def test_think_is_non_mutating_and_its_streak_reuses_rumination_nudge(
 ) -> None:
     cfg = make_config(
         max_turns=100,
+        done_guard_enabled=True,
         rumination_nudge_threshold_abs=50,
         rumination_gate_arm_threshold_abs=50,
         think_streak_nudge_after=3,

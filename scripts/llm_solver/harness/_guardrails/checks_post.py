@@ -297,7 +297,7 @@ def mark_bash_verified(state: GuardrailState, cfg: Any, *,
     if (not verification_tree_matches(state, cwd)
             or verification_changes_tree(tc_name, tc_args)):
         return
-    if passed:
+    if passed and not state.formal_verification_failure_pending:
         state.verified_since_mutation = True
     elif failed:
         state.verified_since_mutation = False

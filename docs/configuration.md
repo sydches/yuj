@@ -49,11 +49,17 @@ Historical intent and rumination abort values remain loadable but no longer
 end a session.
 
 Reuse requires unchanged inputs and an answer still present in context.
-When the done guard requires verification, its first eligible `done` runs
+When the done guard requires verification, its first eligible finish runs
 the existing component verifier once and returns the result for review.
+The same requirements apply to explicit `done` and enabled prose completion.
 Missing targets and unavailable runners remain unchecked. A passing component
 test does not establish the whole task's correctness. The next `done` uses
 the existing completion requirements; a source edit invalidates the check.
+After a formal check fails, a successful custom probe cannot clear that
+failure. A formal passing result can restore verification credit for the
+current revision. Edits and generated cache files do not clear the requirement
+to rerun a failed check. Test calls remain available through advisory no-edit
+blocking; permissions and execution limits still apply.
 
 ## Save model settings
 
