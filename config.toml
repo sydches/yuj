@@ -139,7 +139,7 @@ pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls aft
 # Symmetric to error_nudge: after N consecutive non-mutation tool calls,
 # queue a strong directive for the next synthetic user turn and activate the
 # rumination gate that rejects
-# non-mutation calls until a successful mutation clears it. Blocked calls
+# non-mutation calls within its release allowance. Blocked calls
 # carry no completed observation and cannot drive the duplicate limit.
 #
 # Value is a PERCENTAGE of max_turns (e.g. 20 = 20%). Derived to an
@@ -147,12 +147,12 @@ pre_mutation_turn_cap = 0  # Orientation gate — block non-write tool calls aft
 # At max_turns=50 and threshold=20, the gate arms after 10 non-mutation
 # calls. At max_turns=200 it arms after 40. Scales automatically.
 rumination_nudge_threshold = 20
+guard_ladders = {}  # Optional per-guard rung counts and advisory release counts.
 # A consecutive think-only streak reuses the rumination nudge before the
 # broader non-write budget is exhausted. 0 disables this dedicated nudge.
 think_streak_nudge_after = 3
-# After this many consecutive gate-blocked calls, end the session.
-# The model's current code becomes the final patch. Prevents both
-# infinite blocking and forced-write regressions. 0 = disabled.
+# Historical compatibility value. Advisory blocks now release without ending.
+# Set guard_ladders.no_edit.release_after to change the release allowance.
 rumination_gate_max_blocks = 5
 # Optional same-target rumination path. Detects repeated inspection of the
 # same file or normalized bash target before the broad non-mutation threshold
@@ -674,7 +674,7 @@ error_nudge = "[harness: {count} errors. Re-read the file.]"
 
 # Delivered in the next synthetic user turn when rumination_nudge_threshold is
 # crossed. {count} is replaced with the non-mutation call count.
-rumination_nudge = "[HARNESS: {count} non-mutation calls. One more and all tools except file-mutation tools are blocked. Mutate a file now.]"
+rumination_nudge = "[HARNESS: {count} non-mutation calls. Choose a useful edit when you have enough evidence; otherwise identify the next fact you need.]"
 
 # Returned when the rumination gate blocks a non-mutation call.
 rumination_gate = "NOT EXECUTED. Only a file-mutation tool is accepted. Blocked until a file mutation succeeds. Each blocked call wastes a turn."

@@ -35,8 +35,10 @@ def duplicate_guard(state: GuardrailState, cfg: Any, *,
         return PASS
     # Repetition is not a completion or failure verdict. The legacy abort
     # setting remains loadable, but never ends a session.
-    if cfg.duplicate_warn_count > 0:
-        if tail >= cfg.duplicate_warn_count and not state.duplicate_warned:
+    from .ladder import threshold
+    warn_at = threshold(cfg, "duplicate_call", 2, cfg.duplicate_warn_count)
+    if warn_at > 0:
+        if tail >= warn_at and not state.duplicate_warned:
             state.duplicate_warned = True
             return Decision.warn(
                 cfg.duplicate_warn.format(count=tail, abort="disabled",

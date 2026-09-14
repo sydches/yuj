@@ -50,8 +50,8 @@ def test_quiet_intent_observations_do_not_count_as_rejections():
                                          "content_present": False}
         assert state.intent_block_count == state.consecutive_intent_rejections == 0
         assert state.intent_first_block_turn is None
-    assert intent_gate(state, cfg, turn=4, content="", tool_calls=[object()]).action == Action.BLOCK
-    assert state.consecutive_intent_rejections == 1
+    assert intent_gate(state, cfg, turn=4, content="", tool_calls=[object()]).action == Action.WARN
+    assert state.consecutive_intent_rejections == 0
 
 
 def test_quiet_loop_observations_do_not_consume_recovery_warning():
@@ -64,7 +64,7 @@ def test_quiet_loop_observations_do_not_consume_recovery_warning():
                            allow_intervention=False).action == Action.PASS
         assert state.loop_detect_streak == count
         assert state.loop_detect_warned is False
-    assert loop_detect(state, cfg, tool_calls_sig=("same",)).action == Action.PASS
+    assert loop_detect(state, cfg, tool_calls_sig=("same",)).action == Action.WARN
     assert loop_detect(state, cfg, tool_calls_sig=("same",)).action == Action.PASS
 
 

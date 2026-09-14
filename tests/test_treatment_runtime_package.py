@@ -52,7 +52,7 @@ def test_loop_activation_restores_threshold_and_baseline(tmp_path, overlay):
     state = init_guardrail_state(session.cfg)
     sig = (("read", '{"path": "a.py"}'),)
     actions = [loop_detect(state, session.cfg, tool_calls_sig=sig).action for _ in range(6)]
-    assert actions == [Action.PASS] * 6
+    assert actions == [Action.PASS] * 4 + [Action.WARN, Action.PASS]
     changed = (("read", '{"path": "b.py"}'),)
     assert loop_detect(state, session.cfg, tool_calls_sig=changed).action == Action.PASS
     assert state.loop_detect_streak == 1

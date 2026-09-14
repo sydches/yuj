@@ -16,6 +16,45 @@ runtime, model profile, test runner, or tool rule.
 Activate the environment that contains Yuj before you run a command on this
 page. Otherwise, replace `yuj` with that environment's `bin/yuj` path.
 
+## Guard ladders
+
+Use `loop.guard_ladders` to set when an enabled guard advises, transforms or
+briefly blocks a call. Keep the guard's existing enable switch. An omitted
+policy uses existing thresholds; an explicit `rungs` table replaces its tiers.
+
+```toml
+[loop.guard_ladders.silent_call]
+rungs = { 2 = 1, 4 = 3 }
+release_after = 3
+```
+
+This warns once on the first silent call, blocks from the third, then releases
+after three refusals for the rest of that silent episode. Use only
+`rungs = { 2 = 1 }` for warning without blocking. Content returning resets
+the episode. The initial `intent_grace_turns` still applies.
+
+| Guard | Supported rungs | Episode |
+| --- | --- | --- |
+| `identical_call` | 2: request-repeat advice; 3: eligible result reuse | Consecutive identical requests |
+| `duplicate_call` | 2: matching-result advice; 3: eligible result reuse | Consecutive matching observations |
+| `silent_call` | 2: advice; 4: temporary block | Calls without accompanying content |
+| `no_edit` | 2: advice; 4: temporary block | Calls since the last recorded mutation |
+| `done_without_check` | 3: run an available component check | Edited revision awaiting verification |
+
+Use positive counts. An empty rung table disables ladder actions for that
+guard. Only silent-call and inspection blocks accept `release_after`; their
+default is three. The pre-mutation cap shares inspection release. Permission
+and required-verification refusals do not release after repeated requests.
+Historical intent and rumination abort values remain loadable but no longer
+end a session.
+
+Reuse requires unchanged inputs and an answer still present in context.
+When the done guard requires verification, its first eligible `done` runs
+the existing component verifier once and returns the result for review.
+Missing targets and unavailable runners remain unchecked. A passing component
+test does not establish the whole task's correctness. The next `done` uses
+the existing completion requirements; a source edit invalidates the check.
+
 ## Save model settings
 
 For a local server, run:

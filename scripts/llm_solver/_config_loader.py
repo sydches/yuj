@@ -493,6 +493,7 @@ def _extract_config_fields(d: dict) -> dict:
         "injections_path_rule_repeat": d.get("injections", {}).get(
             "path_rule_repeat", False
         ),
+        "guard_ladders": d.get("loop", {}).get("guard_ladders", {}),
         "loop_detect_enabled": d.get("loop", {}).get("loop_detect_enabled", False),
         "turn_snapshots_enabled": d.get("loop", {}).get("turn_snapshots_enabled", False),
         "loop_detect_threshold": d.get("loop", {}).get("loop_detect_threshold", 5),
@@ -1125,6 +1126,8 @@ def _validate_coupling(
             cfg.effective_edit_format,
             field="config error: effective_edit_format",
         )
+    from .harness._guardrails.ladder import validate_ladders
+    validate_ladders(cfg.guard_ladders)
     if cfg.tools_stale_guard_mode not in {"off", "warn", "block"}:
         raise ValueError(
             "config error: tools.stale_guard_mode must be 'off', 'warn', "

@@ -1,4 +1,4 @@
-"""Request repetition stays diagnostic; native observations drive notices."""
+"""Request advice never ends a session; result reuse still needs evidence."""
 import io
 import json
 from dataclasses import replace
@@ -13,16 +13,19 @@ from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
 
 
 @pytest.mark.parametrize("threshold", [0, 1, 5, 8])
-def test_request_signatures_never_warn_or_end_even_after_legacy_warning(threshold):
+def test_request_signatures_warn_once_after_quiet_period_and_never_end(threshold):
     cfg = make_config(loop_detect_enabled=True, loop_detect_threshold=threshold)
     state = init_guardrail_state(cfg)
     state.loop_detect_warned = True
+    warnings = []
     for index in range(12):
         decision = loop_detect(state, cfg, tool_calls_sig=("same",),
                                allow_intervention=index > 3)
-        assert decision.action == Action.PASS
+        assert decision.action in {Action.PASS, Action.WARN}
+        if decision.action == Action.WARN:
+            warnings.append(index + 1)
         assert state.loop_detect_streak == index + 1
-        assert not state.loop_detect_warned
+    assert warnings == ([max(5, threshold)] if threshold else [])
     loop_detect(state, cfg, tool_calls_sig=("changed",))
     assert state.loop_detect_streak == 1
     cfg = replace(cfg, loop_detect_enabled=False)

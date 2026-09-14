@@ -95,6 +95,7 @@ def record_mutation(state: GuardrailState) -> None:
     state.rumination_gate = False
     state.rumination_gate_grace = 0
     state.rumination_nudge_emitted = False
+    state.rumination_released = False
     state.gate_block_count = 0
     state.has_mutated = True
     state.verified_since_mutation = False
@@ -144,7 +145,7 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
         state.think_streak = 0
         state.think_streak_nudge_emitted = False
         return PASS
-    if already_blocked_this_turn:
+    if already_blocked_this_turn or gate_blocked:
         return PASS
 
     state.non_write_calls_since_write += 1
@@ -176,6 +177,8 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
     threshold = (state.rumination_nudge_threshold_post_mutation
                  if state.has_mutated
                  else state.rumination_nudge_threshold)
+    from .ladder import threshold as rung_threshold
+    threshold = rung_threshold(cfg, "no_edit", 2, threshold)
     warn_parts: list[str] = []
     think_after = int(getattr(cfg, "think_streak_nudge_after", 0) or 0)
     if (
@@ -187,6 +190,7 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
         state.think_streak_nudge_emitted = True
     broad_nudge_due = (
         not state.rumination_nudge_emitted
+        and threshold > 0
         and state.non_write_calls_since_write >= threshold
         and not (cfg.rumination_nudge_only_pre_mutation and state.has_mutated)
     )
@@ -217,9 +221,10 @@ def rumination_ladder(state: GuardrailState, cfg: Any, *,
 
     # ARM: flip the gate flag. The block tier runs next turn.
     same_target_arm = int(getattr(cfg, "rumination_same_target_arm_count", 0) or 0)
-    if (not state.rumination_gate
+    arm_threshold = rung_threshold(cfg, "no_edit", 4, state.rumination_arm_threshold)
+    if (not state.rumination_gate and not state.rumination_released
             and (
-                state.non_write_calls_since_write >= state.rumination_arm_threshold
+                (arm_threshold > 0 and state.non_write_calls_since_write >= arm_threshold)
                 or (
                     same_target_arm > 0
                     and state.same_target_key

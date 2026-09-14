@@ -33,25 +33,39 @@ log = logging.getLogger(__name__)
 def intent_gate(state: GuardrailState, cfg: Any, *,
                 turn: int, content: str, tool_calls: list,
                 allow_intervention: bool = True) -> Decision:
-    """Reject silent tool calls.
-
-    GRACE: first ``cfg.intent_grace_turns`` turns get a free pass.
-    BLOCK: tool_calls present + no reasoning content → reject this turn.
-    END: ``cfg.intent_abort_threshold`` consecutive rejections → end session.
-    """
+    """Warn once, then block briefly; release for the rest of a silent episode."""
+    from .ladder import threshold, release_after
     state.intent_evidence = {"required": bool(cfg.require_intent),
                              "tool_calls": len(tool_calls),
                              "content_present": bool((content or "").strip())}
     if not allow_intervention or not cfg.require_intent or not tool_calls:
         state.consecutive_intent_rejections = 0
+        state.silent_call_count = 0
+        state.intent_warned = state.intent_released = False
         return PASS
     if turn < cfg.intent_grace_turns:
         state.consecutive_intent_rejections = 0
         return PASS
     if (content or "").strip():
         state.consecutive_intent_rejections = 0
+        state.silent_call_count = 0
+        state.intent_warned = state.intent_released = False
         return PASS
-
+    state.silent_call_count += 1
+    if state.intent_released:
+        return PASS
+    warn_at = threshold(cfg, "silent_call", 2, 1)
+    block_at = threshold(cfg, "silent_call", 4, 3)
+    if warn_at and state.silent_call_count >= warn_at and not state.intent_warned:
+        state.intent_warned = True
+        return Decision.warn("Before your next tool call, briefly state what you will check or change and why.",
+                             reason="intent_gate.warning")
+    if not block_at or state.silent_call_count < block_at:
+        return PASS
+    if state.consecutive_intent_rejections >= release_after(cfg, "silent_call"):
+        state.intent_released = True
+        return Decision.warn("Intent gate released: tool calls may execute without accompanying text.",
+                             reason="intent_gate.release")
     state.intent_block_count += 1
     state.consecutive_intent_rejections += 1
     if state.intent_first_block_turn is None:
@@ -62,20 +76,13 @@ def intent_gate(state: GuardrailState, cfg: Any, *,
             count=state.intent_block_count,
             first_turn=state.intent_first_block_turn,
         )
-    if (cfg.intent_abort_threshold > 0
-            and state.consecutive_intent_rejections >= cfg.intent_abort_threshold):
-        # END overrides BLOCK: record the rejection text but end the session.
-        return Decision(Action.END, text=text, reason="intent_abort")
     return Decision.block(text, reason="intent_gate")
 
 
 def loop_detect(state: GuardrailState, cfg: Any, *,
                 tool_calls_sig: tuple, allow_intervention: bool = True) -> Decision:
-    """Retain request-signature diagnostics without inferring stalled work.
-
-    Completed-observation notices run after dispatch. This compatibility
-    entry never warns or stops from requests alone, even after a legacy warn.
-    """
+    """Advise once per repeated-request episode without claiming equal results."""
+    from .ladder import threshold
     if not cfg.loop_detect_enabled:
         state.loop_detect_streak = 0
         state.loop_detect_last_sig = ()
@@ -87,7 +94,12 @@ def loop_detect(state: GuardrailState, cfg: Any, *,
         state.loop_detect_last_sig = tool_calls_sig
         state.loop_detect_streak = 1
         state.loop_detect_warned = False
-    state.loop_detect_warned = False
+    warn_at = threshold(cfg, "identical_call", 2, cfg.loop_detect_threshold)
+    if (allow_intervention and tool_calls_sig and warn_at > 0
+            and state.loop_detect_streak >= warn_at and not state.loop_detect_warned):
+        state.loop_detect_warned = True
+        return Decision.warn(cfg.loop_detect_recovery.format(streak=state.loop_detect_streak),
+                             reason="loop_detect")
     return PASS
 
 
@@ -101,12 +113,12 @@ def pre_mutation_gate(
     state: GuardrailState, cfg: Any, *, tc_name: str, turn_number: int,
     tc_args: dict | None = None,
 ) -> Decision:
-    """Force commitment after N orientation turns without a mutation.
+    """Briefly block inspection after N orientation turns without a mutation.
 
     The model is allowed cfg.pre_mutation_turn_cap read-only turns at the
     start of a session. Once that budget is exhausted AND the model has
     not yet executed a mutation, every non-mutation tool call
-    is BLOCKED with a stern harness message until the model commits.
+    is blocked within the shared inspection release allowance.
 
     `done` is exempt — the model can still legitimately call it (for
     tasks that are already in the desired state or judged unfixable).
@@ -118,6 +130,8 @@ def pre_mutation_gate(
         return PASS
     if state.has_mutated:
         return PASS
+    if state.rumination_released:
+        return PASS
     if turn_number < cap:
         return PASS
     if (
@@ -126,6 +140,12 @@ def pre_mutation_gate(
         or _is_bash_write_like(tc_name, tc_args)
     ):
         return PASS
+    from .ladder import release_after
+    if state.gate_block_count >= release_after(cfg, "no_edit"):
+        state.rumination_released = True
+        state.rumination_gate = False
+        return PASS
+    state.gate_block_count += 1
     template = getattr(
         cfg,
         "pre_mutation_gate",
@@ -419,11 +439,11 @@ def contract_gate(
 
 def rumination_gate(state: GuardrailState, cfg: Any, *,
                     tc_name: str, tc_args: dict | None = None) -> Decision:
-    """Hard gate armed by the rumination ladder: block non-writes.
+    """Advisory gate armed by the rumination ladder: briefly block non-writes.
 
     GRACE (1 call): execute and queue a warning for the next model request.
-    BLOCK: reject non-writes; count toward gate_max_blocks.
-    END: after ``cfg.rumination_gate_max_blocks`` blocks → end session.
+    BLOCK: reject non-writes within the shared release allowance.
+    RELEASE: allow execution for the rest of this no-edit episode.
 
     Mutation tools pass through (PASS); a successful mutation clears the
     gate via reset_on_successful_write().
@@ -432,6 +452,9 @@ def rumination_gate(state: GuardrailState, cfg: Any, *,
         return PASS
     if not state.rumination_gate:
         return PASS
+    from .ladder import release_after
+    if state.rumination_released:
+        return PASS
     if tc_name in MUTATION_TOOLS or _is_bash_write_like(tc_name, tc_args):
         return PASS
     if state.rumination_gate_grace > 0:
@@ -439,10 +462,12 @@ def rumination_gate(state: GuardrailState, cfg: Any, *,
         # Not a BLOCK — dispatch still runs — but carry a WARN so the
         # caller queues it for the next synthetic user turn.
         return Decision.warn(cfg.rumination_gate_grace_prefix, reason="rumination_gate.grace")
+    if state.gate_block_count >= release_after(cfg, "no_edit"):
+        state.rumination_released = True
+        state.rumination_gate = False
+        return Decision.warn("Inspection gate released: tools may execute. Choose the next useful check or edit.",
+                             reason="rumination_gate.release")
     state.gate_block_count += 1
-    if (cfg.rumination_gate_max_blocks > 0
-            and state.gate_block_count >= cfg.rumination_gate_max_blocks):
-        return Decision(Action.END, text=cfg.rumination_gate, reason="gate_escalation")
     return Decision.block(cfg.rumination_gate, reason="rumination_gate")
 
 

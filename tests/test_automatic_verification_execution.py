@@ -131,7 +131,7 @@ def automatic_state(rig):
         output_control=None, universal_rewrites=None, forbidden_rules=None,
         redactions=None, _tool_registry=None, _effective_env=None, _allow_login_shell=False,
         _queue_user_turn_injection=Mock(), _queue_execution_user_turn_injections=Mock())
-    return SimpleNamespace(session=session, cfg=cfg, turn=1, dispatch=dispatch,
+    return SimpleNamespace(session=session, cfg=cfg, turn=1, dispatch=dispatch, plan_mode_active=False,
         observers={"mark_bash_verified": mark_bash_verified,
                    "observe_post_mutation_verification": observe_post_mutation_verification})
 

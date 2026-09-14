@@ -1199,12 +1199,11 @@ def run_session_loop(session: "Session") -> "SessionResult":
             return SessionResult(consumed_turns, "no_tool_call", done=False, total_prompt_tokens=total_prompt, total_completion_tokens=total_completion)
 
         sig = tuple(_dedup_signature(tc) for tc in tool_calls)
-        turn_warn_text = ""
-        turn_had_pressure = False
+        turn_warn_text = intent_decision.text if intent_decision.action == Action.WARN else ""
+        turn_had_pressure = bool(turn_warn_text)
 
-        # Collect request-signature diagnostics. The native guard leaves
-        # intervention to completed-observation notices after dispatch.
-        # Custom registry decisions retain the ordinary handling below.
+        # Request repetition advises once; only completed observations with
+        # current inputs can authorize reuse in the tool dispatch path.
         loop_decision = (
             turn_pre["loop_detect"](
                 session._guards, cfg, tool_calls_sig=sig,

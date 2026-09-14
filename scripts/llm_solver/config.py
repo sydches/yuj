@@ -651,12 +651,9 @@ class Config:
     edit_strict_match: bool = True
     edit_fuzzy_cascade_enabled: bool = False
     edit_candidate_count: int = 3
-    # loop_detect guardrail (N consecutive identical tool-call signatures).
-    # WARN on first reach-threshold (inject recovery text). END if the
-    # pattern repeats once more after the warning. Enabled by default because
-    # identical bash signatures can repeat without a guard, and the
-    # threshold=5 ceiling makes this cheap (one recovery-inject before
-    # END limits collateral). Set to False to disable this guardrail.
+    # Shared rung/count policies. Empty uses each guard's compatibility knobs.
+    guard_ladders: dict[str, object] = field(default_factory=dict)
+    # Advice once per consecutive identical-request episode; never ends.
     loop_detect_enabled: bool = True
     loop_detect_threshold: int = 5
     # Invisible per-turn git snapshots of the workspace (rewind/branch

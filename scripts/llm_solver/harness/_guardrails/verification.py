@@ -122,12 +122,13 @@ class ComponentVerificationTarget:
 def automatic_component_verification_due(
     state: GuardrailState,
     cfg: Any,
+    *, on_done: bool = False,
 ) -> bool:
     """Return whether this source revision needs its one automatic run."""
     return bool(
-        int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
+        (on_done or (int(getattr(cfg, "post_mutation_verification_gate_after", 0) or 0) > 0
+                     and state.post_mutation_verification_gate_armed))
         and state.has_mutated
-        and state.post_mutation_verification_gate_armed
         and not state.post_mutation_automatic_verification_attempted
         and not state.formal_verification_passed_since_mutation
     )

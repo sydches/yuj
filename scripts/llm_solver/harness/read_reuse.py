@@ -107,11 +107,20 @@ class ReuseCall:
 
     def lookup(self, cwd, cfg):
         previous = self.previous
+        from ._guardrails.ladder import threshold
+        limits = []
+        if cfg.duplicate_guard_enabled:
+            limits.append(threshold(cfg, 'duplicate_call', 3, max(2, cfg.duplicate_warn_count) + 1))
+        if cfg.loop_detect_enabled:
+            limits.append(threshold(cfg, 'identical_call', 3, max(2, cfg.loop_detect_threshold) + 1))
+        limits = [n for n in limits if n > 0]
+        if not limits:
+            return None
         # Let the first turn after a quiet period deliver its warning before
         # reuse removes the completed observation from the next guard check.
         if self.turn <= getattr(cfg, 'guardrails_arm_after_turn', 0) + (cfg.duplicate_warn_count > 0):
             return None
-        if not previous or previous['count'] < max(2, cfg.duplicate_warn_count):
+        if not previous or previous['count'] < max(2, min(limits) - 1):
             return None
         if self.name == 'read':
             from ._guardrails.verification import _file_revision
@@ -166,7 +175,7 @@ def reuse_scope(session, tc, turn, *, allow_reuse=True):
         yield None
         return
     previous = getattr(session, '_completed_read_reuse', None)
-    enabled = (allow_reuse and cfg.duplicate_guard_enabled
+    enabled = (allow_reuse and (cfg.duplicate_guard_enabled or cfg.loop_detect_enabled)
                and not getattr(getattr(session, '_plan_mode', None), 'active', False)
                and not getattr(getattr(session, 'client', None), 'is_replay', False))
     manager = getattr(session, '_process_manager', None)

@@ -339,11 +339,12 @@ def test_recovery_executes_work_and_explicit_completion(tmp_path):
         action("write", {"path": "out.py", "content": "VALUE = 1\n"}),
         action("bash", {"cmd": f"{sys.executable} -c 'import out; assert out.VALUE == 1; print(\"verified \" * 30)'"}),
         action("done", {"message": "Updated out.py."}),
+        action("done", {"message": "Updated out.py; no adjacent component suite was available."}),
     ])
     result = Session(cfg, client, "system", "task", str(tmp_path)).run()
     assert (tmp_path / "out.py").read_text() == "VALUE = 1\n"
     assert result.done, client.client.chat.completions.create.call_args.kwargs["messages"][-1]["content"]
-    assert client.client.chat.completions.create.call_count == 4
+    assert client.client.chat.completions.create.call_count == 5
     redirect = json.dumps(client.client.chat.completions.create.call_args_list[1].kwargs["messages"])
     assert "discarded from working context" in redirect
     assert "Do not merely describe intended actions" in redirect

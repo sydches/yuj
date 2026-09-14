@@ -149,6 +149,7 @@ def _run_automatic_component_verification(
     state: "TurnState",
     result: str,
     metadata: dict,
+    *, on_done: bool = False,
 ) -> tuple[str, float]:
     """Run one mechanically selected component target for this revision."""
     from .._guardrails.verification import (
@@ -164,7 +165,7 @@ def _run_automatic_component_verification(
     session = state.session
     cfg = state.cfg
     guards = session._guards
-    if not automatic_component_verification_due(guards, cfg):
+    if not automatic_component_verification_due(guards, cfg, on_done=on_done):
         return result, 0.0
     if not verification_tree_matches(guards, session.cwd):
         return result, 0.0
@@ -290,6 +291,12 @@ def _run_automatic_component_verification(
         auto_result, tc_name="run_tests", execution_metadata=auto_execution_metadata,
     )
     guards.post_mutation_automatic_verification_unavailable = runner_unavailable
+    # Apply the same source/test-artifact distinction as an ordinary run_tests
+    # call before verification observers consume its file-change receipt.
+    from ...server.types import ToolCall
+    auto_tc = ToolCall(id=f"{tc.id}:automatic-verification", name="run_tests", arguments=auto_arguments)
+    _apply_dispatch_effects(auto_tc, state, action_metadata("run_tests", auto_arguments),
+                            auto_execution_metadata, auto_result)
     if not runner_unavailable:
         session._queue_execution_user_turn_injections(
             auto_execution_metadata,
@@ -317,6 +324,9 @@ def _run_automatic_component_verification(
         execution_metadata=auto_execution_metadata,
         tc_args={"path": target.path},
     )
+    # A test that changes source invalidates its pass, but does not earn
+    # unbounded automatic retries on successive done calls.
+    guards.post_mutation_automatic_verification_attempted = True
     passed = verification_result_passed("run_tests", auto_result, auto_execution_metadata)
     if (
         not runner_unavailable
@@ -474,6 +484,20 @@ def _handle_done_tool(tc, state: "TurnState") -> TCOutcome:
     """
     session = state.session
     pre_context = _pre_tool_context(tc, state)
+    from .._guardrails.ladder import threshold
+    check_at = threshold(state.cfg, "done_without_check", 3, 1)
+    if (state.cfg.done_guard_enabled and state.cfg.done_require_verify and check_at
+            and session._guards.done_blocked_count + 1 >= check_at):
+        metadata = {}
+        result, elapsed_ms = _run_automatic_component_verification(
+            tc, state, "Review this check before calling done again.", metadata, on_done=True,
+        )
+        if metadata:
+            result = _route_hook_context(result, pre_context, session=session, tool_call_id=tc.id)
+            session.context.add_tool_result(tc.id, result, tool_name="done")
+            _emit_done(tc, state, result, gate_reason="done_verification",
+                       execution_metadata=metadata, elapsed_ms=elapsed_ms)
+            return TCOutcome(end=False)
     done_decision = state.tool_pre["done_guard"](
         session._guards, state.cfg, tc_name=tc.name, cwd=session.cwd,
     )
@@ -570,6 +594,8 @@ def _emit_done(
     *,
     gate_blocked: bool = False,
     gate_reason: str = "",
+    execution_metadata: dict | None = None,
+    elapsed_ms: float = 0.0,
 ) -> None:
     """Emit a tool_call event for the ``done`` short-circuit branches.
 
@@ -590,6 +616,7 @@ def _emit_done(
         session_number=session._session_number,
         turn_number=state.turn,
         tool_name="done",
+        **({"tool_dispatch_ms": elapsed_ms} if execution_metadata else {}),
         args_summary=args_summary,
         **build_tool_call_trace_fields(
             session,
@@ -598,6 +625,7 @@ def _emit_done(
             result=result_summary,
             turn=state.turn,
             gate_blocked=gate_blocked,
+            execution_metadata=execution_metadata,
         ),
         reasoning=_truncate_for_trace(state.content or "", cfg.trace_reasoning_store_chars),
         gate_blocked=gate_blocked,
