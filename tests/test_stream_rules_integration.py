@@ -353,7 +353,8 @@ def test_recovery_executes_work_and_explicit_completion(tmp_path):
 
 @pytest.mark.parametrize("error_arguments", [None, {}])
 def test_narration_escalates_and_resets_after_executed_work(tmp_path, error_arguments):
-    cfg = make_config(context_size=43008, max_turns=10, sandbox_bash=False)
+    cfg = make_config(context_size=43008, max_turns=10, sandbox_bash=False,
+                      guard_ladders={"done_without_check": {"rungs": {}}})
     limit = int(cfg.context_size * cfg.narration_context_fraction * 4)
 
     def breach():

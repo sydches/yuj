@@ -127,7 +127,7 @@ def test_incomplete_or_blocked_metadata_does_not_count(rig, change):
 def automatic_state(rig):
     root, cfg, guards = rig
     guards.post_mutation_verification_gate_armed = True
-    session = SimpleNamespace(_guards=guards, cfg=cfg, _emit=Mock(), cwd=str(root), _ignore_policy=None,
+    session = SimpleNamespace(_guards=guards, cfg=cfg, _emit=Mock(), context=Mock(), cwd=str(root), _ignore_policy=None,
         output_control=None, universal_rewrites=None, forbidden_rules=None,
         redactions=None, _tool_registry=None, _effective_env=None, _allow_login_shell=False,
         _queue_user_turn_injection=Mock(), _queue_execution_user_turn_injections=Mock())
