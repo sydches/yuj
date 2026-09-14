@@ -501,7 +501,7 @@ def _extract_config_fields(d: dict) -> dict:
             "<system-reminder>Loop detected: the last {streak} tool calls "
             "all have identical name and arguments. Stop repeating. Re-read "
             "the task, read a file you have not inspected yet, or change "
-            "approach. One more repeat ends the session.</system-reminder>",
+            "approach.</system-reminder>",
         ),
         "done_guard_enabled": d.get("loop", {}).get("done_guard_enabled", True),
         "rumination_enabled": d.get("loop", {}).get("rumination_enabled", True),

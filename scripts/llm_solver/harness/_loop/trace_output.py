@@ -87,6 +87,8 @@ def build_tool_call_trace_fields(
     if execution_budget is not None:
         fields["execution_budget"] = execution_budget
     observation = (execution_metadata or {}).get("observation_receipt")
+    if (execution_metadata or {}).get('observation_reuse') is not None:
+        fields['observation_reuse'] = execution_metadata['observation_reuse']
     if observation is not None:
         fields["observation_receipt"] = observation
     inspection = (execution_metadata or {}).get("inspection_evidence")

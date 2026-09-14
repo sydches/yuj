@@ -158,6 +158,32 @@ def test_background_revision_checks_batch_all_native_inputs(bwrap, tmp_path):
         assert binder.poll_metadata('owned', 0)['verification_status'] == 'stale_revision'
 
 
+def test_deleted_and_nonregular_inputs_do_not_unbatch_other_revisions(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails.verification import _file_revisions, _file_revision
+    from scripts.llm_solver.harness.task_path import activate_task_files
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'source_{index}.py' for index in range(70)]
+    for name in names:
+        (source / name).write_text(name)
+    (source / names[0]).unlink()
+    (source / 'directory').mkdir()
+    names += ['directory', 'never-created']
+    calls = []
+    original = files.run
+    def run(script, args, data):
+        calls.append(args[3] if len(args) > 3 else 'discovery')
+        return original(script, args, data)
+    files.run = run
+    with activate_task_files(files, host_root=source):
+        observed = _file_revisions(str(source), names)
+        assert calls.count('resolve_files') == 1
+        assert calls.count('digest_batch') <= 4
+        assert len(calls) < 20
+        assert observed == {name: _file_revision(str(source), name) for name in names}
+        (source / names[0]).write_text('recreated')
+        assert _file_revisions(str(source), names)[names[0]] != 'missing'
+
+
 def test_blocked_background_result_retains_exit_without_verification_credit(tmp_path, monkeypatch):
     from pathlib import Path
     from scripts.llm_solver.harness._guardrails.verification import verification_result_passed

@@ -27,7 +27,7 @@ Yuj applies four groups of rules:
 | `halflife` context | Keep recent tool results in the form first sent to the model. Shorten older tool results when the model nears its input limit. |
 | Command handling | Correct known shell and task-format problems before Yuj sends a command. |
 | Output handling | Limit large or repeated command output before it fills the model input. |
-| Recovery | Find known forms of repeated failed work and send a matching next step. |
+| Recovery | Record completed observations and apply the guards enabled by the selected settings. |
 
 The assistant CLI applies the
 [treatment base file](https://github.com/sydches/yuj/blob/main/configs/regimes/treatment.toml)
@@ -96,6 +96,31 @@ Your changed values make a new setting. Do not call it the shipped default or
 an exact paper setting.
 
 Read [Configuration](configuration.html) for the full setting order.
+
+## Repeated source inspections
+
+The current trace_nets backend records observations. It does not choose a
+response from the medicine ladder. To enable the repetition policy, add these
+values to your settings file:
+
+```toml
+[loop]
+duplicate_guard_enabled = true
+duplicate_warn_count = 2
+duplicate_abort = 0
+```
+
+The second identical completed call gets one warning. From the third call,
+eligible unchanged reads and source searches return a reference to the earlier
+answer. A changed file, changed query or range, pending background work, or an
+unknown search input requires fresh execution. Compaction and rewind clear the
+reference. Arbitrary shell commands continue to execute. Repetition never ends
+a session; the overall turn, time and token limits still apply.
+
+The policy uses file digests for reads and native entry metadata for searches
+over explicit task subtrees. These checks do not form an atomic filesystem
+snapshot. The trace records when an answer was reused without executing its
+tool again.
 
 ## Change only the context mode
 

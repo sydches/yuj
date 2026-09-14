@@ -387,7 +387,7 @@ class Config:
     mutation_repeat_block_after: int = 0  # Block when repeating the same successful mutation N times in a row (0 = disabled).
     mutation_repeat_abort_after: int = 0  # End session after N blocked identical mutation retries (0 = disabled).
     duplicate_warn_count: int = 0  # warn after N identical completed observations (0 = disabled)
-    duplicate_warn: str = "[harness: {count} identical completed observations in a row. Review whether another query is needed.]"
+    duplicate_warn: str = "[harness: same call as turn {prior_turn}, same answer. Name what you still need and change the call.]"
     error_abort_threshold: int = 0  # end session after N consecutive errors of any kind (0 = disabled)
     error_same_class_threshold: int = 0  # end session after N errors with the same signature (exit code or first-token error string), regardless of interleaved non-error turns. 0 = disabled. Catches the "model repeats the same wrong fix" pattern that error_abort_threshold misses because intervening mutation calls reset its counter.
     intent_abort_threshold: int = 0  # end session after N consecutive silent intent-gate rejections (0 = disabled)
@@ -691,7 +691,7 @@ class Config:
         "<system-reminder>Loop detected: the last {streak} tool calls all "
         "have identical name and arguments. Stop repeating. Re-read the "
         "task, read a file you have not inspected yet, or change approach. "
-        "One more repeat ends the session.</system-reminder>"
+        "</system-reminder>"
     )
     done_guard_enabled: bool = True
     rumination_enabled: bool = True

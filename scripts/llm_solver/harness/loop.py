@@ -591,6 +591,10 @@ class Session:
         handlers["apply_subagent"] = _apply_subagent_handler
         handlers["load_tools"] = _load_tools_handler
         handlers["exit_plan_mode"] = _exit_plan_mode_handler
+        from .tools import _DISPATCH
+        _bash_handler._native_source_inspection = (
+            base_bash_handler is _DISPATCH['bash'] and not self._subagent_read_only
+        )
         handlers["bash"] = _bash_handler
         handlers["bash_poll"] = _bash_poll_handler
         handlers["bash_kill"] = _bash_kill_handler

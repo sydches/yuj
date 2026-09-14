@@ -126,7 +126,7 @@ stream_rules_enabled = false
 stream_rules_dir = ".harness/stream_rules"
 stream_rules_context_mode = "discard"  # discard | keep; partial assistant text on interrupt
 stream_rules_repeat_gap = 10            # completed logical turns between after-gap injections
-duplicate_abort = 3         # end after N matching completed observation batches
+duplicate_abort = 0         # legacy setting; repetition never ends a session
 max_transient_retries = 1   # retry count for transient API errors (connection, timeout)
 retry_backoff = [10]        # seconds between retries (index = attempt number)
 error_nudge_threshold = 3   # inject a "re-read the file" nudge after N consecutive tool errors
@@ -709,11 +709,8 @@ read_empty_reminder = "<system-reminder>File {path} exists but is empty (0 bytes
 # {offset}, {total}, {path}. Task-agnostic.
 read_offset_past_eof_reminder = "<system-reminder>Read offset {offset} is past EOF for {path} (file has {total} lines). No content returned — call read with a smaller offset to inspect the file.</system-reminder>"
 
-# Delivered in the next synthetic user turn when loop_detect fires its WARN
-# tier (N consecutive identical tool-call signatures). Text should steer the
-# model to take stock and change approach rather than hard-abort. Task-agnostic.
-# Followed by loop_detect END on the next repeat.
-loop_detect_recovery = "<system-reminder>Loop detected: the last {streak} tool calls all have identical name and arguments. Stop repeating. Re-read the task, read a file you have not inspected yet, or change approach. One more repeat ends the session.</system-reminder>"
+# Historical recovery text retained for settings compatibility.
+loop_detect_recovery = "<system-reminder>The last {streak} calls repeat the same request. Name what you still need and change the query or range.</system-reminder>"
 
 # Sink-surface pointer. Rendered at the tail of truncated bash output
 # so the agent sees a structured handle to the full sink file. Format

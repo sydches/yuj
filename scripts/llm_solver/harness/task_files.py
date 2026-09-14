@@ -180,20 +180,21 @@ class NamespaceFiles:
             raise TaskFileError('invalid task path response')
         return PurePosixPath(os.fsdecode(output[:-1]))
 
-    def resolve_regular_files(self, paths):
-        """Resolve regular-file rule keys together; exceptional entries raise."""
+    def resolve_regular_files(self, paths, *, partial=False):
+        """Resolve regular files together; optionally omit exceptional entries."""
         names = tuple(dict.fromkeys(str(self.root / self._relative(path)) for path in paths))
         if not names:
             return {}
         output = self._call('resolve_files', self.root,
+                            args=('partial',) if partial else (),
                             data=b''.join(os.fsencode(name) + b'\0' for name in names),
                             script_prefix=_RESOLVE_FILES)
         fields = output.split(b'\0')
-        if fields[-1] or len(fields) != len(names) * 2 + 1:
+        if fields[-1] or len(fields) % 2 != 1 or (not partial and len(fields) != len(names) * 2 + 1):
             raise TaskFileError('invalid task file resolution response')
         result = {os.fsdecode(name): os.fsdecode(target)
                   for name, target in zip(fields[0:-1:2], fields[1:-1:2])}
-        if set(result) != set(names):
+        if not set(result).issubset(names) or (not partial and set(result) != set(names)):
             raise TaskFileError('task resolved paths differ from request')
         return result
 

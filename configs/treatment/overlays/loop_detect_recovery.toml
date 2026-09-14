@@ -1,8 +1,9 @@
-# Detector-activated identical-call guardrail and recovery message.
+# Explicit completed-observation policy. Historical path retained for overlays.
 
 [loop]
-loop_detect_enabled = true # Watch for consecutive identical tool calls.
-loop_detect_threshold = 5 # Warn on the fifth; the next identical call ends the session. Restore after a zeroed baseline.
+duplicate_guard_enabled = true
+duplicate_warn_count = 2
+duplicate_abort = 0
 
 [prompts]
-loop_detect_recovery = "<system-reminder>Loop: {streak} identical calls. The repeat produces nothing new. Name one fact you still need, then issue a DIFFERENT call to get it. One more identical call ends the session.</system-reminder>"
+loop_detect_recovery = "<system-reminder>The last {streak} calls repeat the same request. Name what you still need and change the query or range.</system-reminder>"

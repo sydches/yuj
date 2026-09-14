@@ -800,6 +800,9 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 f"ERROR: stale_file: read {arguments.get('path', '')} first"
             )
 
+    from .read_reuse import active_reuse, source_search
+    reuse = active_reuse()
+    reusable_handler = handler is _DISPATCH.get(name) or getattr(handler, '_native_source_inspection', False)
     executed = False
     if redirected:
         pass
@@ -808,6 +811,13 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             result = handler(arguments, cwd, cfg)
         except (KeyError, TypeError) as e:
             result = f"ERROR: bad arguments for {name}: {e}"
+    elif reuse is not None and reusable_handler and (cached_result := reuse.lookup(cwd, cfg)) is not None:
+        result = cached_result
+        if execution_metadata is not None:
+            execution_metadata['observation_reuse'] = {
+                'prior_turn': reuse.previous['origin'], 'executed': False,
+                'basis': 'unchanged_task_inputs',
+            }
     elif stale_precheck_error:
         result = stale_precheck_error
         from .savings import get_ledger
@@ -942,7 +952,7 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
     # Update the mechanical read ledger only after an operation actually
     # succeeded. Observation failures never turn a completed tool call into a
     # harness exception; they simply leave the next edit conservatively stale.
-    if stale_guard is not None and not redirected:
+    if stale_guard is not None and not redirected and executed:
         from .._shared.classification import is_error_result
         raw_result = str(result)
         succeeded = not is_error_result(raw_result)
@@ -1009,6 +1019,14 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
                 execution_metadata["observation_receipt"] = raw_observation
             elif name in PARALLEL_READ_SAFE_TOOL_NAMES and handler is _DISPATCH.get(name):
                 execution_metadata["observation_receipt"] = read_observation(result_before_security_scan)
+            elif (name == 'bash' and reusable_handler and not arguments.get('background')
+                  and raw_exit_status in (0, 1) and not raw_timed_out
+                  and source_search(str(arguments.get('cmd', ''))) is not None):
+                execution_metadata['observation_receipt'] = {
+                    **read_observation(result_before_security_scan),
+                    'command_sha256': hashlib.sha256(str(arguments['cmd']).encode()).hexdigest(),
+                    'exit_status': raw_exit_status,
+                }
         execution_metadata["executed"] = executed
         if (executed and raw_exit_status_known and type(raw_exit_status) is int
                 and not raw_timed_out and not result_scan.blocked

@@ -20,7 +20,7 @@ OBSERVED_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES | {
 }
 
 
-def _inventory(files, cwd, owned_paths):
+def _inventory(files, cwd, owned_paths, *, include_directories=False):
     remaining_before(execution_deadline())
     excluded = [".git"]
     for path in owned_paths:
@@ -33,16 +33,32 @@ def _inventory(files, cwd, owned_paths):
         # find -path takes a pattern, even when passed as a literal argv.
         literal = "".join("\\" + c if c in "\\*?[]" else c for c in path)
         args.extend(["-path", "./" + literal])
-    args.extend([")", "-prune", "-o", "!", "-type", "d", "-printf",
-                 r"%P\0%y\0%m\0%s\0%T@\0%C@\0%i\0%l\0"])
-    result = files.run('cd -- "$1" && shift && exec "$@"',
+    args.extend([")", "-prune", "-o"])
+    if not include_directories:
+        args.extend(["!", "-type", "d"])
+    args.extend(["-printf",
+                 r"%p\0%y\0%m\0%s\0%T@\0%C@\0%i\0%l\0"])
+    # Include the task index in the same inventory call. It is evidence for
+    # tracked inputs, not a source change or permission to inspect Git config.
+    script = '''cd -- "$1" && shift || exit
+inventory=("$1" "$2" "$3"); shift 3
+if [[ -d .git && ! -L .git && -f .git/index && ! -L .git/index ]]; then
+    inventory+=(./.git/index)
+fi
+# reuse_inputs
+exec "${inventory[@]}" "$@"'''
+    if include_directories:
+        script = script.replace('# reuse_inputs', '''for path in .git/config .git/info/exclude; do
+    if [[ -e "$path" || -L "$path" ]]; then inventory+=("./$path"); fi
+done''')
+    result = files.run(script,
                        [str(files.root), *args], None)
     if result.returncode:
         raise OSError("native file inventory did not complete")
     fields = result.stdout.split(b"\0")
     if fields.pop() != b"" or len(fields) % 8:
         raise ValueError("native file inventory has an invalid shape")
-    return {os.fsdecode(fields[i]): tuple(fields[i + 1:i + 8])
+    return {os.fsdecode(fields[i]).removeprefix('./'): tuple(fields[i + 1:i + 8])
             for i in range(0, len(fields), 8)}, excluded
 
 
@@ -51,8 +67,10 @@ def observed_dispatch(function):
     @wraps(function)
     def wrapped(name, arguments, **kwargs):
         metadata = kwargs.get("execution_metadata")
+        from .read_reuse import active_reuse, contained_search_paths, inventory_stamp, source_search
+        reuse = active_reuse()
         owned = kwargs.pop("observation_owned_paths", (".tool_output", ".solver"))
-        if name not in OBSERVED_TOOLS or metadata is None:
+        if (name not in OBSERVED_TOOLS and not (name == 'grep' and reuse)) or metadata is None:
             return function(name, arguments, **kwargs)
         cwd = kwargs["cwd"]
         record = {"basis": "native_entry_metadata_v1", "status": "unavailable",
@@ -73,8 +91,17 @@ def observed_dispatch(function):
                     environment=kwargs.get("effective_env"),
                     allow_login_shell=bool(kwargs.get("allow_login_shell")))
             record["task_binding"] = files.binding
-            before, excluded = _inventory(files, cwd, owned)
+            before, excluded = _inventory(files, cwd, owned, **(
+                {'include_directories': True} if reuse is not None else {}))
             record["excluded_paths"] = excluded
+            if reuse is not None:
+                search = source_search(str(arguments.get('cmd', ''))) if name == 'bash' else None
+                paths = search.paths if search else (str(arguments.get('path', '.')),)
+                if (contained_search_paths(paths, (str(files.root), cwd), excluded)
+                        and (name != 'bash' or search and search.directory in ('.', str(files.root), cwd))):
+                    reuse.before = inventory_stamp(before, files.binding)
+            before = {path: entry for path, entry in before.items()
+                      if entry[0] != b'd' and path not in {'.git/index', '.git/config', '.git/info/exclude'}}
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             record["error_kind"] = type(error).__name__
         try:
@@ -90,7 +117,12 @@ def observed_dispatch(function):
         finally:
             if before is not None:
                 try:
-                    after, excluded = _inventory(files, cwd, owned)
+                    after, excluded = _inventory(files, cwd, owned, **(
+                        {'include_directories': True} if reuse is not None else {}))
+                    if reuse is not None:
+                        reuse.after = inventory_stamp(after, files.binding)
+                    after = {path: entry for path, entry in after.items()
+                             if entry[0] != b'd' and path not in {'.git/index', '.git/config', '.git/info/exclude'}}
                     # A registered artifact may first be created by this call.
                     def admitted(path):
                         return not any(path == p or path.startswith(p + "/")
@@ -107,6 +139,10 @@ def observed_dispatch(function):
                 record["terminal_observed"] = bool(metadata.get("exit_status_known"))
                 if not record["terminal_observed"] and record["status"] == "unchanged_metadata":
                     record["status"] = "incomplete"
+            if record['status'] in {'changed', 'unavailable', 'incomplete'}:
+                # Equal stdout does not establish equal observations of an
+                # effectful or unfinished command.
+                metadata.pop('observation_receipt', None)
 
     return wrapped
 

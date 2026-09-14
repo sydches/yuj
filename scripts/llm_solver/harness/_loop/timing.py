@@ -26,7 +26,19 @@ def timed_dispatch(state, tc, dispatch, *args, emit_end=True, **kwargs):
     started = time.perf_counter()
     completed = False
     try:
-        result = dispatch(*args, **kwargs)
+        from ..read_reuse import reuse_scope
+        with reuse_scope(state.session, tc, state.turn,
+                         allow_reuse=len(getattr(state, 'schema_validations', {})) <= 1) as reuse:
+            result = dispatch(*args, **kwargs)
+            if reuse is not None:
+                if reuse.reused and reuse.name != 'read' and reuse.after != reuse.before:
+                    # A concurrent change during validation needs a fresh
+                    # execution, not a reference to an older answer.
+                    reuse.previous = None
+                    reuse.reused = False
+                    (kwargs.get('execution_metadata') or {}).pop('observation_reuse', None)
+                    result = dispatch(*args, **kwargs)
+                reuse.finish(result, kwargs.get('execution_metadata') or {})
         completed = True
         return result
     finally:

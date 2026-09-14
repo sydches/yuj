@@ -49,7 +49,7 @@ digest_batch() {
 
 _RESOLVE_FILES = r'''
 resolve_files() {
-    local index target
+    local index target partial=${1:-}
     local -a batch resolved
     while :; do
         mapfile -d '' -n 64 -t batch
@@ -59,8 +59,14 @@ resolve_files() {
         (( ${#resolved[@]} == ${#batch[@]} )) || return 74
         for index in "${!batch[@]}"; do
             target=${resolved[$index]}
-            case "$target" in "$root"|"${root%/}/"*) ;; *) return 77 ;; esac
-            [[ -f "$target" ]] || return 74
+            case "$target" in
+                "$root"|"${root%/}/"*) ;;
+                *) [[ "$partial" == partial ]] && continue; return 77 ;;
+            esac
+            if [[ ! -f "$target" ]]; then
+                [[ "$partial" == partial ]] && continue
+                return 74
+            fi
             printf '%s\0%s\0' "${batch[$index]}" "$target"
         done
     done
@@ -166,7 +172,7 @@ case "$operation" in
     glob) native_glob "$@" ;;
     search_batch) native_search "$@" ;;
     digest_batch) digest_batch "$@" ;;
-    resolve_files) resolve_files ;;
+    resolve_files) resolve_files "$@" ;;
     search_files)
         exec "$utility" --files --null --no-follow "$@" -- "$target"
         ;;

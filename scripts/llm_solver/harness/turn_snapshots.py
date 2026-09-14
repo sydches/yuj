@@ -516,6 +516,7 @@ def rewind_to(session, turn_number: int, *, reason: str = "operator") -> dict[st
     if guard_snapshot is not None:
         session._guards = copy.deepcopy(guard_snapshot)
     session._output_dedup_cache.clear()
+    session._completed_read_reuse = None
     session._last_actual_prompt_tokens = 0
     session._last_fill = 0.0
     session._preflight_prev_estimate = None

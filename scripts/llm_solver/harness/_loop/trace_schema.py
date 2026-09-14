@@ -199,7 +199,7 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (TraceEventSpec("completed_obser
             "tool_call_id", "duration_ms", "dispatch_executed", "tool_dispatch_ms",
             "parent_tool_call_id", "cell_inner_index", "cell_source", "shell_submission",
             "combined_output_chars", "combined_output_bytes", "inspection_evidence",
-            "inner_call_count", "runner_request", "execution_budget", "observation_receipt", "automatic_verification_execution_budget", "outcome_version", "execution_observation",
+            "inner_call_count", "runner_request", "execution_budget", "observation_receipt", "observation_reuse", "automatic_verification_execution_budget", "outcome_version", "execution_observation",
         }),
     ),
     TraceEventSpec(

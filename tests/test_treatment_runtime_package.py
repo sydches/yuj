@@ -25,7 +25,7 @@ def _repeat_event(turn: int) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("overlay", ["loop_detect.toml", "loop_detect_recovery.toml"])
+@pytest.mark.parametrize("overlay", ["loop_detect.toml"])
 def test_loop_activation_restores_threshold_and_baseline(tmp_path, overlay):
     from scripts.llm_solver.harness.guardrails import (
         Action, init_guardrail_state, loop_detect,
@@ -70,7 +70,8 @@ def _read_tsv(path):
         return list(csv.DictReader(handle, delimiter="\t"))
 
 
-def test_duplicate_activation_warns_only_on_a_repeat(tmp_path):
+@pytest.mark.parametrize("overlay", ["duplicate_guard.toml", "loop_detect_recovery.toml"])
+def test_duplicate_activation_warns_only_on_a_repeat(tmp_path, overlay):
     from scripts.llm_solver.harness.guardrails import Action, init_guardrail_state, duplicate_guard
 
     baseline = tmp_path / "disabled.toml"
@@ -81,7 +82,7 @@ def test_duplicate_activation_warns_only_on_a_repeat(tmp_path):
     payload = InterventionPayload(
         intervention_id="toml_overlay.apply::loop.duplicate_guard",
         executor_id="toml_overlay.apply", timing_class="immediate",
-        candidate_config_path=str(PROJECT_ROOT / "configs/treatment/overlays/duplicate_guard.toml"),
+        candidate_config_path=str(PROJECT_ROOT / "configs/treatment/overlays" / overlay),
     )
     assert executors.apply(session, payload).applied
     receipt = {"kind": "read_observation", "pending": False, "sha256": "a"*64}
@@ -91,7 +92,8 @@ def test_duplicate_activation_warns_only_on_a_repeat(tmp_path):
         assert duplicate_guard(state, session.cfg, tool_calls_sig=sig, observations=(receipt,)).action == Action.PASS
     repeated = duplicate_guard(state, session.cfg, tool_calls_sig=("read c",), observations=(receipt,))
     assert repeated.action == Action.WARN
-    assert "2 identical" in repeated.text
+    assert "same answer" in repeated.text
+    assert duplicate_guard(state, session.cfg, tool_calls_sig=("read c",), observations=(receipt,)).action == Action.PASS
     assert "ends" not in repeated.text and "disabled" not in repeated.text
     assert duplicate_guard(state, session.cfg, tool_calls_sig=("test a",), observations=(receipt,)).action == Action.PASS
     assert executors.restore_baseline(session).applied
@@ -99,7 +101,7 @@ def test_duplicate_activation_warns_only_on_a_repeat(tmp_path):
     assert state.recent_calls.maxlen == 2
 
 
-def test_duplicate_abort_keeps_its_own_window():
+def test_legacy_abort_does_not_override_the_warning_threshold():
     from dataclasses import replace
     from scripts.llm_solver.harness.guardrails import Action, init_guardrail_state, duplicate_guard
 
@@ -108,7 +110,9 @@ def test_duplicate_abort_keeps_its_own_window():
     state = init_guardrail_state(cfg)
     assert duplicate_guard(state, cfg, tool_calls_sig=("old",), observations=(receipt,)).action == Action.PASS
     assert duplicate_guard(state, cfg, tool_calls_sig=("new",), observations=(receipt,)).action == Action.PASS
-    assert duplicate_guard(state, cfg, tool_calls_sig=("new",), observations=(receipt,)).action == Action.END
+    for _ in range(3):
+        assert duplicate_guard(state, cfg, tool_calls_sig=("new",), observations=(receipt,)).action == Action.PASS
+    assert duplicate_guard(state, cfg, tool_calls_sig=("new",), observations=(receipt,)).action == Action.WARN
 
 
 def test_public_treatment_data_contains_only_released_runtime_fields():

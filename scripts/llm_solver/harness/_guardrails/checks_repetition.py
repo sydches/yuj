@@ -5,7 +5,7 @@ from .state import GuardrailState, Decision, PASS
 
 def duplicate_guard(state: GuardrailState, cfg: Any, *,
                     tool_calls_sig: tuple, observations: tuple | None = None,
-                    allow_intervention: bool = True) -> Decision:
+                    allow_intervention: bool = True, turn_number: int | None = None) -> Decision:
     """Limit repeated completed observations; unknown effects break the streak.
 
     The loop calls this only after the whole batch has completed and records
@@ -18,31 +18,29 @@ def duplicate_guard(state: GuardrailState, cfg: Any, *,
     if (not cfg.duplicate_guard_enabled or not keys
             or len(keys) != len(tool_calls_sig) or any(key is None for key in keys)):
         state.recent_calls.clear()
+        state.duplicate_count = 0
+        state.duplicate_warned = False
         return PASS
     tool_calls_sig = (tool_calls_sig, keys)
+    if state.recent_calls and state.recent_calls[-1] == tool_calls_sig:
+        state.duplicate_count += 1
+    else:
+        state.duplicate_count = 1
+        state.duplicate_warned = False
     state.recent_calls.append(tool_calls_sig)
-    tail = 0
-    for observed in reversed(state.recent_calls):
-        if observed != tool_calls_sig:
-            break
-        tail += 1
+    tail = state.duplicate_count
     state.duplicate_evidence = {"eligible": True, "count": tail}
     # One observation is not a repetition, even with a declared limit of one.
     if tail < 2 or not allow_intervention:
         return PASS
-    # END — declared-disabled when duplicate_abort <= 0 (some baselines
-    # zero it; previously that silently never matched the deque length and
-    # the warn text printed "session ends at 0 identical").
-    if (cfg.duplicate_abort > 0
-            and len(state.recent_calls) >= cfg.duplicate_abort
-            and len(set(list(state.recent_calls)[-cfg.duplicate_abort:])) == 1):
-        return Decision.end("duplicate_abort")
-    # WARN (optional, config-gated)
+    # Repetition is not a completion or failure verdict. The legacy abort
+    # setting remains loadable, but never ends a session.
     if cfg.duplicate_warn_count > 0:
-        if tail >= cfg.duplicate_warn_count:
-            abort_disp = cfg.duplicate_abort if cfg.duplicate_abort > 0 else "disabled"
+        if tail >= cfg.duplicate_warn_count and not state.duplicate_warned:
+            state.duplicate_warned = True
             return Decision.warn(
-                cfg.duplicate_warn.format(count=tail, abort=abort_disp),
+                cfg.duplicate_warn.format(count=tail, abort="disabled",
+                                          prior_turn=(turn_number - tail + 1 if turn_number is not None else 'earlier')),
                 reason="duplicate_guard",
             )
     return PASS

@@ -1532,6 +1532,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 observations=(None if pending_work else
                               tuple(state.observations.get(tc.id) for tc in tool_calls)),
                 allow_intervention=guards_armed,
+                turn_number=turn,
             )
             if not plan_turn_active and not outcome.rewind
             else PASS
@@ -1546,7 +1547,7 @@ def run_session_loop(session: "Session") -> "SessionResult":
                 interventions_allowed=guards_armed,
                 quiet_through_turn=getattr(cfg, "guardrails_arm_after_turn", 0),
                 **{"eligible": False, "count": 0, **session._guards.duplicate_evidence},
-                abort_limit=cfg.duplicate_abort, warn_limit=cfg.duplicate_warn_count,
+                abort_limit=0, warn_limit=cfg.duplicate_warn_count,
             )
         if plan_turn_active or outcome.rewind:
             session._guards.recent_calls.clear()

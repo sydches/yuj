@@ -27,11 +27,14 @@ def test_duplicate_abort_zero_is_declared_disabled():
                           duplicate_warn_count=1,
                           duplicate_warn="[{count} identical; ends at {abort}]")
     d = None
+    warnings = []
     for _ in range(6):  # far past any deque length
         d = duplicate_guard(st, cfg, tool_calls_sig=("same",),
                             observations=({"kind": "read_observation", "pending": False, "sha256": "a"*64},))
+        if d.action.name == "WARN":
+            warnings.append(d.text)
     assert d.action.name != "END"
-    assert "ends at disabled" in (d.text or "")
+    assert warnings == ["[2 identical; ends at disabled]"]
 
 
 def test_quiet_intent_observations_do_not_count_as_rejections():
@@ -74,12 +77,13 @@ def test_quiet_duplicate_history_retains_known_results_and_breaks_on_unknown():
     args = dict(tool_calls_sig=("read",), observations=(read_observation("same"),))
     for _ in range(4):
         assert duplicate_guard(state, cfg, **args, allow_intervention=False).action == Action.PASS
-    assert state.duplicate_evidence["count"] == 2
+    assert state.duplicate_evidence["count"] == 4
     assert duplicate_guard(state, cfg, tool_calls_sig=("read",), observations=None,
                            allow_intervention=False).action == Action.PASS
     assert not state.duplicate_evidence["eligible"]
     assert duplicate_guard(state, cfg, **args).action != Action.END
-    assert duplicate_guard(state, cfg, **args).action == Action.END
+    assert duplicate_guard(state, cfg, **args).action == Action.WARN
+    assert duplicate_guard(state, cfg, **args).action == Action.PASS
 
 
 @pytest.mark.parametrize("guard", ["intent_gate", "loop_detect", "duplicate_guard"])

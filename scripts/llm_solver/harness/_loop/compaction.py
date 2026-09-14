@@ -1005,6 +1005,7 @@ def maybe_compact_messages(
     # cannot refer to stale file contents.
     if hasattr(session, "_output_dedup_cache"):
         session._output_dedup_cache.clear()
+    session._completed_read_reuse = None
     compaction_turn = int(getattr(session, "_compaction_turn", 0) or 0)
     compaction_turns = getattr(session, "_compaction_turns", None)
     if compaction_turns is None:

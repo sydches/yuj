@@ -16,7 +16,7 @@ from test_process_manager import make_manager
 
 def config(**changes):
     return make_config(duplicate_guard_enabled=True, duplicate_abort=2,
-                       duplicate_warn_count=0, loop_detect_enabled=False,
+                       duplicate_warn_count=2, loop_detect_enabled=False,
                        max_turns=4, **changes)
 
 
@@ -33,7 +33,8 @@ def test_missing_pending_changed_and_mixed_evidence_reset_the_streak():
     assert check((dict(same[0], pending=True),)).action == Action.PASS
     assert check((same[0], None), ("query", "unknown")).action == Action.PASS
     assert check(same).action == Action.PASS
-    assert check(same).action == Action.END
+    assert check(same).action == Action.WARN
+    assert check(same).action == Action.PASS  # One notice, never an end tier.
 
 
 def test_dispatch_receipt_precedes_output_clipping_and_does_not_trust_overrides(tmp_path):
@@ -74,8 +75,8 @@ def test_actual_session_observes_results_before_deciding(tmp_path, changing, par
     trace = io.StringIO()
     session = Session(cfg, client, "system", "task", str(tmp_path), trace_file=trace)
     result = session.run()
-    assert result.finish_reason == ("max_turns" if changing else "duplicate_abort")
-    assert len(calls) == (4 if changing else arm_after + 2)
+    assert result.finish_reason == "max_turns"
+    assert len(calls) == 4
     assert result.turns == len(calls)
     events = [json.loads(line) for line in trace.getvalue().splitlines()]
     checks = [row for row in events if row["event"] == "duplicate_observation_check"]
@@ -85,8 +86,8 @@ def test_actual_session_observes_results_before_deciding(tmp_path, changing, par
     assert all(row["action"] == "pass" and not row["interventions_allowed"]
                for row in checks[:arm_after + 1])
     if not changing:
-        assert checks[-1]["action"] == "end"
-        assert checks[-1]["count"] == 2
+        assert sum(row['action'] == 'warn' for row in checks) == 1
+        assert checks[-1]["count"] == 4
     observed = [row for row in events if row["event"] == "tool_call"]
     assert len(observed) == len(calls) * (2 if parallel else 1)
     assert all("observation_receipt" in row for row in observed)
@@ -149,7 +150,8 @@ def test_one_observation_is_not_a_duplicate_even_with_limit_one():
     state = init_guardrail_state(cfg)
     args = dict(tool_calls_sig=("query",), observations=(read_observation("same"),))
     assert duplicate_guard(state, cfg, **args).action == Action.PASS
-    assert duplicate_guard(state, cfg, **args).action == Action.END
+    assert duplicate_guard(state, cfg, **args).action == Action.WARN
+    assert duplicate_guard(state, cfg, **args).action == Action.PASS
 
 
 def test_identical_shell_output_does_not_hide_repeated_effects(tmp_path):

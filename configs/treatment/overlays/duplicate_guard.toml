@@ -1,5 +1,6 @@
-# Detector-activated duplicate-call guardrail.
+# Explicit completed-observation guard. trace_nets does not activate overlays.
 
 [loop]
 duplicate_guard_enabled = true # Watch consecutive identical tool calls.
 duplicate_warn_count = 2 # Warn on the first repeat, not on a novel call.
+duplicate_abort = 0 # Repeated observations never end the session.

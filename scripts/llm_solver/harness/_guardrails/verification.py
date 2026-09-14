@@ -52,18 +52,22 @@ def _file_revisions(cwd, paths) -> dict[str, str]:
         try:
             base = cwd if isinstance(cwd, TaskPath) else TaskPath(files, files.root)
             requested = {path: str(native_requested_path(base, path, expand=False)) for path in paths}
-            resolved = files.resolve_regular_files(requested.values())
+            resolved = files.resolve_regular_files(requested.values(), partial=True)
             policy = active_ignore_policy() if isinstance(cwd, TaskPath) else active_ignore_policy(str(cwd))
             if policy is not None and not policy.contains(base):
                 policy = None
             visible = {}
             for path, request in requested.items():
+                if request not in resolved:
+                    continue
                 target = TaskPath(files, PurePosixPath(resolved[request]))
                 target.relative_to(base)
                 if policy is None or not policy.is_model_hidden(target, is_dir=False):
                     visible[path] = str(target)
             digests = files.sha256_many(visible.values())
-            return {path: digests[visible[path]] if path in visible else 'missing' for path in paths}
+            return {path: (digests[visible[path]] if path in visible else
+                           _file_revision(cwd, path) if requested[path] not in resolved else 'missing')
+                    for path in paths}
         except (OSError, RuntimeError, ValueError):
             # Missing, non-regular, denied and unsupported entries keep the
             # established per-file missing/unknown decisions.

@@ -332,6 +332,7 @@ def finalize_deferred_context_actions(session, turn: int) -> str | None:
         session._context_checkpoint = None
         session._tool_log = session._tool_log[: checkpoint.tool_log_length]
         session._output_dedup_cache.clear()
+        session._completed_read_reuse = None
         session._last_actual_prompt_tokens = 0
         session._last_fill = 0.0
         session._preflight_prev_estimate = None

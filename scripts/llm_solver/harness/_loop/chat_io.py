@@ -278,6 +278,8 @@ def chat_with_retry(session: "Session", turn: int):
                     session, session.context.get_messages()
                 )
                 _release_protected_correction(session, outgoing)
+                from ..read_reuse import retain_visible_reference
+                retain_visible_reference(session, outgoing)
                 runtime = getattr(session, "_stream_rule_runtime", None)
                 narration = (
                     NarrationBudget(

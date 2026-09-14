@@ -145,6 +145,8 @@ class GuardrailState:
     recent_calls: deque = field(default_factory=lambda: deque(maxlen=2))
     duplicate_evidence: dict = field(default_factory=dict)
     duplicate_last_turn: int = -1
+    duplicate_count: int = 0
+    duplicate_warned: bool = False
     intent_evidence: dict = field(default_factory=dict)
     consecutive_errors: dict[str, int] = field(default_factory=dict)
     same_class_error_signature: str = ""

@@ -73,7 +73,7 @@ def test_actual_reads_and_recovery_respect_observations_and_budget(tmp_path, mod
         assert "stalled progress;" in calls[-1]
 
 
-def test_completed_repetition_allowance_still_stops_at_its_declared_budget(tmp_path):
+def test_legacy_duplicate_abort_does_not_end_completed_repetitions(tmp_path):
     cfg = make_config(max_turns=8, loop_detect_enabled=True, loop_detect_threshold=1,
                       duplicate_guard_enabled=True, duplicate_abort=3,
                       adaptive_control_enabled=False, guardrails_arm_after_turn=0,
@@ -85,8 +85,8 @@ def test_completed_repetition_allowance_still_stops_at_its_declared_budget(tmp_p
         finish_reason="tool_calls", usage=Usage(prompt_tokens=10, completion_tokens=5))
     client.build_assistant_message.return_value = {"role": "assistant", "content": None}
     result = Session(cfg, client, "system", "task", str(tmp_path)).run()
-    assert result.finish_reason == "duplicate_abort"
-    assert client.chat.call_count == 3
+    assert result.finish_reason == "max_turns"
+    assert client.chat.call_count == 8
 
 
 def test_blocked_turn_runs_all_post_turn_hooks():
