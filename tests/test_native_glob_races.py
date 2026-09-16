@@ -9,7 +9,8 @@ from tests.test_task_files import bwrap, namespace_files
 
 
 @pytest.mark.parametrize('swap_after_check', [False, True])
-def test_glob_does_not_enumerate_a_swapped_outside_directory(bwrap, tmp_path, swap_after_check):
+@pytest.mark.parametrize('pattern', ['folder/*.txt', '**/*.txt', '**/**/*.txt'])
+def test_glob_does_not_enumerate_a_swapped_outside_directory(bwrap, tmp_path, swap_after_check, pattern):
     source, files = namespace_files(bwrap, tmp_path)
     (source / 'folder').mkdir()
     (source / 'folder' / 'visible.txt').write_text('task bytes')
@@ -32,7 +33,7 @@ def test_glob_does_not_enumerate_a_swapped_outside_directory(bwrap, tmp_path, sw
     wrapper.chmod(0o755)
     files._utilities['readlink'] = root + '/controlled-readlink'
     with activate_task_files(files, host_root=source):
-        result = glob_files('folder/*.txt', cwd=str(source))
+        result = glob_files(pattern, cwd=str(source))
     assert (source / 'folder').is_symlink(), 'controlled swap did not run'
     assert 'leaked_name' not in result
 
@@ -47,3 +48,20 @@ def test_glob_keeps_inaccessible_directory_handling(bwrap, tmp_path):
             assert glob_files('folder/*.py', cwd=str(source)) == 'No files found.'
     finally:
         (source / 'folder').chmod(0o700)
+
+
+def test_recursive_glob_checks_each_retained_directory_once(bwrap, tmp_path):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'folder').mkdir()
+    (source / 'folder/code.py').write_text('body')
+    observer = files._utility('readlink')
+    log = str(files.root / 'directory-checks')
+    wrapper = source / 'observed-readlink'
+    wrapper.write_text('#!/bin/bash\n'
+        f'if [[ "$2" == /proc/self/fd/* ]]; then printf "checked\\n" >> {shlex.quote(log)}; fi\n'
+        f'exec {shlex.quote(observer)} "$@"\n')
+    wrapper.chmod(0o755)
+    files._utilities['readlink'] = str(files.root / wrapper.name)
+    with activate_task_files(files, host_root=source):
+        assert glob_files('**/*.py', cwd=str(source)) == 'folder/code.py'
+    assert (source / 'directory-checks').read_text().splitlines() == ['checked', 'checked']

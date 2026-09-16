@@ -55,29 +55,34 @@ def local_glob(root: Path, base: Path, pattern: str):
                 with os.scandir(descriptor) as entries:
                     # DirEntry metadata remains relative to this retained FD.
                     entries = list(entries)
-                part = parts[index]
-                if part == '**':
-                    yield from visit(directory, index + 1)
-                    for entry in entries:
-                        # pathlib includes files for a trailing ** since 3.13.
-                        if index + 1 == len(parts) and sys.version_info >= (3, 13):
-                            yield from emit(directory / entry.name, entry)
-                        if entry.is_dir(follow_symlinks=False):
-                            yield from visit(directory / entry.name, index)
-                elif part == '..':
-                    yield from visit(directory / '..', index + 1)
-                else:
-                    for entry in entries:
-                        if not fnmatchcase(entry.name, part):
-                            continue
-                        path = directory / entry.name
-                        if index + 1 == len(parts):
-                            yield from emit(path, entry)
-                        else:
-                            yield from visit(path, index + 1)
+                yield from match_entries(directory, entries, index)
         except (OSError, ValueError):
             # pathlib glob skips inaccessible or concurrently removed entries.
             return
+
+    def match_entries(directory, entries, index):
+        if index == len(parts):
+            return
+        part = parts[index]
+        if part == '**':
+            yield from match_entries(directory, entries, index + 1)
+            for entry in entries:
+                # pathlib includes files for a trailing ** since 3.13.
+                if index + 1 == len(parts) and sys.version_info >= (3, 13):
+                    yield from emit(directory / entry.name, entry)
+                if entry.is_dir(follow_symlinks=False):
+                    yield from visit(directory / entry.name, index)
+        elif part == '..':
+            yield from visit(directory / '..', index + 1)
+        else:
+            for entry in entries:
+                if not fnmatchcase(entry.name, part):
+                    continue
+                path = directory / entry.name
+                if index + 1 == len(parts):
+                    yield from emit(path, entry)
+                else:
+                    yield from visit(path, index + 1)
 
     yield from visit(base, 0)
 

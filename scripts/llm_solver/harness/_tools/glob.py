@@ -47,7 +47,7 @@ native_glob() {
         return 0
     }
     expand() {
-        local directory=$1 index=$2 display=$3 resolved key part child directory_fd
+        local directory=$1 index=$2 display=$3 resolved directory_fd status
         [[ -d "$directory" ]] || return 0
         [[ -r "$directory" ]] || return 0
         exec {directory_fd}< "$directory" || return 74
@@ -55,20 +55,26 @@ native_glob() {
         resolved=${resolved%.}; resolved=${resolved%$'\n'}
         case "$resolved" in "$root"|"${root%/}/"*) ;; *) exec {directory_fd}<&-; return 0 ;; esac
         directory=/proc/self/fd/$directory_fd
+        expand_opened "$directory" "$index" "$display" "$resolved"
+        status=$?
+        exec {directory_fd}<&-
+        return "$status"
+    }
+    expand_opened() {
+        local directory=$1 index=$2 display=$3 resolved=$4 key part child
         if (( index == ${#parts[@]} )); then
             emit_match "$directory" "$display"
             flush_matches
-            exec {directory_fd}<&-
             return
         fi
         key="$resolved/$index"
-        if [[ ${visiting[$key]:-} ]]; then exec {directory_fd}<&-; return 0; fi
+        if [[ ${visiting[$key]:-} ]]; then return 0; fi
         visiting[$key]=1
         part=${parts[index]}
         if [[ "$part" == .. ]]; then
             expand "$directory/.." "$((index + 1))" "$display/.." || return
         elif [[ "$part" == '**' ]]; then
-            expand "$directory" "$((index + 1))" "$display" || return
+            expand_opened "$directory" "$((index + 1))" "$display" "$resolved" || return
             for child in "$directory"/*; do
                 expand "$child" "$index" "$display/${child##*/}" || return
             done
@@ -88,7 +94,6 @@ native_glob() {
         visiting[$key]=''
         # Resolve queued entries while their parent descriptor is still open.
         flush_matches
-        exec {directory_fd}<&-
         return 0
     }
     expand "${root%/}/$requested" 0 "${root%/}/$requested" || return

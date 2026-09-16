@@ -36,7 +36,8 @@ def test_read_refuses_final_file_swapped_to_outside_link(tmp_path, monkeypatch):
     assert 'FORBIDDEN' not in result
 
 
-def test_glob_never_lists_entries_from_swapped_outside_directory(tmp_path, monkeypatch):
+@pytest.mark.parametrize('pattern', ['folder/*.py', '**/*.py', '**/**/*.py'])
+def test_glob_never_lists_entries_from_swapped_outside_directory(tmp_path, monkeypatch, pattern):
     task = tmp_path / 'task'
     folder = task / 'folder'
     folder.mkdir(parents=True)
@@ -57,12 +58,12 @@ def test_glob_never_lists_entries_from_swapped_outside_directory(tmp_path, monke
         return original(path)
 
     monkeypatch.setattr(os, 'scandir', scanning)
-    result = glob_files('folder/*.py', cwd=str(task))
+    result = glob_files(pattern, cwd=str(task))
     assert swapped
     assert 'leaked.py' not in result
 
 
-@pytest.mark.parametrize('pattern', ['*.py', '*/*.py', '**/*.py', '**/*', '**', 'folder/../*.py', '*/'])
+@pytest.mark.parametrize('pattern', ['*.py', '*/*.py', '**/*.py', '**/**/*.py', '**/*', '**', 'folder/../*.py', '*/'])
 def test_local_glob_keeps_pathlib_matching_and_contained_aliases(tmp_path, pattern):
     (tmp_path / 'folder').mkdir()
     for name in ('top.py', '.hidden.py', 'folder/code.py', 'folder/text.txt'):
@@ -83,6 +84,19 @@ def test_glob_lists_regular_files_without_read_permission(tmp_path):
         assert glob_files('*.py', cwd=str(tmp_path)) == 'file.py'
     finally:
         source.chmod(0o600)
+
+
+def test_recursive_glob_enumerates_each_open_directory_once(tmp_path, monkeypatch):
+    (tmp_path / 'folder').mkdir()
+    (tmp_path / 'folder/code.py').write_text('body')
+    original = os.scandir
+    scanned = []
+    def scanning(descriptor):
+        scanned.append(os.fstat(descriptor).st_ino)
+        return original(descriptor)
+    monkeypatch.setattr(os, 'scandir', scanning)
+    assert glob_files('**/*.py', cwd=str(tmp_path)) == 'folder/code.py'
+    assert scanned == [tmp_path.stat().st_ino, (tmp_path / 'folder').stat().st_ino]
 
 
 @pytest.mark.parametrize('use_rg', [False, True])
