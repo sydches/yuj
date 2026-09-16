@@ -92,6 +92,18 @@ class TestReportCapture:
         return sorted(self.path.parent.glob(self.path.name + '.*.xml')) if self.per_invocation else [self.path]
 
 
+def _remove_report_paths(paths):
+    """Remove this invocation's exact names, grouped by checked native parent."""
+    native = {}
+    for path in dict.fromkeys(paths):
+        if isinstance(path, TaskPath):
+            native.setdefault(path.parent, []).append(path.name)
+        else:
+            path.unlink(missing_ok=True)
+    for parent, names in native.items():
+        parent.files.unlink_entries(str(parent), names)
+
+
 @contextmanager
 def capture_test_report(cwd, cfg, environment=None, *, command=None):
     """Use a reporting option declared by the selected runner, when enabled.
@@ -158,13 +170,12 @@ def capture_test_report(cwd, cfg, environment=None, *, command=None):
     finally:
         if capture.path is not None:
             try:
-                for path in capture.report_paths():
-                    path.unlink(missing_ok=True)
-                capture.path.unlink(missing_ok=True)
+                paths = [*capture.report_paths(), capture.path]
                 if capture.plugin_path is not None:
-                    capture.plugin_path.unlink(missing_ok=True)
+                    paths.append(capture.plugin_path)
+                _remove_report_paths(paths)
+                if capture.plugin_path is not None:
                     cache = capture.plugin_path.parent / '__pycache__'
-                    for path in cache.glob(capture.plugin_path.stem + '.*.pyc'):
-                        path.unlink(missing_ok=True)
+                    _remove_report_paths(cache.glob(capture.plugin_path.stem + '.*.pyc'))
             except (OSError, BudgetExhausted, subprocess.TimeoutExpired) as error:
                 capture.record["cleanup_error"] = str(error)

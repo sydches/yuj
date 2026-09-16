@@ -163,9 +163,7 @@ class TaskPath:
         self.files.mkdir(str(self.path), parents=parents)
 
     def unlink(self, missing_ok=False):
-        if missing_ok and not self.exists():
-            return
-        self.files.unlink(str(self.path))
+        self.files.unlink(str(self.path), missing_ok=missing_ok)
 
     def rmdir(self):
         self.files.rmdir(str(self.path))

@@ -9,7 +9,7 @@ from tests.test_task_files import bwrap, namespace_files
 from scripts.llm_solver.harness.task_files import TaskFileError, TaskUtilityUnavailable
 
 
-@pytest.mark.parametrize('operation', ['write', 'write_new', 'create', 'replace', 'unlink', 'link', 'rmdir', 'chmod', 'chmod_dir'])
+@pytest.mark.parametrize('operation', ['write', 'write_new', 'create', 'replace', 'unlink', 'unlink_entries', 'link', 'rmdir', 'chmod', 'chmod_dir'])
 @pytest.mark.parametrize('change_at', ['resolution', 'entered_parent'])
 def test_entry_mutations_keep_the_checked_parent(bwrap, tmp_path, operation, change_at):
     outside = tmp_path / 'outside'
@@ -19,7 +19,7 @@ def test_entry_mutations_keep_the_checked_parent(bwrap, tmp_path, operation, cha
     source, files = namespace_files(bwrap, tmp_path, writable=(outside,))
     folder = source / 'folder'
     folder.mkdir()
-    if operation in ('write', 'replace', 'unlink', 'chmod'):
+    if operation in ('write', 'replace', 'unlink', 'unlink_entries', 'chmod'):
         (folder / 'entry').write_bytes(b'SELECTED')
         (outside / 'entry').write_bytes(b'OUTSIDE')
     if operation in ('rmdir', 'chmod_dir'):
@@ -65,6 +65,8 @@ def test_entry_mutations_keep_the_checked_parent(bwrap, tmp_path, operation, cha
             files.replace_bytes(path, b'NEW\x00\xff', mode=0o640)
         elif operation == 'unlink':
             files.unlink(path)
+        elif operation == 'unlink_entries':
+            files.unlink_entries('folder', ['entry', 'missing'])
         elif operation == 'link':
             files.symlink_to(path, 'literal-target')
         elif operation.startswith('chmod'):
@@ -89,7 +91,7 @@ def test_entry_mutations_keep_the_checked_parent(bwrap, tmp_path, operation, cha
             assert entry.stat().st_mode & 0o777 == 0o700
         else:
             assert not entry.exists()
-    if operation in ('write', 'replace', 'unlink', 'chmod'):
+    if operation in ('write', 'replace', 'unlink', 'unlink_entries', 'chmod'):
         assert (outside / 'entry').read_bytes() == b'OUTSIDE'
         if operation == 'chmod':
             assert (outside / 'entry').stat().st_mode & 0o777 != 0o700

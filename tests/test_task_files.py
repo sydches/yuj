@@ -319,6 +319,28 @@ def test_unlink_removes_the_directory_entry_not_its_symlink_target(bwrap, tmp_pa
     assert (source / 'file').read_bytes() == b'keep'
 
 
+def test_missing_ok_unlink_handles_dangling_links_and_missing_parents(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_path import TaskPath
+
+    source, files = namespace_files(bwrap, tmp_path)
+    target = TaskPath(files, files.root / 'alias')
+    (source / 'alias').symlink_to('missing')
+    target.unlink(missing_ok=True)
+    assert not (source / 'alias').is_symlink()
+    target.unlink(missing_ok=True)
+    (TaskPath(files, files.root) / 'absent/parent/file').unlink(missing_ok=True)
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'keep').write_text('keep')
+    (source / 'escape').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(PermissionError):
+        files.unlink('escape/keep', missing_ok=True)
+    (source / 'directory').mkdir()
+    with pytest.raises(OSError):
+        files.unlink('directory', missing_ok=True)
+    assert (outside / 'keep').read_text() == 'keep'
+
+
 def test_missing_utility_never_selects_a_host_fallback(tmp_path):
     calls = []
     def unavailable(script, args, data):

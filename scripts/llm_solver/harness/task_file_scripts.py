@@ -148,14 +148,20 @@ if [[ -d "$ancestor" && ! -x "$ancestor" &&
 fi
 # These operations use one checked directory and relative names. Metadata
 # and entry operations do not follow the final component at execution.
+if [[ "$operation" == unlink && "${2:-}" == -f && ! -e "$target" && ! -L "$target" ]]; then
+    exit 0
+fi
+if [[ "$operation" == unlink_entries && ! -e "$target" && ! -L "$target" ]]; then
+    exit 0
+fi
 case "$operation" in
     stat|lstat|list|scandir|entry_modes|readlink|read_entry) [[ -e "$target" || -L "$target" ]] || exit 66 ;;
     symlink) [[ -e "$target" || -L "$target" ]] || { printf false; exit 0; } ;;
 esac
 case "$operation" in
-    write|create|replace|link|unlink|rmdir|stat|lstat|list|scandir|entry_modes|readlink|read_entry|symlink|chmod|search_files)
+    write|create|replace|link|unlink|unlink_entries|rmdir|stat|lstat|list|scandir|entry_modes|readlink|read_entry|symlink|chmod|search_files)
         readlink_bin=$1; shift
-        if [[ "$operation" == list || "$operation" == scandir || "$operation" == entry_modes || "$target" == "$root" ||
+        if [[ "$operation" == list || "$operation" == scandir || "$operation" == entry_modes || "$operation" == unlink_entries || "$target" == "$root" ||
               ( "$operation" == search_files && -d "$target" ) ]]; then
             directory=$target
             target=.
@@ -315,7 +321,8 @@ case "$operation" in
         change_mode "$utility" "$1" "$target"
         ;;
     rmdir) exec "$utility" -- "$target" ;;
-    unlink) exec "$utility" -- "$target" ;;
+    unlink) exec "$utility" "$@" -- "$target" ;;
+    unlink_entries) exec "$utility" -f -- "$@" ;;
     list) exec "$utility" "$target" -mindepth 1 -maxdepth 1 -print0 ;;
     scandir) exec "$utility" "$target" -mindepth 1 -maxdepth 1 -printf '%f\0%y\0' ;;
     *) printf 'unsupported task file operation' >&2; exit 64 ;;

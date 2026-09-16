@@ -149,13 +149,13 @@ class NamespaceFiles:
         return value
 
     def _call(self, operation, path, *, utility='', args=(), data=None, success=(0,), script_prefix=''):
-        if self.readonly and operation in ('write', 'create', 'mkdir', 'chmod', 'unlink', 'replace', 'link', 'rmdir'):
+        if self.readonly and operation in ('write', 'create', 'mkdir', 'chmod', 'unlink', 'unlink_entries', 'replace', 'link', 'rmdir'):
             raise PermissionError(errno.EROFS, 'external task resource is read-only', str(path))
         relative = self._relative(path)
         realpath = self._utility('realpath')
         executable = self._utility(utility) if utility else ''
         if operation in ('read', 'read_observation', 'read_range', 'search', 'search_files', 'glob', 'write', 'create', 'replace',
-                         'link', 'unlink', 'rmdir', 'stat', 'lstat', 'list', 'scandir', 'readlink', 'symlink', 'chmod', 'mkdir'):
+                         'link', 'unlink', 'unlink_entries', 'rmdir', 'stat', 'lstat', 'list', 'scandir', 'readlink', 'symlink', 'chmod', 'mkdir'):
             args = (self._utility('readlink'), *args)
         result = self.run(script_prefix + _OPERATE, [str(self.root), relative, realpath,
                                    operation, executable, *args], data)
@@ -355,8 +355,18 @@ class NamespaceFiles:
             raise ValueError('task mode must contain permission bits only')
         self._call('chmod', path, utility='chmod', args=(format(mode, 'o'),))
 
-    def unlink(self, path):
-        self._call('unlink', path, utility='rm')
+    def unlink(self, path, *, missing_ok=False):
+        self._call('unlink', path, utility='rm', args=('-f',) if missing_ok else ())
+
+    def unlink_entries(self, directory, names):
+        """Remove named entries through one checked parent; absent entries are OK."""
+        names = tuple(dict.fromkeys(names))
+        if any(not isinstance(name, str) or not name or name in {'.', '..'}
+               or '/' in name or '\0' in name for name in names):
+            raise ValueError('removal entries must be literal basenames')
+        if names:
+            self._call('unlink_entries', directory, utility='rm',
+                       args=tuple('./' + name for name in names))
 
     def rmdir(self, path):
         self._call('rmdir', path, utility='rmdir')
