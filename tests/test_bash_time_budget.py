@@ -44,13 +44,14 @@ def test_calls_use_remaining_run_time_and_optional_ceiling(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("ceiling", [0, 7])
 def test_absent_run_deadline_is_not_invented(tmp_path, monkeypatch, ceiling):
+    monkeypatch.setattr(budgets.time, "monotonic", lambda: 123.456)
     observed = []
     def execute(*args, **kwargs):
         observed.append(kwargs["timeout"])
         return "result", 0, False
     monkeypatch.setattr(tools, "_run_in_sandbox", execute)
     _, facts, _ = call(tmp_path, ceiling=ceiling)
-    assert observed == [ceiling or None]
+    assert observed == [pytest.approx(ceiling, rel=0, abs=1e-12) if ceiling else None]
     assert facts["execution_budget"]["declared_run_seconds"] is None
     assert facts["execution_budget"]["status"] == ("allocated" if ceiling else "unbounded")
 
