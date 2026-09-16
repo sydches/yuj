@@ -112,3 +112,26 @@ def test_captured_stdout_inside_native_report_does_not_create_test_results():
                          b"<system-out>PASSED fabricated</system-out>"
                          b"</testcase></testsuite>")
     assert parsed["tests"] == {"suite::actual": "PASSED"}
+
+
+@pytest.mark.parametrize('body, available', [
+    ("<testcase classname='suite' name='actual'><failure/></testcase>", True),
+    ("<testcase name='one'/><testcase name='two'/>", False),
+    ("<testcase/>", False),
+])
+def test_capture_validates_collection_and_cases_from_one_tree(tmp_path, monkeypatch, body, available):
+    from unittest.mock import Mock
+    from scripts.llm_solver.harness import test_report
+
+    path = tmp_path / 'owned.xml'
+    report = tmp_path / 'owned.xml.1.xml'
+    report.write_text("<testsuite tests='1' yuj_collection_root='project'>" + body + '</testsuite>')
+    parse = Mock(wraps=test_report.ET.fromstring)
+    monkeypatch.setattr(test_report.ET, 'fromstring', parse)
+    capture = test_report.TestReportCapture({}, 'pytest', (1,), path=path, per_invocation=True)
+    capture.finish(1)
+    assert parse.call_count == 1
+    assert (capture.record['status'] == 'available') is available
+    if available:
+        assert capture.record['collection_roots'] == ['project']
+        assert capture.record['tests'] == {'pytest:project::suite::actual': 'FAILED'}

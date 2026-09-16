@@ -14,7 +14,10 @@ from .time_budget import BudgetExhausted
 
 def parse_junit(data: bytes) -> dict:
     """Read complete JUnit cases; captured stdout never supplies a verdict."""
-    root = ET.fromstring(data)
+    return _parse_junit_root(ET.fromstring(data))
+
+
+def _parse_junit_root(root: ET.Element) -> dict:
     if root.tag not in {"testsuites", "testsuite"}:
         raise ValueError("not a JUnit report")
     tests = {}
@@ -64,11 +67,12 @@ class TestReportCapture:
             tests, roots, hashes = {}, set(), []
             for path in paths:
                 data = path.read_bytes()
-                context = ET.fromstring(data).get('yuj_collection_root', '')
+                root = ET.fromstring(data)
+                context = root.get('yuj_collection_root', '')
                 if self.per_invocation and not context:
                     raise ValueError('report has no observed collection root')
                 roots.add(context)
-                parsed = parse_junit(data)
+                parsed = _parse_junit_root(root)
                 prefix = f'{self.runner}:{context}::' if context else f'{self.runner}:'
                 for key, value in parsed['tests'].items():
                     identity = prefix + key
