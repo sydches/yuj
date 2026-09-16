@@ -155,13 +155,13 @@ if [[ "$operation" == unlink_entries && ! -e "$target" && ! -L "$target" ]]; the
     exit 0
 fi
 case "$operation" in
-    stat|lstat|list|scandir|entry_modes|readlink|read_entry) [[ -e "$target" || -L "$target" ]] || exit 66 ;;
+    stat|lstat|list|scandir|entry_modes|entry_identities|readlink|read_entry) [[ -e "$target" || -L "$target" ]] || exit 66 ;;
     symlink) [[ -e "$target" || -L "$target" ]] || { printf false; exit 0; } ;;
 esac
 case "$operation" in
-    write|create|replace|link|unlink|unlink_entries|rmdir|stat|lstat|list|scandir|entry_modes|readlink|read_entry|symlink|chmod|search_files)
+    write|create|replace|link|unlink|unlink_entries|rmdir|stat|lstat|list|scandir|entry_modes|entry_identities|readlink|read_entry|symlink|chmod|search_files)
         readlink_bin=$1; shift
-        if [[ "$operation" == list || "$operation" == scandir || "$operation" == entry_modes || "$operation" == unlink_entries || "$target" == "$root" ||
+        if [[ "$operation" == list || "$operation" == scandir || "$operation" == entry_modes || "$operation" == entry_identities || "$operation" == unlink_entries || "$target" == "$root" ||
               ( "$operation" == search_files && -d "$target" ) ]]; then
             directory=$target
             target=.
@@ -184,6 +184,15 @@ case "$operation" in
         ;;
     symlink)
         if [[ -L "$target" ]]; then printf true; else printf false; fi
+        ;;
+    entry_identities)
+        for name in "$@"; do
+            [[ -n "$name" && "$name" != */* && "$name" != . && "$name" != .. ]] || exit 77
+            if [[ -e "./$name" || -L "./$name" ]]; then
+                identity=$("$utility" -c '%d %i %f' -- "./$name") || exit 74
+                printf '%s\0%s\0' "$name" "$identity"
+            fi
+        done
         ;;
     entry_modes)
         entries=()

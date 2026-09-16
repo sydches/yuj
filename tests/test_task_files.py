@@ -1,6 +1,7 @@
 """Task file primitives must observe real namespace mounts and permissions."""
 import shutil
 import shlex
+from pathlib import Path
 import subprocess
 import sys
 import textwrap
@@ -128,6 +129,39 @@ def test_directory_metadata_is_batched_and_does_not_follow_links(bwrap, tmp_path
     files.run = lambda script, args, data: (operations.append(args), run(script, args, data))[1]
     assert dict(files.scandir()) == {'directory': 'd', 'literal\nfile': 'f', 'outside': 'l'}
     assert sum(len(args) > 3 and args[3] == 'scandir' for args in operations) == 1
+
+
+def test_owned_entry_identities_are_batched_and_reobserved(bwrap, tmp_path):
+    source, files = namespace_files(bwrap, tmp_path)
+    names = ['.solver', '.tool_output', 'literal\nname', '-f', 'link']
+    for name in names[:-1]:
+        (source / name).mkdir()
+    (source / 'link').symlink_to(tmp_path / 'absent')
+    requested = {name: source / name for name in names}
+    requested['missing'] = source / 'missing'
+    expected = {name: files.observe_host_entry(name, path) for name, path in requested.items()}
+    operations = []
+    run = files.run
+    files.run = lambda script, args, data: (operations.append(args), run(script, args, data))[1]
+    assert files.observe_host_entries(requested) == expected
+    assert sum(len(args) > 3 and args[3] == 'entry_identities' for args in operations) == 1
+    # Same host spelling can name an unrelated task entry in the mounted view.
+    (Path(files.root) / '.solver').mkdir()
+    requested['.solver'] = files.root / '.solver'
+    assert files.observe_host_entries(requested)['.solver']['relation'] == 'different_entry'
+    # Replacing a retained host artifact is observed again on the next boundary.
+    (source / '.tool_output').rename(source / 'saved')
+    (source / '.tool_output').mkdir()
+    requested['.tool_output'] = source / 'saved'
+    assert files.observe_host_entries(requested)['.tool_output']['relation'] == 'different_entry'
+    (source / 'external-parent').symlink_to(tmp_path)
+    escaped = files.observe_host_entries({'external-parent/source': source})
+    assert escaped['external-parent/source']['relation'] == 'unverified'
+    assert escaped['external-parent/source']['error_kind'] == 'PermissionError'
+    files.shares_host_kernel = False
+    before = len(operations)
+    assert all(row['relation'] == 'unverified' for row in files.observe_host_entries(requested).values())
+    assert len(operations) == before
 
 
 def test_checkpoint_entry_reads_current_binary_mode_and_symlink_text(bwrap, tmp_path):

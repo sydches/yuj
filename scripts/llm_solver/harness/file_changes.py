@@ -23,8 +23,9 @@ OBSERVED_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES | {
 def _inventory(files, cwd, owned_paths, *, include_directories=False):
     remaining_before(execution_deadline())
     excluded = [".git"]
-    for path in owned_paths:
-        if files.observe_host_entry(path, os.path.join(cwd, path))["relation"] == "same_entry":
+    identities = files.observe_host_entries({path: os.path.join(cwd, path) for path in owned_paths})
+    for path, identity in identities.items():
+        if identity["relation"] == "same_entry":
             excluded.append(path)
     args = [files._utility("find"), "-P", ".", "("]
     for index, path in enumerate(excluded):

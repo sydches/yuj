@@ -91,6 +91,53 @@ class NamespaceFiles:
         return {'relation': 'same_entry' if left == right else 'different_entry',
                 'basis': 'shared_kernel_entry_metadata', 'host': left, 'native': right}
 
+    def observe_host_entries(self, entries):
+        """Batch entry identity checks that belong to one observation boundary."""
+        if not self.shares_host_kernel:
+            return {path: {'relation': 'unverified', 'basis': 'unverified_kernel_relation'}
+                    for path in entries}
+        result, parents = {}, {}
+        for path, host_path in entries.items():
+            try:
+                host = Path(host_path).lstat()
+                native = self.root / self._relative(path)
+                if native == self.root:
+                    result[path] = self.observe_host_entry(path, host_path)
+                    continue
+                left = {'device': host.st_dev, 'inode': host.st_ino, 'kind': stat.S_IFMT(host.st_mode)}
+                parents.setdefault(native.parent, {})[native.name] = (path, left)
+            except OSError as error:
+                result[path] = {'relation': 'unverified', 'basis': 'entry_metadata_unavailable',
+                                'error_kind': type(error).__name__}
+        for parent, names in parents.items():
+            try:
+                output = self._call('entry_identities', parent, utility='stat',
+                                    args=(self._utility('readlink'), *names))
+                fields = output.split(b'\0')
+                if fields[-1] or len(fields) % 2 != 1:
+                    raise TaskFileError('invalid task entry identities')
+                found = {}
+                for raw_name, raw_identity in zip(fields[0:-1:2], fields[1:-1:2]):
+                    name = os.fsdecode(raw_name)
+                    if name not in names or name in found:
+                        raise ValueError('unexpected task entry identity')
+                    device, inode, mode = raw_identity.split()
+                    found[name] = {'device': int(device), 'inode': int(inode),
+                                   'kind': stat.S_IFMT(int(mode, 16))}
+                for name, (path, left) in names.items():
+                    if name not in found:
+                        result[path] = {'relation': 'unverified', 'basis': 'entry_metadata_unavailable',
+                                        'error_kind': 'FileNotFoundError'}
+                    else:
+                        right = found[name]
+                        result[path] = {'relation': 'same_entry' if left == right else 'different_entry',
+                                        'basis': 'shared_kernel_entry_metadata', 'host': left, 'native': right}
+            except (OSError, ValueError) as error:
+                for path, _ in names.values():
+                    result[path] = {'relation': 'unverified', 'basis': 'entry_metadata_unavailable',
+                                    'error_kind': type(error).__name__}
+        return result
+
     def environment_value(self, name):
         if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
             raise ValueError('invalid environment variable name')
