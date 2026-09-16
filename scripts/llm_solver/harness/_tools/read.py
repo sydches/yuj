@@ -61,14 +61,13 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
                 ),
             )
         policy = active_ignore_policy(cwd)
-        is_directory = target.is_dir()
         if policy is not None and policy.contains(target):
-            policy.require_visible(target, is_dir=is_directory)
-        if is_directory:
-            return (
-                f"ERROR: {path} is a directory — "
-                f"use glob to list contents."
-            )
+            # Only a type-dependent ignore decision needs a separate stat.
+            # The protected open below already rejects directories itself.
+            file_hidden = policy.is_ignored(target, is_dir=False)
+            directory_hidden = policy.is_ignored(target, is_dir=True)
+            policy.require_visible(target, is_dir=(
+                target.is_dir() if file_hidden != directory_hidden else False))
         from ..local_file_access import read_bytes, read_observation
         mtime_ns = None
         if capture_observation:
@@ -150,6 +149,8 @@ def read(path: str, *, cwd: str, offset: int = 0, limit: int = 0,
             return inspected(_record_read_reminder("truncated", path, body, result),
                              body, returned, total)
         return inspected(body, body, returned, total)
+    except IsADirectoryError:
+        return f"ERROR: {path} is a directory — use glob to list contents."
     except FileNotFoundError:
         return f"ERROR: file not found: {path}" + _path_hint(cwd, path)
     except UnicodeDecodeError:

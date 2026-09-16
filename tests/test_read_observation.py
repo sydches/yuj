@@ -25,6 +25,32 @@ def native_files(root):
     return NamespaceFiles(str(root), run, binding={'test': 'checked-read'}), calls
 
 
+@pytest.mark.parametrize('rules, directory, hidden', [
+    ('', False, False), ('', True, False),
+    ('target/\n', False, False), ('target/\n', True, True),
+    ('target\n!target/\n', False, True), ('target\n!target/\n', True, False),
+])
+def test_read_keeps_type_dependent_visibility_before_access(tmp_path, monkeypatch, rules, directory, hidden):
+    from scripts.llm_solver.harness.sandbox.ignore_policy import load_ignore_policy
+
+    (tmp_path / '.yujignore').write_text(rules)
+    target = tmp_path / 'target'
+    target.mkdir() if directory else target.write_text('visible bytes')
+    policy = load_ignore_policy(tmp_path)
+    if hidden:
+        def forbidden(*args, **kwargs):
+            raise AssertionError('hidden content was accessed')
+        monkeypatch.setattr(local_file_access, 'read_bytes', forbidden)
+        monkeypatch.setattr(local_file_access, 'read_observation', forbidden)
+    result = dispatch('read', {'path': 'target'}, cwd=str(tmp_path),
+                      cfg=make_config(), ignore_policy=policy)
+    assert ('file not found' in result) is hidden
+    if not hidden:
+        assert ('is a directory' in result) is directory
+        if not directory:
+            assert 'visible bytes' in result
+
+
 def test_native_read_preserves_binary_framing_and_uses_one_warm_operation(tmp_path):
     name = "literal\nfile\n"
     data = b'\0\xff\n81a4\0header-like\0\0'
