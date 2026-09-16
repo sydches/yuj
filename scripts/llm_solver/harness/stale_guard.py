@@ -127,6 +127,9 @@ class StaleFileGuard:
     def observe(self, path: str, *, source: str) -> FileFingerprint:
         """Record a successful read or mutation and emit reconstruction data."""
         target, relative = self._target(path)
+        return self._observe_target(target, relative, source=source)
+
+    def _observe_target(self, target, relative, *, source):
         try:
             fingerprint = self._fingerprint(target)
         except FileNotFoundError as exc:
@@ -168,10 +171,10 @@ class StaleFileGuard:
         classified = classify_single_file_read(command)
         if classified is None:
             return None
-        target, _relative = self._target(classified.path)
+        target, relative = self._target(classified.path)
         if not target.is_file():
             return None
-        self.observe(classified.path, source=f"bash:{classified.verb}")
+        self._observe_target(target, relative, source=f"bash:{classified.verb}")
         return classified
 
     def forget(self, path: str, *, source: str = "apply_patch") -> None:

@@ -97,3 +97,28 @@ def test_outside_spelling_is_not_rerooted_to_a_task_collision(tmp_path):
     with pytest.raises(StaleGuardError):
         guard.observe_read('/outside/source.txt')
     assert not guard.ledger_snapshot()
+
+
+@pytest.mark.parametrize('spelling', ['relative', 'host', 'native'])
+def test_shell_read_observation_keeps_native_view(bwrap, tmp_path, spelling):
+    import shlex
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'source.txt').write_text('native content\n')
+    host = tmp_path / 'host_alias'
+    host.mkdir()
+    (host / 'source.txt').write_text('host content\n')
+    path = {'relative': 'source.txt', 'host': str(host / 'source.txt'),
+            'native': str(files.root / 'source.txt')}[spelling]
+    events = []
+    guard = StaleFileGuard(cwd=host, mode='block', event_sink=events.append)
+    with activate_task_files(files, host_root=host):
+        assert guard.observe_shell_read('cat ' + shlex.quote(path)) is not None
+        assert events[-1]['source'] == 'bash:cat'
+        assert events[-1]['task_view'] == files.binding
+        assert guard.ledger_snapshot()['source.txt'].sha256 == hashlib.sha256(b'native content\n').hexdigest()
+        assert guard.check_edit(path).reason == 'fresh'
+        (source / 'source.txt').write_text('changed content\n')
+        assert guard.check_edit(path).reason == 'modified'
+        with pytest.raises(StaleGuardError):
+            guard.observe_shell_read('cat /outside/source.txt')
