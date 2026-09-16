@@ -53,6 +53,28 @@ def test_public_grep_uses_native_rg_selection(bwrap, tmp_path, glob_filter, path
     assert native == local
 
 
+@pytest.mark.parametrize('use_rg', [True, False])
+def test_native_grep_relabels_only_the_descriptor_prefix(bwrap, tmp_path, monkeypatch, use_rg):
+    from scripts.llm_solver.harness._tools.grep import grep_files
+    from scripts.llm_solver.harness.task_files import TaskUtilityUnavailable
+    source, files = namespace_files(bwrap, tmp_path)
+    name = "literal [x] ' $(touch escaped).txt"
+    lines = ['needle /proc/self/fd/999:2: literal content',
+             'needle :42: ' + 'é漢' * 2000, 'last needle without newline']
+    (source / name).write_text('\n'.join(lines))
+    if not use_rg:
+        original = files._utility
+        def utility(name):
+            if name == 'rg':
+                raise TaskUtilityUnavailable('rg unavailable')
+            return original(name)
+        monkeypatch.setattr(files, '_utility', utility)
+    with activate_task_files(files, host_root=source):
+        result = grep_files('needle', name, cwd=str(source))
+    assert result == ''.join(f'./{name}:{index}:{line}\n' for index, line in enumerate(lines, 1))
+    assert not (source / 'escaped').exists()
+
+
 def test_native_glob_never_enumerates_outside_parent(bwrap, tmp_path, monkeypatch):
     source, files = namespace_files(bwrap, tmp_path)
     outside = tmp_path / 'outside'

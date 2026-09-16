@@ -19,7 +19,7 @@ _MATCH_LINE_RE = re.compile(r'^(.*?):(\d+):')
 
 _NATIVE_SEARCH = r'''
 native_search() {
-    local readlink_bin=$1 pattern=$2 input_fd code target index
+    local readlink_bin=$1 pattern=$2 input_fd code target index descriptor
     local -a batch targets inputs opened
     local -A labels
     while :; do
@@ -46,8 +46,10 @@ native_search() {
         done
         "$utility" -n --with-filename --color=never -- "$pattern" "${inputs[@]}" |
             while IFS= read -r line || [[ -n "$line" ]]; do
-                if [[ "$line" =~ ^/proc/self/fd/([0-9]+):(.*)$ ]]; then
-                    printf '%s:%s\n' "${labels[${BASH_REMATCH[1]}]}" "${BASH_REMATCH[2]}"
+                if [[ "$line" == /proc/self/fd/+([0-9]):* ]]; then
+                    descriptor=${line%%:*}
+                    descriptor=${descriptor##*/}
+                    printf '%s:%s\n' "${labels[$descriptor]}" "${line#*:}"
                 else
                     printf '%s\n' "$line"
                 fi
