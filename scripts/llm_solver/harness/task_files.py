@@ -452,10 +452,13 @@ class NamespaceFiles:
         """Let native ripgrep select files; subsequent reads remain checked."""
         args = ('--glob', glob_filter) if glob_filter else ()
         output = self._call('search_files', path, utility='rg', args=args, success=(0, 1))
+        kind, separator, output = output.partition(b'\0')
+        if not separator or kind not in (b'd', b'f'):
+            raise TaskFileError('invalid task search scope')
         if output and not output.endswith(b'\x00'):
             raise TaskFileError('invalid task search listing')
         requested = self.root / self._relative(path)
-        base = requested if self.kind(path) == 'directory' else requested.parent
+        base = requested if kind == b'd' else requested.parent
         return [base / os.fsdecode(value) for value in output.split(b'\x00') if value]
 
     def search(self, path, pattern):

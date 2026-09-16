@@ -180,6 +180,8 @@ case "$operation" in
     digest_batch) digest_batch "$@" ;;
     resolve_files) resolve_files "$@" ;;
     search_files)
+        # The checked operation already knows which scope supplied these names.
+        if [[ "$target" == . ]]; then printf 'd\0'; else printf 'f\0'; fi
         exec "$utility" --files --null --no-follow "$@" -- "$target"
         ;;
     symlink)

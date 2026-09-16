@@ -131,6 +131,29 @@ def test_directory_metadata_is_batched_and_does_not_follow_links(bwrap, tmp_path
     assert sum(len(args) > 3 and args[3] == 'scandir' for args in operations) == 1
 
 
+@pytest.mark.parametrize('scope,pattern,expected', [
+    ('.', '', ['folder/a.py', 'folder/b.txt']),
+    ('folder', '*.py', ['folder/a.py']),
+    ('folder/a.py', '', ['folder/a.py']),
+    ('empty', '', []),
+    ('folder', '*.absent', []),
+    ('alias', '*.py', ['alias/a.py']),
+])
+def test_search_listing_keeps_its_scope_without_another_stat(bwrap, tmp_path, scope, pattern, expected):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'folder').mkdir()
+    (source / 'empty').mkdir()
+    (source / 'folder/a.py').write_text('needle')
+    (source / 'folder/b.txt').write_text('needle')
+    (source / 'alias').symlink_to('folder')
+    operations = []
+    run = files.run
+    files.run = lambda script, args, data: (operations.append(args), run(script, args, data))[1]
+    assert sorted(str(path.relative_to(files.root)) for path in files.search_files(scope, pattern)) == expected
+    assert sum(len(args) > 3 and args[3] == 'search_files' for args in operations) == 1
+    assert not any(len(args) > 3 and args[3] == 'stat' for args in operations)
+
+
 def test_owned_entry_identities_are_batched_and_reobserved(bwrap, tmp_path):
     source, files = namespace_files(bwrap, tmp_path)
     names = ['.solver', '.tool_output', 'literal\nname', '-f', 'link']
