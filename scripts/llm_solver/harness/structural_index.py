@@ -12,7 +12,7 @@ import glob
 import hashlib
 import importlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Literal, Protocol, Sequence
 
 
@@ -493,7 +493,9 @@ class _UnreadableMatcher:
     def blocks(self, path: Path) -> bool:
         if not self._blocked:
             return False
-        resolved = path.resolve(strict=False)
+        return self.blocks_resolved(path.resolve(strict=False))
+
+    def blocks_resolved(self, resolved: Path) -> bool:
         for blocked in self._blocked:
             if resolved == blocked or blocked in resolved.parents:
                 return True
@@ -542,6 +544,40 @@ class StructuralIndex:
         relative = path.relative_to(self.root).as_posix()
         return any(fnmatchcase(relative, pattern) for pattern in self._path_globs)
 
+    def _readable_paths(self, paths):
+        """Batch native admission facts within this scan, never across changes."""
+        from .task_path import TaskPath, task_path_ignore_policy
+        import stat
+        if not paths or not isinstance(self.root, TaskPath):
+            return {path for path in paths if self._is_readable_path(path)}
+        files = self.root.files
+        try:
+            modes = files.entry_modes([str(path) for path in paths])
+            candidates = [path for path in paths
+                          if not stat.S_ISLNK(modes.get(str(path), 0))]
+            resolved = files.resolve_paths([str(path) for path in candidates])
+            policy = task_path_ignore_policy(self.root)
+            target_modes = files.entry_modes(resolved.values()) if policy is not None else {}
+            readable = set()
+            for path in candidates:
+                target = TaskPath(files, PurePosixPath(resolved[str(path)]))
+                if not target.is_relative_to(self.root) or self._unreadable.blocks_resolved(target):
+                    continue
+                if policy is not None:
+                    mode = target_modes.get(str(target), 0)
+                    if stat.S_ISLNK(mode):
+                        # A final link appeared between the two observations.
+                        if self._is_readable_path(path):
+                            readable.add(path)
+                        continue
+                    if policy.is_model_hidden(target, is_dir=stat.S_ISDIR(mode)):
+                        continue
+                readable.add(path)
+            return readable
+        except (OSError, ValueError):
+            # Retain the old per-path handling for partial failures and races.
+            return {path for path in paths if self._is_readable_path(path)}
+
     def _candidate_paths(self) -> tuple[Path, ...]:
         from .task_path import TaskPath
         candidates: list[Path] = []
@@ -549,19 +585,17 @@ class StructuralIndex:
         traversal = self.root.walk() if isinstance(self.root, TaskPath) else local_walk(self.root)
         for raw_dir, dir_names, file_names in traversal:
             directory = raw_dir if isinstance(raw_dir, TaskPath) else Path(raw_dir)
-            dir_names[:] = [
-                name
-                for name in sorted(dir_names)
-                if name not in self._ignored_dir_names
-                and self._is_readable_path(directory / name)
-            ]
-            for name in sorted(file_names):
-                path = directory / name
-                # Every consumer indexes supported source languages only.
-                # Reject other suffixes before expensive namespace checks.
-                if not self.extractor.detect_language(path):
-                    continue
-                if self._accept_file(path):
+            dirs = [directory / name for name in sorted(dir_names)
+                    if name not in self._ignored_dir_names]
+            # Reject unsupported suffixes before expensive namespace checks.
+            files = [directory / name for name in sorted(file_names)
+                     if self.extractor.detect_language(directory / name)]
+            readable = self._readable_paths([*dirs, *files])
+            dir_names[:] = [path.name for path in dirs if path in readable]
+            for path in files:
+                if path in readable and (not self._path_globs or any(
+                        fnmatchcase(path.relative_to(self.root).as_posix(), pattern)
+                        for pattern in self._path_globs)):
                     candidates.append(path)
         return tuple(candidates)
 

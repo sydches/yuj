@@ -337,6 +337,17 @@ def _captured_native_alias(files, path):
     return None
 
 
+def task_path_ignore_policy(cwd):
+    """Return the active policy for the same binding used by path resolution."""
+    from .sandbox.ignore_policy import active_ignore_policy
+    if isinstance(cwd, TaskPath):
+        active = _ACTIVE.get()
+        host_root = active.host_root if active is not None and active.files is cwd.files else None
+    else:
+        host_root = cwd
+    return active_ignore_policy(host_root) if host_root is not None else None
+
+
 def resolve_task_path(cwd, path):
     """Resolve a task reread without re-rooting outside absolute paths."""
     if isinstance(cwd, TaskPath):
@@ -346,16 +357,14 @@ def resolve_task_path(cwd, path):
         else:
             target = native_requested_path(cwd, str(path), expand=False).resolve()
         target.relative_to(cwd)
-        host_root = active.host_root if active is not None and active.files is cwd.files else None
     else:
         target = bound_task_path(str(cwd), str(path))
         if target is None:
             root = Path(cwd).resolve()
             target = (root / path).resolve()
             target.relative_to(root)
-        host_root = cwd
-    from .sandbox.ignore_policy import active_ignore_policy, IgnoredPathError
-    policy = active_ignore_policy(host_root) if host_root is not None else None
+    from .sandbox.ignore_policy import IgnoredPathError
+    policy = task_path_ignore_policy(cwd)
     if policy is not None and policy.is_model_hidden(target, is_dir=target.is_dir()):
         raise IgnoredPathError(str(path))
     return target

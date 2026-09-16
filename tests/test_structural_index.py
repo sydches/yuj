@@ -170,18 +170,148 @@ def test_structural_scan_checks_supported_sources_before_other_file_metadata(
     for number in range(23):
         (tmp_path / f'cache{number}.pyc').write_bytes(b'not source')
     checked = []
-    original = index._is_readable_path
+    original = files.entry_modes
 
-    def track(path):
-        checked.append(path.name)
-        return original(path)
+    def track(paths):
+        paths = list(paths)
+        checked.extend(Path(path).name for path in paths)
+        return original(paths)
 
-    monkeypatch.setattr(index, '_is_readable_path', track)
+    monkeypatch.setattr(files, 'entry_modes', track)
     first = index.search()
     assert [row.name for row in first.rows] == ['target']
     assert checked == ['code.fixture']
     assert index.search().cache_hits == 1
     assert not any(name.endswith('.pyc') for name in checked)
+
+
+def test_native_index_admission_batches_and_rechecks_changed_entries(tmp_path, native_index, monkeypatch):
+    files, index = native_index
+    for number in range(130):
+        (tmp_path / f'f{number}.fixture').write_text(f'DEF item{number}\n')
+    assert index.scan().files_scanned == 130
+    calls = []
+    original = files.run
+    def record(script, args, data):
+        calls.append(args[3] if len(args) > 3 else 'discovery')
+        return original(script, args, data)
+    monkeypatch.setattr(files, 'run', record)
+    warm = index.scan()
+    assert warm.cache_hits == 130
+    assert calls.count('entry_modes') == 3
+    assert calls.count('resolve_files') == 1
+    assert calls.count('digest_batch') == 1
+    assert 'symlink' not in calls and 'resolve' not in calls and 'read' not in calls
+    (tmp_path / 'f0.fixture').unlink()
+    (tmp_path / 'f0.fixture').symlink_to('f1.fixture')
+    (tmp_path / 'f2.fixture').write_text('DEF changed\n')
+    changed = index.scan()
+    assert changed.files_scanned == 129 and changed.cache_hits == 128
+    assert 'item0' not in {row.name for row in changed.rows}
+    assert 'changed' in {row.name for row in changed.rows}
+
+
+def test_native_index_batch_keeps_missing_file_diagnostics(tmp_path, native_index, monkeypatch):
+    files, index = native_index
+    source = tmp_path / 'gone.fixture'
+    source.write_text('DEF missing\n')
+    original = files.resolve_paths
+    def remove_then_resolve(paths):
+        source.unlink()
+        return original(paths)
+    monkeypatch.setattr(files, 'resolve_paths', remove_then_resolve)
+    result = index.scan()
+    assert result.rows == () and len(result.diagnostics) == 1
+    assert result.diagnostics[0].path == 'gone.fixture'
+    assert 'FileNotFoundError' in result.diagnostics[0].message
+
+
+def test_native_index_batch_rejects_late_outside_link(tmp_path, native_index, monkeypatch):
+    files, index = native_index
+    source = tmp_path / 'swap.fixture'
+    source.write_text('DEF initial\n')
+    outside = tmp_path.parent / (tmp_path.name + '-outside.fixture')
+    outside.write_text('DEF secret\n')
+    original = files.resolve_paths
+    def swap_then_resolve(paths):
+        source.unlink()
+        source.symlink_to(outside)
+        return original(paths)
+    monkeypatch.setattr(files, 'resolve_paths', swap_then_resolve)
+    result = index.scan()
+    assert result.rows == () and index.extractor.extracted == []
+
+
+def test_native_index_batch_matches_scalar_mask_and_ignore_policy(tmp_path, native_index, monkeypatch):
+    from llm_solver.harness.sandbox.ignore_policy import load_ignore_policy, activate_ignore_policy
+    from llm_solver.harness.structural_index import _UnreadableMatcher
+    files, index = native_index
+    for name in ('visible.fixture', 'secret.fixture', 'ignored.fixture', 'other.fixture'):
+        (tmp_path / name).write_text(f'DEF {name}\n')
+    (tmp_path / 'folder').mkdir()
+    (tmp_path / 'folder/nested.fixture').write_text('DEF nested\n')
+    (tmp_path / '.yujignore').write_text('ignored.fixture\nfolder/\n')
+    index._unreadable = _UnreadableMatcher(index.root, ['secret.fixture'])
+    index._path_globs = ('visible*', 'secret*', 'ignored*', 'folder/*')
+    policy = load_ignore_policy(tmp_path)
+    with activate_ignore_policy(policy):
+        batched = index.scan()
+        monkeypatch.setattr(index, '_readable_paths',
+                            lambda paths: {path for path in paths if index._is_readable_path(path)})
+        scalar = index.scan()
+    assert batched.rows == scalar.rows and batched.diagnostics == scalar.diagnostics
+    assert [row.name for row in batched.rows] == ['visible.fixture']
+
+
+@pytest.mark.parametrize('operation', ['entry_modes', 'resolve_paths'])
+def test_native_index_batch_failure_preserves_scalar_fallback(tmp_path, native_index, monkeypatch, operation):
+    from llm_solver.harness.task_files import TaskUtilityUnavailable
+    files, index = native_index
+    (tmp_path / 'visible.fixture').write_text('DEF target\n')
+    def unavailable(*args):
+        raise TaskUtilityUnavailable('batch utility unavailable')
+    monkeypatch.setattr(files, operation, unavailable)
+    result = index.scan()
+    assert [row.name for row in result.rows] == ['target']
+    assert result.diagnostics == ()
+
+
+def test_native_index_read_rechecks_parent_after_batched_admission(tmp_path, native_index, monkeypatch):
+    files, index = native_index
+    parent = tmp_path / 'folder'
+    parent.mkdir()
+    (parent / 'source.fixture').write_text('DEF initial\n')
+    outside = tmp_path.parent / (tmp_path.name + '-outside')
+    outside.mkdir()
+    (outside / 'source.fixture').write_text('DEF secret\n')
+    original = files.read_bytes
+    def swap_then_read(path):
+        parent.rename(tmp_path / 'saved')
+        parent.symlink_to(outside, target_is_directory=True)
+        return original(path)
+    monkeypatch.setattr(files, 'read_bytes', swap_then_read)
+    result = index.scan()
+    assert result.rows == () and index.extractor.extracted == []
+    assert result.diagnostics[0].path == 'folder/source.fixture'
+    assert result.diagnostics[0].error_kind == 'read_error'
+
+
+def test_native_index_batch_keeps_subdirectory_scope(tmp_path, native_index, monkeypatch):
+    files, index = native_index
+    scope = tmp_path / 'scope'
+    scope.mkdir()
+    source = scope / 'swap.fixture'
+    source.write_text('DEF initial\n')
+    (tmp_path / 'sibling.fixture').write_text('DEF sibling\n')
+    index.root = index.root / 'scope'
+    original = files.resolve_paths
+    def swap_then_resolve(paths):
+        source.unlink()
+        source.symlink_to('../sibling.fixture')
+        return original(paths)
+    monkeypatch.setattr(files, 'resolve_paths', swap_then_resolve)
+    result = index.scan()
+    assert result.rows == () and index.extractor.extracted == []
 
 
 @pytest.mark.parametrize('readable', [False, True])

@@ -63,7 +63,7 @@ resolve_files() {
                 "$root"|"${root%/}/"*) ;;
                 *) [[ "$partial" == partial ]] && continue; return 77 ;;
             esac
-            if [[ ! -f "$target" ]]; then
+            if [[ "$partial" != paths && ! -f "$target" ]]; then
                 [[ "$partial" == partial ]] && continue
                 return 74
             fi
