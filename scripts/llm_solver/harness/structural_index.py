@@ -610,7 +610,17 @@ class StructuralIndex:
         """
         mode = b"contents" if contents else b"metadata"
         digest = hashlib.sha256(b"yuj-structural-fingerprint-v1\x00" + mode)
-        for path in self._candidate_paths():
+        candidates = self._candidate_paths()
+        digests: dict[str, str] = {}
+        from .task_path import TaskPath
+        if contents and isinstance(self.root, TaskPath):
+            try:
+                digests = self.root.files.sha256_many([str(path) for path in candidates])
+            except OSError:
+                # Individual reads retain per-file error markers and support
+                # task environments without the native digest utility.
+                pass
+        for path in candidates:
             language = self.extractor.detect_language(path)
             if not language:
                 continue
@@ -624,7 +634,9 @@ class StructuralIndex:
             try:
                 if contents:
                     from .local_file_access import read_bytes
-                    payload = hashlib.sha256(read_bytes(self.root, path)).digest()
+                    current = digests.get(str(path))
+                    payload = (bytes.fromhex(current) if current is not None
+                               else hashlib.sha256(read_bytes(self.root, path)).digest())
                 else:
                     from .local_file_access import stat as file_stat
                     stat = file_stat(self.root, path)

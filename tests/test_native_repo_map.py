@@ -9,6 +9,70 @@ from scripts.llm_solver.harness.repo_map import build_repo_map
 from scripts.llm_solver.harness.task_path import TaskPath, activate_task_files
 
 
+def test_content_fingerprint_batches_current_bytes(bwrap, tmp_path, monkeypatch):
+    from scripts.llm_solver.harness.structural_index import StructuralIndex
+    source, files = namespace_files(bwrap, tmp_path)
+    for number in range(70):
+        (source / f'file{number}.py').write_text(f'def item_{number}():\n    return 1\n')
+    local = StructuralIndex(source)
+    native = StructuralIndex(TaskPath(files, files.root))
+    calls = []
+    original = files.sha256_many
+
+    def tracked(paths):
+        calls.append(len(paths))
+        return original(paths)
+
+    monkeypatch.setattr(files, 'sha256_many', tracked)
+    first = native.fingerprint(contents=True)
+    assert first == local.fingerprint(contents=True)
+    selected = source / 'file0.py'
+    stamp = selected.stat()
+    selected.write_text('def item_0():\n    return 2\n')
+    os.utime(selected, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    second = native.fingerprint(contents=True)
+    assert second != first and second == local.fingerprint(contents=True)
+    assert calls == [70, 70]
+
+
+@pytest.mark.parametrize('failure', ['utility', 'removed', 'outside_link', 'denied'])
+def test_content_fingerprint_batch_falls_back_to_read_errors(bwrap, tmp_path, monkeypatch, failure):
+    from scripts.llm_solver.harness.structural_index import StructuralIndex
+    from scripts.llm_solver.harness.task_files import TaskFileError
+    source, files = namespace_files(bwrap, tmp_path)
+    selected = source / 'module.py'
+    selected.write_text('def symbol():\n    pass\n')
+    index = StructuralIndex(TaskPath(files, files.root))
+    candidates = index._candidate_paths()
+    monkeypatch.setattr(index, '_candidate_paths', lambda: candidates)
+    initial = index.fingerprint(contents=True)
+    if failure == 'removed':
+        selected.unlink()
+    elif failure == 'outside_link':
+        selected.unlink()
+        selected.symlink_to('/etc/passwd')
+    elif failure == 'denied':
+        selected.chmod(0)
+    else:
+        original_utility = files._utility
+        def utility(name):
+            if name == 'sha256sum':
+                raise TaskFileError('missing')
+            return original_utility(name)
+        monkeypatch.setattr(files, '_utility', utility)
+    batch_attempt = index.fingerprint(contents=True)
+    def unavailable(paths):
+        raise TaskFileError('missing')
+    monkeypatch.setattr(files, 'sha256_many', unavailable)
+    try:
+        scalar = index.fingerprint(contents=True)
+        assert batch_attempt == scalar
+        assert (scalar == initial) == (failure == 'utility')
+    finally:
+        if failure == 'denied':
+            selected.chmod(0o600)
+
+
 @pytest.mark.parametrize('explicit_root', [False, True])
 def test_map_reads_nested_readonly_overlay(bwrap, tmp_path, explicit_root):
     overlay = tmp_path / 'overlay'
