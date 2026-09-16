@@ -172,12 +172,6 @@ class BackendTokenCounter:
             self._unavailable_reason = ""
             self._usage_mismatch = False
             clear_request_count_reuse()
-        body = {k: v for k, v in payload.items() if k not in _SDK_OPTIONS}
-        extra_body = payload.get("extra_body") or {}
-        fingerprint = hashlib.sha256(json.dumps(
-            {"body": body, "extra_body": extra_body}, sort_keys=True,
-            ensure_ascii=False, default=str,
-        ).encode()).hexdigest()
         reuse_key = None
         if _request_count_reuse.get() is not None:
             try:
@@ -187,6 +181,16 @@ class BackendTokenCounter:
                     payload, sort_keys=True, ensure_ascii=False, allow_nan=False))
             except (TypeError, ValueError):
                 pass
+        reused = _request_count_reuse.get()
+        if reuse_key is not None and reused and reused[0] == reuse_key:
+            fingerprint = reused[2]
+        else:
+            body = {k: v for k, v in payload.items() if k not in _SDK_OPTIONS}
+            extra_body = payload.get("extra_body") or {}
+            fingerprint = hashlib.sha256(json.dumps(
+                {"body": body, "extra_body": extra_body}, sort_keys=True,
+                ensure_ascii=False, default=str,
+            ).encode()).hexdigest()
         count = None
         basis = "character_estimate"
         reason = "unsupported_request_dialect"
@@ -244,7 +248,7 @@ class BackendTokenCounter:
             count = estimate_payload(payload)
         if _request_count_reuse.get() is not None:
             _request_count_reuse.set(
-                (reuse_key, count)
+                (reuse_key, count, fingerprint)
                 if reuse_key is not None and basis == "backend_input_tokens"
                 and self.count_precision == "backend_reported"
                 else ())

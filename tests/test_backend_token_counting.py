@@ -274,6 +274,30 @@ def test_reuse_ends_at_turn_scope_and_generation_boundaries():
     assert counter.calls == 4
 
 
+def test_exact_reuse_retains_fingerprint_but_mutated_payload_recomputes_it(monkeypatch):
+    from unittest.mock import Mock
+    from scripts.llm_solver.server import token_counting
+
+    client = LlamaClient(make_config(tokenizer_id='auto'))
+    attach_transport(client, lambda request: httpx.Response(200, json={'input_tokens': 31}))
+    counter = client.get_request_token_counter()
+    payload = client.prepare_chat_request(copy.deepcopy(MESSAGES), TOOLS)
+    digest = Mock(wraps=token_counting.hashlib.sha256)
+    monkeypatch.setattr(token_counting.hashlib, 'sha256', digest)
+    with request_count_reuse():
+        counter.count_payload(payload)
+        first = counter.last['request_sha256']
+        hashes = digest.call_count
+        counter.count_payload(copy.deepcopy(payload))
+        assert counter.last['request_sha256'] == first
+        assert digest.call_count == hashes
+        payload['messages'][0]['content'] += ' changed'
+        counter.count_payload(payload)
+        assert counter.last['request_sha256'] != first
+        assert digest.call_count > hashes
+    assert counter.calls == 2
+
+
 @pytest.mark.parametrize("changed", [
     {"messages": [{"role": "user", "content": "changed"}]},
     {"tools": []}, {"extra_body": {"temperature": .7}},
