@@ -155,7 +155,8 @@ def test_component_sources_batch_regular_hidden_missing_and_alias_paths(bwrap, t
             ]))
             timings = profile.take()
     assert [p.relative_to(files.root).as_posix() for p in paths] == names
-    assert operations == ['resolve_files']
+    # The first large call also discovers optional bulk tools in this namespace.
+    assert operations == ['', 'resolve_files']
     resolution, = [row for row in timings if row['operation'][-1] == 'files.resolve_files']
     assert resolution['calls'] == 1
     assert resolution['operation'] == ['verification.source_paths', 'files.resolve_files']

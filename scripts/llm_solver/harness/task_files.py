@@ -10,11 +10,14 @@ from dataclasses import dataclass
 import errno
 import os
 import re
+import shlex
 from pathlib import Path, PurePosixPath
 import stat
 from typing import Callable
 
-from .task_file_scripts import _DISCOVER, _OPERATE, _DIGEST_BATCH, _RESOLVE_FILES
+from .task_file_scripts import (
+    _DISCOVER, _OPERATE, _DIGEST_BATCH, _RESOLVE_FILES, _BATCH_CAPABILITIES, _BATCH_HELPERS,
+)
 from .operation_timing import measured
 
 
@@ -80,12 +83,30 @@ class NamespaceFiles:
         # compared across views known to share the host kernel.
         self.shares_host_kernel = shares_host_kernel
         self._utilities: dict[str, str] = {}
+        self._batch_xargs: str | None = None
+
+    def _batch_program(self, script, count):
+        """Admit optional bulk execution once, only when a large call needs it."""
+        if count >= 256 and self._batch_xargs is None:
+            result = self.run(_BATCH_CAPABILITIES, [self._utility('realpath')], None)
+            fields = result.stdout.split(b'\0')
+            if (result.returncode or len(fields) != 2 or fields[-1]
+                    or (fields[0] and not fields[0].startswith(b'/'))):
+                raise TaskFileError('task batch capability discovery failed')
+            self._batch_xargs = os.fsdecode(fields[0])
+            if self._batch_xargs:
+                self._utilities['xargs'] = self._batch_xargs
+        executable = self._utilities.get('xargs', '') if self._batch_xargs else ''
+        return 'batch_xargs_bin=' + shlex.quote(executable) + '\n' + _BATCH_HELPERS + script
 
     def readonly_view(self, root):
         """Use the same executor for an explicitly admitted external root."""
         view = NamespaceFiles(str(root), self.run, binding={
             **self.binding, 'readonly_root': str(root),
         }, readonly=True, shares_host_kernel=self.shares_host_kernel)
+        view._batch_xargs = self._batch_xargs
+        if self._batch_xargs:
+            view._utilities['xargs'] = self._utilities['xargs']
         view.root = view.resolve('.')
         return view
 
@@ -258,9 +279,9 @@ class NamespaceFiles:
         if not names:
             return {}
         output = self._call('resolve_files', self.root,
-                            args=(mode,) if mode else (),
+                            args=(mode, str(len(names))),
                             data=b''.join(os.fsencode(name) + b'\0' for name in names),
-                            script_prefix=_RESOLVE_FILES)
+                            script_prefix=self._batch_program(_RESOLVE_FILES, len(names)))
         fields = output.split(b'\0')
         if mode == 'states':
             if fields[-1] or len(fields) != len(names) * 3 + 1:
@@ -358,9 +379,9 @@ class NamespaceFiles:
         if not names:
             return {}
         output = self._call('digest_batch', self.root, utility='sha256sum',
-                            args=(self._utility('readlink'),),
+                            args=(self._utility('readlink'), str(len(names))),
                             data=b''.join(os.fsencode(name) + b'\0' for name in names),
-                            script_prefix=_DIGEST_BATCH)
+                            script_prefix=self._batch_program(_DIGEST_BATCH, len(names)))
         fields = output.split(b'\0')
         if fields[-1] or len(fields) != len(names) * 2 + 1:
             raise TaskFileError('invalid task digest response')

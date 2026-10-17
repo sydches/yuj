@@ -1,6 +1,7 @@
 """Task file primitives must observe real namespace mounts and permissions."""
 import shutil
 import shlex
+import hashlib
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -9,6 +10,171 @@ import textwrap
 import pytest
 
 from scripts.llm_solver.harness.task_files import NamespaceFiles, TaskFileError, _relative_posix_parts
+
+
+@pytest.fixture
+def batch_files(tmp_path):
+    root = tmp_path / 'task'
+    root.mkdir()
+    def run(script, args, data):
+        return subprocess.run(['/bin/bash', '--noprofile', '--norc', '-c', script,
+                               'batch-test', *args], input=data, capture_output=True, timeout=15)
+    return NamespaceFiles(str(root), run, binding={'test': 'native-batches'})
+
+
+def test_large_batches_keep_literal_names_states_and_hashes(batch_files):
+    files = batch_files
+    root = Path(str(files.root))
+    names = [f'file-{index}\n\udcff' for index in range(257)]
+    data = b'bytes\x00\xff'
+    for name in names:
+        (root / name).write_bytes(data)
+    expected = {str(root / name): hashlib.sha256(data).hexdigest() for name in names}
+    assert files.sha256_many(names) == expected
+    assert files.resolve_file_states(names) == {name: (name, 'file') for name in expected}
+    (root / 'loop').symlink_to('loop')
+    small = files.resolve_file_states(['loop', 'loop/child', 'absent'])
+    large = files.resolve_file_states([*names, 'loop', 'loop/child', 'absent'])
+    assert {name: large[name] for name in small} == small
+
+
+@pytest.mark.parametrize('optional', ['missing', 'unsupported', 'resolver_unsupported'])
+def test_optional_xargs_discovery_keeps_native_fallback(tmp_path, optional):
+    from scripts.llm_solver.harness.task_file_scripts import _BATCH_CAPABILITIES
+    root, bins = tmp_path / 'root', tmp_path / 'bin'
+    root.mkdir()
+    bins.mkdir()
+    for name in ('realpath', 'readlink', 'stat', 'dd', 'find', 'sha256sum', 'chmod'):
+        (bins / name).symlink_to(shutil.which(name))
+    if optional == 'unsupported':
+        (bins / 'xargs').write_text('#!/bin/bash\necho unsupported xargs\nexit 1\n')
+        (bins / 'xargs').chmod(0o700)
+    elif optional == 'resolver_unsupported':
+        (bins / 'xargs').symlink_to(shutil.which('xargs'))
+        (bins / 'realpath').unlink()
+        (bins / 'realpath').write_text('#!/bin/bash\n'
+            'if [[ "$1" == --version ]]; then echo other resolver; exit 0; fi\n'
+            + f'exec {shlex.quote(shutil.which("realpath"))} "$@"\n')
+        (bins / 'realpath').chmod(0o700)
+    calls = []
+    def run(script, args, data):
+        calls.append(script)
+        return subprocess.run(['/bin/bash', '--noprofile', '--norc', '-c', script, 'optional-xargs', *args],
+            input=data, capture_output=True, env={'PATH': str(bins)}, timeout=15)
+    files = NamespaceFiles(str(root), run, binding={'test': optional})
+    names = [f'file-{index}' for index in range(257)]
+    for name in names:
+        (root / name).write_bytes(b'abc')
+    assert len(files.resolve_paths(names[:64])) == 64
+    assert _BATCH_CAPABILITIES not in calls
+    for _ in range(2):
+        assert files.sha256_many(names) == {str(root / name): hashlib.sha256(b'abc').hexdigest() for name in names}
+        assert len(files.resolve_file_states(names)) == len(names)
+    assert files._batch_xargs == ''
+    view = files.readonly_view(str(root))
+    assert len(view.resolve_file_states(names)) == len(names)
+    assert view._batch_xargs == ''
+    assert calls.count(_BATCH_CAPABILITIES) == 1
+
+
+def test_readonly_view_keeps_admitted_batch_capability(batch_files):
+    from scripts.llm_solver.harness.task_file_scripts import _BATCH_CAPABILITIES
+    files = batch_files
+    calls = []
+    native = files.run
+    def run(script, args, data):
+        calls.append(script)
+        return native(script, args, data)
+    files.run = run
+    names = [f'file-{index}' for index in range(257)]
+    expected = files.resolve_file_states(names)
+    if not files._batch_xargs:
+        pytest.skip('requires task GNU xargs and GNU/uutils realpath')
+    view = files.readonly_view(str(files.root))
+    assert view.readonly
+    assert view.run is files.run
+    assert view.binding['readonly_root'] == str(files.root)
+    assert view.resolve_file_states(names) == expected
+    assert view._batch_xargs == files._batch_xargs
+    assert view._utilities['xargs'] == files._utilities['xargs']
+    assert calls.count(_BATCH_CAPABILITIES) == 1
+
+
+@pytest.mark.parametrize('limit,held', [(24, 0), (64, 0), (128, 40), (512, 100)])
+def test_large_digest_batches_respect_task_descriptor_headroom(batch_files, limit, held):
+    files = batch_files
+    files._batch_program('', 256)
+    if not files._batch_xargs:
+        pytest.skip('requires task GNU xargs and GNU/uutils realpath')
+    root = Path(str(files.root))
+    names = [f'file-{index}' for index in range(270)]
+    for name in names:
+        (root / name).write_bytes(b'current')
+    native = files.run
+    def limited(script, args, data):
+        prelude = f'ulimit -n {limit}\n'
+        prelude += f'for ((i=0; i<{held}; i++)); do exec {{held_fd}}</dev/null; done\n'
+        return native(prelude + script, args, data)
+    files.run = limited
+    assert files.sha256_many(names) == {str(root / name): hashlib.sha256(b'current').hexdigest() for name in names}
+
+
+def test_large_resolver_splits_long_argv_and_bounds_exception_retries(batch_files):
+    files = batch_files
+    files._batch_program('', 256)
+    if not files._batch_xargs:
+        pytest.skip('requires task GNU xargs and GNU/uutils realpath')
+    root = Path(str(files.root))
+    log = root / 'realpath-calls'
+    realpath = files._utility('realpath')
+    wrapper = root / 'record-realpath'
+    wrapper.write_text('#!/bin/bash\n'
+        + f'printf "%s\\n" "$#" >> {shlex.quote(str(log))}\n'
+        + 'for name in "$@"; do if [[ "$name" == */exceptional ]]; then '
+        + 'printf "native resolver diagnostic\\n" >&2; exit 1; fi; done\n'
+        + f'exec {shlex.quote(realpath)} "$@"\n')
+    wrapper.chmod(0o700)
+    files._utilities['realpath'] = str(wrapper)
+    parent = root.joinpath(*(['d' * 200] * 5))
+    parent.mkdir(parents=True)
+    names = [str(parent / f'file-{index}') for index in range(300)]
+    for name in names:
+        Path(name).write_bytes(b'payload')
+    assert len(files.resolve_paths(names[:64])) == 64
+    assert [int(value) for value in log.read_text().splitlines()] == [3, 3, 67]
+    log.write_text('')
+    assert len(files.resolve_paths(names)) == len(names)
+    calls = [int(value) for value in log.read_text().splitlines()]
+    assert 67 < max(calls) < len(names) + 3
+    log.write_text('')
+    names = [f'file-{index}' for index in range(299)] + ['exceptional']
+    states = files.resolve_file_states(names)
+    assert states[str(root / 'exceptional')] == ('', 'unknown')
+    assert all(kind == 'missing' for name, (_, kind) in states.items() if name != str(root / 'exceptional'))
+    calls = [int(value) for value in log.read_text().splitlines()]
+    assert calls.count(3) == 46
+    with pytest.raises(TaskFileError, match='native resolver diagnostic'):
+        files.resolve_paths(names)
+
+
+def test_task_environment_cannot_enable_bulk_helper_for_small_calls(batch_files):
+    files = batch_files
+    files._batch_program('', 256)
+    if not files._batch_xargs:
+        pytest.skip('requires task GNU xargs and GNU/uutils realpath')
+    root = Path(str(files.root))
+    marker, wrapper = root / 'xargs-called', root / 'record-xargs'
+    binary = files._utilities['xargs']
+    wrapper.write_text('#!/bin/bash\n' + f'printf called > {shlex.quote(str(marker))}\n'
+                       + f'exec {shlex.quote(binary)} "$@"\n')
+    wrapper.chmod(0o700)
+    files._utilities['xargs'] = str(wrapper)
+    native = files.run
+    files.run = lambda script, args, data: native('export batch_bulk=true\n' + script, args, data)
+    (root / 'file').write_bytes(b'content')
+    assert files.resolve_paths(['file']) == {str(root / 'file'): str(root / 'file')}
+    assert files.sha256_many(['file']) == {str(root / 'file'): hashlib.sha256(b'content').hexdigest()}
+    assert not marker.exists()
 
 
 def test_lexical_posix_relatives_match_pathlib_without_filesystem_access():
@@ -362,7 +528,7 @@ def test_batch_hashes_read_current_bytes_and_preserve_literal_paths(bwrap, tmp_p
     import hashlib
     import os
     source, files = namespace_files(bwrap, tmp_path)
-    names = [f'file {index}\n' for index in range(70)]
+    names = [f'file {index}\n' for index in range(270)]
     for name in names:
         (source / name).write_bytes(name.encode())
     expected = {str(files.root / name): hashlib.sha256(name.encode()).hexdigest() for name in names}
@@ -375,7 +541,7 @@ def test_batch_hashes_read_current_bytes_and_preserve_literal_paths(bwrap, tmp_p
     (source / 'escape').symlink_to(tmp_path / 'outside')
     (tmp_path / 'outside').write_bytes(b'external')
     with pytest.raises(PermissionError):
-        files.sha256_many(['escape'])
+        files.sha256_many([*names, 'escape'])
 
 
 def test_nested_mount_hides_host_source_for_read_stat_and_listing(bwrap, tmp_path):

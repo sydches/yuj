@@ -1,5 +1,6 @@
 """Deterministic native path changes around the file helper's read boundary."""
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -92,7 +93,8 @@ def test_search_preserves_alias_labels_and_no_match(bwrap, tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize('change_at', ['resolution', 'opened_file'])
-def test_batch_hashes_validate_opened_files_during_parent_changes(bwrap, tmp_path, change_at):
+@pytest.mark.parametrize('count', [1, 256])
+def test_batch_hashes_validate_opened_files_during_parent_changes(bwrap, tmp_path, change_at, count):
     import hashlib
     source, files = namespace_files(bwrap, tmp_path)
     (source / 'folder').mkdir()
@@ -102,6 +104,9 @@ def test_batch_hashes_validate_opened_files_during_parent_changes(bwrap, tmp_pat
     (outside / 'file').write_bytes(b'OUTSIDE')
     root = str(files.root)
     name = root + '/folder/file'
+    names = [root + f'/other-{index}' for index in range(count - 1)] + [name]
+    for other in names[:-1]:
+        (source / Path(other).name).write_bytes(b'SELECTED')
     utility = 'realpath' if change_at == 'resolution' else 'readlink'
     executable = files._utility(utility)
     swap = (f'mv -- {shlex.quote(root + "/folder")} {shlex.quote(root + "/saved")}; '
@@ -114,8 +119,8 @@ def test_batch_hashes_validate_opened_files_during_parent_changes(bwrap, tmp_pat
     files._utilities[utility] = root + '/controlled-hash-observer'
     if change_at == 'resolution':
         with pytest.raises(PermissionError):
-            files.sha256_many([name])
+            files.sha256_many(names)
     else:
-        assert files.sha256_many([name]) == {name: hashlib.sha256(b'SELECTED').hexdigest()}
+        assert files.sha256_many(names) == {path: hashlib.sha256(b'SELECTED').hexdigest() for path in names}
     assert (source / 'folder').is_symlink()
     assert (outside / 'file').read_bytes() == b'OUTSIDE'

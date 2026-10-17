@@ -7,15 +7,52 @@ for utility in "$@"; do
 done
 '''
 
+_BATCH_CAPABILITIES = r'''
+xargs_bin=$(type -P -- xargs) || xargs_bin=''
+if [[ -n "$xargs_bin" ]]; then
+    xargs_version=$("$xargs_bin" --version 2>&1)
+    realpath_version=$("$1" --version 2>&1)
+    if [[ "$xargs_version" != *GNU* ||
+          ( "$realpath_version" != *GNU* && "$realpath_version" != *uutils* ) ]]; then
+        xargs_bin=''
+    fi
+fi
+printf '%s\0' "$xargs_bin"
+'''
+
+_BATCH_HELPERS = r'''
+batch_bulk=false
+canonical_many() {
+    if [[ ${batch_bulk:-false} == true ]]; then
+        # xargs accounts for the task's environment and exec argument limit.
+        printf '%s\0' "$@" | "$batch_xargs_bin" -0 -r "$realpath_bin" -m -z --
+    else
+        "$realpath_bin" -m -z -- "$@"
+    fi
+}
+'''
+
 _DIGEST_BATCH = r'''
 digest_batch() {
     local readlink_bin=$1 input_fd code target index record descriptor
+    local batch_limit=64 batch_bulk=false descriptor_limit
     local -a batch targets inputs opened
     local -A labels
+    if (( ${2:-0} >= 256 )) && [[ -n "$batch_xargs_bin" ]]; then
+        batch_bulk=true; batch_limit=256
+        # Leave room for the resolver, checksum pipeline and inherited handles.
+        local -a existing_descriptors=(/proc/self/fd/*)
+        descriptor_limit=$(ulimit -n) || return 74
+        if [[ "$descriptor_limit" != unlimited ]]; then
+            (( descriptor_limit -= ${#existing_descriptors[@]} + 16 ))
+            (( descriptor_limit >= batch_limit )) || batch_limit=$descriptor_limit
+        fi
+        (( batch_limit > 0 )) || return 74
+    fi
     while :; do
-        mapfile -d '' -n 64 -t batch
+        mapfile -d '' -n "$batch_limit" -t batch
         (( ${#batch[@]} )) || break
-        mapfile -d '' -t targets < <("$realpath_bin" -m -z -- "${batch[@]}")
+        mapfile -d '' -t targets < <(canonical_many "${batch[@]}")
         wait "$!" || return 74
         (( ${#targets[@]} == ${#batch[@]} )) || return 74
         inputs=(); labels=()
@@ -49,19 +86,33 @@ digest_batch() {
 
 _RESOLVE_FILES = r'''
 resolve_files() {
-    local index target ancestor kind partial=${1:-}
-    local -a batch resolved
+    local index target ancestor kind partial=${1:-} offset
+    local batch_limit=64 batch_bulk=false
+    local -a batch resolved chunk recovered
+    if (( ${2:-0} >= 256 )) && [[ -n "$batch_xargs_bin" ]]; then
+        batch_bulk=true; batch_limit=1024
+    fi
     while :; do
-        mapfile -d '' -n 64 -t batch
+        mapfile -d '' -n "$batch_limit" -t batch
         (( ${#batch[@]} )) || break
-        mapfile -d '' -t resolved < <("$realpath_bin" -m -z -- "${batch[@]}")
+        mapfile -d '' -t resolved < <(canonical_many "${batch[@]}")
         if ! wait "$!" || (( ${#resolved[@]} != ${#batch[@]} )); then
             [[ "$partial" == states ]] || return 74
-            # An exceptional name must not discard the rest of the batch.
+            # Limit individual exceptional-name retries to the original groups.
             resolved=()
-            for target in "${batch[@]}"; do
-                if canonical ancestor "$target"; then resolved+=("$ancestor")
-                else resolved+=(''); fi
+            for ((offset=0; offset<${#batch[@]}; offset+=64)); do
+                chunk=("${batch[@]:offset:64}")
+                if (( ${#batch[@]} > 64 )); then
+                    mapfile -d '' -t recovered < <(canonical_many "${chunk[@]}")
+                    if wait "$!" && (( ${#recovered[@]} == ${#chunk[@]} )); then
+                        resolved+=("${recovered[@]}")
+                        continue
+                    fi
+                fi
+                for target in "${chunk[@]}"; do
+                    if canonical ancestor "$target"; then resolved+=("$ancestor")
+                    else resolved+=(''); fi
+                done
             done
         fi
         for index in "${!batch[@]}"; do
