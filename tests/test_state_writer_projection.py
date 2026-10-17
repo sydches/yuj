@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.llm_solver.harness.state_writer import (
     project,
     project_from_trace,
@@ -22,6 +24,65 @@ from scripts.llm_solver.harness.state_writer import (
 )
 
 _CAP = 20000
+
+
+@pytest.mark.parametrize("source", ["recorded", "action", "cached"])
+def test_target_selection_stops_after_eight_distinct_paths(source, monkeypatch):
+    from scripts.llm_solver.harness import state_writer
+
+    expected = [f"src/file_{index}.py" for index in range(8)]
+    paths = [expected[0], *expected, *[f"src/extra_{index}.py" for index in range(6343)]]
+    normalized = []
+    original = state_writer._normalize_path
+
+    def normalize(path):
+        normalized.append(path)
+        return original(path)
+
+    monkeypatch.setattr(state_writer, "_normalize_path", normalize)
+    if source == "recorded":
+        item = {"source_write_paths": ["../outside.py", *paths]}
+    elif source == "action":
+        item = {"action": "read(" + " ".join(paths) + ")"}
+    else:
+        def cached():
+            yield expected[0]
+            yield from expected
+            pytest.fail("target selection consumed the unused cached suffix")
+
+        item = {"_target_paths": cached()}
+
+    assert state_writer._target_paths([item], None) == expected
+    assert len(normalized) == (0 if source == "cached" else 9)
+
+
+def test_target_selection_preserves_normalization_order_and_source_precedence():
+    from scripts.llm_solver.harness import state_writer, task_environment
+
+    item = {
+        "source_write_paths": ["/outside.py", "../skip.py", "./src/a.py", "src/a.py", "/task/src/b.py"],
+        "action": "edit(src/b.py src/c.py)",
+        "_recorded_command": "cat src/d.py src/c.py src/e.py src/f.py src/g.py src/h.py src/i.py",
+    }
+    with task_environment.recorded_task_environment({
+        "host_root": "/task", "working_directory": "/task", "aliases": [],
+    }):
+        assert state_writer._target_paths([item], None) == [f"src/{name}.py" for name in "abcdefgh"]
+
+
+@pytest.mark.parametrize("imperative", [False, True])
+def test_bounded_targets_preserve_complete_recorded_path_evidence(imperative):
+    paths = [f"src/file_{index}.py" for index in range(6343)]
+    event = {"event": "tool_call", "session_number": 1, "turn_number": 0,
+             "tool_name": "write", "args_summary": "src/file_0.py", "result_summary": "written",
+             "source_write_like": True, "source_write_paths": paths}
+    output = project([event], max_result_chars=_CAP, imperative_projection=imperative)
+    assert output["trace"][0]["source_write_paths"] == paths
+    assert event["source_write_paths"] == paths
+    if imperative:
+        assert output["process"]["target_paths"] == paths[:8]
+    else:
+        assert "process" not in output
 
 
 def _project(events):

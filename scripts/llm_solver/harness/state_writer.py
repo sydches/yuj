@@ -470,6 +470,7 @@ def _normalize_path(path: str) -> str:
 
 
 def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
+    """Select the first eight distinct targets without processing later paths."""
     paths: list[str] = []
     scan_start = max(0, (pending_idx or len(trace) - 1) - 16)
     scan_end = (pending_idx + 1) if pending_idx is not None else len(trace)
@@ -478,6 +479,8 @@ def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
             for path in item["_target_paths"]:
                 if path not in paths:
                     paths.append(path)
+                    if len(paths) == 8:
+                        return paths
             continue
         for raw_path in item.get("source_write_paths") or []:
             if not is_workspace_path(str(raw_path)):
@@ -485,6 +488,8 @@ def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
             path = _normalize_path(str(raw_path))
             if path and path not in paths:
                 paths.append(path)
+                if len(paths) == 8:
+                    return paths
         action = str(item.get("action") or "")
         cmd = _action_cmd(item)
         for source in (action, cmd):
@@ -495,6 +500,8 @@ def _target_paths(trace: list[dict], pending_idx: int | None) -> list[str]:
                 path = _normalize_path(raw_path)
                 if path and path not in paths:
                     paths.append(path)
+                    if len(paths) == 8:
+                        return paths
     return paths[:8]
 
 
