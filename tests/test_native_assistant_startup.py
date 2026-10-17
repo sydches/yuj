@@ -221,6 +221,103 @@ def test_run_tests_refreshes_native_declarations_once(bwrap, tmp_path, monkeypat
         assert commands == ['selected test']
 
 
+def test_native_declaration_batch_skips_absent_probes_but_reads_current_bytes(bwrap, tmp_path):
+    from collections import Counter
+    import hashlib
+    from scripts.llm_solver.harness.runtime_discovery import selection_inputs
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    files.binding.update(host_root=str(source), working_directory=str(files.root))
+    raw = b'current native bytes'
+    (source / 'present').write_bytes(raw)
+    names = ['present', *(f'absent-{index}' for index in range(12))]
+    calls = Counter()
+    native_run = files.run
+
+    def run(script, args, data):
+        if len(args) > 3:
+            calls[args[3]] += 1
+        return native_run(script, args, data)
+
+    files.run = run
+    with activate_task_files(files, host_root=source):
+        result = selection_inputs(source, names)
+        assert result == {**{name: {'status': 'missing'} for name in names[1:]},
+                          'present': {'sha256': hashlib.sha256(raw).hexdigest()}}
+        assert calls['resolve_files'] == calls['stat'] == 1
+        # The unchanged buffered read requests the bytes, then observes EOF.
+        assert calls['read_range'] == 2
+        (source / 'present').write_bytes(b'changed bytes')
+        (source / 'absent-0').write_bytes(b'new file')
+        current = selection_inputs(source, names)
+        assert current['present'] == {'sha256': hashlib.sha256(b'changed bytes').hexdigest()}
+        assert current['absent-0'] == {'sha256': hashlib.sha256(b'new file').hexdigest()}
+        (source / 'present').unlink()
+        assert selection_inputs(source, names)['present'] == {'status': 'missing'}
+
+
+def test_native_declaration_batch_preserves_absolute_names_and_masks(bwrap, tmp_path, monkeypatch):
+    from scripts.llm_solver.harness.runtime_discovery import selection_inputs
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    native = Path(str(files.root))
+    files.binding.update(host_root=str(source), working_directory=str(native))
+    host_name, native_name = str(source / 'absent'), str(native / 'absent')
+    with activate_task_files(files, host_root=source):
+        assert selection_inputs(source, ['absent', 'another', host_name, native_name]) == {
+            'absent': {'status': 'missing'}, 'another': {'status': 'missing'},
+            host_name: {'status': 'unavailable'}, native_name: {'status': 'missing'}}
+        monkeypatch.setattr(files, 'resolve_file_states',
+                            lambda *args: pytest.fail('effective masks must retain scalar observation'))
+        assert selection_inputs(source, ['absent', 'another'], (native_name,)) == {
+            'absent': {'status': 'unavailable'}, 'another': {'status': 'missing'}}
+
+
+@pytest.mark.parametrize('failure', [OSError, ValueError])
+def test_native_declaration_failed_batch_uses_original_scalar_results(bwrap, tmp_path, monkeypatch, failure):
+    import hashlib
+    from scripts.llm_solver.harness.runtime_discovery import selection_inputs
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    files.binding.update(host_root=str(source), working_directory=str(files.root))
+    (source / 'present').write_bytes(b'unchanged')
+    def fail(paths):
+        raise failure('controlled failed batch')
+    monkeypatch.setattr(files, 'resolve_file_states', fail)
+    with activate_task_files(files, host_root=source):
+        assert selection_inputs(source, ['absent', 'present']) == {
+            'absent': {'status': 'missing'},
+            'present': {'sha256': hashlib.sha256(b'unchanged').hexdigest()}}
+
+
+@pytest.mark.parametrize('stage', ['before_batch', 'during_batch', 'after_batch'])
+def test_native_declaration_batch_preserves_deadline_boundaries(bwrap, tmp_path, monkeypatch, stage):
+    from scripts.llm_solver.harness import time_budget
+    from scripts.llm_solver.harness.runtime_discovery import selection_inputs
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    files.binding.update(host_root=str(source), working_directory=str(files.root))
+    deadline = [0 if stage == 'before_batch' else None]
+    monkeypatch.setattr(time_budget, 'execution_deadline', lambda: deadline[0])
+    original = files.resolve_file_states
+    calls = []
+    def batch(paths):
+        calls.append(True)
+        if stage == 'during_batch':
+            raise time_budget.BudgetExhausted('controlled batch deadline')
+        result = original(paths)
+        deadline[0] = 0
+        return result
+    monkeypatch.setattr(files, 'resolve_file_states', batch)
+    with activate_task_files(files, host_root=source), pytest.raises(time_budget.BudgetExhausted):
+        selection_inputs(source, ['first', 'second'])
+    assert len(calls) == (0 if stage == 'before_batch' else 1)
+
+
 def test_native_global_guidance_uses_task_home_and_keeps_ancestor_chain(bwrap, tmp_path, monkeypatch):
     import shlex
     from scripts.llm_solver.harness.project_instructions import discover_project_instructions

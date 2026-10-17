@@ -189,8 +189,29 @@ def selection_inputs(cwd, names, unreadable_paths=()):
     cwd = _resolve_observation(cwd, '.')
     blocked = _UnreadableMatcher(cwd, unreadable_paths)
     result = {}
-    for name in sorted(names):
+    names = sorted(names)
+    missing = set()
+    if isinstance(cwd, TaskPath) and len(names) > 1 and not blocked._native.blocked:
+        from pathlib import PurePosixPath
+        from .task_path import native_requested_path
+        try:
+            # Absolute labels retain read_declaration's scalar interpretation.
+            requested = {name: str(native_requested_path(cwd, name, expand=False))
+                         for name in names if not PurePosixPath(name).is_absolute()}
+            remaining_before(execution_deadline())
+            states = cwd.files.resolve_file_states(requested.values())
+            for name, request in requested.items():
+                target, kind = states[request]
+                if (kind == 'missing'
+                        and TaskPath(cwd.files, PurePosixPath(target)).is_relative_to(cwd)):
+                    missing.add(name)
+        except (OSError, ValueError):
+            missing.clear()
+    for name in names:
         remaining_before(execution_deadline())
+        if name in missing:
+            result[name] = {'status': 'missing'}
+            continue
         try:
             if blocked.blocks(_resolve_observation(cwd, name)):
                 raise ValueError("blocked declaration")
