@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 license-files = ["LICENSE", "LICENSES/Apache-2.0.txt", "THIRD_PARTY_NOTICES.md"]
 dependencies = [
     "openai",
+    "httpx",
     "orjson",
     "PyYAML>=6.0",
     "requests",
