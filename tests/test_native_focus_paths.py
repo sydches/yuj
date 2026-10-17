@@ -62,6 +62,30 @@ def test_native_search_root_is_not_reported_outside(bwrap, tmp_path):
     assert str(files.root) in display
 
 
+@pytest.mark.parametrize('text,enabled', [(None, True), ('# comment\n', True), ('hidden/\n', False)])
+def test_empty_policy_focus_resolves_without_stat(bwrap, tmp_path, text, enabled):
+    from scripts.llm_solver.harness.sandbox.ignore_policy import activate_ignore_policy, load_ignore_policy
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'file').write_text('native bytes')
+    if text is not None:
+        (source / '.yujignore').write_text(text)
+    policy = load_ignore_policy(source, enabled=enabled)
+    files._utility('realpath')
+    operations, run = [], files.run
+    files.run = lambda script, args, data: (operations.append(args[3]), run(script, args, data))[1]
+    with activate_task_files(files, host_root=source), activate_ignore_policy(policy):
+        key, _ = _focus_signature(SimpleNamespace(name='read', arguments={'path': str(source / 'file')}),
+                                  '', str(source))
+        assert key.startswith('file:')
+        # A retargeted symlink still requires a fresh native resolution. The
+        # denied resolution remains unknown, not evidence for an outside label.
+        (source / 'file').unlink()
+        (source / 'file').symlink_to(tmp_path)
+        assert _path_within_cwd(str(source / 'file'), str(source)) is None
+    assert operations == ['resolve', 'resolve']
+
+
 def test_focus_resolution_preserves_budget_exhaustion(bwrap, tmp_path, monkeypatch):
     from scripts.llm_solver.harness.time_budget import BudgetExhausted
 

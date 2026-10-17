@@ -116,6 +116,42 @@ def test_disabled_policy_does_not_read_or_apply_the_file(tmp_path: Path) -> None
     }
 
 
+@pytest.mark.parametrize('text,enabled', [(None, True), ('', True), ('# comment\n', True), ('cache/\n', False)])
+def test_policy_without_active_rules_does_not_inspect_entries(tmp_path, monkeypatch, text, enabled):
+    from scripts.llm_solver.harness.sandbox.ignore_policy import IgnorePolicy
+
+    if text is not None:
+        (tmp_path / '.yujignore').write_text(text)
+    policy = load_ignore_policy(tmp_path, enabled=enabled)
+    def unavailable(*args, **kwargs):
+        raise AssertionError('empty policy must not inspect task entries')
+    monkeypatch.setattr(IgnorePolicy, '_directory', unavailable)
+    monkeypatch.setattr(IgnorePolicy, '_source_root', unavailable)
+    assert not policy.has_rules
+    assert policy.decision('cache') is None
+    assert not policy.is_model_hidden('cache')
+    assert policy.existing_ignored_paths() == ()
+
+
+def test_directory_rule_still_observes_changed_entry_type(tmp_path):
+    policy = _policy(tmp_path, 'cache/\n')
+    assert policy.has_rules
+    entry = tmp_path / 'cache'
+    entry.write_text('visible file')
+    assert not policy.is_model_hidden(entry)
+    entry.unlink()
+    entry.mkdir()
+    assert policy.is_model_hidden(entry)
+
+
+def test_builtin_rules_keep_public_project_paths_hidden(tmp_path):
+    policy = load_ignore_policy(tmp_path, builtin_rules=('/private/',))
+    (tmp_path / 'private').mkdir()
+    assert policy.has_rules
+    assert policy.is_model_hidden(tmp_path / 'private')
+    assert not policy.is_model_hidden(tmp_path / 'visible')
+
+
 def test_require_visible_uses_file_not_found_semantics(tmp_path: Path) -> None:
     policy = _policy(tmp_path, "private.txt\n")
 

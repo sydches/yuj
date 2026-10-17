@@ -369,7 +369,8 @@ def resolve_task_path(cwd, path):
             target.relative_to(root)
     from .sandbox.ignore_policy import IgnoredPathError
     policy = task_path_ignore_policy(cwd)
-    if policy is not None and policy.is_model_hidden(target, is_dir=target.is_dir()):
+    if (policy is not None and policy.has_rules
+            and policy.is_model_hidden(target, is_dir=target.is_dir())):
         raise IgnoredPathError(str(path))
     return target
 

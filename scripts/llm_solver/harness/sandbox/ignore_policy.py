@@ -360,6 +360,11 @@ class IgnorePolicy:
     def source_names(self) -> tuple[str, ...]:
         return tuple(source.name for source in self.sources) if self.enabled else ()
 
+    @property
+    def has_rules(self) -> bool:
+        """Whether this loaded policy can hide any task entry."""
+        return self.enabled and any(source.rules for source in self.sources)
+
     def trace_fields(self) -> dict[str, object]:
         """Return provenance fields containing hashes/names, never rule text."""
         return {
@@ -398,6 +403,8 @@ class IgnorePolicy:
         if not self.enabled:
             return None
         relative, target = self._relative(path)
+        if not self.has_rules:
+            return None
         directory = self._directory(relative) if is_dir is None else bool(is_dir)
         for source in self.sources:
             decision = source.decision(relative, is_dir=directory)
@@ -437,6 +444,8 @@ class IgnorePolicy:
         mask roots, while traversable ignored parents do not.
         """
         relative, target = self._relative(path)
+        if not self.has_rules:
+            return False
         directory = self._directory(relative) if is_dir is None else bool(is_dir)
         if not self.is_ignored(relative, is_dir=directory):
             return False
@@ -464,7 +473,7 @@ class IgnorePolicy:
         a directory with any visible descendant is left mounted and only its
         ignored descendants are returned.  This preserves negation semantics.
         """
-        if not self.enabled or not self.sources:
+        if not self.has_rules:
             return ()
         entries: list[tuple[Path, bool, bool]] = []
         source_root = self._source_root()
