@@ -11,6 +11,7 @@ from scripts.llm_solver.harness import task_file_runtime
 from scripts.llm_solver.harness._loop.state_projection import project_and_sink, sink_to_disk
 from scripts.llm_solver.harness._loop.trace_output import _result_fields, _sink_trace_output
 from scripts.llm_solver.harness.tools import dispatch
+from scripts.llm_solver.harness.retained_output import trace_output_root
 
 
 def bind_projection(projection, bwrap, tmp_path, monkeypatch, *, readonly=False):
@@ -55,13 +56,14 @@ def test_native_saved_pointer_and_trace_read_the_same_bytes(projection, bwrap, t
     assert not list((source / '.tool_output').glob('.yuj-output-*'))
 
 
-def test_readonly_sink_keeps_raw_result_and_does_not_write_the_host(projection, bwrap, tmp_path, monkeypatch):
+def test_readonly_task_keeps_raw_result_and_can_retain_host_telemetry(projection, bwrap, tmp_path, monkeypatch):
     session, raw, ledger, source, files = bind_projection(
         projection, bwrap, tmp_path, monkeypatch, readonly=True,
     )
     assert project_and_sink(session, 'bash', 'check', raw, 3) == raw
     ledger.record_transform.assert_not_called()
-    assert _sink_trace_output(session, raw, 3) == ''
+    retained = _sink_trace_output(session, raw, 3)
+    assert (trace_output_root(session) / retained).read_text() == raw
     assert not (source / '.tool_output').exists()
     assert not (session.cwd / '.tool_output').exists()
 

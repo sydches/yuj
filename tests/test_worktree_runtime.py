@@ -83,13 +83,16 @@ def test_session_sinks_stay_readable_but_not_untracked(tmp_path):
     from _config_helpers import make_config
     from scripts.llm_solver.harness.loop import Session
     from scripts.llm_solver.harness._loop.trace_output import _sink_trace_output
+    from scripts.llm_solver.harness.retained_output import trace_output_root
     repo = _make_repo(tmp_path)
     info = create_session_worktree(repo, mode="auto", run_id="sink-session")
     session = Session(make_config(), MagicMock(), "sys", "task", str(info.session_cwd))
     pointer = session._sink_to_disk("full shell bytes", 1)
     trace_path = _sink_trace_output(session, "full trace bytes", 2)
     assert ".tool_output/" in pointer
-    assert (info.session_cwd / trace_path).read_text() == "full trace bytes"
+    trace_root = trace_output_root(session)
+    assert not trace_root.is_relative_to(info.session_cwd)
+    assert (trace_root / trace_path).read_text() == "full trace bytes"
     assert not _git(info.session_cwd, "status", "--porcelain=v1")
 
 

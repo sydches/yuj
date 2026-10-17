@@ -706,7 +706,9 @@ def project(
                 "plan_artifact": bool(ev.get("plan_artifact")),
                 "pass_fail": str(ev.get("pass_fail") or ""),
                 "output_sha256": str(ev.get("output_sha256") or ""),
-                "output_full_path": str(ev.get("output_full_path") or ""),
+                "output_full_path": str(ev.get("output_full_path") or "") if (
+                    ev.get("output_full_path_scope", "workspace") == "workspace"
+                ) else "",
             }
             # Preserve tool-owned outcome evidence before rendering advice.
             # Missing legacy evidence stays unknown; never infer it from text.

@@ -282,6 +282,25 @@ Python checks. A completed pipeline can create a cache even when its test result
 is unresolved. Previously edited paths and undeclared output files remain
 inputs; cache recognition grants no verification credit.
 
+### Retained trace output
+
+Large audit-only tool results live in `tool_output/` beside the actual trace
+file. The trace records `output_full_path_scope="telemetry"`; its relative
+path resolves from that trace's parent directory. These files stay outside
+the task workspace and are not exposed through state or detector packets.
+If the telemetry directory is inside an enclosing Git repository, only the
+newly created retained file is locally excluded. Existing project files remain
+visible to Git.
+
+Model-readable output sinks remain in the task workspace and use
+`output_full_path_scope="workspace"`. A missing scope on an older trace also
+means workspace. An empty retained path means no full output was saved.
+Retaining trace output does not change the tool result delivered to the model.
+
+A branch bundle copies only retained files named by its selected trace prefix
+and verifies their recorded hashes. Missing, changed, conflicting, or escaping
+paths fail the capture. Unreferenced files and later-turn output are excluded.
+
 ### Tool and turn timing
 
 Use the trace's timing fields according to their measured scope:

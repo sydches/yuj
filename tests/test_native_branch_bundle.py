@@ -1,4 +1,5 @@
 """Branch snapshots consume the task view without running a branch attempt."""
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,6 +48,15 @@ def test_bundle_capture_reads_native_tree_and_sunk_outputs(bwrap, tmp_path, monk
     baseline.write_text('[loop]\nmax_turns = 3\n')
     artifacts = tmp_path / 'records'
     artifacts.mkdir()
+    (artifacts / 'tool_output').mkdir()
+    for name in ('past.log', 'future.log', 'unreferenced.log'):
+        (artifacts / 'tool_output' / name).write_bytes((name + '\n').encode())
+    def trace_output(name, turn):
+        data = (artifacts / 'tool_output' / name).read_bytes()
+        return dict(event='tool_call', turn_number=turn,
+                    output_full_path='tool_output/' + name,
+                    output_full_path_scope='telemetry',
+                    output_sha256=hashlib.sha256(data).hexdigest())
     state = artifacts / 'state.json'
     state.write_text('{"private_state":true}\n')
     cfg = make_config(**vars(_cfg(tmp_path / 'bundles', baseline)),
@@ -57,6 +67,8 @@ def test_bundle_capture_reads_native_tree_and_sunk_outputs(bwrap, tmp_path, monk
     session = SimpleNamespace(
         cfg=cfg, cwd=str(workspace), context=context, instance_id='fixture',
         attempt_id='fixture-attempt', _state_path=state,
+        _trace_path=artifacts / '.trace.jsonl',
+        _trace_events=[trace_output('past.log', 1), trace_output('future.log', 2)],
         _effective_env=environment, _allow_login_shell=False, _ignore_policy=None,
     )
     calls = []
@@ -85,6 +97,11 @@ def test_bundle_capture_reads_native_tree_and_sunk_outputs(bwrap, tmp_path, monk
         assert (bundle / 'repo_snapshot/alias.py').read_bytes() == b'native\x00\xff\r\n'
         assert not (bundle / 'repo_snapshot/alias.py').is_symlink()
         assert (bundle / 'sunk_outputs/log').read_text() == 'native output'
+        assert sorted(path.name for path in (bundle / 'tool_output').iterdir()) == ['past.log']
+        assert (bundle / 'tool_output/past.log').read_bytes() == b'past.log\n'
+        integrity = json.loads((bundle / 'integrity.json').read_text())['file_sha256']
+        assert integrity['tool_output/past.log'] == hashlib.sha256(b'past.log\n').hexdigest()
+        assert not (bundle / 'repo_snapshot/tool_output').exists()
         assert json.loads((bundle / 'solver_state.json').read_text()) == {'private_state': True}
         exclusions = json.loads((bundle / 'snapshot_exclusions.json').read_text())
         assert exclusions['exclusions'] == []
@@ -128,3 +145,32 @@ def test_bundle_capture_keeps_native_task_after_host_alias_retargets(bwrap, tmp_
     assert result['status'] == 'created', result
     bundle = tmp_path / 'bundles' / result['branch_point_id']
     assert (bundle / 'repo_snapshot/module.py').read_text() == 'selected native module'
+
+
+@pytest.mark.parametrize('failure', ['missing', 'tampered', 'escape', 'traversal', 'conflict', 'directory'])
+def test_trace_output_copy_rejects_unavailable_or_mismatched_handles(tmp_path, failure):
+    source = tmp_path / 'records'
+    (source / 'tool_output').mkdir(parents=True)
+    output = source / 'tool_output/result.log'
+    output.write_bytes(b'retained\x00bytes\n')
+    row = dict(output_full_path='tool_output/result.log', output_full_path_scope='telemetry',
+               output_sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+    rows = [row]
+    if failure == 'missing':
+        output.unlink()
+    elif failure == 'tampered':
+        output.write_bytes(b'changed')
+    elif failure == 'escape':
+        outside = tmp_path / 'outside.log'
+        outside.write_bytes(output.read_bytes())
+        output.unlink()
+        output.symlink_to(outside)
+    elif failure == 'traversal':
+        row['output_full_path'] = '../outside.log'
+    elif failure == 'conflict':
+        rows.append({**row, 'output_sha256': '0' * 64})
+    else:
+        output.unlink()
+        output.mkdir()
+    with pytest.raises((ValueError, FileNotFoundError)):
+        branch_bundle._copy_trace_outputs(source, tmp_path / 'copy', rows)

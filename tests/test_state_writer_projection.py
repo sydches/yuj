@@ -250,6 +250,8 @@ class TestProjectEvidence:
         assert out["evidence"][0]["verdict"] == "FAIL"
         assert out["trace"][0]["output_sha256"] == "abc123"
         assert out["trace"][0]["output_full_path"] == ".tool_output/1_0001_t0_trace.log"
+        events[0]['output_full_path_scope'] = 'telemetry'
+        assert _project(events)['trace'][0]['output_full_path'] == ''
 
     def test_error_wrapper_is_fail_evidence(self):
         events = [

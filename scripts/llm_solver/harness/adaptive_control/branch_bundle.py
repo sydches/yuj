@@ -194,6 +194,45 @@ def _prefix_events(session, branch_slot: int) -> list[dict]:
     return out
 
 
+def _copy_trace_outputs(source_root: Path, destination: Path, prefix: list[dict]) -> None:
+    """Carry only hash-checked telemetry handles named by this trace prefix."""
+    references: dict[str, str] = {}
+    for event in prefix:
+        for field in ('output_full_path', 'model_output_full_path'):
+            name = event.get(field)
+            if not name or event.get(field + '_scope', 'workspace') != 'telemetry':
+                continue
+            relative = Path(name)
+            if (relative.is_absolute() or '..' in relative.parts
+                    or len(relative.parts) < 2 or relative.parts[0] != 'tool_output'):
+                raise ValueError('invalid telemetry output path')
+            digest = event.get(field.replace('_full_path', '_sha256'))
+            if (not isinstance(digest, str) or len(digest) != 64
+                    or any(char not in '0123456789abcdef' for char in digest)):
+                raise ValueError('invalid telemetry output digest')
+            name = relative.as_posix()
+            if name in references and references[name] != digest:
+                raise ValueError('conflicting telemetry output digests')
+            references[name] = digest
+    if not references:
+        return
+    source_root = source_root.resolve()
+    for name, expected in references.items():
+        source = (source_root / name).resolve(strict=True)
+        source.relative_to(source_root)
+        if not source.is_file():
+            raise ValueError('telemetry output is not a regular file')
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        with source.open('rb') as incoming, target.open('xb') as outgoing:
+            for chunk in iter(lambda: incoming.read(1 << 20), b''):
+                digest.update(chunk)
+                outgoing.write(chunk)
+        if digest.hexdigest() != expected:
+            raise ValueError('telemetry output hash mismatch')
+
+
 def _copy_configs(configs_dir: Path, baseline_paths: tuple[Path, ...]) -> dict[str, str]:
     copied: dict[str, str] = {}
     configs_dir.mkdir(parents=True, exist_ok=True)
@@ -292,6 +331,8 @@ def maybe_capture(session, decision, turn: int, boundary_type: str) -> dict[str,
     try:
         prefix = _prefix_events(session, int(turn))
         _write_text_jsonl(tmp / "prefix.trace.jsonl", prefix)
+        from ..retained_output import trace_output_root
+        _copy_trace_outputs(trace_output_root(session), tmp, prefix)
         _write_json(tmp / "context_messages.json", session.context.get_messages())
         exclusions: list[dict] = []
         worktree_digest = _capture_task_trees(session, repo_dir, tmp, exclusions)

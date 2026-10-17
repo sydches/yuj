@@ -61,6 +61,10 @@ def _trace_prefix_rows(
         for field_name in TRACE_PACKET_FIELDS:
             if field_name not in event:
                 continue
+            if (field_name == 'output_full_path'
+                    and event.get('output_full_path_scope', 'workspace') != 'workspace'):
+                row[field_name] = ''
+                continue
             row[field_name] = _packet_value(event[field_name], max_field_chars=max_field_chars)
         rows.append(row)
     return rows

@@ -38,8 +38,11 @@ def test_session_keeps_preexisting_runtime_named_project_files_visible(tmp_path,
 
 @pytest.mark.parametrize("existing_link", [False, True])
 def test_trace_sink_does_not_replace_existing_file(tmp_path, existing_link):
-    output = tmp_path / ".tool_output"
-    output.mkdir()
+    task = tmp_path / "task"
+    task.mkdir()
+    telemetry = tmp_path / "telemetry"
+    output = telemetry / "tool_output"
+    output.mkdir(parents=True)
     existing = output / "1_0001_t2_trace.log"
     original = tmp_path / "original.txt"
     original.write_text("original")
@@ -47,12 +50,14 @@ def test_trace_sink_does_not_replace_existing_file(tmp_path, existing_link):
         existing.symlink_to(original)
     else:
         existing.write_text("original")
-    session = SimpleNamespace(cwd=str(tmp_path), _session_number=1, _sink_counter=0)
+    session = SimpleNamespace(cwd=str(task), _trace_path=telemetry / ".trace.jsonl",
+                              _session_number=1, _sink_counter=0)
     path = _sink_trace_output(session, "fresh", 2)
     assert existing.read_text() == "original"
     assert original.read_text() == "original"
-    assert path == ".tool_output/1_0002_t2_trace.log"
-    assert (tmp_path / path).read_text() == "fresh"
+    assert path == "tool_output/1_0002_t2_trace.log"
+    assert (telemetry / path).read_text() == "fresh"
+    assert list(task.iterdir()) == []
 
 
 @pytest.mark.parametrize("writer", [sink_to_disk, _sink_trace_output])
@@ -61,8 +66,12 @@ def test_sink_does_not_adopt_a_symlinked_output_directory(tmp_path, writer):
     task.mkdir()
     other = tmp_path / "other"
     other.mkdir()
-    (task / ".tool_output").symlink_to(other, target_is_directory=True)
-    session = SimpleNamespace(cwd=str(task), _session_number=1, _sink_counter=0, cfg=make_config())
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    output = telemetry / "tool_output" if writer is _sink_trace_output else task / ".tool_output"
+    output.symlink_to(other, target_is_directory=True)
+    session = SimpleNamespace(cwd=str(task), _trace_path=telemetry / ".trace.jsonl",
+                              _session_number=1, _sink_counter=0, cfg=make_config())
     assert writer(session, "private output", 1) == ""
     assert list(other.iterdir()) == []
 

@@ -2,7 +2,7 @@
 
 ``.trace.jsonl`` is durable telemetry, not a raw transcript.  This module
 keeps each tool-call row bounded while preserving replay handles for
-the full bytes when the harness retains them under ``.tool_output/``.
+the full bytes in task output or host telemetry storage.
 """
 from __future__ import annotations
 
@@ -105,11 +105,13 @@ def _result_fields(session: "Session", result: str, turn: int) -> dict[str, Any]
     snippet = _truncate(result, cap)
 
     retained_path = _existing_retained_path(session, result)
+    retained_scope = 'workspace'
     retained_text = _read_retained_text(session, retained_path) if retained_path else None
     if retained_path and retained_text is None:
         retained_path = ""
     if retained_text is None and len(result) > cap:
         retained_path = _sink_trace_output(session, result, turn)
+        retained_scope = 'telemetry'
         retained_text = result if retained_path else None
 
     full_text = retained_text if retained_text is not None else result
@@ -122,6 +124,7 @@ def _result_fields(session: "Session", result: str, turn: int) -> dict[str, Any]
         "output_chars": len(full_text),
         "output_lines": _line_count(full_text),
         "output_full_path": retained_path or "",
+        "output_full_path_scope": retained_scope if retained_path else '',
         "output_retained": bool(retained_path),
     }
 
