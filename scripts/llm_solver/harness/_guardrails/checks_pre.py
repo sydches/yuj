@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from ..operation_timing import measured
 
 from .state import PASS, Action, Decision, GuardrailState
 from .extractors import (
@@ -160,6 +161,7 @@ def pre_mutation_gate(
     return Decision.block(text, reason="pre_mutation_gate")
 
 
+@measured("verification.done_guard")
 def done_guard(
     state: GuardrailState,
     cfg: Any,

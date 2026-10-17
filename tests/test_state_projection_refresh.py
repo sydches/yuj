@@ -32,7 +32,10 @@ def test_every_published_state_matches_full_projection(tmp_path, imperative):
         dict(event='tool_call', session_number=0, turn_number=0, tool_name='think',
              args_summary='retained thought', reasoning='thought reasoning'),
         dict(event='tool_timing', session_number=0, turn_number=100),
-        dict(event='turn_timing', session_number=0, turn_number=101),
+        dict(event='turn_timing', session_number=0, turn_number=101,
+             operation_timing_version=1, operations=[{
+                 'operation': ['verification.done_guard'], 'tool_call_id': 'finish',
+                 'calls': 1, 'elapsed_ms': 80000, 'self_ms': 80000, 'max_ms': 80000, 'raised': 0}]),
         dict(event='tool_end', session_number=0, turn_number=102),
         dict(event='turn', session_number=0, turn_number=103),
         dict(event='tool_call', session_number=0, turn_number=2, tool_name='read', args_summary='file.py'),
@@ -49,6 +52,7 @@ def test_every_published_state_matches_full_projection(tmp_path, imperative):
     for index, event in enumerate(events):
         value._trace_events.append(event)
         actual = assert_current(value)
+        assert 'verification.done_guard' not in json.dumps(actual)
         if 1 <= index <= 5:
             assert actual['trace'][0]['reasoning'] == 'thought reasoning'
         if index == 6:

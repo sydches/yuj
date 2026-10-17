@@ -10,6 +10,7 @@ import subprocess
 import time
 
 from .action_metadata import action_metadata
+from .operation_timing import measured
 from .task_path import active_task_files
 from .task_file_runtime import make_task_files
 from .time_budget import BudgetExhausted, command_time_budget, execution_deadline, remaining_before
@@ -20,6 +21,7 @@ OBSERVED_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES | {
 }
 
 
+@measured("changes.inventory")
 def _inventory(files, cwd, owned_paths, *, include_directories=False):
     remaining_before(execution_deadline())
     excluded = [".git"]

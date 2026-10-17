@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 import orjson
+from ..operation_timing import measured
 
 log = logging.getLogger(__name__)
 
@@ -228,7 +229,8 @@ TRACE_EVENT_SPECS: tuple[TraceEventSpec, ...] = (TraceEventSpec("completed_obser
                    "duration_ms", "tool_phase_ms", "post_turn_ms",
                    "next_model_preparation_ms", "turn_total_ms"}),
         frozenset({"boundary", "chat_call_ms", "tool_ms", "post_ms", "harness_ms",
-                   "model_to_boundary_ms", "dispatch_executed"}),
+                   "model_to_boundary_ms", "dispatch_executed",
+                   "operation_timing_version", "operations"}),
     ),
     TraceEventSpec(
         "todos",
@@ -543,6 +545,7 @@ def _validate_event(event_type: str, fields_keys) -> None:
                     event_type, sorted(missing))
 
 
+@measured("trace.write_and_project")
 def write_trace(session, entry: dict) -> None:
     """Session-level equivalent: write a single pre-built JSON line to the
     session's trace file, append it to the in-memory event mirror, and

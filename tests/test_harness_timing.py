@@ -141,3 +141,41 @@ def test_parallel_dispatch_failure_records_every_finished_worker(tmp_path, monke
     terminal = next(row for row in session._trace_events if row["event"] == "turn_timing")
     assert terminal["boundary"] == "session_end" and terminal["dispatch_executed"]
     assert all(terminal[field] >= 0 for field in ("duration_ms", "tool_phase_ms", "post_turn_ms", "post_ms", "tool_ms"))
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_operation_breakdown_reaches_trace_with_call_identity(tmp_path, monkeypatch, parallel):
+    from scripts.llm_solver.harness.operation_timing import measured, take_operations
+    @measured("fixture.read")
+    def dispatch(*args, **kwargs):
+        return "task bytes"
+    monkeypatch.setattr(loop, "dispatch", dispatch)
+    session = loop.Session(make_config(max_turns=2, parallel_readonly_enabled=parallel),
+        _client([ToolCall(str(i), "read", {"path": f"{i}.py"}) for i in range(2)]),
+        "system", "task", str(tmp_path))
+    assert session.run().done
+    rows = [row for row in session._trace_events if row["event"] == "turn_timing"]
+    assert all(row["operation_timing_version"] == 1 for row in rows)
+    reads = [row for row in rows[0]["operations"] if row["operation"][-1] == "fixture.read"]
+    assert {row["tool_call_id"] for row in reads} == {"0", "1"}
+    assert all(row["calls"] == 1 for row in reads)
+    assert not any(row["operation"][-1] == "fixture.read" for row in rows[1]["operations"])
+    assert take_operations() == []
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("require_mutation", [False, True])
+def test_completion_guard_has_cost_even_without_tool_dispatch(tmp_path, explicit, require_mutation):
+    client = _client([])
+    client.chat.side_effect = [TurnResult(content="finished",
+        tool_calls=[ToolCall("finish", "done", {"message": "done"})] if explicit else [],
+        finish_reason="tool_calls" if explicit else "stop", usage=Usage(10, 2))]
+    session = loop.Session(make_config(max_turns=1, done_guard_enabled=True,
+                           done_require_mutation=require_mutation, done_require_verify=False),
+                           client, "system", "task", str(tmp_path))
+    assert session.run().done is not require_mutation
+    turn = next(row for row in session._trace_events if row["event"] == "turn_timing")
+    guards = [row for row in turn["operations"] if row["operation"][-1] == "verification.done_guard"]
+    assert len(guards) == 1
+    assert guards[0]["tool_call_id"] == ("finish" if explicit else None)
+    assert not turn["dispatch_executed"] and turn["tool_ms"] == 0

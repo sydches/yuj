@@ -14,6 +14,7 @@ from ...language_quirks import (
 )
 from ..command_redirect import split_shell_fragments, strip_leading_assignments
 from ..bash_write_classification import is_workspace_path, normalize_trace_path
+from ..operation_timing import measured
 from .extractors import MUTATION_TOOLS, _is_bash_write_like
 from .state import PASS, Decision, GuardrailState
 from .custom_execution import (
@@ -40,6 +41,7 @@ def _file_revision(cwd: str | Path, path: str) -> str:
         return ""
 
 
+@measured("verification.file_revisions")
 def _file_revisions(cwd, paths) -> dict[str, str]:
     """Observe tracked bytes together, retaining scalar exceptional-path results."""
     paths = tuple(paths)
@@ -134,6 +136,7 @@ def automatic_component_verification_due(
     )
 
 
+@measured("verification.select_target")
 def resolve_component_verification_target(
     state: GuardrailState,
     cwd: str | Path,
@@ -239,6 +242,7 @@ def verification_runner_unavailable(result: str, *, tc_name: str = "bash",
     return False
 
 
+@measured("verification.source_paths")
 def _safe_source_paths(root: Path, raw_paths: tuple[str, ...]) -> list[Path]:
     from ..task_path import resolve_task_path
     paths: list[Path] = []

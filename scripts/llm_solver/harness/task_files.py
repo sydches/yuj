@@ -15,6 +15,7 @@ import stat
 from typing import Callable
 
 from .task_file_scripts import _DISCOVER, _OPERATE, _DIGEST_BATCH, _RESOLVE_FILES
+from .operation_timing import measured
 
 
 class TaskFileError(OSError):
@@ -195,6 +196,7 @@ class NamespaceFiles:
                 raise ValueError(f'path escapes task root: {value}') from None
         return value
 
+    @measured(lambda self, operation, *args, **kwargs: "files." + operation)
     def _call(self, operation, path, *, utility='', args=(), data=None, success=(0,), script_prefix=''):
         if self.readonly and operation in ('write', 'create', 'mkdir', 'chmod', 'unlink', 'unlink_entries', 'replace', 'link', 'rmdir'):
             raise PermissionError(errno.EROFS, 'external task resource is read-only', str(path))

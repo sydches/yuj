@@ -8,6 +8,7 @@ import os
 import shlex
 
 from .task_files import NamespaceFiles
+from .operation_timing import measured
 from .sandbox.env_policy import build_bash_argv
 from .task_environment import discover_task_environment
 from .time_budget import execution_deadline, remaining_before
@@ -107,6 +108,7 @@ def make_task_files(cwd, cfg, *, environment, allow_login_shell=False,
         binding['execution_selection_sha256'] = hashlib.sha256(
             json.dumps(selection, separators=(',', ':')).encode('ascii')).hexdigest()
 
+    @measured("files.transport")
     def run(script, args, data):
         if host_task_root is not None:
             host_task_root.verify()

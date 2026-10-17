@@ -21,6 +21,7 @@ from ..sandbox.env_policy import (
 )
 from ..task_environment import TaskEnvironmentUnavailable
 from ..process_identity import ProcessIdentityError
+from ..operation_timing import measured
 from ..time_budget import (
     BudgetExhausted, command_timeout, command_is_scoped,
     execution_deadline, remaining_before,
@@ -51,6 +52,14 @@ class SandboxUnavailableError(RuntimeError):
     """The selected execution boundary is unavailable."""
 
 
+def _process_operation(argv, **kwargs):
+    if len(argv) > 1 and os.path.basename(argv[0]) in {"docker", "podman"}:
+        if argv[1] in {"exec", "run"}:
+            return "process.container_" + argv[1]
+    return "process.execute"
+
+
+@measured(_process_operation)
 def _execute(argv, *, timeout, cwd=None, env=None, input_bytes=None, binary=False,
              pass_fds=()):
     from ..process_identity import verified_process_result, with_container_deadline
@@ -183,6 +192,7 @@ def ambient_unshare_net_status() -> tuple[bool, bool]:
     return _AMBIENT_UNSHARE_PROBED, _AMBIENT_UNSHARE_AVAILABLE
 
 
+@measured("sandbox.command")
 def _run_in_sandbox(
     cmd: str, *, cwd: str, timeout: float | None, sandbox: bool,
     bwrap_bin: str, sandbox_required: bool = False,

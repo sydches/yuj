@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 from functools import wraps
 import time
 
+from ..operation_timing import (
+    operation, operation_call, operation_profile, pause_operation_timing, take_operations,
+)
+
 
 @dataclass
 class DispatchTiming:
@@ -27,7 +31,7 @@ def timed_dispatch(state, tc, dispatch, *args, emit_end=True, **kwargs):
     completed = False
     try:
         from ..read_reuse import reuse_scope
-        with reuse_scope(state.session, tc, state.turn,
+        with operation_call(tc.id), operation("tool.dispatch"), reuse_scope(state.session, tc, state.turn,
                          allow_reuse=len(getattr(state, 'schema_validations', {})) <= 1) as reuse:
             result = dispatch(*args, **kwargs)
             if reuse is not None:
@@ -110,24 +114,28 @@ class TurnTiming:
         tool_ms = dispatch_union_ms(self.dispatches.values())
         boundary_ms = (ready - self.model_started) * 1000
         last_dispatch = max((row.finished for row in self.dispatches.values()), default=None)
-        session._emit(
-            "turn_timing", session_number=session._session_number, turn_number=self.turn,
-            next_turn_number=next_turn,
-            scope=("tool_preparation_through_next_model_call_entry" if next_turn is not None
-                   else "tool_preparation_through_session_end"),
-            boundary="next_model_call_entry" if next_turn is not None else "session_end",
-            duration_ms=round((ready - tools_started) * 1000, 2),
-            tool_phase_ms=round((tools_finished - tools_started) * 1000, 2),
-            post_turn_ms=round((post_finished - tools_finished) * 1000, 2),
-            next_model_preparation_ms=(round((ready - post_finished) * 1000, 2)
-                                       if next_turn is not None else None),
-            turn_total_ms=round((ready - self.turn_started) * 1000, 2),
-            chat_call_ms=round(chat_ms, 2), tool_ms=round(tool_ms, 2),
-            post_ms=round((ready - last_dispatch) * 1000, 2) if last_dispatch is not None else None,
-            harness_ms=round(max(0.0, boundary_ms - chat_ms - tool_ms), 2),
-            model_to_boundary_ms=round(boundary_ms, 2),
-            dispatch_executed=bool(self.dispatches),
-        )
+        operations = take_operations()
+        # Publishing this row is outside both the boundary and its breakdown.
+        with pause_operation_timing():
+            session._emit(
+                "turn_timing", session_number=session._session_number, turn_number=self.turn,
+                next_turn_number=next_turn,
+                scope=("tool_preparation_through_next_model_call_entry" if next_turn is not None
+                       else "tool_preparation_through_session_end"),
+                boundary="next_model_call_entry" if next_turn is not None else "session_end",
+                duration_ms=round((ready - tools_started) * 1000, 2),
+                tool_phase_ms=round((tools_finished - tools_started) * 1000, 2),
+                post_turn_ms=round((post_finished - tools_finished) * 1000, 2),
+                next_model_preparation_ms=(round((ready - post_finished) * 1000, 2)
+                                           if next_turn is not None else None),
+                turn_total_ms=round((ready - self.turn_started) * 1000, 2),
+                chat_call_ms=round(chat_ms, 2), tool_ms=round(tool_ms, 2),
+                post_ms=round((ready - last_dispatch) * 1000, 2) if last_dispatch is not None else None,
+                harness_ms=round(max(0.0, boundary_ms - chat_ms - tool_ms), 2),
+                model_to_boundary_ms=round(boundary_ms, 2),
+                dispatch_executed=bool(self.dispatches),
+                operation_timing_version=1, operations=operations,
+            )
 
 
 def record_turn_timings(function):
@@ -136,12 +144,13 @@ def record_turn_timings(function):
     def wrapped(session):
         session._pending_turn_timing = None
         session._tool_dispatch_timings = {}
-        try:
-            return function(session)
-        finally:
-            timing = session._pending_turn_timing
-            if timing is not None:
-                timing.finish(session)
-                session._pending_turn_timing = None
-            session._tool_dispatch_timings = {}
+        with operation_profile():
+            try:
+                return function(session)
+            finally:
+                timing = session._pending_turn_timing
+                if timing is not None:
+                    timing.finish(session)
+                    session._pending_turn_timing = None
+                session._tool_dispatch_timings = {}
     return wrapped

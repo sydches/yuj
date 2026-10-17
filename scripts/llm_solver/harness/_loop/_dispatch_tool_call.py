@@ -31,6 +31,7 @@ from ..._shared.classification import is_error_result
 from .._guardrails.extractors import MUTATION_TOOLS
 from ..security_scan import security_block_stage
 from ..injections import UserTurnInjection
+from ..operation_timing import measured, operation_call
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
 from .timing import timed_dispatch
 from ._dispatch_types import TCOutcome, TurnState
@@ -144,6 +145,7 @@ def _automatic_verification_not_executed(result, metadata, status, *, budget=Non
     return combined
 
 
+@measured("verification.automatic")
 def _run_automatic_component_verification(
     tc,
     state: "TurnState",
@@ -397,7 +399,7 @@ def _tool_call_transform_scope(function):
             started = time.perf_counter()
         completed = False
         try:
-            with transform_scope(str(getattr(tc, "id", "") or "")):
+            with operation_call(tc.id), transform_scope(str(getattr(tc, "id", "") or "")):
                 result = function(tc, *args, **kwargs)
             completed = True
             return result
@@ -418,6 +420,7 @@ def _observation_owned_paths(session):
     return _snapshot_owned_paths(Path(session.cwd), session)
 
 
+@measured("changes.apply_effects")
 def _apply_dispatch_effects(tc, state, metadata, execution_metadata, result):
     """Record observed effects before a tool-error policy can end the turn."""
     if metadata.get("plan_artifact"):
@@ -490,6 +493,7 @@ def _check_done_verification(tc, state: "TurnState") -> tuple[str, float, dict]:
     return "", 0.0, metadata
 
 
+@measured("verification.implicit_completion")
 def check_implicit_completion(*, session, cfg, turn, content, dispatch, log,
                               tool_pre, tool_post, observers, prompt_tokens,
                               completion_tokens, turn_t0):
@@ -1499,6 +1503,7 @@ def _exec_cell_trace_fields(tc, state: "TurnState", execution_metadata: dict) ->
 
 
 @_tool_call_transform_scope
+@measured("tool.process")
 def dispatch_one_tool_call(tc, state: TurnState) -> TCOutcome:
     """Run all of Phase 6 for one tool call.
 

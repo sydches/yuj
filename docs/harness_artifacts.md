@@ -298,6 +298,52 @@ advisor work outside that call and raw tool dispatch fall under `harness_ms`.
 Use their own records for finer attribution. Do not interpret this split as
 CPU usage or total inference-server time.
 
+From runtime 8.1.20, `turn_timing` also carries
+`operation_timing_version = 1` and an `operations` array. Read each row as
+one aggregate for an operation path and `tool_call_id` within that boundary.
+The collector covers the session loop from entry, then from the previous
+boundary. It includes preparation before the first model call, but excludes
+session startup outside the loop, cleanup after loop exit and publication of
+the timing row itself. A null call ID identifies loop work, including an
+implicit completion check.
+
+| Field | Meaning |
+| --- | --- |
+| `operation` | Nested code-owned labels, from outer operation to inner operation. No command arguments, task paths or output bodies. |
+| `calls` | Number of completed or raised invocations in this group. |
+| `elapsed_ms` | Sum of measured elapsed intervals, including measured children. |
+| `self_ms` | Elapsed time after subtracting measured children on the same thread. Includes uninstrumented work and waits. |
+| `max_ms` | Longest invocation in the group. |
+| `raised` | Invocations that raised an exception, including errors later handled by their caller. This is not a command failure count. |
+
+Use the nested labels to attribute file resolution, hashing, inventories,
+automatic verification, sandbox commands and trace publication. `tool.process`
+covers call processing, including guards and post-processing; `tool.dispatch`
+covers raw dispatch and reuse checks. Parallel dispatch finishes before its
+call processing, so those operations have separate roots.
+`process.container_exec` counts invocations of the shared process runner with
+a Docker or Podman `exec` launcher. `process.container_run` covers their `run`
+launcher; other launchers use `process.execute`. These intervals include
+process startup, execution, output transfer and result checks. Persistent-shell
+commands remain in `sandbox.command`; they need no new process launch. Direct
+subprocess calls outside this shared runner are not included in its count.
+
+Rank operation costs with the report below. Add `--json` for structured output.
+The report also reads older traces and retains their model/tool/harness split.
+Missing breakdowns remain unknown. Records arrive at the next model boundary
+or normal loop exit; a killed or still-running turn has no completed breakdown.
+
+```sh
+python -m scripts.llm_solver.analysis.timing_report RUN_DIR --limit 20
+```
+
+Compare `calls` with `max_ms` to distinguish many small calls from one slow
+call. Use `self_ms` to avoid adding nested children twice. Parallel workers
+still overlap, so summed operation times are not session wall time and must
+not be added to the model/tool/harness split. Use the ranked turn and call
+identities to find the owning execution records. Timing aggregates stay in
+the existing trace and do not enter model-facing tool output.
+
 When comparing implementations, measure the complete operation through its
 next usable result, including required log writes and shutdown work. Preserve
 output, coverage, freshness, and complete records. Moving work into idle time
