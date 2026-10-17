@@ -9,7 +9,7 @@ import fnmatch
 import io
 import os
 
-from .task_files import NamespaceFiles, TaskFileError
+from .task_files import NamespaceFiles, TaskFileError, _relative_posix_parts
 
 
 from ._task_host_root import HostTaskRoot, capture_host_task_root
@@ -56,7 +56,11 @@ class TaskPath:
             if self.files is not other.files:
                 raise ValueError('paths belong to different task views')
             other = other.path
-        return self.path.relative_to(other)
+        root = PurePosixPath(other)
+        relative = _relative_posix_parts(self.path, root)
+        if relative is None:
+            raise ValueError(f'{str(self.path)!r} is not in the subpath of {str(root)!r}')
+        return PurePosixPath(*relative)
 
     def is_relative_to(self, other):
         try:

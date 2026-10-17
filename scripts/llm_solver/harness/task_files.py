@@ -26,6 +26,18 @@ class TaskUtilityUnavailable(TaskFileError):
     """Discovery completed, but the named utility was absent."""
 
 
+def _relative_posix_parts(path: PurePosixPath, root: PurePosixPath) -> tuple[str, ...] | None:
+    """Compare lexical components without constructing every parent path.
+
+    Preserve distinct anchors and literal ``..`` components. Native operations
+    still resolve symlinks and enforce containment in their selected namespace.
+    """
+    parts, root_parts = path.parts, root.parts
+    if path.anchor != root.anchor or parts[:len(root_parts)] != root_parts:
+        return None
+    return parts[len(root_parts):]
+
+
 @dataclass(frozen=True)
 class FileMetadata:
     mode: int
@@ -190,10 +202,10 @@ class NamespaceFiles:
             raise ValueError('task path must be a NUL-free string')
         parsed = PurePosixPath(value)
         if parsed.is_absolute():
-            try:
-                return str(parsed.relative_to(self.root))
-            except ValueError:
-                raise ValueError(f'path escapes task root: {value}') from None
+            relative = _relative_posix_parts(parsed, self.root)
+            if relative is None:
+                raise ValueError(f'path escapes task root: {value}')
+            return '/'.join(relative) or '.'
         return value
 
     @measured(lambda self, operation, *args, **kwargs: "files." + operation)
@@ -253,7 +265,7 @@ class NamespaceFiles:
                   for name, target in zip(fields[0:-1:2], fields[1:-1:2])}
         if not set(result).issubset(names) or (not partial and set(result) != set(names)):
             raise TaskFileError('task resolved paths differ from request')
-        if any(not PurePosixPath(target).is_relative_to(self.root) for target in result.values()):
+        if any(_relative_posix_parts(PurePosixPath(target), self.root) is None for target in result.values()):
             raise TaskFileError('resolved task path escapes root')
         return result
 

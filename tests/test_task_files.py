@@ -1,14 +1,79 @@
 """Task file primitives must observe real namespace mounts and permissions."""
 import shutil
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import textwrap
 
 import pytest
 
-from scripts.llm_solver.harness.task_files import NamespaceFiles, TaskFileError
+from scripts.llm_solver.harness.task_files import NamespaceFiles, TaskFileError, _relative_posix_parts
+
+
+def test_lexical_posix_relatives_match_pathlib_without_filesystem_access():
+    from scripts.llm_solver.harness.task_path import TaskPath
+
+    def unavailable(*args):
+        raise AssertionError('lexical comparison must not access the filesystem')
+
+    files = NamespaceFiles('/task', unavailable, binding={})
+    spellings = (
+        '', '.', '..', '../child', 'task', 'task/file', 'task/../file',
+        'task/./file', 'task//file', 'task-other/file', '/', '//', '///',
+        '/task', '/task/', '/task/file', '/task/../file', '/task/../task/file',
+        '/task//file', '/task-other/file', '//task', '//task/file',
+        '///task/file', 'task/日本語', '/task/日本語', '/task/line\nname\t',
+        '/task/literal\\name', '/task/\udcff', '/task/.hidden', '/task/-option',
+    )
+    for raw in spellings:
+        path = PurePosixPath(raw)
+        task = TaskPath(files, path)
+        for base in spellings:
+            root = PurePosixPath(base)
+            relative = _relative_posix_parts(path, root)
+            assert (relative is not None) == path.is_relative_to(root), (raw, base)
+            assert task.is_relative_to(root) == path.is_relative_to(root), (raw, base)
+            if relative is None:
+                with pytest.raises(ValueError):
+                    task.relative_to(root)
+            else:
+                expected = path.relative_to(root)
+                assert PurePosixPath(*relative) == expected, (raw, base)
+                assert task.relative_to(root) == expected, (raw, base)
+                assert task.relative_to(TaskPath(files, root)) == expected, (raw, base)
+
+
+def test_native_lexical_admission_retains_identity_nul_and_escape_checks():
+    from scripts.llm_solver.harness.task_path import TaskPath
+
+    files = NamespaceFiles('/task', None, binding={})
+    other = NamespaceFiles('/task', None, binding={})
+    task = TaskPath(files, files.root / 'file')
+    with pytest.raises(ValueError, match='different task views'):
+        task.relative_to(TaskPath(other, other.root))
+    assert not task.is_relative_to(TaskPath(other, other.root))
+    for raw in ('/task\x00/file', 'relative\x00file', b'/task/file'):
+        with pytest.raises(ValueError, match='NUL-free string'):
+            files._relative(raw)
+    for raw in ('/task-other/file', '/other', '//task/file'):
+        with pytest.raises(ValueError, match='escapes task root'):
+            files._relative(raw)
+    assert files._relative('/task') == '.'
+    assert files._relative('/task/../file') == '../file'
+    assert files._relative('/task//./line\nname\udcff') == 'line\nname\udcff'
+    # Relative request spelling remains untouched until native resolution.
+    assert files._relative('./task/../file') == './task/../file'
+
+
+@pytest.mark.parametrize('mode', ['paths', 'partial'])
+@pytest.mark.parametrize('target', ['/task-other/file', '//task/file', 'task/file'])
+def test_resolved_file_response_rejects_lexical_escape(mode, target, monkeypatch):
+    files = NamespaceFiles('/task', None, binding={})
+    response = b'/task/file\0' + target.encode() + b'\0'
+    monkeypatch.setattr(files, '_call', lambda *args, **kwargs: response)
+    with pytest.raises(TaskFileError):
+        files._resolve_paths(['file'], mode)
 
 
 @pytest.mark.parametrize('retarget', [False, True])
