@@ -497,15 +497,21 @@ def observe_post_mutation_verification(
         return
     if tc_name not in {"bash", "exec_cell", "run_tests", "bash_poll"}:
         return
-    if (not verification_tree_matches(state, cwd)
-            or verification_changes_tree(tc_name, tc_args)):
-        return
     facts = execution_metadata or {}
     formal_attempt = (tc_name == "run_tests"
                       or (facts.get("runner_request") or {}).get("check_intent")
                       or facts.get("verification_status") in {"passed", "failed", "runner_unavailable"})
-    if (facts.get("executed") and facts.get("exit_status_known") and
-            formal_attempt):
+    formal_execution = bool(facts.get("executed") and facts.get("exit_status_known")
+                            and formal_attempt)
+    # Inspect current revisions only when this result can update the observer.
+    if not formal_execution and (
+            state.post_mutation_automatic_verification_attempted
+            or tc_name != "bash" or not completed_custom_execution(facts, cwd)):
+        return
+    if (not verification_tree_matches(state, cwd)
+            or verification_changes_tree(tc_name, tc_args)):
+        return
+    if formal_execution:
         state.post_mutation_non_test_bash_count = 0
         state.post_mutation_verification_gate_armed = False
         passed = verification_result_passed(tc_name, result, execution_metadata)
@@ -518,10 +524,6 @@ def observe_post_mutation_verification(
         if not verification_runner_unavailable(result, tc_name=tc_name,
                                                execution_metadata=execution_metadata):
             state.post_mutation_automatic_verification_unavailable = False
-        return
-    if state.post_mutation_automatic_verification_attempted:
-        return
-    if tc_name != "bash" or not completed_custom_execution(facts, cwd):
         return
     observed_runtime = _observe_runtime_executable(facts)
     state.post_mutation_observed_runtime_family = ""

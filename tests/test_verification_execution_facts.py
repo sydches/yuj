@@ -19,7 +19,8 @@ from scripts.llm_solver.harness.tools import dispatch
 
 @pytest.mark.parametrize('tool', ['read', 'grep', 'glob', 'bash'])
 @pytest.mark.parametrize('verified', [False, True])
-def test_non_check_results_do_not_rehash_verification_inputs(monkeypatch, tool, verified):
+@pytest.mark.parametrize('observer', [mark_bash_verified, observe_post_mutation_verification])
+def test_non_check_results_do_not_rehash_verification_inputs(monkeypatch, tool, verified, observer):
     from scripts.llm_solver.harness._guardrails import verification
     state = GuardrailState(has_mutated=True, verified_since_mutation=verified,
                            verification_file_revisions={'generated.pyc': 'previous'})
@@ -28,12 +29,72 @@ def test_non_check_results_do_not_rehash_verification_inputs(monkeypatch, tool, 
         pytest.fail('an ordinary tool result cannot update verification credit')
 
     monkeypatch.setattr(verification, 'verification_tree_matches', unexpected_hash)
-    mark_bash_verified(state, make_config(), tc_name=tool, result='ordinary output',
-                       gate_blocked=False, cwd='/task', execution_metadata={
-                           'executed': True, 'exit_status_known': True, 'exit_status': 0,
-                           'file_changes': {'status': 'unchanged_metadata'},
-                       })
+    observer(state, make_config(), tc_name=tool, result='ordinary output',
+             gate_blocked=False, cwd='/task', execution_metadata={
+                 'executed': True, 'exit_status_known': True, 'exit_status': 0,
+                 'file_changes': {'status': 'unchanged_metadata'},
+             })
     assert state.verified_since_mutation is verified
+
+
+@pytest.mark.parametrize('case', ['inspection', 'already_attempted', 'not_executed'])
+def test_post_mutation_ineligible_results_skip_revision_observation(monkeypatch, case):
+    from scripts.llm_solver.harness._guardrails import verification
+    state = GuardrailState(has_mutated=True, verified_since_mutation=True,
+                           verification_file_revisions={'dependency/input.py': 'previous'},
+                           post_mutation_automatic_verification_attempted=case == 'already_attempted')
+    facts = {'executed': case != 'not_executed', 'exit_status_known': True, 'exit_status': 0,
+             'file_changes': {'status': 'unchanged_metadata'},
+             'verification_status': 'shell_unresolved' if case == 'inspection' else 'custom_passed',
+             'shell_submission': {'executable': 'python', 'task_cwd': '/task'}}
+    monkeypatch.setattr(verification, 'verification_tree_matches',
+                        lambda *args: pytest.fail('ineligible result must not observe revisions'))
+    observe_post_mutation_verification(state, make_config(), tc_name='bash', result='output',
+        gate_blocked=False, cwd='/task', execution_metadata=facts)
+    assert state.verified_since_mutation
+    assert state.post_mutation_non_test_bash_count == 0
+
+
+@pytest.mark.parametrize('case', ['formal_pass', 'formal_timeout', 'custom_pass'])
+@pytest.mark.parametrize('changed', [False, True])
+def test_eligible_post_mutation_result_still_checks_current_input_bytes(tmp_path, case, changed):
+    cfg = make_config(sandbox_bash=False, post_mutation_verification_gate_after=1)
+    state = GuardrailState(has_mutated=True)
+    path = tmp_path / 'dependency.py'
+    path.write_text('VALUE = 1\n')
+    seed_edited_input(state, cfg, tmp_path, path.name)
+    if changed:
+        path.write_text('VALUE = 2\n')
+    facts = {'executed': True, 'exit_status_known': True, 'exit_status': 0,
+             'file_changes': {'status': 'unchanged_metadata'}}
+    if case == 'custom_pass':
+        facts.update(verification_status='custom_passed',
+                     shell_submission={'executable': 'python', 'task_cwd': str(tmp_path)})
+        tool = 'bash'
+    else:
+        tool = 'run_tests'
+        facts['verification_status'] = 'passed'
+        if case == 'formal_timeout':
+            facts.update(verification_status='timed_out', timed_out=True, exit_status=124)
+    observe_post_mutation_verification(state, cfg, tc_name=tool, result='display text',
+        gate_blocked=False, cwd=tmp_path, execution_metadata=facts)
+    assert state.formal_verification_passed_since_mutation is (case == 'formal_pass' and not changed)
+    assert state.formal_verification_failure_pending is (case == 'formal_timeout' and not changed)
+    assert state.post_mutation_verification_gate_armed is (case == 'custom_pass' and not changed)
+
+
+@pytest.mark.parametrize('status', ['unavailable', 'incomplete'])
+def test_post_mutation_unavailable_changes_still_invalidate_before_eligibility(monkeypatch, status):
+    from scripts.llm_solver.harness._guardrails import verification
+    state = GuardrailState(has_mutated=True, verified_since_mutation=True,
+                           formal_verification_passed_since_mutation=True)
+    monkeypatch.setattr(verification, 'verification_tree_matches',
+                        lambda *args: pytest.fail('unavailable changes must return before revisions'))
+    observe_post_mutation_verification(state, make_config(), tc_name='bash', result='output',
+        gate_blocked=False, execution_metadata={'verification_status': 'shell_unresolved',
+                                               'file_changes': {'status': status}})
+    assert not state.verified_since_mutation
+    assert not state.formal_verification_passed_since_mutation
 
 
 @pytest.mark.parametrize('status', ['changed', 'incomplete', 'unavailable'])
