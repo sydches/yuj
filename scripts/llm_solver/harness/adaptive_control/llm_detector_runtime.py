@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -16,16 +18,57 @@ from .llm_detector_core import (
     append_detector_log,
     build_detector_log_row,
     build_detector_packet,
+    load_atlas_families,
     parse_detector_verdict,
     render_detector_messages,
 )
+from .llm_detector_utils import TRACE_PACKET_FIELDS, _trace_prefix_events
+
+
+class DetectorLogWriter:
+    """One session-owned audit job; the loop owns decisions and error handling."""
+
+    def __init__(self):
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='detector-log')
+        self._future = None
+
+    def drain(self):
+        if self._future is not None:
+            future = self._future
+            try:
+                future.result()
+            finally:
+                if future.done():
+                    self._future = None
+
+    def submit(self, *args):
+        self.drain()
+        self._future = self._executor.submit(_write_detector_audit, *args)
+
+    def close(self):
+        try:
+            self.drain()
+        finally:
+            self._executor.shutdown(wait=True)
+
+
+def _write_detector_audit(log_path, packet_args, raw_response, verdict, extras):
+    packet = build_detector_packet(**packet_args)
+    row = build_detector_log_row(packet=packet, messages=render_detector_messages(packet),
+                                 raw_response=raw_response, verdict=verdict)
+    row.update(extras)
+    append_detector_log(log_path, row)
+
 
 def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | None:
     """Run the configured no-tool LLM detector after a solver turn.
 
-    This is fail-open: a detector error is logged when possible, but it must not
-    interrupt the solver loop.
+    Failed live verdicts become uncertain observations. Setup and audit-write
+    errors propagate; a pending audit is reconciled before another invocation.
     """
+    writer = getattr(session, '_detector_log_writer', None)
+    if writer is not None:
+        writer.drain()
     cfg = getattr(session, "cfg", None)
     if not bool(getattr(cfg, "llm_hurdle_detector_enabled", False)):
         return None
@@ -59,7 +102,9 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
     if not log_path:
         return None
 
-    packet = build_detector_packet(
+    backend = str(getattr(cfg, "llm_hurdle_detector_backend", "llm") or "llm")
+    deferred = backend == 'trace_nets' and writer is not None
+    packet_args = dict(
         atlas_dictionary_path=atlas_source,
         input_contract_path=str(getattr(cfg, "llm_hurdle_detector_input_contract_path", "") or ""),
         trace_events=list(getattr(session, "_trace_events", []) or []),
@@ -72,11 +117,22 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
         prompt_version=str(getattr(cfg, "llm_hurdle_detector_prompt_version", PROMPT_VERSION) or PROMPT_VERSION),
     )
 
-    messages = render_detector_messages(packet)
+    if deferred:
+        # Read/parse the atlas before live evaluation, as on the synchronous
+        # path. The worker receives values, never a later view of the file.
+        packet_args['atlas_families'] = load_atlas_families(atlas_source)
+        fields = set(TRACE_PACKET_FIELDS) | {'output_full_path_scope'}
+        packet_args['trace_events'] = [
+            {key: value for key, value in event.items() if key in fields}
+            for event in _trace_prefix_events(packet_args['trace_events'], int(turn))
+        ]
+        packet_args = deepcopy(packet_args)
+    else:
+        packet = build_detector_packet(**packet_args)
+        messages = render_detector_messages(packet)
     raw_response = ""
     routed = None
     request_allowance = None
-    backend = str(getattr(cfg, "llm_hurdle_detector_backend", "llm") or "llm")
     try:
         if backend == "trace_nets":
             # mechanical soft-tier nets, in-process: no model call at all
@@ -108,7 +164,7 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
                 record_role_usage(session, routed, response.usage)
                 raw_response = response.content
             verdict = parse_detector_verdict(raw_response)
-        row = build_detector_log_row(
+        row = {} if deferred else build_detector_log_row(
             packet=packet,
             messages=messages,
             raw_response=raw_response,
@@ -130,7 +186,7 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
             timing_basis="detector_error",
             uncertainty=f"{type(exc).__name__}: {exc}",
         )
-        row = build_detector_log_row(
+        row = {} if deferred else build_detector_log_row(
             packet=packet,
             messages=messages,
             raw_response=raw_response,
@@ -145,6 +201,9 @@ def maybe_run_llm_hurdle_detector(session: Any, turn: int) -> dict[str, Any] | N
         from .observation_notice import record_observation_notice
         record_observation_notice(session, int(turn), row)
     _maybe_apply_detector_intervention(session, int(turn), verdict, row)
+    if deferred:
+        writer.submit(log_path, packet_args, raw_response, deepcopy(verdict), deepcopy(row))
+        return None
     append_detector_log(log_path, row)
     return row
 
@@ -195,6 +254,9 @@ def _config_state(cfg: Any) -> dict[str, Any]:
 
 
 def _log_detector_setup_error(session: Any, turn: int, reason: str) -> dict[str, Any] | None:
+    writer = getattr(session, '_detector_log_writer', None)
+    if writer is not None:
+        writer.drain()
     log_path = _detector_log_path(session)
     if not log_path:
         return None

@@ -303,6 +303,76 @@ def test_next_request_can_overlap_finish_but_final_exit_reconciles(
         ['call-read'] if finish_fails else [])
 
 
+@pytest.mark.parametrize('log_fails, loop_fails', [(False, False), (True, False), (True, True)])
+def test_session_drains_detector_audit_and_shuts_down_on_every_exit(
+    tmp_path, monkeypatch, log_fails, loop_fails,
+):
+    from scripts.llm_solver.harness.adaptive_control import llm_detector_runtime as runtime
+    from scripts.llm_solver.harness._loop.run_step import run_session_loop
+
+    entered, release = threading.Event(), threading.Event()
+    append = runtime.append_detector_log
+
+    def held_append(*args):
+        entered.set()
+        assert release.wait(3)
+        if log_fails:
+            raise OSError('audit write failed')
+        append(*args)
+
+    monkeypatch.setattr(runtime, 'append_detector_log', held_append)
+    atlas = tmp_path / 'atlas.tsv'
+    atlas.write_text('family\tcell_count\tdescription\nrepeat_wall\t1\trepeated result\n')
+    trace, audit = tmp_path / '.trace.jsonl', tmp_path / 'detector.jsonl'
+    call = ToolCall(id='call-read', name='read', arguments={'path': 'a.txt'})
+    client = MagicMock()
+    client.build_assistant_message.side_effect = _assistant_message
+    requests = []
+
+    def chat(*_args, **_kwargs):
+        requests.append(True)
+        if len(requests) == 1:
+            return _result(calls=[call])
+        assert entered.wait(3)
+        assert session._detector_log_writer._future is not None
+        assert not session._detector_log_writer._future.done()
+        release.set()
+        return _result(content='Done.', finish_reason='stop')
+
+    def checked_loop(session):
+        result = run_session_loop(session)
+        if loop_fails:
+            raise ValueError('independent loop failure')
+        return result
+
+    client.chat.side_effect = chat
+    cfg = make_config(max_turns=3, llm_hurdle_detector_enabled=True,
+        llm_hurdle_detector_backend='trace_nets', adaptive_control_enabled=False,
+        guardrails_arm_after_turn=10000, llm_hurdle_detector_atlas_dictionary_path=str(atlas),
+        llm_hurdle_detector_log_path=str(audit))
+    try:
+        with trace.open('a') as stream, patch(
+            'scripts.llm_solver.harness.loop.dispatch', return_value='file contents',
+        ), patch('scripts.llm_solver.harness._loop.run_step.run_session_loop', checked_loop):
+            session = Session(cfg, client, 'system', 'task', str(tmp_path),
+                trace_file=stream, trace_path=trace, session_number=1)
+            if loop_fails:
+                with pytest.raises(ValueError, match='independent loop failure') as error:
+                    session.run()
+                assert isinstance(error.value.__cause__, OSError)
+            elif log_fails:
+                with pytest.raises(OSError, match='audit write failed'):
+                    session.run()
+            else:
+                assert session.run().done
+                assert len(audit.read_text().splitlines()) == 1
+    finally:
+        release.set()
+    assert session._detector_log_writer is None
+    assert not any(thread.name.startswith('detector-log') for thread in threading.enumerate())
+    assert _events(trace)[-1]['kind'] == ('fatal' if log_fails else 'normal')
+
+
 def test_resume_injection_uses_interrupted_unknown_outcome_message(
     tmp_path: Path,
 ) -> None:

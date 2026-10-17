@@ -51,12 +51,7 @@ def _trace_prefix_rows(
     max_field_chars: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for event in trace_events:
-        if event.get("event") != "tool_call":
-            continue
-        turn = _int_value(event.get("turn_number"), -1)
-        if turn < 0 or turn > observation_turn:
-            continue
+    for event in _trace_prefix_events(trace_events, observation_turn):
         row: dict[str, Any] = {}
         for field_name in TRACE_PACKET_FIELDS:
             if field_name not in event:
@@ -68,6 +63,12 @@ def _trace_prefix_rows(
             row[field_name] = _packet_value(event[field_name], max_field_chars=max_field_chars)
         rows.append(row)
     return rows
+
+
+def _trace_prefix_events(trace_events, observation_turn):
+    """Select eligible rows without converting fields that may be omitted."""
+    return [event for event in trace_events if event.get('event') == 'tool_call'
+            and 0 <= _int_value(event.get('turn_number'), -1) <= observation_turn]
 
 
 def _packet_value(value: Any, *, max_field_chars: int) -> Any:

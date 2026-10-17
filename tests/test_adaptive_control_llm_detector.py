@@ -195,19 +195,27 @@ def test_packet_preserves_llm_dictionary_fields(tmp_path: Path) -> None:
     ]
 
 
-def test_packet_can_limit_trace_tail_without_future_peeking(tmp_path: Path) -> None:
+@pytest.mark.parametrize('limit', [2, 0, -1])
+def test_packet_can_limit_trace_tail_without_future_peeking(tmp_path: Path, limit) -> None:
     packet = build_detector_packet(
         atlas_dictionary_path=_atlas(tmp_path / "hurdle_dictionary.v3.tsv"),
         observation_turn=4,
-        trace_events=[_event(1), _event(2), _event(3), _event(4), _event(5)],
-        max_trace_events=2,
-        max_state_snapshots=2,
+        trace_events=[_event(1, source_write_like=True, args_summary='same'),
+                      *[_event(turn, args_summary='same') for turn in range(2, 6)],
+                      _event(9, turn_number='malformed'), _event(-1)],
+        max_trace_events=limit,
+        max_state_snapshots=limit,
     )
 
-    assert [row["turn_number"] for row in packet.trace_prefix] == [3, 4]
-    assert [row["turn_number"] for row in packet.raw_state_snapshots] == ["3", "4"]
+    expected = [3, 4] if limit > 0 else []
+    assert [row["turn_number"] for row in packet.trace_prefix] == expected
+    assert [row["turn_number"] for row in packet.raw_state_snapshots] == list(map(str, expected))
     assert packet.omissions["trace_prefix_tool_calls_total"] == 4
-    assert packet.omissions["trace_prefix_older_tool_calls_omitted"] == 2
+    assert packet.omissions["trace_prefix_older_tool_calls_omitted"] == 4 - len(expected)
+    assert packet.omissions['raw_state_snapshots_total'] == 4
+    if expected:
+        assert packet.raw_state_snapshots[-1]['args_seen_before'] == '3'
+        assert packet.raw_state_snapshots[-1]['source_write_count_before'] == '1'
 
 
 def test_prompt_renders_detector_not_solver_contract(tmp_path: Path) -> None:

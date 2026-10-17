@@ -18,6 +18,7 @@ from .llm_detector_utils import (
     _string_list,
     _strip_json_fence,
     _tail,
+    _trace_prefix_events,
     _trace_prefix_rows,
 )
 
@@ -225,18 +226,20 @@ def build_detector_packet(
     max_field_chars: int = 800,
     max_state_snapshots: int = 24,
     prompt_version: str = PROMPT_VERSION,
+    atlas_families: list[dict[str, Any]] | None = None,
 ) -> LLMDetectorPacket:
     """Build a detector evidence packet from already-loaded live artifacts."""
     observation_turn = int(observation_turn)
-    trace_prefix_all = _trace_prefix_rows(
-        trace_events,
+    trace_prefix_all = _trace_prefix_events(trace_events, observation_turn)
+    trace_prefix = _trace_prefix_rows(
+        _tail(trace_prefix_all, max_trace_events),
         observation_turn=observation_turn,
         max_field_chars=max_field_chars,
     )
-    trace_prefix = _tail(trace_prefix_all, max_trace_events)
-    snapshots_all = [item.to_row() for item in replay_events(trace_events, through_turn=observation_turn)]
-    snapshots = _tail(snapshots_all, max_state_snapshots)
-    families = load_atlas_families(atlas_dictionary_path)
+    snapshots_all = replay_events(trace_events, through_turn=observation_turn)
+    snapshots = [item.to_row() for item in _tail(snapshots_all, max_state_snapshots)]
+    families = (load_atlas_families(atlas_dictionary_path)
+                if atlas_families is None else atlas_families)
 
     return LLMDetectorPacket(
         schema_version=SCHEMA_VERSION,
@@ -412,7 +415,8 @@ def build_detector_log_row(
     raw_response: str,
     verdict: LLMDetectorVerdict,
 ) -> dict[str, Any]:
-    packet_json = json.dumps(packet.to_dict(), sort_keys=True)
+    packet_dict = packet.to_dict()
+    packet_json = json.dumps(packet_dict, sort_keys=True)
     messages_json = json.dumps(messages, sort_keys=True)
     return {
         "event_type": EVENT_TYPE,
@@ -422,7 +426,7 @@ def build_detector_log_row(
         "evidence_regime": packet.evidence_regime,
         "packet_sha256": _sha256(packet_json),
         "messages_sha256": _sha256(messages_json),
-        "packet": packet.to_dict(),
+        "packet": packet_dict,
         "verdict": verdict.to_dict(),
         "raw_response": raw_response,
     }

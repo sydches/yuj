@@ -536,10 +536,20 @@ prompt when the task runs.
 
 ## Adaptive-control files
 
+The trace-nets detector keeps its verdict, notices and interventions on the
+session loop. Its audit packet and `llm_hurdle_detector.jsonl` row may be built
+and written by one session-owned worker. Freeze the observation-time trace
+fields, configuration, atlas contents, verdict and intervention additions
+before submitting the job. The worker must not read the changing session.
+Permit one outstanding job, preserve log order and propagate worker failures.
+Drain before recording normal session completion and close the worker on all
+exit paths. The LLM detector retains synchronous packet construction because
+its model request consumes that packet.
+
 | File | Writer | What it holds | Ready | Context | Detector | Audit | Scoring | Limits |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `<cell_dir>/adaptive_debug.jsonl` | adaptive-control debug writer | a summary of how the controller and detector used the live prefix to reach a decision | `live-prefix` append-only when debug is enabled | No. | No. It is controller output, not input. | Yes. | Yes, but only to check how well the controller worked. | It is not raw turn evidence. Do not use this file as the correct answer when you train or check a live detector. |
-| `<cell_dir>/llm_hurdle_detector.jsonl` | LLM hurdle detector | detector input summary, result, and effective model role for each model-backed call | `live-prefix` append-only when enabled | No. | No as input to the same detector call. | Yes. | Yes, but only to check detector behavior after the run. | It is detector output. Do not treat it as raw proof that a hurdle existed. |
+| `<telemetry_dir>/llm_hurdle_detector.jsonl` or configured detector log path | hurdle-detector audit writer | frozen observation packet, verdict, intervention result, and model role when used | `live-prefix`, with ordered asynchronous publication for trace-nets | No. | No. It records detector output. | Yes. | Yes, but only to check detector behavior after the run. | The live file may lag the current turn. Successful session completion drains queued rows. Do not treat it as raw proof that a hurdle existed. |
 | `<cell_dir>/adaptive_control_ledger.jsonl` | adaptive-control ledger writer | when the controller did or did not act, and how it applied each intervention | `live-prefix` append-only when enabled | No. | No. It is controller output, not input. | Yes. | Yes, but only to record when and how the controller applied interventions. | Do not use it as live detector input. Do not use it as proof that a hurdle existed. |
 | `<branch_bundle_root>/<branch_point_id>/prefix.trace.jsonl` | branch bundle capture | source-run `.trace.jsonl` prefix through the branch slot | `live-prefix` snapshot for the source run; `run-start` for branch attempts | Yes, but only to rebuild a replay or branch. | No for the source run. A branch replay may read prefix facts from it. | Yes. | Yes, to check where the branch setup came from. | It must not contain source-run events after the branch slot. |
 | `<branch_bundle_root>/<branch_point_id>/context_messages.json` | branch bundle capture | context messages visible when Yuj captures the branch | `run-start` for branch attempts | Yes, to rebuild the branch. | No. | Yes. | No. | Use it only to set up replay. After capture, do not use it as live evidence about the source run. |

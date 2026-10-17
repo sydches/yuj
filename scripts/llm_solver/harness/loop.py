@@ -1020,6 +1020,7 @@ class Session:
         # trace_file is set, so tests that poke at internal state
         # without running the loop don't spawn writer threads.
         self._async_trace_writer = None
+        self._detector_log_writer = None
         # Installed only while ``run`` owns the active trace writer. Tool
         # dispatch uses this recorder to make starts durable before execution
         # and to retain unresolved calls for signal/fatal recovery.
@@ -1662,6 +1663,7 @@ class Session:
             maybe_install_persistent_bash, teardown_persistent_bash,
         )
         from ._loop.trace_async_writer import AsyncTraceWriter
+        from .adaptive_control.llm_detector_runtime import DetectorLogWriter
         runner = None
         # Lazy-start the async trace writer only when actually running
         # the loop; tests that construct Session without calling run()
@@ -1677,6 +1679,7 @@ class Session:
                 sync_before=partial(self._async_trace_writer.barrier, require_fsync=False),
             )
         try:
+            self._detector_log_writer = DetectorLogWriter()
             if diagnostics is not None:
                 diagnostics.install()
                 self._exit_diagnostics = diagnostics
@@ -1699,16 +1702,24 @@ class Session:
                             + self._subagent_completion_tokens
                         ),
                     )
+                self._detector_log_writer.drain()
                 if diagnostics is not None:
                     # Surface finish failures inside the fatal-exit handler;
                     # record_exit must not snapshot stale pending completions.
                     diagnostics.reconcile_finished()
             except BaseException as exc:
+                secondary_error = None
+                try:
+                    self._detector_log_writer.drain()
+                except Exception as log_error:
+                    secondary_error = log_error
                 if diagnostics is not None:
                     try:
                         diagnostics.record_fatal_exception(exc)
                     except Exception as diagnostic_error:
-                        raise exc from diagnostic_error
+                        secondary_error = diagnostic_error
+                if secondary_error is not None:
+                    raise exc from secondary_error
                 raise
             if diagnostics is not None:
                 if result.finish_reason in {"length", "context_full"}:
@@ -1725,19 +1736,26 @@ class Session:
                     )
             return result
         finally:
-            if diagnostics is not None:
-                diagnostics.uninstall()
-            self._exit_diagnostics = None
-            teardown_persistent_bash(runner)
-            if self._lsp_manager is not None:
-                self._lsp_manager.close()
-            if self._process_manager is not None:
-                self._process_manager.close()
-            if self._terminal_manager is not None:
-                self._terminal_manager.close()
-            if self._async_trace_writer is not None:
-                self._async_trace_writer.stop(timeout=5.0)
-                self._async_trace_writer = None
+            try:
+                if diagnostics is not None:
+                    diagnostics.uninstall()
+                self._exit_diagnostics = None
+                teardown_persistent_bash(runner)
+                if self._lsp_manager is not None:
+                    self._lsp_manager.close()
+                if self._process_manager is not None:
+                    self._process_manager.close()
+                if self._terminal_manager is not None:
+                    self._terminal_manager.close()
+                if self._async_trace_writer is not None:
+                    self._async_trace_writer.stop(timeout=5.0)
+                    self._async_trace_writer = None
+            finally:
+                if self._detector_log_writer is not None:
+                    try:
+                        self._detector_log_writer.close()
+                    finally:
+                        self._detector_log_writer = None
 
 
     def _record_pressure_event(self, had_pressure: bool) -> None:

@@ -469,3 +469,164 @@ def test_trace_nets_cannot_open_an_episode_from_repeated_actions(tmp_path):
         assert session.cfg.loop_detect_enabled is False
     machine = getattr(session, "_adaptive_control_episode_machine", None)
     assert machine is None or machine.episodes_opened == 0
+
+
+def _audit_session(tmp_path, events):
+    from _config_helpers import make_config
+    atlas = tmp_path / 'atlas.tsv'
+    atlas.write_text('family\tcell_count\tdescription\nrepeat_wall\t1\toriginal\n')
+    return SimpleNamespace(_trace_events=events, _session_number=1,
+        cfg=make_config(llm_hurdle_detector_enabled=True, llm_hurdle_detector_backend='trace_nets',
+            llm_hurdle_detector_atlas_dictionary_path=str(atlas),
+            llm_hurdle_detector_log_path=str(tmp_path / 'detector.jsonl'),
+            adaptive_control_enabled=False, guardrails_arm_after_turn=10000))
+
+
+def test_deferred_audit_freezes_inputs_and_matches_direct_helper(tmp_path, monkeypatch):
+    import json
+    import threading
+    from dataclasses import replace
+    from pathlib import Path
+    from scripts.llm_solver.harness.adaptive_control import llm_detector_runtime as runtime
+
+    events = [_ev(turn, args=f'unique {turn}', sha=f'hash-{turn}') for turn in range(4)]
+    events[-1]['source_write_paths'] = ['original.py']
+    events[-1].update(output_full_path='tool_output/host.log', output_full_path_scope='telemetry')
+    session = _audit_session(tmp_path, events)
+    extras = {'nested': ['before']}
+    monkeypatch.setattr(runtime, '_maybe_apply_detector_intervention',
+                        lambda session, turn, verdict, row: row.update(extra=extras))
+    expected = runtime.maybe_run_llm_hurdle_detector(session, 3)
+    path = Path(session.cfg.llm_hurdle_detector_log_path)
+    assert expected == json.loads(path.read_text())
+    expected = json.loads(path.read_text())
+    path.unlink()
+    entered, release = threading.Event(), threading.Event()
+    original = runtime._write_detector_audit
+
+    def held(*args):
+        entered.set()
+        assert release.wait(3)
+        original(*args)
+
+    monkeypatch.setattr(runtime, '_write_detector_audit', held)
+    writer = runtime.DetectorLogWriter()
+    session._detector_log_writer = writer
+    try:
+        assert runtime.maybe_run_llm_hurdle_detector(session, 3) is None
+        assert entered.wait(3)
+        events[-1]['source_write_paths'].append('later.py')
+        events[-1]['args_summary'] = 'later command'
+        events.append(_ev(4, args='future', sha='future'))
+        Path(session.cfg.llm_hurdle_detector_atlas_dictionary_path).write_text('invalid later atlas')
+        session.cfg = replace(session.cfg, context_size=1)
+        extras['nested'].append('after')
+        release.set()
+        writer.drain()
+        assert json.loads(path.read_text()) == expected
+        assert expected['packet']['trace_prefix'][-1]['output_full_path'] == ''
+    finally:
+        release.set()
+        writer.close()
+
+
+def test_deferred_audit_has_one_future_and_propagates_failure_before_setup(tmp_path, monkeypatch):
+    import threading
+    from dataclasses import replace
+    from scripts.llm_solver.harness.adaptive_control import llm_detector_runtime as runtime
+
+    session = _audit_session(tmp_path, [_ev(0, args='first', sha='one')])
+    entered, release, waiting = (threading.Event() for _ in range(3))
+
+    def fail_write(*args):
+        entered.set()
+        assert release.wait(3)
+        raise OSError('detector log failed')
+
+    monkeypatch.setattr(runtime, 'append_detector_log', fail_write)
+    writer = runtime.DetectorLogWriter()
+    session._detector_log_writer = writer
+    errors = []
+    thread = None
+    try:
+        runtime.maybe_run_llm_hurdle_detector(session, 0)
+        assert entered.wait(3)
+        pending = writer._future
+        result = pending.result
+
+        def observed_result():
+            waiting.set()
+            return result()
+
+        pending.result = observed_result
+        session.cfg = replace(session.cfg, llm_hurdle_detector_atlas_dictionary_path='')
+
+        def next_call():
+            try:
+                runtime.maybe_run_llm_hurdle_detector(session, 1)
+            except Exception as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=next_call)
+        thread.start()
+        assert waiting.wait(3)
+        assert writer._future is pending
+        assert not errors
+        release.set()
+        thread.join(3)
+        assert not thread.is_alive()
+        assert len(errors) == 1 and str(errors[0]) == 'detector log failed'
+        assert writer._future is None
+    finally:
+        release.set()
+        if thread is not None:
+            thread.join(3)
+        writer.close()
+
+
+def test_deferred_audit_rejects_malformed_atlas_before_live_evaluation(tmp_path, monkeypatch):
+    from pathlib import Path
+    from scripts.llm_solver.harness.adaptive_control import llm_detector_runtime as runtime
+    from scripts.llm_solver.harness.adaptive_control import trace_nets_detector
+
+    session = _audit_session(tmp_path, [])
+    Path(session.cfg.llm_hurdle_detector_atlas_dictionary_path).write_text(
+        'family\tcell_count\ninvalid\tnot-a-number\n')
+    monkeypatch.setattr(trace_nets_detector, 'evaluate_trace_nets',
+                        lambda *args: pytest.fail('evaluation preceded atlas validation'))
+    writer = runtime.DetectorLogWriter()
+    session._detector_log_writer = writer
+    try:
+        with pytest.raises(ValueError):
+            runtime.maybe_run_llm_hurdle_detector(session, 0)
+        assert writer._future is None
+    finally:
+        writer.close()
+
+
+def test_interrupted_audit_drain_keeps_its_pending_slot():
+    from scripts.llm_solver.harness.adaptive_control.llm_detector_runtime import DetectorLogWriter
+
+    class InterruptedCompletion:
+        complete = False
+
+        def result(self):
+            if not self.complete:
+                raise KeyboardInterrupt()
+
+        def done(self):
+            return self.complete
+
+    writer = DetectorLogWriter()
+    pending = InterruptedCompletion()
+    writer._future = pending
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            writer.drain()
+        assert writer._future is pending
+        pending.complete = True
+        writer.drain()
+        assert writer._future is None
+    finally:
+        pending.complete = True
+        writer.close()
