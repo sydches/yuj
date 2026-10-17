@@ -12,6 +12,7 @@ from _config_helpers import make_config
 from scripts.llm_solver.harness._guardrails.state import GuardrailState
 from scripts.llm_solver.harness._guardrails.verification import resolve_component_verification_target
 from scripts.llm_solver.harness.tools import dispatch
+from tests.test_task_files import bwrap, namespace_files
 
 
 @pytest.mark.parametrize("sandbox", [False, True])
@@ -93,3 +94,89 @@ def test_native_collection_controls_the_actual_component_run(tmp_path, case, exp
         assert selection["items"] == []
         assert facts["verification_status"] != "passed"
     assert not list((tmp_path / ".tool_output").glob("yuj_component_*"))
+
+
+@pytest.mark.parametrize("case,batch_sizes", [
+    ("first_valid", [64]),
+    ("small", [3]),
+    ("invalid_prefix", [64, 1]),
+    ("hidden_prefix", [64, 2]),
+    ("all_missing", [64, 196]),
+    ("small_missing", [3]),
+])
+def test_suite_selection_keeps_first_visible_source_and_bounds_fallback(bwrap, tmp_path, case, batch_sizes):
+    from scripts.llm_solver.harness.task_path import TaskPath, activate_task_files
+    from scripts.llm_solver.harness.sandbox.ignore_policy import activate_ignore_policy, load_ignore_policy
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / "selected.js").write_text("selected source")
+    hidden = tuple(f"hidden-{index}.js" for index in range(65))
+    for name in hidden:
+        (source / name).write_text("hidden source")
+    (source / ".yujignore").write_text("hidden*\n")
+    (source / "directory").mkdir()
+    (source / "closed").mkdir(mode=0)
+    (tmp_path / "outside.js").write_text("outside source")
+    (source / "outside.js").symlink_to(tmp_path / "outside.js")
+    missing = tuple(f"missing-{index}.js" for index in range(260))
+    paths = {
+        "first_valid": ("selected.js", *missing),
+        "small": ("hidden-0.js", "missing.js", "selected.js"),
+        "invalid_prefix": (*missing[:60], "../outside.js", "outside.js", "directory", "closed/missing.js", "selected.js"),
+        "hidden_prefix": (*hidden, "selected.js"),
+        "all_missing": missing,
+        "small_missing": missing[:3],
+    }[case]
+    batches = []
+    native = files.run
+    def observed(script, arguments, data):
+        if len(arguments) > 3 and arguments[3] == "resolve_files":
+            batches.append(len(data.split(b"\0")) - 1)
+        return native(script, arguments, data)
+    files.run = observed
+    try:
+        with activate_task_files(files, host_root=source):
+            policy = load_ignore_policy(source)
+            with activate_ignore_policy(policy):
+                if case == "invalid_prefix" and os.geteuid() != 0:
+                    denied = files.resolve_file_states(["closed/missing.js"])
+                    assert denied[str(files.root / "closed/missing.js")][1] == "unknown"
+                    batches.clear()
+                target = resolve_component_verification_target(
+                    GuardrailState(post_mutation_source_paths=paths), TaskPath(files, files.root), runner="npm")
+        if case in {"all_missing", "small_missing"}:
+            assert target is None
+        else:
+            assert target.display == "<registered suite>"
+            assert target.source_path == "selected.js"
+        assert batches == batch_sizes
+    finally:
+        (source / "closed").chmod(0o700)
+
+
+def test_collection_selection_keeps_every_source_after_the_first_group(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_path import TaskPath, activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path)
+    names = tuple(f"source-{index}.py" for index in range(65))
+    for name in names:
+        (source / name).write_text("source bytes")
+    with activate_task_files(files, host_root=source):
+        target = resolve_component_verification_target(
+            GuardrailState(post_mutation_source_paths=names), TaskPath(files, files.root), runner="pytest")
+    assert target.display == "<runner-collected component>"
+    assert target.native_sources == names
+
+
+def test_component_templates_can_select_a_later_source(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_path import TaskPath, activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path)
+    for name in ("first.js", "second.js", "second.test.js"):
+        (source / name).write_text("source bytes")
+    with activate_task_files(files, host_root=source):
+        target = resolve_component_verification_target(
+            GuardrailState(post_mutation_source_paths=(*("first.js",) * 64, "second.js")),
+            TaskPath(files, files.root), runner="jest")
+    assert target.path == "second.test.js"
+    assert target.source_path == "second.js"

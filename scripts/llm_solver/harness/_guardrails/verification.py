@@ -174,7 +174,16 @@ def resolve_component_verification_target(
     from ..task_path import resolve_task_path
     root = resolve_task_path(cwd, '.')
     quirk = load_run_tests_quirk_object(root, runner=runner)
-    sources = _safe_source_paths(root, state.post_mutation_source_paths)
+    raw_sources = state.post_mutation_source_paths
+    if (not quirk.component_test_names
+            and not quirk.extra_fields.get("component_collection_plugin")
+            and quirk.component_fallback == "suite"):
+        sources = _safe_source_paths(root, raw_sources[:64])
+        if not sources and len(raw_sources) > 64:
+            sources = _safe_source_paths(root, raw_sources[64:])
+        sources = sources[:1]
+    else:
+        sources = _safe_source_paths(root, raw_sources)
     if not sources:
         return None
 
