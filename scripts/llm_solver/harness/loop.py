@@ -1699,9 +1699,16 @@ class Session:
                             + self._subagent_completion_tokens
                         ),
                     )
+                if diagnostics is not None:
+                    # Surface finish failures inside the fatal-exit handler;
+                    # record_exit must not snapshot stale pending completions.
+                    diagnostics.reconcile_finished()
             except BaseException as exc:
                 if diagnostics is not None:
-                    diagnostics.record_fatal_exception(exc)
+                    try:
+                        diagnostics.record_fatal_exception(exc)
+                    except Exception as diagnostic_error:
+                        raise exc from diagnostic_error
                 raise
             if diagnostics is not None:
                 if result.finish_reason in {"length", "context_full"}:

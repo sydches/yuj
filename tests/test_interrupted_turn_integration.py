@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -226,6 +227,80 @@ def test_parallel_reads_record_each_start_before_its_worker(
         if event["event"] == "tool_start"
     } == {"call-a", "call-b"}
     assert events[-1]["pending_tool_calls"] == []
+
+
+@pytest.mark.parametrize('finish_fails, loop_fails', [(False, False), (True, False), (True, True)])
+def test_next_request_can_overlap_finish_but_final_exit_reconciles(
+    tmp_path, monkeypatch, finish_fails, loop_fails,
+):
+    trace = tmp_path / '.trace.jsonl'
+    entered, release = threading.Event(), threading.Event()
+    real_fsync = os.fsync
+    writer_syncs = []
+
+    def held_finish(fd):
+        if threading.current_thread().name == 'harness-trace-writer':
+            writer_syncs.append(fd)
+            if len(writer_syncs) == 1:
+                entered.set()
+                assert release.wait(3)
+                if finish_fails:
+                    raise OSError('finish durability failed')
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, 'fsync', held_finish)
+    call = ToolCall(id='call-read', name='read', arguments={'path': 'a.txt'})
+    client = MagicMock()
+    client.build_assistant_message.side_effect = _assistant_message
+    requests = []
+
+    def chat(*_args, **_kwargs):
+        requests.append(True)
+        if len(requests) == 1:
+            return _result(calls=[call])
+        assert entered.wait(3)
+        assert session._exit_diagnostics.pending_tool_calls[0].tool_call_id == call.id
+        assert not session._exit_diagnostics._finishing[1].done.is_set()
+        release.set()
+        return _result(content='Done.', finish_reason='stop')
+
+    client.chat.side_effect = chat
+    from scripts.llm_solver.harness._loop.run_step import run_session_loop
+
+    def checked_loop(session):
+        result = run_session_loop(session)
+        if loop_fails:
+            raise ValueError('independent loop failure')
+        return result
+
+    try:
+        with trace.open('a') as stream, patch(
+            'scripts.llm_solver.harness.loop.dispatch', return_value='file contents',
+        ), patch(
+            'scripts.llm_solver.harness._loop.run_step.run_session_loop', checked_loop,
+        ):
+            session = Session(make_config(max_turns=3), client, 'system', 'task',
+                str(tmp_path), trace_file=stream, trace_path=trace, session_number=1)
+            if loop_fails:
+                with pytest.raises(ValueError, match='independent loop failure') as error:
+                    session.run()
+                assert isinstance(error.value.__cause__, RuntimeError)
+                assert isinstance(error.value.__cause__.__cause__, OSError)
+            elif finish_fails:
+                with pytest.raises(RuntimeError, match='barrier failed'):
+                    session.run()
+            else:
+                assert session.run().done
+    finally:
+        release.set()
+    assert len(requests) == 2
+    exit_event = _events(trace)[-1]
+    assert exit_event['event'] == 'session_exit'
+    assert exit_event['kind'] == ('fatal' if finish_fails else 'normal')
+    if loop_fails:
+        assert exit_event['reason'] == 'ValueError: independent loop failure'
+    assert [call['tool_call_id'] for call in exit_event['pending_tool_calls']] == (
+        ['call-read'] if finish_fails else [])
 
 
 def test_resume_injection_uses_interrupted_unknown_outcome_message(

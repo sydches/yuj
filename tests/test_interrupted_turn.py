@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import signal
+import threading
+from functools import partial
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from scripts.llm_solver.harness._loop.interrupted_turn import (
     recover_interrupted_trace,
 )
 from scripts.llm_solver.harness.state_writer import project
+from scripts.llm_solver.harness._loop.trace_async_writer import AsyncTraceWriter
 
 
 NOW = datetime(2026, 8, 23, 12, 34, 56, tzinfo=timezone.utc)
@@ -155,6 +158,133 @@ def test_finished_tool_is_not_reported_pending(tmp_path):
     assert recorder.record_tool_finished("call-7") is False
     recorder.record_exit(reason="done", kind="normal")
     assert _rows(trace)[-1]["pending_tool_calls"] == []
+
+
+@pytest.mark.parametrize('boundary', ['start', 'exit', 'signal', 'second_finish'])
+def test_pending_finish_reconciles_before_boundary_without_lock_callback(
+    tmp_path, monkeypatch, boundary,
+):
+    trace = tmp_path / '.trace.jsonl'
+    entered, release, waiting = (threading.Event() for _ in range(3))
+    real_fsync = os.fsync
+
+    def held_writer_fsync(fd):
+        if threading.current_thread().name == 'harness-trace-writer':
+            entered.set()
+            assert release.wait(3)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, 'fsync', held_writer_fsync)
+    with trace.open('a') as stream:
+        writer = AsyncTraceWriter(stream)
+        recorder = ExitDiagnostics(trace, session_number=1,
+            sync_before=partial(writer.barrier, require_fsync=False), clock=_clock)
+        _start(recorder)
+        if boundary == 'second_finish':
+            _start(recorder, call_id='call-8')
+        writer.submit('{"event":"tool_call","tool_call_id":"call-7"}\n')
+        assert recorder.defer_tool_finished('call-7', writer.barrier_async)
+        assert entered.wait(3)
+        first = recorder._finishing
+        completion = first[1]
+        real_wait = completion.wait
+
+        def observed_wait(timeout=5.0):
+            waiting.set()
+            real_wait(timeout)
+
+        completion.wait = observed_wait
+        errors = []
+
+        def boundary_call():
+            try:
+                if boundary == 'start':
+                    _start(recorder, call_id='call-8')
+                elif boundary == 'second_finish':
+                    writer.submit('{"event":"tool_call","tool_call_id":"call-8"}\n')
+                    recorder.defer_tool_finished('call-8', writer.barrier_async)
+                elif boundary == 'signal':
+                    recorder._previous_handlers[signal.SIGTERM] = lambda *_: None
+                    recorder._handle_signal(signal.SIGTERM, None)
+                else:
+                    recorder.record_exit(reason='done', kind='normal')
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=boundary_call)
+        try:
+            thread.start()
+            assert waiting.wait(3)
+            # Reading diagnostics from another thread would block here if
+            # reconciliation held its lock while waiting for the writer.
+            assert recorder._lock.acquire(timeout=0.5)
+            try:
+                assert recorder.pending_tool_calls[0].tool_call_id == 'call-7'
+            finally:
+                recorder._lock.release()
+            assert recorder._finishing is first
+            release.set()
+            thread.join(3)
+            assert not thread.is_alive() and not errors
+            recorder.reconcile_finished()
+            expected = ['call-8'] if boundary == 'start' else []
+            assert [call.tool_call_id for call in recorder.pending_tool_calls] == expected
+            rows = _rows(trace)
+            assert [row['event'] for row in rows][:2] == (
+                ['tool_start', 'tool_start'] if boundary == 'second_finish'
+                else ['tool_start', 'tool_call'])
+            if boundary in {'exit', 'signal'}:
+                assert rows[-1]['event'] == 'session_exit'
+                assert rows[-1]['pending_tool_calls'] == []
+        finally:
+            release.set()
+            thread.join(3)
+            writer.stop()
+
+
+def test_finish_failure_retains_pending_for_fatal_exit(tmp_path, monkeypatch):
+    trace = tmp_path / '.trace.jsonl'
+    real_fsync = os.fsync
+
+    def failing_writer_fsync(fd):
+        if threading.current_thread().name == 'harness-trace-writer':
+            raise OSError('durability failed')
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, 'fsync', failing_writer_fsync)
+    with trace.open('a') as stream:
+        writer = AsyncTraceWriter(stream)
+        recorder = ExitDiagnostics(trace, session_number=1,
+            sync_before=partial(writer.barrier, require_fsync=False), clock=_clock)
+        _start(recorder)
+        writer.submit('{"event":"tool_call","tool_call_id":"call-7"}\n')
+        recorder.defer_tool_finished('call-7', writer.barrier_async)
+        with pytest.raises(RuntimeError, match='barrier failed') as error:
+            _start(recorder, call_id='call-8')
+        assert [call.tool_call_id for call in recorder.pending_tool_calls] == ['call-7']
+        assert recorder._finishing is None
+        recorder.record_fatal_exception(error.value)
+        assert _rows(trace)[-1]['pending_tool_calls'][0]['tool_call_id'] == 'call-7'
+        assert not any(row.get('tool_call_id') == 'call-8' for row in _rows(trace))
+        with pytest.raises(RuntimeError, match='barrier failed'):
+            writer.stop()
+
+
+def test_finish_timeout_keeps_the_single_completion_slot(tmp_path):
+    from scripts.llm_solver.harness._loop.trace_async_writer import _DurabilityBarrier
+
+    recorder = ExitDiagnostics(tmp_path / '.trace.jsonl', session_number=1)
+    _start(recorder)
+    completion = _DurabilityBarrier(require_fsync=True)
+    assert recorder.defer_tool_finished('call-7', lambda: completion)
+    with pytest.raises(TimeoutError):
+        recorder.reconcile_finished(timeout=0.001)
+    assert recorder._finishing[1] is completion
+    assert recorder.pending_tool_calls[0].tool_call_id == 'call-7'
+    completion.done.set()
+    recorder.reconcile_finished()
+    assert recorder.pending_tool_calls == ()
+    assert not recorder.defer_tool_finished('unknown', lambda: pytest.fail('unexpected marker'))
 
 
 def test_recovery_truncates_torn_suffix_and_appends_one_aborted_row(tmp_path):

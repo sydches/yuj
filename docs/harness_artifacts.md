@@ -301,6 +301,16 @@ A branch bundle copies only retained files named by its selected trace prefix
 and verifies their recorded hashes. Missing, changed, conflicting, or escaping
 paths fail the capture. Unreferenced files and later-turn output are excluded.
 
+### Tool durability
+
+Persist `tool_start` before dispatch so interruption recovery can identify an
+unknown outcome. After a completed tool row, queue an ordered background fsync.
+Keep the call pending until that sync succeeds. Permit only one outstanding
+finish sync, and reconcile it before another tool start or an exit snapshot.
+The next model request may run while this finish sync completes. A failed sync
+retains the pending call and propagates its error; it cannot establish a
+completed outcome. Drain the writer before session cleanup finishes.
+
 ### Tool and turn timing
 
 Use the trace's timing fields according to their measured scope:

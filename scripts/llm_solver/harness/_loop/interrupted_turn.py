@@ -16,11 +16,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import FrameType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import orjson
 
 from .trace_schema import TRACE_SCHEMA_VERSION
+
+if TYPE_CHECKING:
+    from .trace_async_writer import _DurabilityBarrier
 
 InterruptedTurnMode = Literal["off", "mechanical"]
 ExitKind = Literal["normal", "truncated", "signal", "fatal", "process_exit"]
@@ -125,6 +128,7 @@ class ExitDiagnostics:
         self._sync_before = sync_before
         self._clock = clock
         self._pending: OrderedDict[str, PendingToolCall] = OrderedDict()
+        self._finishing: tuple[str, _DurabilityBarrier] | None = None
         self._lock = threading.RLock()
         self._exit_recorded = False
         self._installed = False
@@ -158,6 +162,7 @@ class ExitDiagnostics:
             args_summary=str(args_summary or ""),
             intent=str(intent or ""),
         )
+        self.reconcile_finished()
         with self._lock:
             if call_id in self._pending:
                 raise ValueError(f"tool call {call_id!r} is already pending")
@@ -170,6 +175,43 @@ class ExitDiagnostics:
         with self._lock:
             return self._pending.pop(str(tool_call_id), None) is not None
 
+    def defer_tool_finished(
+        self, tool_call_id: str, submit: Callable[[], _DurabilityBarrier]
+    ) -> bool:
+        """Keep one call pending until its ordered background fsync succeeds."""
+        self.reconcile_finished()
+        with self._lock:
+            call_id = str(tool_call_id)
+            if call_id not in self._pending:
+                return False
+            self._finishing = (call_id, submit())
+            return True
+
+    def reconcile_finished(self, timeout: float = 5.0) -> None:
+        """Observe completion before start/exit accounting, without callbacks."""
+        with self._lock:
+            finishing = self._finishing
+        if finishing is None:
+            return
+        call_id, completion = finishing
+        try:
+            completion.wait(timeout)
+        except TimeoutError:
+            # A timed-out marker may still be running. Keep the slot occupied
+            # so retrying cannot accumulate more background finish work.
+            raise
+        except RuntimeError:
+            # Consume the failed completion, but keep the call pending. The
+            # caller propagates the error and can still record a fatal exit.
+            with self._lock:
+                if self._finishing is finishing:
+                    self._finishing = None
+            raise
+        with self._lock:
+            if self._finishing is finishing:
+                self._pending.pop(call_id, None)
+                self._finishing = None
+
     @property
     def pending_tool_calls(self) -> tuple[PendingToolCall, ...]:
         with self._lock:
@@ -179,6 +221,13 @@ class ExitDiagnostics:
         """Write at most one ``session_exit`` row for this recorder."""
         if kind not in EXIT_KINDS:
             raise ValueError(f"unsupported session exit kind: {kind!r}")
+        finish_error = None
+        try:
+            self.reconcile_finished()
+        except RuntimeError as error:
+            # A failed, acknowledged finish leaves its call pending. Preserve
+            # that exit evidence before reporting the durability failure.
+            finish_error = error
         with self._lock:
             if self._exit_recorded:
                 return None
@@ -192,6 +241,8 @@ class ExitDiagnostics:
             )
             self._append(entry)
             self._exit_recorded = True
+            if finish_error is not None:
+                raise finish_error
             return entry
 
     def record_fatal_exception(self, exc: BaseException) -> dict | None:

@@ -9,6 +9,7 @@ harness hot path. Critical contracts:
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -102,3 +103,49 @@ def test_barrier_propagates_an_earlier_writer_failure(require_fsync):
         writer.barrier(require_fsync=require_fsync)
     with pytest.raises(RuntimeError, match="barrier failed"):
         writer.stop()
+
+
+def test_async_barrier_returns_before_fsync_and_preserves_order(tmp_path, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    real_fsync = os.fsync
+
+    def held_fsync(fd):
+        entered.set()
+        assert release.wait(3)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, 'fsync', held_fsync)
+    path = tmp_path / 'trace.jsonl'
+    with path.open('a') as stream:
+        writer = AsyncTraceWriter(stream)
+        try:
+            writer.submit('before\n')
+            completion = writer.barrier_async()
+            assert entered.wait(3)
+            assert not completion.done.is_set()
+            writer.submit('after\n')
+            assert path.read_text() == 'before\n'
+            with pytest.raises(TimeoutError):
+                completion.wait(0.001)
+            release.set()
+            completion.wait()
+        finally:
+            release.set()
+            writer.stop()
+    assert path.read_text() == 'before\nafter\n'
+
+
+def test_async_barrier_propagates_fsync_failure(tmp_path, monkeypatch):
+    def fail(_fd):
+        raise OSError('fsync unavailable')
+
+    monkeypatch.setattr(os, 'fsync', fail)
+    with (tmp_path / 'trace.jsonl').open('a') as stream:
+        writer = AsyncTraceWriter(stream)
+        writer.submit('retained in page cache\n')
+        completion = writer.barrier_async()
+        with pytest.raises(RuntimeError, match='barrier failed') as error:
+            completion.wait()
+        assert isinstance(error.value.__cause__, OSError)
+        with pytest.raises(RuntimeError, match='barrier failed'):
+            writer.stop()

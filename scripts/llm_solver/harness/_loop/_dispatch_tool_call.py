@@ -1321,15 +1321,14 @@ def record_tool_start(tc, state: "TurnState") -> None:
 
 
 def _record_tool_finished(tc, state: "TurnState") -> None:
-    """Clear pending state only after ordinary result evidence is durable."""
+    """Order background durability without clearing the pending call early."""
     diagnostics = getattr(state.session, "_exit_diagnostics", None)
     if diagnostics is None:
         return
     writer = getattr(state.session, "_async_trace_writer", None)
     if writer is None:
         raise RuntimeError("tool exit diagnostics require an active trace writer")
-    writer.barrier()
-    if not diagnostics.record_tool_finished(tc.id):
+    if not diagnostics.defer_tool_finished(tc.id, writer.barrier_async):
         raise RuntimeError(
             f"tool call {tc.id!r} finished without a pending tool_start"
         )

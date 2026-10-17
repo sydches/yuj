@@ -43,6 +43,15 @@ class _DurabilityBarrier:
         self.error: BaseException | None = None
         self.require_fsync = require_fsync
 
+    def wait(self, timeout: float = 5.0) -> None:
+        """Acknowledge durability, propagating a timeout or writer failure."""
+        if not self.done.wait(timeout=timeout):
+            raise TimeoutError(
+                f"trace durability barrier timed out after {timeout:.1f}s"
+            )
+        if self.error is not None:
+            raise RuntimeError("trace durability barrier failed") from self.error
+
 
 class AsyncTraceWriter:
     """Background daemon thread draining a queue of pre-formatted lines.
@@ -102,18 +111,21 @@ class AsyncTraceWriter:
         self, timeout: float = 5.0, *, require_fsync: bool = True
     ) -> None:
         """Drain, flush, and fsync every row submitted before this call."""
+        self.barrier_async(require_fsync=require_fsync).wait(timeout)
+
+    def barrier_async(self, *, require_fsync: bool = True) -> _DurabilityBarrier:
+        """Queue an ordered completion without waiting or invoking callbacks.
+
+        The diagnostics owner permits only one outstanding finish marker and
+        reconciles it before another tool start or session exit.
+        """
         if not self._thread.is_alive():
             if self._failure is not None:
                 raise RuntimeError("asynchronous trace writer failed") from self._failure
             raise RuntimeError("asynchronous trace writer is not running")
         marker = _DurabilityBarrier(require_fsync=require_fsync)
         self._queue.put(marker)
-        if not marker.done.wait(timeout=timeout):
-            raise TimeoutError(
-                f"trace durability barrier timed out after {timeout:.1f}s"
-            )
-        if marker.error is not None:
-            raise RuntimeError("trace durability barrier failed") from marker.error
+        return marker
 
     def stop(self, timeout: float = 5.0) -> None:
         """Signal stop and wait for the queue to drain.
