@@ -14,7 +14,40 @@ import json
 import logging
 from typing import Any
 
+from ..server.token_counting import _request_count_reuse, clear_request_count_reuse
+
 log = logging.getLogger(__name__)
+
+
+def _deterministic_encoding_binding(tokenizer):
+    """Recognize the standard native path; other tokenizers keep legacy counting."""
+    try:
+        from tokenizers.models import BPE, Unigram, WordLevel, WordPiece
+        from transformers import PreTrainedTokenizerBase, PreTrainedTokenizerFast
+
+        if not isinstance(tokenizer, PreTrainedTokenizerFast):
+            return None
+        for name, expected in (
+            ("apply_chat_template", PreTrainedTokenizerBase.apply_chat_template),
+            ("__call__", PreTrainedTokenizerBase.__call__),
+            ("_encode_plus", PreTrainedTokenizerFast._encode_plus),
+            ("_batch_encode_plus", getattr(PreTrainedTokenizerFast, "_batch_encode_plus", None)),
+        ):
+            if getattr(getattr(tokenizer, name, None), "__func__", None) is not expected:
+                return None
+        backend = tokenizer.backend_tokenizer
+        model = backend.model
+        if type(model) not in (BPE, Unigram, WordLevel, WordPiece):
+            return None
+        if isinstance(model, BPE) and model.dropout not in (None, 0):
+            return None
+        # Keep the actual objects alive for this scope; replacement cannot
+        # accidentally match a recycled object id. Never copy the base vocab.
+        return (tokenizer, backend,
+                tuple((key, repr(value)) for key, value in tokenizer.added_tokens_decoder.items()),
+                tokenizer.split_special_tokens)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
 
 
 def _parse_tool_call_args(messages: list[dict]) -> list[dict]:
@@ -99,15 +132,34 @@ class LocalTokenizer:
         """
         try:
             self.last_basis = "local_tokenizer_estimate"
+            scoped = _request_count_reuse.get() is not None
+            binding = _deterministic_encoding_binding(self._tok) if scoped else None
             kwargs = {}
             if self._chat_template:
                 # Server template render: match the real request, which
                 # always ends with the generation prompt.
                 kwargs = {"chat_template": self._chat_template,
                           "add_generation_prompt": True}
-            result = self._tok.apply_chat_template(
-                _parse_tool_call_args(messages), tools=tools or None,
-                tokenize=True, **kwargs)
+            reuse_key = None
+            if binding is None:
+                if scoped:
+                    clear_request_count_reuse()
+                result = self._tok.apply_chat_template(
+                    _parse_tool_call_args(messages), tools=tools or None,
+                    tokenize=True, **kwargs)
+            else:
+                # Render every time: templates may depend on the current time.
+                rendered = self._tok.apply_chat_template(
+                    _parse_tool_call_args(messages), tools=tools or None,
+                    tokenize=False, **kwargs)
+                reuse_key = (self, "local_rendered_encoding", binding, rendered)
+                reused = _request_count_reuse.get()
+                if reused and reused[0] == reuse_key:
+                    return reused[1]
+                result = self._tok(
+                    rendered, padding=False, truncation=False, max_length=None,
+                    add_special_tokens=False, return_tensors=None,
+                )
             # Newer transformers (≥4.42 or so) return a BatchEncoding /
             # dict {input_ids: [...], attention_mask: [...]} instead of
             # a flat list when tokenize=True. Older versions returned a
@@ -119,8 +171,12 @@ class LocalTokenizer:
                 ids = result["input_ids"]
             else:
                 ids = result
-            return len(ids)
+            count = len(ids)
+            if reuse_key is not None:
+                _request_count_reuse.set((reuse_key, count, None))
+            return count
         except Exception as exc:
+            clear_request_count_reuse()
             self.last_basis = "local_message_estimate"
             log.warning("local chat template failed (%s); using per-message estimate", type(exc).__name__)
             total = 0

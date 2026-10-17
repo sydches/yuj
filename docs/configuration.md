@@ -1843,6 +1843,14 @@ Set an explicit tokenizer ID or local path to select that tokenizer. An empty
 value selects the legacy character estimate. Backend capacity may reduce a
 declared context allowance; it does not enlarge that allowance.
 
+Within one request-preparation scope, the local estimator may reuse an encoding
+for identical rendered text and the same deterministic native tokenizer.
+It renders every call so time-dependent templates stay current. Changed text,
+tokenizer bindings, added tokens, or special-token modes require fresh encoding.
+Slow, stochastic, and custom encoding paths keep their existing behavior.
+Leaving the scope or failing a count clears reuse. This does not change the
+count's local-estimate basis or make it backend evidence.
+
 Released paper runtime files set the tokenizer for each reported model. Apply
 the files in the
 [paper configuration guide](https://github.com/sydches/yuj/blob/main/configs/paper/README.md)
