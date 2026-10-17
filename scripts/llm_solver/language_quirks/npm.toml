@@ -1,6 +1,8 @@
 name = "npm"
 description = "The project's declared package.json test script"
 verification_patterns = ['''(?:^|[\s/'"])(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b''']
+# Build and named test scripts can create outputs. This grants no test pass.
+artifact_command_patterns = ['''(?:^|[\s/'"])(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:build|test)(?::[\w.-]+)?\b''']
 
 [[detection]]
 path = "package.json"

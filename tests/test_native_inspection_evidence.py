@@ -103,6 +103,121 @@ def test_batched_verification_preserves_scalar_missing_and_unknown_results(bwrap
         assert _file_revisions(str(source), names) == expected
 
 
+def test_bulk_removed_files_and_directory_links_do_not_use_scalar_reads(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails import verification
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'package').mkdir()
+    (source / 'package/index.js').write_bytes(b'new package bytes')
+    names = [f'removed/file_{i}.js' for i in range(1000)]
+    links = [f'package-link-{i}' for i in range(100)]
+    for name in links:
+        (source / name).symlink_to('package', target_is_directory=True)
+    operations = []
+    original_run = files.run
+    def observed(script, args, data):
+        operations.append(args[3] if len(args) > 3 else 'discovery')
+        return original_run(script, args, data)
+    files.run = observed
+    with activate_task_files(files, host_root=source), patch.object(
+        verification, '_file_revision', side_effect=AssertionError('scalar fallback')):
+        result = verification._file_revisions(str(source), [*names, *links, 'package/index.js'])
+    assert result == {**dict.fromkeys(names, 'missing'), **dict.fromkeys(links, ''),
+                      'package/index.js': hashlib.sha256(b'new package bytes').hexdigest()}
+    assert operations.count('resolve_files') == operations.count('digest_batch') == 1
+    assert 'resolve' not in operations and 'stat' not in operations
+
+
+def test_component_sources_batch_regular_hidden_missing_and_alias_paths(bwrap, tmp_path):
+    from scripts.llm_solver.harness.operation_timing import operation_profile
+    from scripts.llm_solver.harness._guardrails.verification import _safe_source_paths
+    from scripts.llm_solver.harness.sandbox.ignore_policy import activate_ignore_policy, load_ignore_policy
+    from scripts.llm_solver.harness.task_path import TaskPath
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'generated-{i}.js' for i in range(1000)]
+    for name in names:
+        (source / name).write_bytes(b'source')
+    (source / 'hidden.js').write_bytes(b'hidden')
+    (source / '.yujignore').write_text('hidden.js\n')
+    (source / 'alias.js').symlink_to(names[0])
+    (source / 'escape.js').symlink_to(tmp_path / 'outside.js')
+    (tmp_path / 'outside.js').write_bytes(b'outside')
+    operations = []
+    run = files.run
+    files.run = lambda script, args, data: (operations.append(args[3] if len(args) > 3 else ''),
+                                           run(script, args, data))[1]
+    with activate_task_files(files, host_root=source):
+        policy = load_ignore_policy(source)
+        with activate_ignore_policy(policy), operation_profile() as profile:
+            operations.clear()
+            paths = _safe_source_paths(TaskPath(files, files.root), tuple([
+                *names, 'missing.js', 'alias.js', 'escape.js', 'hidden.js',
+                str(tmp_path / 'outside.js'), str(source / names[0]),
+            ]))
+            timings = profile.take()
+    assert [p.relative_to(files.root).as_posix() for p in paths] == names
+    assert operations == ['resolve_files']
+    resolution, = [row for row in timings if row['operation'][-1] == 'files.resolve_files']
+    assert resolution['calls'] == 1
+    assert resolution['operation'] == ['verification.source_paths', 'files.resolve_files']
+
+
+def test_file_state_batch_keeps_denials_loops_and_hidden_entries_distinct(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails import verification
+    from scripts.llm_solver.harness.sandbox.ignore_policy import activate_ignore_policy, load_ignore_policy
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'file').write_bytes(b'native bytes')
+    (source / 'unreadable').write_bytes(b'denied')
+    (source / 'unreadable').chmod(0)
+    (source / 'closed').mkdir(mode=0)
+    (source / 'loop').symlink_to('loop')
+    (source / 'dangling').symlink_to('missing')
+    (source / 'outside').symlink_to(tmp_path / 'outside')
+    (tmp_path / 'outside').write_bytes(b'outside bytes')
+    (source / 'hidden').write_bytes(b'hidden bytes')
+    (source / 'hidden').chmod(0)
+    (source / 'hidden-directory').mkdir()
+    (source / '.yujignore').write_text('hidden\nhidden-directory/\n')
+    names = ['file', 'unreadable', 'closed/missing', 'loop', 'dangling', 'outside',
+             'hidden', 'hidden-directory']
+    try:
+        assert len(files.resolve_file_states(names)) == len(names)
+        with activate_task_files(files, host_root=source):
+            policy = load_ignore_policy(source)
+            with activate_ignore_policy(policy):
+                expected = {name: verification._file_revision(str(source), name) for name in names}
+                with patch.object(verification, '_file_revision', side_effect=AssertionError('scalar fallback')):
+                    assert verification._file_revisions(str(source), names) == expected
+    finally:
+        (source / 'closed').chmod(0o700)
+    # The hidden-directory mask walk encounters the denied parent. Its result
+    # stays unknown without discarding unrelated entries from the batch.
+    assert expected == {'file': hashlib.sha256(b'native bytes').hexdigest(),
+        'unreadable': '', 'closed/missing': '', 'loop': '', 'dangling': 'missing',
+        'outside': '', 'hidden': 'missing', 'hidden-directory': ''}
+
+
+def test_one_file_removed_during_hashing_does_not_discard_the_batch(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails import verification
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'file-{i}.py' for i in range(128)]
+    for name in names:
+        (source / name).write_bytes(name.encode())
+    original_digest = files.sha256_many
+    removed = False
+    def digest(paths):
+        nonlocal removed
+        if not removed:
+            (source / names[57]).unlink()
+            removed = True
+        return original_digest(paths)
+    with activate_task_files(files, host_root=source), patch.object(files, 'sha256_many', digest), patch.object(
+        verification, '_file_revision', wraps=verification._file_revision) as scalar:
+        result = verification._file_revisions(str(source), names)
+    assert result == {name: ('missing' if name == names[57] else hashlib.sha256(name.encode()).hexdigest())
+                      for name in names}
+    assert scalar.call_count == 1
+
+
 @pytest.mark.parametrize('spelling', ['relative', 'host', 'native'])
 def test_partial_complete_and_changed_native_revision(rig, spelling):
     root, files, overlay, cfg, state = rig

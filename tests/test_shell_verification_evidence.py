@@ -100,3 +100,105 @@ def test_runner_inspection_modes_do_not_become_executed_checks(command):
 def test_compile_only_success_is_useful_without_becoming_test_execution(command):
     from scripts.llm_solver.harness.shell_verification import shell_verification_status
     assert shell_verification_status(command, 0) == "custom_passed"
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+@pytest.mark.parametrize("filter_command", ["tail -30", "grep -E '(OK|FAILED)'"])
+def test_prepared_runner_pipeline_uses_actual_pipefail_result(tmp_path, monkeypatch, exit_code, filter_command):
+    from _verification_fixture import seed_edited_input, account_check_changes
+    monkeypatch.delenv("YUJ_CONTAINER", raising=False)
+    (tmp_path / "runtests.py").write_text(f"print('OK')\nraise SystemExit({exit_code})\n")
+    (tmp_path / "module.py").write_text("edited input")
+    command = f"cd . && timeout 5 {shlex.quote(sys.executable)} runtests.py 2>&1 | {filter_command}"
+    cfg = make_config(sandbox_bash=False, turn_snapshots_enabled=False)
+    state = GuardrailState(has_mutated=True)
+    seed_edited_input(state, cfg, tmp_path, "module.py")
+    facts = {}
+    result = dispatch("bash", {"cmd": command}, cwd=str(tmp_path), cfg=cfg, execution_metadata=facts)
+    assert facts["exit_status"] == exit_code
+    assert facts["verification_status"] == ("passed" if exit_code == 0 else "shell_unresolved")
+    account_check_changes(state, cfg, tmp_path, "bash", {"cmd": command}, result, facts)
+    mark_bash_verified(state, cfg, tc_name="bash", tc_args={"cmd": command}, result=result,
+                       gate_blocked=False, execution_metadata=facts, cwd=tmp_path)
+    assert state.verified_since_mutation is (exit_code == 0)
+
+
+@pytest.mark.parametrize("command", [
+    "set +o pipefail; pytest | tail", "bash -c 'pytest | tail'",
+    "pytest | tail || true", "timeout --help pytest", "timeout unknown pytest",
+    "timeout 5 pytest --help | tail", "timeout 5 pytest --collect-only | tail",
+    "pytest | sh -c 'true'", "pytest | tail && true", "pytest > report",
+    "timeout --preserve-status 5 pytest | tail",
+])
+def test_pipeline_attribution_does_not_credit_masks_or_non_execution(command):
+    from scripts.llm_solver.harness.shell_verification import shell_verification_status
+    assert shell_verification_status(command, 0, pipefail=True) not in {"passed", "custom_passed"}
+
+
+@pytest.mark.parametrize("command", [
+    "timeout 5 cargo test | tail", "timeout --signal TERM --kill-after=2s 5 go test ./... | tail",
+    "env KEY=value timeout 5 python runtests.py 2>&1", "timeout 5 env KEY=value python runtests.py",
+])
+def test_timeout_wrapper_is_independent_of_task_runner(command):
+    from scripts.llm_solver.harness.shell_verification import shell_verification_status
+    assert shell_verification_status(command, 0, pipefail=True) == "passed"
+
+
+@pytest.mark.parametrize("path,previously_edited,passed", [
+    (".pytest_cache/v/cache/nodeids", False, True),
+    (".pytest_cache/v/cache/nodeids", True, False),
+    ("other_module.py", False, False),
+    (".pytest_cache/custom_source.py", False, False),
+    ("result_images/test_text/result.png", False, False),
+])
+def test_runner_cache_does_not_hide_real_changed_inputs(tmp_path, monkeypatch, path, previously_edited, passed):
+    from _verification_fixture import seed_edited_input, account_check_changes
+    from scripts.llm_solver.harness.file_changes import observed_mutation
+    monkeypatch.delenv("YUJ_CONTAINER", raising=False)
+    target = tmp_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("before")
+    (tmp_path / "module.py").write_text("edited input")
+    (tmp_path / "test_check.py").write_text(
+        "from pathlib import Path\ndef test_check():\n"
+        f"    Path({path!r}).write_text('changed')\n"
+    )
+    command = shlex.join([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"])
+    cfg = make_config(sandbox_bash=False, turn_snapshots_enabled=False)
+    state = GuardrailState(has_mutated=True)
+    seed_edited_input(state, cfg, tmp_path, path if previously_edited else "module.py")
+    facts = {}
+    result = dispatch("bash", {"cmd": command}, cwd=str(tmp_path), cfg=cfg, execution_metadata=facts)
+    assert facts["verification_status"] == "passed"
+    assert path in facts["file_changes"]["changed_paths"]
+    account_check_changes(state, cfg, tmp_path, "bash", {"cmd": command}, result, facts)
+    for observer in (mark_bash_verified, observe_post_mutation_verification):
+        observer(state, cfg, tc_name="bash", tc_args={"cmd": command}, result=result,
+                 gate_blocked=False, execution_metadata=facts, cwd=tmp_path)
+    assert state.verified_since_mutation is passed
+    assert state.formal_verification_passed_since_mutation is passed
+    assert observed_mutation(facts) is not passed
+
+
+def test_masked_check_cache_does_not_grant_verification(tmp_path, monkeypatch):
+    from _verification_fixture import seed_edited_input, account_check_changes
+    from scripts.llm_solver.harness.file_changes import observed_mutation
+    monkeypatch.delenv("YUJ_CONTAINER", raising=False)
+    (tmp_path / "test_check.py").write_text("def test_check():\n    assert False\n")
+    command = "set +o pipefail; " + shlex.join([sys.executable, "-m", "pytest", "-q"]) + " | wc -l"
+    cfg = make_config(sandbox_bash=False, turn_snapshots_enabled=False,
+                      bash_transforms_universal_enabled=False)
+    state = GuardrailState(has_mutated=True)
+    seed_edited_input(state, cfg, tmp_path, "test_check.py")
+    facts = {}
+    result = dispatch("bash", {"cmd": command}, cwd=str(tmp_path), cfg=cfg, execution_metadata=facts)
+    assert facts["exit_status"] == 0
+    assert facts["verification_status"] not in {"passed", "custom_passed"}
+    account_check_changes(state, cfg, tmp_path, "bash", {"cmd": command}, result, facts)
+    assert ".pytest_cache/v/cache/nodeids" in facts["file_changes"]["test_artifact_paths"]
+    assert not observed_mutation(facts)
+    for observer in (mark_bash_verified, observe_post_mutation_verification):
+        observer(state, cfg, tc_name="bash", tc_args={"cmd": command}, result=result,
+                 gate_blocked=False, execution_metadata=facts, cwd=tmp_path)
+    assert not state.verified_since_mutation
+    assert not state.formal_verification_passed_since_mutation

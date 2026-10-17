@@ -41,6 +41,23 @@ def _file_revision(cwd: str | Path, path: str) -> str:
         return ""
 
 
+def _native_digests(files, cwd, visible):
+    """Keep a read failure confined to its paths, retaining checked reads."""
+    if not visible:
+        return {}
+    try:
+        digests = files.sha256_many(visible.values())
+        return {path: digests[target] for path, target in visible.items()}
+    except (OSError, RuntimeError, ValueError):
+        if len(visible) == 1:
+            path = next(iter(visible))
+            return {path: _file_revision(cwd, path)}
+        names = list(visible)
+        middle = len(names) // 2
+        return {**_native_digests(files, cwd, {p: visible[p] for p in names[:middle]}),
+                **_native_digests(files, cwd, {p: visible[p] for p in names[middle:]})}
+
+
 @measured("verification.file_revisions")
 def _file_revisions(cwd, paths) -> dict[str, str]:
     """Observe tracked bytes together, retaining scalar exceptional-path results."""
@@ -54,22 +71,31 @@ def _file_revisions(cwd, paths) -> dict[str, str]:
         try:
             base = cwd if isinstance(cwd, TaskPath) else TaskPath(files, files.root)
             requested = {path: str(native_requested_path(base, path, expand=False)) for path in paths}
-            resolved = files.resolve_regular_files(requested.values(), partial=True)
+            resolved = files.resolve_file_states(requested.values())
             policy = active_ignore_policy() if isinstance(cwd, TaskPath) else active_ignore_policy(str(cwd))
             if policy is not None and not policy.contains(base):
                 policy = None
-            visible = {}
+            visible, revisions = {}, {}
             for path, request in requested.items():
-                if request not in resolved:
+                target_name, kind = resolved[request]
+                if kind in {'unknown', 'missing'}:
+                    revisions[path] = 'missing' if kind == 'missing' else ''
                     continue
-                target = TaskPath(files, PurePosixPath(resolved[request]))
+                target = TaskPath(files, PurePosixPath(target_name))
                 target.relative_to(base)
-                if policy is None or not policy.is_model_hidden(target, is_dir=False):
+                try:
+                    hidden = policy is not None and policy.is_model_hidden(target, is_dir=kind == 'directory')
+                except (OSError, RuntimeError, ValueError):
+                    revisions[path] = ''
+                    continue
+                if hidden:
+                    revisions[path] = 'missing'
+                elif kind in {'directory', 'other', 'unreadable'}:
+                    revisions[path] = ''
+                else:
                     visible[path] = str(target)
-            digests = files.sha256_many(visible.values())
-            return {path: (digests[visible[path]] if path in visible else
-                           _file_revision(cwd, path) if requested[path] not in resolved else 'missing')
-                    for path in paths}
+            revisions.update(_native_digests(files, cwd, visible))
+            return revisions
         except (OSError, RuntimeError, ValueError):
             # Missing, non-regular, denied and unsupported entries keep the
             # established per-file missing/unknown decisions.
@@ -244,7 +270,36 @@ def verification_runner_unavailable(result: str, *, tc_name: str = "bash",
 
 @measured("verification.source_paths")
 def _safe_source_paths(root: Path, raw_paths: tuple[str, ...]) -> list[Path]:
-    from ..task_path import resolve_task_path
+    from ..task_path import TaskPath, native_requested_path, resolve_task_path, task_path_ignore_policy
+    if isinstance(root, TaskPath):
+        # Component selection needs names and kinds, not a resolve/stat pair
+        # for every output from the preceding command.
+        requested = []
+        for raw in raw_paths:
+            try:
+                name = str(native_requested_path(root, raw, expand=False))
+                requested.append(str(root.files.root / root.files._relative(name)))
+            except (ValueError, OSError, RuntimeError):
+                continue
+        try:
+            states = root.files.resolve_file_states(requested)
+        except (ValueError, OSError, RuntimeError):
+            return []
+        policy = task_path_ignore_policy(root)
+        paths, seen = [], set()
+        for target, kind in states.values():
+            if kind != 'file' or target in seen:
+                continue
+            candidate = TaskPath(root.files, PurePosixPath(target))
+            try:
+                candidate.relative_to(root)
+                if policy is not None and policy.is_model_hidden(candidate, is_dir=False):
+                    continue
+            except (ValueError, OSError, RuntimeError):
+                continue
+            seen.add(target)
+            paths.append(candidate)
+        return paths
     paths: list[Path] = []
     for raw in raw_paths:
         try:

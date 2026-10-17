@@ -340,7 +340,8 @@ def bash(cmd: str, *, cwd: str, timeout: float | None, sandbox: bool = True,
             normalize_output=transform_output,
         )
     from ..shell_verification import shell_verification_status
-    verification_status = shell_verification_status(cmd, exit_code, timed_out)
+    verification_status = shell_verification_status(
+        cmd, exit_code, timed_out, pipefail=not allow_login_shell)
     from ..runner_invocations import runner_request_record, bind_runner_workspace
     runner_request = runner_request_record(cmd)
     if 'requests' not in runner_request:

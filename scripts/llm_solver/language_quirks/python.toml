@@ -8,6 +8,11 @@ custom_check_patterns = [
     '''(?:^|[\s/'"])python[0-9.]*\s+(?:-c\b|-\s*<<)''',
 ]
 
+# Inline checks create import caches too. Edited inputs still remain inputs.
+generated_artifact_patterns = [
+    '''(?:.*/)?__pycache__/[^/]+\.(?:pyc|pyo)''',
+]
+
 [runtime]
 language = "Python"
 executables = ["python3", "python"]

@@ -103,6 +103,30 @@ def test_running_wait_is_not_process_timeout_and_cancellation_cannot_pass(tmp_pa
         session._process_manager.close()
 
 
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_background_runner_pipeline_uses_bound_shell_policy(tmp_path, monkeypatch, exit_code):
+    monkeypatch.delenv("YUJ_CONTAINER", raising=False)
+    session, _ = _session(tmp_path)
+    (tmp_path / "runtests.py").write_text(f"print('OK')\nraise SystemExit({exit_code})\n")
+    try:
+        command = f"timeout 5 {shlex.quote(sys.executable)} runtests.py 2>&1 | tail -10"
+        _call(session, "bash", {"cmd": command, "background": True})
+        _, facts = _terminal_poll(session)
+        assert facts["exit_status"] == exit_code
+        assert facts["verification_status"] == ("passed" if exit_code == 0 else "shell_unresolved")
+    finally:
+        session._process_manager.close()
+
+
+def test_unknown_background_shell_cannot_claim_pipefail(tmp_path):
+    from scripts.llm_solver.harness.background_verification import BackgroundVerification
+    session, _ = _session(tmp_path)
+    binder = BackgroundVerification(lambda: session._guards, tmp_path)
+    manager = SimpleNamespace(start=lambda command: SimpleNamespace(proc_id="fixture", result="started"))
+    binder.start(manager, "pytest | tail")
+    assert binder.poll_metadata("fixture", 0)["verification_status"] == "shell_unresolved"
+
+
 def test_background_replay_uses_recorded_binding_without_reading_current_files(tmp_path, monkeypatch):
     from scripts.llm_solver.harness.process_manager import ReplayProcessManager
     from scripts.llm_solver.harness.background_verification import BackgroundVerification

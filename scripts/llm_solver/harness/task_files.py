@@ -249,6 +249,10 @@ class NamespaceFiles:
         """Resolve names together, retaining directory and missing-path semantics."""
         return self._resolve_paths(paths, 'paths')
 
+    def resolve_file_states(self, paths):
+        """Classify every requested file, including missing and denied entries."""
+        return self._resolve_paths(paths, 'states')
+
     def _resolve_paths(self, paths, mode):
         names = tuple(dict.fromkeys(str(self.root / self._relative(path)) for path in paths))
         if not names:
@@ -258,6 +262,19 @@ class NamespaceFiles:
                             data=b''.join(os.fsencode(name) + b'\0' for name in names),
                             script_prefix=_RESOLVE_FILES)
         fields = output.split(b'\0')
+        if mode == 'states':
+            if fields[-1] or len(fields) != len(names) * 3 + 1:
+                raise TaskFileError('invalid task file state response')
+            result, expected = {}, set(names)
+            for name, target, kind in zip(fields[0:-1:3], fields[1:-1:3], fields[2:-1:3]):
+                name, target, kind = map(os.fsdecode, (name, target, kind))
+                if (name not in expected or name in result
+                        or kind not in {'file', 'directory', 'missing', 'other', 'unknown', 'unreadable'}
+                        or (not target and kind != 'unknown')
+                        or (target and _relative_posix_parts(PurePosixPath(target), self.root) is None)):
+                    raise TaskFileError('invalid task file state')
+                result[name] = (target, kind)
+            return result
         partial = mode == 'partial'
         if fields[-1] or len(fields) % 2 != 1 or (not partial and len(fields) != len(names) * 2 + 1):
             raise TaskFileError('invalid task file resolution response')

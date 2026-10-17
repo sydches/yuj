@@ -29,6 +29,43 @@ CHECK_COMMAND_RE = re.compile(
 )
 
 
+def unwrap_command_argv(argv: list[str]) -> list[str]:
+    """Remove literal env/timeout wrappers that preserve child success."""
+    argv = list(argv)
+    while argv:
+        verb = argv[0].rsplit("/", 1)[-1]
+        if verb == "env":
+            argv = argv[1:]
+            while argv and (argv[0] in {"-i", "--ignore-environment"}
+                            or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0])):
+                argv = argv[1:]
+            if argv and argv[0] == "--":
+                argv = argv[1:]
+        elif verb == "timeout":
+            argv = argv[1:]
+            while argv and argv[0].startswith("-"):
+                option = argv.pop(0)
+                if option == "--":
+                    break
+                if option in {"--foreground", "--verbose"}:
+                    continue
+                flag, equals, value = option.partition("=")
+                if flag not in {"-s", "--signal", "-k", "--kill-after"}:
+                    return []
+                if not equals:
+                    if not argv:
+                        return []
+                    value = argv.pop(0)
+                if not value or value.startswith("-"):
+                    return []
+            if not argv or not re.fullmatch(r"(?:\d+(?:\.\d*)?|\.\d+)[smhd]?", argv[0]):
+                return []
+            argv = argv[1:]
+        else:
+            break
+    return argv
+
+
 def command_from_summary(summary: str) -> str:
     """Read a recorded cmd keyword without executing or guessing its contents."""
     if not summary.lstrip().startswith("cmd="):
@@ -60,13 +97,7 @@ def matches_command(command: str, pattern=TEST_COMMAND_RE, *, allow_partial: boo
             if allow_partial and _prefix_match(pattern, text):
                 return True
             continue
-        if argv and argv[0].rsplit("/", 1)[-1] == "env":
-            argv = argv[1:]
-            while argv and (argv[0] in {"-i", "--ignore-environment"}
-                            or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0])):
-                argv = argv[1:]
-            if argv and argv[0] == "--":
-                argv = argv[1:]
+        argv = unwrap_command_argv(argv)
         if argv:
             argv[0] = argv[0].rsplit("/", 1)[-1]
             normalized = shlex.join(argv)

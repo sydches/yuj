@@ -66,11 +66,13 @@ def test_native_lexical_admission_retains_identity_nul_and_escape_checks():
     assert files._relative('./task/../file') == './task/../file'
 
 
-@pytest.mark.parametrize('mode', ['paths', 'partial'])
+@pytest.mark.parametrize('mode', ['states', 'paths', 'partial'])
 @pytest.mark.parametrize('target', ['/task-other/file', '//task/file', 'task/file'])
 def test_resolved_file_response_rejects_lexical_escape(mode, target, monkeypatch):
     files = NamespaceFiles('/task', None, binding={})
     response = b'/task/file\0' + target.encode() + b'\0'
+    if mode == 'states':
+        response += b'file\0'
     monkeypatch.setattr(files, '_call', lambda *args, **kwargs: response)
     with pytest.raises(TaskFileError):
         files._resolve_paths(['file'], mode)

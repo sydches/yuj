@@ -49,16 +49,44 @@ digest_batch() {
 
 _RESOLVE_FILES = r'''
 resolve_files() {
-    local index target partial=${1:-}
+    local index target ancestor kind partial=${1:-}
     local -a batch resolved
     while :; do
         mapfile -d '' -n 64 -t batch
         (( ${#batch[@]} )) || break
         mapfile -d '' -t resolved < <("$realpath_bin" -m -z -- "${batch[@]}")
-        wait "$!" || return 74
-        (( ${#resolved[@]} == ${#batch[@]} )) || return 74
+        if ! wait "$!" || (( ${#resolved[@]} != ${#batch[@]} )); then
+            [[ "$partial" == states ]] || return 74
+            # An exceptional name must not discard the rest of the batch.
+            resolved=()
+            for target in "${batch[@]}"; do
+                if canonical ancestor "$target"; then resolved+=("$ancestor")
+                else resolved+=(''); fi
+            done
+        fi
         for index in "${!batch[@]}"; do
             target=${resolved[$index]}
+            if [[ "$partial" == states ]]; then
+                kind=unknown
+                case "$target" in
+                    "$root"|"${root%/}/"*)
+                        ancestor=$target
+                        while [[ ! -e "$ancestor" && ! -L "$ancestor" && "$ancestor" != / ]]; do
+                            ancestor=${ancestor%/*}; [[ -n "$ancestor" ]] || ancestor=/
+                        done
+                        # Preserve absence versus inaccessible-parent semantics.
+                        if [[ -d "$ancestor" && ! -x "$ancestor" && "$ancestor" != "$target" ]]; then :
+                        elif [[ -f "$target" ]]; then
+                            if [[ -r "$target" ]]; then kind=file; else kind=unreadable; fi
+                        elif [[ -d "$target" ]]; then kind=directory
+                        elif [[ ! -e "$target" && ! -L "$target" ]]; then kind=missing
+                        else kind=other; fi
+                        ;;
+                    *) target='' ;;
+                esac
+                printf '%s\0%s\0%s\0' "${batch[$index]}" "$target" "$kind"
+                continue
+            fi
             case "$target" in
                 "$root"|"${root%/}/"*) ;;
                 *) [[ "$partial" == partial ]] && continue; return 77 ;;

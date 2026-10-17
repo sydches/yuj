@@ -180,6 +180,7 @@ class GuardrailState:
     # novel verify-path drift, model genuinely misreading the gate). Bounds
     # the wasted-pt cost of any rejected-done loop to N round-trips.
     done_blocked_count: int = 0
+    generated_test_artifacts: dict[str, dict] = field(default_factory=dict)
     # Running count of successful write/edit operations. Used by the
     # regression observer to decide whether "PASSED→FAILED" on a test
     # had an intervening mutation (flaky-vs-caused-by-edit disambiguation).

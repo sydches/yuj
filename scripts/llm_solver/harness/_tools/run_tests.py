@@ -212,7 +212,8 @@ def run_tests(
     status = _verification_status(quirk, out, exit_code, timed_out)
     if base_cmd_override:
         from ..shell_verification import shell_verification_status
-        attributed = shell_verification_status(cmd, exit_code, timed_out)
+        attributed = shell_verification_status(
+            cmd, exit_code, timed_out, pipefail=not allow_login_shell)
         if attributed not in {'passed', 'failed', 'timed_out'}:
             status = attributed
     if (component_source and component.get("status") != "selected"

@@ -1052,6 +1052,8 @@ def dispatch(name: str, arguments: dict, *, cwd: str, cfg: Config,
             execution_metadata["verification_evidence"] = raw_verification_evidence
         if raw_runner_request is not None:
             execution_metadata["runner_request"] = raw_runner_request
+        if raw_runner_command:
+            execution_metadata["runner_command"] = raw_runner_command
         if native_test_report is not None and not result_scan.blocked and not raw_security_blocked_stage:
             execution_metadata["native_test_report"] = native_test_report
         if raw_shell_submission is not None:

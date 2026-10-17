@@ -10,6 +10,12 @@
 name = "pytest"
 description = "pytest / py.test / unittest / python -m pytest invocations"
 non_execution_flags = ["--help", "-h", "--version", "--collect-only", "--co"]
+# Runner-generated cache conventions. These apply
+# only to observed check execution; previously edited inputs remain inputs.
+generated_artifact_patterns = [
+    '''(?:.*/)?\.pytest_cache/(?:README\.md|\.gitignore|CACHEDIR\.TAG|v/cache/(?:nodeids|lastfailed|stepwise))''',
+    '''(?:.*/)?__pycache__/[^/]+\.(?:pyc|pyo)''',
+]
 verification_patterns = [
     '''(?:^|[\s/'"])(?:pytest|py\.test|unittest)\b''',
     '''(?:^|[\s/'"])python[0-9.]*\s+(?:-m\s+)?(?:pytest|unittest)\b''',

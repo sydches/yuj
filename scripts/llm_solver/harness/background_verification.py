@@ -23,7 +23,8 @@ class BackgroundVerification:
             manager.poll_metadata = self.poll_metadata
         state = self.state()
         revisions = _file_revisions(self.cwd, state.verification_file_revisions)
-        snapshot = (command, state.mutation_count, state.has_mutated, revisions)
+        snapshot = (command, state.mutation_count, state.has_mutated, revisions,
+                    bool(getattr(manager, "pipefail_guaranteed", False)))
         started = manager.start(command)
         self.starts[started.proc_id] = snapshot
         return started.result
@@ -32,7 +33,7 @@ class BackgroundVerification:
         snapshot = self.starts.get(proc_id)
         if snapshot is None:
             return {"verification_status": "unknown_process"}
-        command, generation, after_mutation, revisions = snapshot
+        command, generation, after_mutation, revisions, pipefail = snapshot
         state = self.state()
         matches = None if exit_code is None else (after_mutation and state.mutation_count == generation and
                    all(revisions.values()) and _file_revisions(self.cwd, revisions) == revisions)
@@ -47,5 +48,5 @@ class BackgroundVerification:
             "revision_matches": matches,
         }
         status = ("process_running" if exit_code is None else "stale_revision" if not matches
-                  else shell_verification_status(command, exit_code))
+                  else shell_verification_status(command, exit_code, pipefail=pipefail))
         return {"verification_status": status, "verification_evidence": evidence}

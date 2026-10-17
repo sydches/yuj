@@ -1,14 +1,15 @@
 """Attribute a shell result to supported check invocations, without output hints.
 
-Recognition labels invocations, not coverage or task correctness. Only a direct
-check or a successful conjunction of checks and directory changes has a result
-we can attribute here. Other shell structures retain an unresolved verdict.
+Recognition labels invocations, not coverage or task correctness. A direct
+check or a successful conjunction of checks and directory changes can be
+attributed. Output-filter pipelines also require the executor's pipefail
+guarantee. Other shell structures retain an unresolved verdict.
 """
 import functools
 import re
 import shlex
 
-from ._shell_patterns import CHECK_COMMAND_RE, matches_command
+from ._shell_patterns import CHECK_COMMAND_RE, matches_command, unwrap_command_argv
 from .command_redirect import split_shell_fragments, strip_leading_assignments
 
 
@@ -51,20 +52,76 @@ def _literal_simple_command(text):
     return not quote and not escaped
 
 
-def shell_verification_status(command, exit_code, timed_out=False):
+def _without_fd_merges(command):
+    """Ignore literal output-fd merges for attribution; keep all file redirects."""
+    result = []
+    quote, escaped, index = "", False, 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif (index == 0 or command[index - 1].isspace()):
+            match = re.match(r"[12]>&[12](?=\s|[|;&]|$)", command[index:])
+            if match:
+                result.append(" ")
+                index += len(match.group())
+                continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def shell_output_invocation(command, patterns):
+    """Recognize declared output producers without granting verification credit."""
+    fragments = split_shell_fragments(_without_fd_merges(command.strip()))
+    produced = False
+    for fragment in fragments:
+        if (fragment.operator_before not in {'', '&&', '|', '|&'}
+                or fragment.operator_after not in {'', '&&', '|', '|&'}
+                or not _literal_simple_command(fragment.text)):
+            return False
+        text = strip_leading_assignments(fragment.text)
+        try:
+            argv = unwrap_command_argv(shlex.split(text))
+        except ValueError:
+            return False
+        if not argv:
+            return False
+        if matches_command(text, patterns):
+            produced = True
+        elif (argv[0] == 'cd' and len(argv) == 2 and not fragment.stdin_from_pipe
+              and fragment.operator_after not in {'|', '|&'}):
+            continue
+        elif (produced and fragment.stdin_from_pipe
+              and argv[0].rsplit('/', 1)[-1] in {'cat', 'head', 'tail', 'grep', 'rg'}):
+            continue
+        else:
+            return False
+    return produced
+
+
+def shell_verification_status(command, exit_code, timed_out=False, *, pipefail=False, allow_custom=True):
     """Return tool-owned status for the exact command submitted to the shell."""
-    fragments = split_shell_fragments(command)
+    fragments = split_shell_fragments(_without_fd_merges(command))
     if not fragments:
         return "not_a_check"
     kinds = []
     for fragment in fragments:
-        if fragment.operator_after not in ("", "&&") or fragment.operator_before not in ("", "&&"):
+        operators = ("", "&&", "|", "|&") if pipefail else ("", "&&")
+        if fragment.operator_after not in operators or fragment.operator_before not in operators:
             return "shell_unresolved"
         if not _literal_simple_command(fragment.text):
             return "shell_unresolved"
         text = strip_leading_assignments(fragment.text)
         try:
-            argv = shlex.split(text)
+            argv = unwrap_command_argv(shlex.split(text))
         except ValueError:
             return "shell_unresolved"
         if matches_command(text):
@@ -77,9 +134,17 @@ def shell_verification_status(command, exit_code, timed_out=False):
         elif matches_command(text, CHECK_COMMAND_RE):
             kinds.append("custom")
         elif len(fragments) > 1 and argv and argv[0] == "cd":
+            if fragment.stdin_from_pipe or fragment.operator_after in {"|", "|&"}:
+                return "shell_unresolved"
             kinds.append("directory_change")
+        elif (pipefail and fragment.stdin_from_pipe and argv
+              and argv[0].rsplit("/", 1)[-1] in {"cat", "head", "tail", "grep", "rg"}
+              and kinds and kinds[-1] in {"formal", "custom", "output_filter"}):
+            kinds.append("output_filter")
         else:
             return "not_a_check" if len(fragments) == 1 else "shell_unresolved"
+    if not allow_custom and any(kind in {'custom', 'inspection'} for kind in kinds):
+        return 'not_a_check'
     if not any(kind in {"formal", "custom"} for kind in kinds):
         return "not_a_check"
     if timed_out:

@@ -425,6 +425,23 @@ def _apply_dispatch_effects(tc, state, metadata, execution_metadata, result):
     """Record observed effects before a tool-error policy can end the turn."""
     if metadata.get("plan_artifact"):
         return
+    from ..file_changes import classify_test_artifacts
+    from .._guardrails.verification import verification_tree_matches
+    guards = state.session._guards
+    classify_test_artifacts(tc.name, tc.arguments, execution_metadata,
+                           guards.verification_file_revisions, guards.generated_test_artifacts)
+    changes = execution_metadata.get("file_changes") or {}
+    if ('project_artifact_evidence' in changes
+            and execution_metadata.get('verification_status') != 'passed'):
+        # Excluding generated outputs must not preserve a previous pass when
+        # this recognized rerun did not establish success.
+        guards.verified_since_mutation = False
+        guards.formal_verification_passed_since_mutation = False
+    execution_metadata["_verification_inputs_unchanged"] = bool(
+        changes.get("test_artifact_paths") and not observed_mutation(execution_metadata)
+        and guards.has_mutated and guards.verification_file_revisions
+        and verification_tree_matches(guards, state.session.cwd)
+    )
     apply_observed_metadata(metadata, execution_metadata)
     if (execution_metadata.get("file_changes") or {}).get("status") in {"unavailable", "incomplete"}:
         state.session._guards.verified_since_mutation = False
@@ -434,16 +451,11 @@ def _apply_dispatch_effects(tc, state, metadata, execution_metadata, result):
             or not observed_mutation(execution_metadata)):
         return
     session = state.session
-    # A check may create files while leaving the previously edited inputs intact.
-    # Capture that distinction before refreshing their revision records below.
+    # Only declared test outputs are excluded above. Other newly changed files
+    # remain inputs even when the previously edited files stayed unchanged.
     from .._guardrails.checks_post import record_mutation
     from .._guardrails.verification import (
-        record_verification_mutation, verification_tree_matches,
-    )
-    execution_metadata["_verification_inputs_unchanged"] = bool(
-        session._guards.has_mutated
-        and session._guards.verification_file_revisions
-        and verification_tree_matches(session._guards, session.cwd)
+        record_verification_mutation,
     )
     record_mutation(session._guards)
     record_verification_mutation(

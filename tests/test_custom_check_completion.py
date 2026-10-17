@@ -85,7 +85,7 @@ def test_failed_custom_rerun_invalidates_previous_check():
 
 
 @pytest.mark.parametrize("case", ["plain", "report", "edited_report"])
-def test_repeated_check_outputs_do_not_become_edited_inputs(tmp_path, case):
+def test_repeated_custom_checks_keep_undeclared_writes_as_inputs(tmp_path, case):
     (tmp_path / "core.txt").write_text("1")
     program = "from pathlib import Path; assert Path('core.txt').read_text() == '2'"
     if case != "plain":
@@ -117,11 +117,14 @@ def test_repeated_check_outputs_do_not_become_edited_inputs(tmp_path, case):
     session = Session(cfg, client, "Follow the task.", "Set core.txt to 2 and check it.",
                       str(tmp_path), trace_file=trace)
     result = session.run()
-    assert result.done is (case != "edited_report")
-    assert captured[2][0]  # First check retained credit.
-    assert set(captured[2][1]) == {"core.txt"}
-    assert captured[-1][0] is (case != "edited_report")
-    assert ("run-note.txt" in captured[-1][1]) is (case == "edited_report")
+    # An arbitrary file written by an inline program has no output declaration.
+    # Its successful exit cannot verify the inputs it changed in that call.
+    assert result.done is (case == "plain")
+    assert captured[2][0] is (case == "plain")
+    expected_inputs = {"core.txt"} if case == "plain" else {"core.txt", "run-note.txt"}
+    assert set(captured[2][1]) == expected_inputs
+    assert captured[-1][0] is (case == "plain")
+    assert set(captured[-1][1]) == expected_inputs
     assert (tmp_path / "core.txt").read_text() == "2"
     rows = [json.loads(line) for line in trace.getvalue().splitlines()]
     checks = [row for row in rows if row.get("event") == "tool_call"

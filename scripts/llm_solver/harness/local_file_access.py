@@ -73,11 +73,11 @@ def read_bytes(cwd, target):
             return stream.read()
 
 
-def read_observation(cwd, target):
+def read_observation(cwd, target, *, with_metadata=False):
     """Return bytes and metadata from the same stable, checked open file."""
     if _native(target):
         data, metadata = target.files.read_observation(str(target))
-        return data, metadata.mtime_ns
+        return data, metadata if with_metadata else metadata.mtime_ns
     for _attempt in range(3):
         with open_local_file(cwd, target, os.O_RDONLY | os.O_NONBLOCK) as descriptor:
             before = os.fstat(descriptor)
@@ -92,6 +92,11 @@ def read_observation(cwd, target):
             return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
                     info.st_mtime_ns, info.st_ctime_ns)
         if revision(before) == revision(after) and len(data) == after.st_size:
+            if with_metadata:
+                from .task_files import FileMetadata
+                return data, FileMetadata(
+                    after.st_mode, after.st_size, int(after.st_mtime), int(after.st_ctime),
+                    after.st_ino, after.st_dev, after.st_mtime_ns, after.st_ctime_ns)
             return data, after.st_mtime_ns
     raise OSError(f'file changed while being read: {target}')
 

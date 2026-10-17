@@ -325,12 +325,15 @@ class ProcessManager:
             from .task_environment import discover_task_environment, use_task_environment
             argv_builder = use_task_environment(discover_task_environment(cwd_text))(argv_builder)
 
-        return cls(
+        manager = cls(
             run_dir=run_dir,
             cwd=cwd_text,
             argv_builder=argv_builder,
             **kwargs,
         )
+        # Opt-in login profiles can change shell options before the command.
+        manager.pipefail_guaranteed = not allow_login_shell
+        return manager
 
     def _discover_next_id(self) -> int:
         highest = 0
