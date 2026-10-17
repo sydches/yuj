@@ -118,6 +118,109 @@ def test_runtime_discovery_reads_native_layout_and_declarations(bwrap, tmp_path,
     assert 'HOST_ONLY' not in str(report) and 'host.py' not in str(report)
 
 
+def test_runtime_declaration_inputs_keep_distinct_native_root_and_masks(bwrap, tmp_path):
+    import hashlib
+    import os
+    from scripts.llm_solver.harness.runtime_discovery import selection_inputs
+    from scripts.llm_solver.harness.task_path import TaskPath, activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    target = Path(str(files.root))
+    files.binding.update(host_root=str(source), working_directory=str(target))
+    raw = b'{"scripts":{"test":"native-check"}}'
+    (source / 'package.json').write_bytes(raw)
+    (source / 'alias.json').symlink_to('package.json')
+    (target / 'package.json').write_text('HOST_ONLY')
+    outside = tmp_path / 'outside.json'
+    outside.write_text('OUTSIDE_TASK')
+    (source / 'escape.json').symlink_to(outside)
+    (source / 'denied.json').write_text('DENIED_NATIVE')
+    (source / 'denied.json').chmod(0)
+    digest = {'sha256': hashlib.sha256(raw).hexdigest()}
+    names = ('package.json', 'alias.json', 'missing.json', 'escape.json')
+    expected = {'package.json': digest, 'alias.json': digest,
+                'missing.json': {'status': 'missing'}, 'escape.json': {'status': 'unavailable'}}
+    with activate_task_files(files, host_root=source):
+        native = TaskPath(files, files.root)
+        assert selection_inputs(native, names) == expected
+        assert selection_inputs(source, names) == expected
+        # Both native and captured host aliases must mask the resolved target.
+        for mask in (str(source / 'package.json'), str(target / 'package.json')):
+            assert selection_inputs(native, ('package.json', 'alias.json'), (mask,)) == {
+                'package.json': {'status': 'unavailable'}, 'alias.json': {'status': 'unavailable'}}
+        if os.geteuid() != 0:
+            assert selection_inputs(native, ('denied.json',)) == {'denied.json': {'status': 'unavailable'}}
+        (source / 'missing.json').write_bytes(raw)
+        assert selection_inputs(native, ('missing.json',)) == {'missing.json': digest}
+        (source / 'package.json').unlink()
+        assert selection_inputs(native, ('package.json', 'alias.json')) == {
+            'package.json': {'status': 'missing'}, 'alias.json': {'status': 'missing'}}
+
+
+def test_run_tests_refreshes_native_declarations_once(bwrap, tmp_path, monkeypatch):
+    from dataclasses import replace
+    import hashlib
+    from _config_helpers import make_config
+    from test_runtime_discovery import _commands
+    from scripts.llm_solver.harness import runtime_discovery, tools
+    from scripts.llm_solver.harness._tools.run_tests import run_tests
+    from scripts.llm_solver.harness.sandbox.env_policy import activate_environment
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path, readonly=True)
+    target = Path(str(files.root))
+    files.binding.update(host_root=str(source), working_directory=str(target))
+    raw = b'{"scripts":{"test":"native-check"}}'
+    (source / 'package.json').write_bytes(raw)
+    (target / 'package.json').write_text('{"scripts":{"test":"HOST_ONLY"}}')
+    commands = []
+
+    def probe(command, **kwargs):
+        commands.append(command)
+        if command.startswith('for name in '):
+            return ''.join(f'{name}\0' + ('/usr/bin/npm' if name == 'npm' else '')
+                           + '\0' for name in _commands()), 0, False
+        assert command == '/usr/bin/npm --version'
+        return '10.0.0\n', 0, False
+
+    def execute(command, **kwargs):
+        assert command == '/usr/bin/npm run test'
+        commands.append('selected test')
+        return 'native test passed', 0, False
+
+    monkeypatch.setattr(runtime_discovery, '_run_in_sandbox', probe)
+    monkeypatch.setattr(tools, '_run_in_sandbox', execute)
+    cfg = make_config(sandbox_bash=True, sandbox_backend='container',
+                      analysis_task_format='auto', tools_run_tests_enabled=True)
+    environment = {'PATH': '/usr/bin:/bin'}
+    with activate_task_files(files, host_root=source), activate_environment(environment):
+        report = runtime_discovery.discover_runtime(source, cfg, effective_env=environment, selection_only=True)
+        selection = report['runner_selection']
+        assert selection['status'] == 'selected'
+        assert selection['declaration_inputs']['package.json'] == {'sha256': hashlib.sha256(raw).hexdigest()}
+        assert 'HOST_ONLY' not in str(report)
+        selection['task_root'] = str(source)
+        cfg = replace(cfg, analysis_task_format='npm', runtime_test_selection=selection)
+        commands.clear()
+        for _ in range(2):
+            result = run_tests(cwd=str(source), cfg=cfg)
+            assert result.verification_status == 'passed'
+            assert 'selection_refresh' not in result.runner_request
+        assert commands == ['selected test', 'selected test']
+        changed = b'{"scripts":{"test":"changed-native-check"}}'
+        (source / 'package.json').write_bytes(changed)
+        commands.clear()
+        result = run_tests(cwd=str(source), cfg=cfg)
+        assert result.runner_request['selection_refresh']['previous']['declaration_inputs']['package.json'] == {
+            'sha256': hashlib.sha256(raw).hexdigest()}
+        assert selection['declaration_inputs']['package.json'] == {'sha256': hashlib.sha256(changed).hexdigest()}
+        assert len(commands) == 3 and commands[-1] == 'selected test'
+        commands.clear()
+        result = run_tests(cwd=str(source), cfg=cfg)
+        assert 'selection_refresh' not in result.runner_request
+        assert commands == ['selected test']
+
+
 def test_native_global_guidance_uses_task_home_and_keeps_ancestor_chain(bwrap, tmp_path, monkeypatch):
     import shlex
     from scripts.llm_solver.harness.project_instructions import discover_project_instructions

@@ -17,6 +17,17 @@ from ._tools._run_in_sandbox import _run_in_sandbox
 from .prompt_imports import _UnreadableMatcher
 from .task_path import TaskPath
 
+
+def _resolve_observation(cwd, name):
+    """Retain the selected task reader when the native root differs from the host."""
+    if not isinstance(cwd, TaskPath):
+        return _resolve(str(cwd), name)
+    from .task_path import native_requested_path
+    target = native_requested_path(cwd, name, expand=False).resolve()
+    target.relative_to(cwd)
+    return target
+
+
 MAX_PROBES = 12
 MAX_SOURCE_BYTES = 65536
 MAX_LAYOUT_ENTRIES = 512
@@ -175,13 +186,13 @@ def selection_inputs(cwd, names, unreadable_paths=()):
     """Fingerprint permitted declaration inputs, including absent sources."""
     from ..language_quirks._discovery import read_declaration
     from .time_budget import execution_deadline, remaining_before
-    cwd = _resolve(str(cwd), '.')
+    cwd = _resolve_observation(cwd, '.')
     blocked = _UnreadableMatcher(cwd, unreadable_paths)
     result = {}
     for name in sorted(names):
         remaining_before(execution_deadline())
         try:
-            if blocked.blocks(_resolve(str(cwd), name)):
+            if blocked.blocks(_resolve_observation(cwd, name)):
                 raise ValueError("blocked declaration")
             raw = read_declaration(cwd, name)
             result[name] = {"sha256": hashlib.sha256(raw).hexdigest()} if raw is not None else {"status": "missing"}
@@ -275,7 +286,7 @@ def _discover_runtime(cwd, cfg, *, effective_env, unreadable_paths=(), selection
         for selection in view.native_selections:
             add_fact({"source": "native_toolchain_selection", **selection})
 
-    cwd = _resolve(str(cwd), '.')
+    cwd = _resolve_observation(cwd, '.')
     blocked = _UnreadableMatcher(cwd, unreadable_paths)
     source_cache = {}
 
@@ -284,7 +295,7 @@ def _discover_runtime(cwd, cfg, *, effective_env, unreadable_paths=(), selection
         if time.monotonic() >= deadline:
             raise ValueError("observation budget exhausted")
         if name not in source_cache:
-            target = _resolve(str(cwd), name)
+            target = _resolve_observation(cwd, name)
             if blocked.blocks(target):
                 raise ValueError("blocked declaration")
             source_cache[name] = read_declaration(cwd, name)
@@ -297,7 +308,7 @@ def _discover_runtime(cwd, cfg, *, effective_env, unreadable_paths=(), selection
         name = file_spec["path"]
         fact = {"source": "project_file", "path": name}
         try:
-            target = _resolve(str(cwd), name)
+            target = _resolve_observation(cwd, name)
             if blocked.blocks(target):
                 fact["status"] = "blocked"
             elif not target.is_file():
