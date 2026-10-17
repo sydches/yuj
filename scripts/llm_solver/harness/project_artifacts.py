@@ -85,18 +85,22 @@ def project_artifact_evidence(files, before, after, candidates):
             return {**result, "reason": "index_missing_or_changed"}
         sources = set()
         path_sources = {}
+        directory_sources = {}
         for name in paths:
             candidate = _relative(name)
-            applicable = set()
-            for parent in candidate.parents:
-                source = (parent / ".gitignore").as_posix()
-                old, new = before.get(source), after.get(source)
-                if old != new or (old is not None and not _regular(old)):
-                    return {**result, "reason": "ignore_rules_changed_or_unsupported"}
-                if old is not None:
-                    sources.add(source)
-                    applicable.add(source)
-            path_sources[name] = applicable
+            directory = candidate.parent
+            if directory not in directory_sources:
+                applicable = set()
+                for parent in candidate.parents:
+                    source = (parent / ".gitignore").as_posix()
+                    old, new = before.get(source), after.get(source)
+                    if old != new or (old is not None and not _regular(old)):
+                        return {**result, "reason": "ignore_rules_changed_or_unsupported"}
+                    if old is not None:
+                        sources.add(source)
+                        applicable.add(source)
+                directory_sources[directory] = applicable
+            path_sources[name] = directory_sources[directory]
         if not sources:
             return {**result, "status": "available", "ignore_sha256": {}}
         index, index_sha = _read_stable(files, ".git/index", index_entry)
@@ -118,8 +122,8 @@ def project_artifact_evidence(files, before, after, candidates):
             (git_dir / "HEAD").write_text("ref: refs/heads/observed\n")
             (git_dir / "config").write_text("[core]\nrepositoryformatversion = 0\nbare = false\n")
             (git_dir / "index").write_bytes(index)
-            for name in paths:
-                (worktree / name).parent.mkdir(parents=True, exist_ok=True)
+            for directory in directory_sources:
+                (worktree / directory).mkdir(parents=True, exist_ok=True)
             for source, data in ignore_data.items():
                 destination = worktree / source
                 destination.parent.mkdir(parents=True, exist_ok=True)

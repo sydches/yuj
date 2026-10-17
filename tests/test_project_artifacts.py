@@ -98,6 +98,39 @@ def test_unrelated_batch_rules_do_not_change_an_artifacts_receipt(project):
     assert first["matches"]["new.png"] == other["matches"]["new.png"]
 
 
+def test_repeated_calls_use_fresh_nested_ignore_rules(project):
+    root, files = project
+    (root / "nested").mkdir()
+    ignore = root / "nested/.gitignore"
+    ignore.write_text("*.dat\n")
+    first_inventory = _inventory(root)
+    candidates = ["nested/first.dat", "nested/second.dat", "nested/new.txt"]
+    first = project_artifact_evidence(files, first_inventory, first_inventory, candidates)
+    assert set(first["matches"]) == {"nested/first.dat", "nested/second.dat"}
+
+    ignore.write_text("*.txt\n# changed rules\n")
+    second_inventory = _inventory(root)
+    changed = project_artifact_evidence(files, first_inventory, second_inventory, candidates)
+    assert changed["status"] == "unknown"
+    assert changed["matches"] == {}
+    second = project_artifact_evidence(files, second_inventory, second_inventory, candidates)
+    assert set(second["matches"]) == {"nested/new.txt"}
+    assert second["ignore_sha256"]["nested/.gitignore"] != first["ignore_sha256"]["nested/.gitignore"]
+    assert files.reads.count("nested/.gitignore") == 2
+
+
+@pytest.mark.parametrize("pattern", ["a/b/", "a/**/b/"])
+def test_candidate_parent_directories_keep_directory_only_rule_semantics(project, pattern):
+    root, files = project
+    (root / ".gitignore").write_text(pattern + "\n")
+    observed = _inventory(root)
+    assert project_artifact_evidence(files, observed, observed, ["a/b"])["matches"] == {}
+    candidates = ["a/b", "a/b/first", "a/b/second"]
+    result = project_artifact_evidence(files, observed, observed, candidates)
+    assert set(result["matches"]) == set(candidates)
+    assert {receipt["pattern"] for receipt in result["matches"].values()} == {pattern}
+
+
 def test_no_project_ignore_rules_needs_no_metadata_reads_or_git(project, monkeypatch):
     root, files = project
     (root / ".gitignore").unlink()
