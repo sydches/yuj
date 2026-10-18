@@ -349,6 +349,21 @@ session startup outside the loop, cleanup after loop exit and publication of
 the timing row itself. A null call ID identifies loop work, including an
 implicit completion check.
 
+`request.initial_preflight` identifies preparation before the first model call;
+`request.preflight` identifies later estimates. Their `request.messages` and
+`request.count` children separate message construction from counting.
+`request.estimate_fallback` records the existing fallback estimate. Initial
+preparation is outside the first model-to-boundary interval. If the loop exits
+before any model call, it emits no invented turn row.
+
+Tokenizer labels distinguish rendering, encoding, combined template counting
+and fallback encoding. An exact rendered-request reuse hit has a
+`tokenizer.render` span and no `tokenizer.encode` span. Combined template calls
+use `tokenizer.template_count`; the per-message fallback uses
+`tokenizer.fallback_encode`. `turn.post_hooks` covers the existing hook group.
+`verification.record_mutation` includes mutation bookkeeping and its measured
+revision child; use its self-time to separate the two.
+
 | Field | Meaning |
 | --- | --- |
 | `operation` | Nested code-owned labels, from outer operation to inner operation. No command arguments, task paths or output bodies. |

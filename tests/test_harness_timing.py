@@ -112,6 +112,9 @@ def test_early_continue_records_each_model_turn_without_inventing_dispatch(tmp_p
         ]
     session = loop.Session(make_config(max_turns=2), client, "system", "task", str(tmp_path),
                            guardrail_registry=registry)
+    from types import SimpleNamespace
+    from scripts.llm_solver.harness.operation_timing import take_operations
+    session._tokenizer = SimpleNamespace(count=lambda messages, tools=None: 100)
     session._turn_start_offset = 1
     monkeypatch.setattr(loop, "dispatch", lambda *a, **k: pytest.fail("blocked call dispatched"))
     assert session.run().done
@@ -119,10 +122,86 @@ def test_early_continue_records_each_model_turn_without_inventing_dispatch(tmp_p
     assert [row["turn_number"] for row in rows] == [1, 2]
     assert [row["boundary"] for row in rows] == ["next_model_call_entry", "session_end"]
     assert all(row["tool_ms"] == 0 and row["post_ms"] is None and not row["dispatch_executed"] for row in rows)
+    preparation = [item for row in rows for item in row['operations']
+                   if item['operation'] in (['request.initial_preflight'], ['request.preflight'])]
+    assert [(item['operation'], item['calls']) for item in preparation] == [
+        (['request.initial_preflight'], 1), (['request.preflight'], 1)]
+    assert take_operations() == [] and session._pending_turn_timing is None
     if branch == "intent_block":
         result = next(row for row in session._trace_events if row["event"] == "tool_call")
         assert result["tool_call_id"] == "blocked"
         assert result["duration_ms"] == 0 and not result["dispatch_executed"]
+
+
+def test_preflight_and_post_hooks_close_before_each_turn_drain(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.llm_solver.harness.operation_timing import take_operations
+
+    clock, counts = [10.0], []
+    client = _client([ToolCall('read', 'read', {'path': 'a.py'})])
+    monkeypatch.setattr(loop, 'dispatch', lambda *args, **kwargs: 'unchanged task bytes')
+    session = loop.Session(make_config(max_turns=2), client, 'system', 'task', str(tmp_path))
+    monkeypatch.setattr(timing.time, 'perf_counter', lambda: clock[0])
+    original_messages = session.context.get_messages
+    def messages():
+        clock[0] += 0.002
+        return original_messages()
+    def count(messages, tools=None):
+        counts.append((messages, tools))
+        clock[0] += 0.003
+        return 100
+    monkeypatch.setattr(session.context, 'get_messages', messages)
+    session._tokenizer = SimpleNamespace(count=count)
+    monkeypatch.setattr(session, '_maybe_switch_adaptive_phase', lambda turn: clock.__setitem__(0, clock[0] + 0.005))
+    assert session.run().done
+    rows = [row for row in session._trace_events if row['event'] == 'turn_timing']
+    first = {tuple(item['operation']): item for item in rows[0]['operations']}
+    for label in ('request.initial_preflight', 'request.preflight'):
+        assert first[(label,)]['calls'] == 1
+        assert first[(label, 'request.messages')]['elapsed_ms'] == 2
+        assert first[(label, 'request.count')]['elapsed_ms'] == 3
+        assert first[(label,)]['elapsed_ms'] == 5 and first[(label,)]['self_ms'] == 0
+    assert first[('turn.post_hooks',)]['calls'] == 1
+    assert first[('turn.post_hooks',)]['elapsed_ms'] == 5
+    assert not any(item['operation'][0].startswith('request.') for item in rows[1]['operations'])
+    assert client.chat.call_count == 2 and len(counts) >= 2
+    assert len([row for row in session._trace_events if row['event'] == 'tool_call']) == 1
+    assert take_operations() == [] and session._pending_turn_timing is None
+
+
+@pytest.mark.parametrize('abort_at', [1, 2])
+def test_preflight_exception_keeps_completed_spans_without_inventing_initial_turn(tmp_path, monkeypatch, abort_at):
+    from types import SimpleNamespace
+    from scripts.llm_solver.harness import operation_timing
+
+    class PreflightAbort(BaseException):
+        pass
+
+    client = _client([])
+    client.chat.side_effect = [TurnResult(content=None, tool_calls=[],
+        finish_reason='narration_discarded', usage=Usage(10, 2))]
+    session = loop.Session(make_config(max_turns=2), client, 'system', 'task', str(tmp_path))
+    # This fixture targets preflight; client-side preparation has its own count.
+    monkeypatch.setattr(session, '_chat_with_retry', lambda turn: client.chat())
+    calls = []
+    def count(messages, tools=None):
+        calls.append(messages)
+        if len(calls) == abort_at:
+            raise PreflightAbort('fixture abort')
+        return 100
+    session._tokenizer = SimpleNamespace(count=count)
+    with pytest.raises(PreflightAbort, match='fixture abort'):
+        session.run()
+    rows = [row for row in session._trace_events if row['event'] == 'turn_timing']
+    assert len(rows) == abort_at - 1 and client.chat.call_count == abort_at - 1
+    if rows:
+        assert rows[0]['boundary'] == 'session_end'
+        operations = {tuple(item['operation']): item for item in rows[0]['operations']}
+        assert operations[('request.initial_preflight',)]['raised'] == 0
+        assert operations[('request.preflight',)]['raised'] == 1
+        assert operations[('request.preflight', 'request.count')]['raised'] == 1
+    assert session._pending_turn_timing is None and operation_timing.take_operations() == []
+    assert operation_timing._collector.get() is None and operation_timing._frame.get() is None
 
 
 def test_parallel_dispatch_failure_records_every_finished_worker(tmp_path, monkeypatch):

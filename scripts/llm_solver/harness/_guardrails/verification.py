@@ -424,6 +424,7 @@ def post_mutation_verification_gate(
     return PASS
 
 
+@measured("verification.record_mutation")
 def record_verification_mutation(
     state: GuardrailState,
     *,

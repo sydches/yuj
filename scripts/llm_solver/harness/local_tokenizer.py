@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from ..server.token_counting import _request_count_reuse, clear_request_count_reuse
+from .operation_timing import operation
 
 log = logging.getLogger(__name__)
 
@@ -144,22 +145,25 @@ class LocalTokenizer:
             if binding is None:
                 if scoped:
                     clear_request_count_reuse()
-                result = self._tok.apply_chat_template(
-                    _parse_tool_call_args(messages), tools=tools or None,
-                    tokenize=True, **kwargs)
+                with operation("tokenizer.template_count"):
+                    result = self._tok.apply_chat_template(
+                        _parse_tool_call_args(messages), tools=tools or None,
+                        tokenize=True, **kwargs)
             else:
                 # Render every time: templates may depend on the current time.
-                rendered = self._tok.apply_chat_template(
-                    _parse_tool_call_args(messages), tools=tools or None,
-                    tokenize=False, **kwargs)
+                with operation("tokenizer.render"):
+                    rendered = self._tok.apply_chat_template(
+                        _parse_tool_call_args(messages), tools=tools or None,
+                        tokenize=False, **kwargs)
                 reuse_key = (self, "local_rendered_encoding", binding, rendered)
                 reused = _request_count_reuse.get()
                 if reused and reused[0] == reuse_key:
                     return reused[1]
-                result = self._tok(
-                    rendered, padding=False, truncation=False, max_length=None,
-                    add_special_tokens=False, return_tensors=None,
-                )
+                with operation("tokenizer.encode"):
+                    result = self._tok(
+                        rendered, padding=False, truncation=False, max_length=None,
+                        add_special_tokens=False, return_tensors=None,
+                    )
             # Newer transformers (≥4.42 or so) return a BatchEncoding /
             # dict {input_ids: [...], attention_mask: [...]} instead of
             # a flat list when tokenize=True. Older versions returned a
@@ -179,23 +183,24 @@ class LocalTokenizer:
             clear_request_count_reuse()
             self.last_basis = "local_message_estimate"
             log.warning("local chat template failed (%s); using per-message estimate", type(exc).__name__)
-            total = 0
-            for m in messages:
-                content = m.get("content") or ""
-                if not isinstance(content, str):
-                    content = str(content)
-                total += len(self._tok.encode(content, add_special_tokens=False))
-                tcs = m.get("tool_calls") or []
-                for tc in tcs:
-                    fn = tc.get("function") or {}
-                    s = str(fn.get("name", "")) + str(fn.get("arguments", ""))
-                    total += len(self._tok.encode(s, add_special_tokens=False))
-                total += 8
-            if tools:
-                import json
-                total += len(self._tok.encode(
-                    json.dumps(tools), add_special_tokens=False))
-            return total
+            with operation("tokenizer.fallback_encode"):
+                total = 0
+                for m in messages:
+                    content = m.get("content") or ""
+                    if not isinstance(content, str):
+                        content = str(content)
+                    total += len(self._tok.encode(content, add_special_tokens=False))
+                    tcs = m.get("tool_calls") or []
+                    for tc in tcs:
+                        fn = tc.get("function") or {}
+                        s = str(fn.get("name", "")) + str(fn.get("arguments", ""))
+                        total += len(self._tok.encode(s, add_special_tokens=False))
+                    total += 8
+                if tools:
+                    import json
+                    total += len(self._tok.encode(
+                        json.dumps(tools), add_special_tokens=False))
+                return total
 
 
 def load(tokenizer_id: str) -> LocalTokenizer | None:

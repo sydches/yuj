@@ -6,6 +6,7 @@ import pytest
 
 from scripts.llm_solver.harness._loop.run_step import _preflight_estimate
 from scripts.llm_solver.harness.local_tokenizer import LocalTokenizer
+from scripts.llm_solver.harness.operation_timing import operation_profile
 from scripts.llm_solver.server.token_counting import (
     BackendTokenCounter, _request_count_reuse, clear_request_count_reuse, request_count_reuse,
 )
@@ -55,6 +56,64 @@ def test_counting_recovery_reassesses_precision_each_time(monkeypatch):
     session._tokenizer.count.side_effect = OSError("count unavailable")
     assert _preflight_estimate(session) == 777
     assert session._preflight_count_authoritative is False
+
+
+@pytest.mark.parametrize('failure', [None, 'lookup', 'messages', 'schemas', 'count', 'fallback'])
+def test_preflight_spans_preserve_evaluation_order_and_fallback(monkeypatch, failure):
+    from scripts.llm_solver.harness import operation_timing
+    from scripts.llm_solver.harness.context import chars_div_4
+
+    events, clock = [], [0.0]
+    messages = [{'role': 'user', 'content': 'private fixture contents'}]
+
+    def observe(stage):
+        events.append(stage)
+        clock[0] += 0.001
+        if failure == stage or (failure == 'fallback' and stage in ('count', 'estimate')):
+            raise OSError(stage)
+
+    class Counter:
+        @property
+        def count(self):
+            observe('lookup')
+            def count(messages, tools=None):
+                observe('count')
+                return 100
+            return count
+
+    def get_messages():
+        observe('messages')
+        return messages
+
+    def schemas(session):
+        observe('schemas')
+        return []
+
+    def estimate():
+        observe('estimate')
+        return 777
+
+    monkeypatch.setattr(operation_timing.time, 'perf_counter', lambda: clock[0])
+    monkeypatch.setattr('scripts.llm_solver.harness._loop.run_step.effective_model_tool_schemas', schemas)
+    session = SimpleNamespace(_tokenizer=Counter(),
+        context=SimpleNamespace(get_messages=get_messages, estimate_tokens=estimate))
+    with operation_profile() as profile:
+        value = _preflight_estimate(session)
+        rows = {tuple(row['operation']): row for row in profile.take()}
+    stages = ['lookup', 'messages', 'schemas', 'count']
+    expected = stages if failure in (None, 'fallback') else stages[:stages.index(failure) + 1]
+    if failure is not None:
+        expected += ['estimate']
+    if failure == 'fallback':
+        expected += ['messages']
+    assert events == expected
+    assert value == (100 if failure is None else chars_div_4(messages) if failure == 'fallback' else 777)
+    prefix = ('request.initial_preflight',)
+    assert rows[prefix]['raised'] == 0 and rows[prefix]['self_ms'] == 1
+    assert {path[-1] for path in rows} <= {
+        'request.initial_preflight', 'request.messages', 'request.count', 'request.estimate_fallback'}
+    assert sum(row['raised'] for row in rows.values()) == int(failure in ('messages', 'schemas', 'count', 'fallback'))
+    assert (prefix + ('request.estimate_fallback',) in rows) is (failure is not None)
 
 
 _LOCAL_MESSAGES = [{"role": "user", "content": "hi there λ"}]
@@ -108,8 +167,12 @@ def test_local_native_models_reuse_exact_rendered_encoding(monkeypatch, kind):
     counter = _local_counter(_native_tokenizer(kind))
     expected = counter.count(_LOCAL_MESSAGES)
     calls = _observe_encodings(monkeypatch)
-    with request_count_reuse():
+    with operation_profile() as profile, request_count_reuse():
         assert counter.count(_LOCAL_MESSAGES) == counter.count(deepcopy(_LOCAL_MESSAGES)) == expected
+        rows = {tuple(row['operation']): row for row in profile.take()}
+    assert set(rows) == {('tokenizer.render',), ('tokenizer.encode',)}
+    assert rows[('tokenizer.render',)]['calls'] == 2
+    assert rows[('tokenizer.encode',)]['calls'] == 1
     assert len(calls) == 1  # admission must work, not merely preserve counts via fallback
     assert calls[0][1]["add_special_tokens"] is False
     assert counter.last_basis == "local_tokenizer_estimate"
@@ -140,8 +203,11 @@ def test_local_legacy_count_shapes_and_optional_dependencies(monkeypatch, shape)
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_optional_import)
-    with request_count_reuse():
+    with operation_profile() as profile, request_count_reuse():
         assert _local_counter(LegacyTokenizer()).count(_LOCAL_MESSAGES) == 4
+        rows = profile.take()
+    assert len(rows) == 1 and rows[0]['operation'] == ['tokenizer.template_count']
+    assert rows[0]['calls'] == 1 and rows[0]['raised'] == 0
 
 
 @pytest.mark.parametrize("kind", ["slow", "renderer", "encoder", "batch_encoder", "dropout"])
@@ -256,7 +322,7 @@ def test_local_dynamic_template_and_failed_template_recovery(monkeypatch):
 
     counter = _local_counter(_native_tokenizer())
     counter._chat_template = "{% for i in range(strftime_now('%S')|int) %}hi {% endfor %}"
-    with request_count_reuse():
+    with operation_profile() as profile, request_count_reuse():
         for second in (1, 7):
             clock = type("Clock", (), {"now": staticmethod(lambda: datetime(2026, 10, 17, 12, 0, second))})
             monkeypatch.setattr("transformers.utils.chat_template_utils.datetime", clock)
@@ -264,6 +330,11 @@ def test_local_dynamic_template_and_failed_template_recovery(monkeypatch):
         counter._chat_template = "{{raise_exception('unsupported shape')}}"
         value = counter.count(_LOCAL_MESSAGES)
         assert counter.last_basis == "local_message_estimate" and _request_count_reuse.get() == ()
+        rows = {tuple(row['operation']): row for row in profile.take()}
+    assert rows[('tokenizer.render',)]['calls'] == 3 and rows[('tokenizer.render',)]['raised'] == 1
+    assert rows[('tokenizer.encode',)]['calls'] == 2
+    assert rows[('tokenizer.fallback_encode',)]['calls'] == 1
+    assert rows[('tokenizer.fallback_encode',)]['raised'] == 0
     assert counter.count(_LOCAL_MESSAGES) == value
     counter._chat_template = None
     with request_count_reuse():

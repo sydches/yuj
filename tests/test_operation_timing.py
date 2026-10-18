@@ -63,6 +63,39 @@ def test_profile_disabled_does_not_read_clock_or_labels(monkeypatch):
     assert work("unchanged") == "unchanged"
 
 
+def test_mutation_span_preserves_retained_inputs_and_subtracts_revision_child(monkeypatch):
+    from scripts.llm_solver.harness._guardrails import verification
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+
+    clock, calls = [0.0], []
+    monkeypatch.setattr(timing.time, 'perf_counter', lambda: clock[0])
+    original_normalize = verification.normalize_trace_path
+    def normalize(path):
+        clock[0] += 0.002
+        return original_normalize(path)
+    @timing.measured('verification.file_revisions')
+    def revisions(cwd, paths):
+        calls.append((cwd, paths))
+        clock[0] += 0.007
+        return {path: 'fresh' for path in paths}
+    monkeypatch.setattr(verification, 'normalize_trace_path', normalize)
+    monkeypatch.setattr(verification, '_file_revisions', revisions)
+    state = GuardrailState(verification_file_revisions={'retained.py': 'old'},
+                           formal_verification_passed_since_mutation=True)
+    with timing.operation_profile() as profile, timing.operation_call('edit-7'):
+        verification.record_verification_mutation(state, tc_name='write', result='ok',
+            source_write_paths=('src/new.py', 'retained.py'), cwd='/fixture')
+        rows = {tuple(row['operation']): row for row in profile.take()}
+    assert calls == [('/fixture', ['retained.py', 'src/new.py'])]
+    assert state.verification_file_revisions == {'retained.py': 'fresh', 'src/new.py': 'fresh'}
+    assert not state.formal_verification_passed_since_mutation
+    parent = rows[('verification.record_mutation',)]
+    child = rows[('verification.record_mutation', 'verification.file_revisions')]
+    assert parent['elapsed_ms'] == 11 and parent['self_ms'] == 4
+    assert child['elapsed_ms'] == child['self_ms'] == 7
+    assert all(row['calls'] == 1 and row['tool_call_id'] == 'edit-7' for row in rows.values())
+
+
 def test_report_keeps_old_trace_gaps_and_does_not_sum_parents(tmp_path):
     path = tmp_path / "task.trace.jsonl"
     operation = {"operation": ["verification", "files.resolve"], "tool_call_id": "done-3",

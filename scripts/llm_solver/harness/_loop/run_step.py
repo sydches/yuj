@@ -40,6 +40,7 @@ from ..plan_mode import effective_model_tool_schemas
 from ..tool_validation import SchemaViolation, ToolArgumentValidation
 from .._tool_filters import resolve_tool_permission
 from ..system_log import get_system_log, provenance_for
+from ..operation_timing import measured, operation
 from ...server.request_controls import CacheObservation, warn_on_cache_miss
 from ...server.token_counting import request_count_reuse, clear_request_count_reuse
 from . import _dedup_signature, _summarize_args, _truncate_for_trace
@@ -403,6 +404,7 @@ def _consume_replay_correction(session: "Session", *, turn: int) -> None:
     _correction_trace_barrier(session)
 
 
+@measured("turn.post_hooks")
 def _run_post_turn_hooks(
     session: "Session", turn: int, *, run_advisor: bool = True
 ) -> None:
@@ -480,6 +482,8 @@ def _complete_turn_rewind(
     )
 
 
+@measured(lambda session: "request.initial_preflight"
+          if getattr(session, "_pending_turn_timing", None) is None else "request.preflight")
 def _preflight_estimate(session) -> int:
     """Current-list token estimate for the pre-flight gate.
 
@@ -490,9 +494,11 @@ def _preflight_estimate(session) -> int:
     session._preflight_count_authoritative = False
     if tok is not None:
         try:
-            count = tok.count(
-                list(session.context.get_messages()),
-                tools=effective_model_tool_schemas(session))
+            count_request = tok.count
+            with operation("request.messages"):
+                messages = list(session.context.get_messages())
+            with operation("request.count"):
+                count = count_request(messages, tools=effective_model_tool_schemas(session))
             if type(count) is not int or count < 0:
                 raise ValueError("request counter must return a nonnegative integer")
             from ..request_counting import has_reported_count
@@ -500,12 +506,13 @@ def _preflight_estimate(session) -> int:
             return count
         except Exception as e:
             log.warning("preflight request count failed (%s); using strategy estimate", e)
-    try:
-        return int(session.context.estimate_tokens())
-    except Exception:
-        # The strategy may share the same unavailable counter.
-        from ..context import chars_div_4
-        return int(chars_div_4(session.context.get_messages()))
+    with operation("request.estimate_fallback"):
+        try:
+            return int(session.context.estimate_tokens())
+        except Exception:
+            # The strategy may share the same unavailable counter.
+            from ..context import chars_div_4
+            return int(chars_div_4(session.context.get_messages()))
 
 
 def _preflight_prompt_tokens(live_pt: int, estimated_pt: int,
