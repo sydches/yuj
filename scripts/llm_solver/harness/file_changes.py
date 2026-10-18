@@ -6,10 +6,12 @@ means unchanged bytes. No task language or command syntax selects the files.
 """
 from functools import wraps
 import functools
+import gzip
 import os
 import re
 import subprocess
 import time
+import zlib
 
 from .action_metadata import action_metadata
 from .operation_timing import measured
@@ -21,6 +23,8 @@ from .tool_specs import ACTION_WRITE_LIKE_TOOL_NAMES
 OBSERVED_TOOLS = ACTION_WRITE_LIKE_TOOL_NAMES | {
     "bash", "bash_poll", "bash_kill", "exec_cell", "run_tests",
 }
+
+_INVENTORY_GZIP_MIN_BYTES = 64 * 1024
 
 
 def _observed_check_attempt(name, arguments, metadata):
@@ -92,13 +96,31 @@ exec "${inventory[@]}" "$@"'''
         script = script.replace('# reuse_inputs', '''for path in .git/config .git/info/exclude; do
     if [[ -e "$path" || -L "$path" ]]; then inventory+=("./$path"); fi
 done''')
-    result = files.run(script,
-                       [str(files.root), *args], None)
+    compressor = files.inventory_compressor() if files._inventory_compression else ''
+    if compressor:
+        compressed_script = script.replace(
+            'inventory=("$1" "$2" "$3"); shift 3',
+            'set -o pipefail\ncompressor=$1; shift\ninventory=("$1" "$2" "$3"); shift 3',
+        ).replace(
+            'exec "${inventory[@]}" "$@"',
+            '"${inventory[@]}" "$@" | exec "$compressor" -1 -c',
+        )
+        result = files.run(compressed_script,
+                           [str(files.root), compressor, *args], None)
+    else:
+        result = files.run(script, [str(files.root), *args], None)
     if result.returncode:
         raise OSError("native file inventory did not complete")
-    fields = result.stdout.split(b"\0")
+    payload = result.stdout
+    if compressor:
+        try:
+            payload = gzip.decompress(payload)
+        except (OSError, EOFError, zlib.error) as error:
+            raise ValueError("native file inventory compression is invalid") from error
+    fields = payload.split(b"\0")
     if fields.pop() != b"" or len(fields) % 8:
         raise ValueError("native file inventory has an invalid shape")
+    files._inventory_compression = len(payload) >= _INVENTORY_GZIP_MIN_BYTES
     return {os.fsdecode(fields[i]).removeprefix('./'): tuple(fields[i + 1:i + 8])
             for i in range(0, len(fields), 8)}, excluded
 

@@ -1,7 +1,10 @@
 """Known audit 086 counterexamples use real commands and dispatch consumers."""
+import gzip
 import json
+import os
 import shlex
 import shutil
+import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +12,8 @@ import pytest
 
 from tests._config_helpers import make_config
 from tests.test_task_files import bwrap, namespace_files
-from scripts.llm_solver.harness.file_changes import observed_dispatch
+from scripts.llm_solver.harness.file_changes import _inventory, observed_dispatch
+from scripts.llm_solver.harness.task_files import NamespaceFiles
 from scripts.llm_solver.harness.task_path import activate_task_files
 from scripts.llm_solver.harness.loop import Session
 from scripts.llm_solver.server.types import ToolCall, TurnResult, Usage
@@ -132,6 +136,94 @@ def test_observation_uses_native_view(bwrap, tmp_path):
                 execution_metadata=metadata)
     assert metadata["file_changes"]["changed_paths"] == ["file\nname"]
     assert (host / "hidden").read_text() == "host"
+
+
+def test_large_inventory_switches_to_compression_and_back(bwrap, tmp_path, monkeypatch):
+    from scripts.llm_solver.harness import file_changes
+
+    source, files = namespace_files(bwrap, tmp_path)
+    monkeypatch.setattr(file_changes, '_INVENTORY_GZIP_MIN_BYTES', 1024)
+    calls = []
+    native = files.run
+    def observed(script, args, data):
+        calls.append((script, args))
+        return native(script, args, data)
+    monkeypatch.setattr(files, 'run', observed)
+    for index in range(40):
+        (source / f'long-inventory-name-{index:04d}.txt').write_text('x')
+
+    expected, _ = _inventory(files, str(source), ())
+    assert files._inventory_compression
+    first_calls = len(calls)
+    assert _inventory(files, str(source), ())[0] == expected
+    assert files._inventory_gzip and len(calls) == first_calls + 2
+    assert files._inventory_gzip in calls[-1][1]
+
+    for path in source.iterdir():
+        path.unlink()
+    assert _inventory(files, str(source), ())[0] == {}
+    assert not files._inventory_compression
+    assert files._inventory_gzip in calls[-1][1]
+    assert _inventory(files, str(source), ())[0] == {}
+    assert files._inventory_gzip not in calls[-1][1]
+
+
+@pytest.mark.parametrize('gzip_kind', ['missing', 'unsupported'])
+def test_unavailable_inventory_compressor_keeps_raw_inventory(tmp_path, gzip_kind):
+    root, bins = tmp_path / 'task', tmp_path / 'bin'
+    root.mkdir()
+    bins.mkdir()
+    for name in ('find',):
+        (bins / name).symlink_to(shutil.which(name))
+    if gzip_kind == 'unsupported':
+        (bins / 'gzip').write_text('#!/bin/sh\nexit 1\n')
+        (bins / 'gzip').chmod(0o700)
+    calls = []
+    def run(script, args, data):
+        calls.append((script, args))
+        return subprocess.run(['/bin/bash', '--noprofile', '--norc', '-c',
+            script, 'inventory-compressor', *args], input=data, capture_output=True,
+            env={'PATH': str(bins)}, timeout=15)
+    files = NamespaceFiles(str(root), run, binding={'test': gzip_kind}, shares_host_kernel=True)
+    (root / 'file').write_text('body')
+    files._inventory_compression = True
+
+    assert set(_inventory(files, str(root), ())[0]) == {'file'}
+    assert files._inventory_gzip == ''
+    assert len(calls) == 3
+    assert set(_inventory(files, str(root), ())[0]) == {'file'}
+    assert len(calls) == 4
+
+
+def test_inventory_compression_rejects_upstream_failure(bwrap, tmp_path):
+    source, files = namespace_files(bwrap, tmp_path)
+    wrapper = tmp_path / 'failed-producer'
+    wrapper.write_text('#!/bin/sh\nprintf partial\nexit 9\n')
+    wrapper.chmod(0o755)
+    files._utilities['find'] = str(wrapper)
+    files._inventory_compression = True
+    with pytest.raises(OSError, match='did not complete'):
+        _inventory(files, str(source), ())
+
+
+@pytest.mark.parametrize('failure', ['process', 'corrupt', 'truncated'])
+def test_inventory_compression_fails_closed(bwrap, tmp_path, monkeypatch, failure):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'file').write_text('body')
+    files._inventory_compression = True
+    compressor = files.inventory_compressor()
+    native = files.run
+    def failed(script, args, data):
+        if compressor not in args:
+            return native(script, args, data)
+        if failure == 'process':
+            return subprocess.CompletedProcess(args, 1, b'', b'failed')
+        payload = b'not a gzip stream' if failure == 'corrupt' else gzip.compress(b'payload')[:-2]
+        return subprocess.CompletedProcess(args, 0, payload, b'')
+    monkeypatch.setattr(files, 'run', failed)
+    error = OSError if failure == 'process' else ValueError
+    with pytest.raises(error):
+        _inventory(files, str(source), ())
 
 
 @pytest.mark.parametrize('reuse_enabled', [False, True])

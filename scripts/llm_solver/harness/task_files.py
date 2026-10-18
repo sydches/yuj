@@ -84,6 +84,27 @@ class NamespaceFiles:
         self.shares_host_kernel = shares_host_kernel
         self._utilities: dict[str, str] = {}
         self._batch_xargs: str | None = None
+        self._inventory_gzip: str | None = None
+        self._inventory_compression = False
+
+    def inventory_compressor(self):
+        """Return a working low-cost compressor after one exact task-side probe."""
+        if self._inventory_gzip is None:
+            result = self.run(
+                'path=$(type -P gzip) || exit 0\n'
+                'if "$path" -1 -c </dev/null >/dev/null 2>&1; then printf "%s\\0" "$path"; fi',
+                [], None,
+            )
+            if result.returncode:
+                raise TaskFileError('task inventory compressor discovery failed')
+            if result.stdout:
+                if (not result.stdout.endswith(b'\0') or b'\0' in result.stdout[:-1]
+                        or not result.stdout[:-1].startswith(b'/')):
+                    raise TaskFileError('task inventory compressor discovery failed')
+                self._inventory_gzip = os.fsdecode(result.stdout[:-1])
+            else:
+                self._inventory_gzip = ''
+        return self._inventory_gzip
 
     def _batch_program(self, script, count):
         """Admit optional bulk execution once, only when a large call needs it."""
@@ -107,6 +128,8 @@ class NamespaceFiles:
         view._batch_xargs = self._batch_xargs
         if self._batch_xargs:
             view._utilities['xargs'] = self._utilities['xargs']
+        view._inventory_gzip = self._inventory_gzip
+        view._inventory_compression = self._inventory_compression
         view.root = view.resolve('.')
         return view
 
