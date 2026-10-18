@@ -144,23 +144,28 @@ def test_missing_native_setsid_allows_unbounded_one_shot_fallback(native, tmp_pa
     assert _execute(argv, timeout=None, binary=True).stdout == b'fallback'
 
 
-def test_failed_capture_cannot_interpret_unconsumed_payload(native, tmp_path):
-    create, _, effective = native
-    tools = tmp_path / 'bin'
-    tools.mkdir()
-    for name in ['bash', 'head', 'wc', 'base64', 'mktemp', 'rm', 'rmdir', 'setsid', 'cat']:
-        (tools / name).symlink_to(shutil.which(name))
-    owner, execute = create(dict(effective, PATH=str(tools)))
+def test_missing_capture_workspace_cannot_start_task_or_replay_payload(native, tmp_path):
+    owner, execute = native[0]()
     assert execute(':').returncode == 0
-    (tools / 'mktemp').unlink()
-    (tools / 'mktemp').write_text('#!/bin/sh\nexit 74\n')
-    (tools / 'mktemp').chmod(0o755)
+    shutil.rmtree(owner._capture_dir)
     payload = base64.b64encode(b'printf injected > injected') + b'\n'
     with pytest.raises(RuntimeError, match='capture failed'):
         execute('printf task > started', input_bytes=payload)
     assert not (tmp_path / 'injected').exists()
     assert not (tmp_path / 'started').exists()
     assert owner._process is None
+
+
+def test_capture_workspace_lives_for_one_connection_and_is_cleaned(native):
+    owner, execute = native[0]()
+    assert execute('printf first').stdout == b'first'
+    capture_dir = Path(owner._capture_dir)
+    assert capture_dir.is_dir()
+    assert sorted(path.name for path in capture_dir.iterdir()) == ['err', 'in', 'out']
+    assert execute('printf second').stdout == b'second'
+    assert owner._capture_dir == str(capture_dir)
+    owner.close()
+    assert not capture_dir.exists()
 
 
 def test_lock_wait_uses_same_call_allowance(native):
@@ -203,7 +208,12 @@ def test_closed_background_streams_do_not_hold_internal_capture_fds(native):
 
 def test_truncated_payload_stops_before_task(native, tmp_path, monkeypatch):
     from scripts.llm_solver.harness.sandbox._persistent_container import _ACK, _RAW_CAPTURE
-    result = subprocess.run(['bash', '-p', '-c', _RAW_CAPTURE, 'capture', '3',
+    capture_dir = tmp_path / 'capture'
+    capture_dir.mkdir()
+    for stream in ['in', 'out', 'err']:
+        (capture_dir / stream).touch()
+    result = subprocess.run(['bash', '-p', '-c', _RAW_CAPTURE, 'capture',
+                             str(capture_dir), shutil.which('base64'), '3',
                              'bash', '-c', 'printf wrong > started'],
                             input=_ACK + b'ab', cwd=tmp_path, capture_output=True)
     assert result.returncode == 74

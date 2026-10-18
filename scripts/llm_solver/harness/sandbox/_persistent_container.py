@@ -1,5 +1,6 @@
 """A session-owned Docker connection with fresh, guarded command processes."""
 import base64
+import binascii
 import locale
 import os
 import secrets
@@ -17,7 +18,7 @@ from ..process_identity import (
 )
 from ..task_environment import TaskEnvironmentUnavailable
 from ..time_budget import command_timeout, execution_deadline, remaining_before
-from ._binary_transport import _CAPTURE, captured_result
+from ._binary_transport import captured_result
 from .env_policy import build_clean_exec_argv
 
 
@@ -31,34 +32,54 @@ class _ConnectionClosed(RuntimeError):
 
 _REQUEST_LOOP = r'''
 for utility in base64 head wc mktemp rm rmdir setsid cat; do
-    type -P "$utility" >/dev/null || exit 69
+    path=$(type -P "$utility") || exit 69
+    case "$utility" in
+        base64) encoder=$path ;;
+        mktemp) temp_maker=$path ;;
+        rm) remove_file=$path ;;
+        rmdir) remove_dir=$path ;;
+    esac
 done
-[[ $(printf YQ== | base64 --decode) == a ]] || exit 69
+[[ $(printf YQ== | "$encoder" --decode) == a ]] || exit 69
 [[ $(printf abc | head -c 2) == ab ]] || exit 69
 [[ $(printf abc | wc -c) -eq 3 ]] || exit 69
-probe=$(mktemp -d) || exit 69
-rm -f -- "$probe/probe" && rmdir -- "$probe" || exit 69
+capture_dir=$("$temp_maker" -d) || exit 69
+cleanup_capture() {
+    "$remove_file" -f -- "$capture_dir/in" "$capture_dir/out" "$capture_dir/err"
+    "$remove_dir" -- "$capture_dir"
+}
+trap cleanup_capture EXIT
+for stream in in out err; do
+    : > "$capture_dir/$stream" || exit 69
+done
+printf 'YUJ_CONTAINER_RESOURCES_V1\n'
+printf '%s' "$capture_dir" | "$encoder" || exit 69
+printf ':\n'
+printf '%s' "$encoder" | "$encoder" || exit 69
+printf ':\n'
 while IFS= read -r request; do
-    command=$(printf '%s' "$request" | base64 --decode) || exit 74
+    command=$(printf '%s' "$request" | "$encoder" --decode) || exit 74
     eval "$command"
 done
 '''
 
-# Keep the established separate-stream response format. Exact-length input
-# avoids large here-documents; pipe collectors retain descendant output/EOF.
-_RAW_CAPTURE = _CAPTURE.replace(
-    '"$encoder" --decode > "$capture_dir/in" || exit 74',
-    r'''size=$1; shift
-: > "$capture_dir/in"
+# Keep the established separate-stream response format. Reuse connection-owned
+# files, while exact-length input and pipe collectors retain input and EOF rules.
+_RAW_CAPTURE = r'''IFS= read -r startup_ack || exit 74
+[[ $startup_ack == yuj-container-start-v1 ]] || exit 74
+capture_dir=$1; encoder=$2; size=$3; shift 3
+[[ -d $capture_dir && ! -L $capture_dir ]] || exit 74
+for stream in in out err; do
+    path=$capture_dir/$stream
+    [[ -f $path && ! -L $path ]] || exit 74
+    : > "$path" || exit 74
+done
 if ((size)); then
     head -c "$size" > "$capture_dir/in" || exit 74
     observed=$(wc -c < "$capture_dir/in") || exit 74
     ((observed == size)) || exit 74
-fi''',
-)
-_RAW_CAPTURE = _RAW_CAPTURE.replace(
-    '"$@" < "$capture_dir/in" > "$capture_dir/out" 2> "$capture_dir/err"\nresult=$?',
-    r'''exec {out_fd}> >(exec cat > "$capture_dir/out")
+fi
+exec {out_fd}> >(exec cat > "$capture_dir/out")
 out_reader=$!
 exec {err_fd}> >(exec {out_fd}>&-; exec cat > "$capture_dir/err")
 err_reader=$!
@@ -67,11 +88,30 @@ result=$?
 exec {out_fd}>&-
 exec {err_fd}>&-
 wait "$out_reader" || exit 74
-wait "$err_reader" || exit 74''',
-)
+wait "$err_reader" || exit 74
+printf 'YUJ_BINARY_V1\n%d\n' "$result"
+"$encoder" < "$capture_dir/out" || exit 74
+printf ':\n'
+"$encoder" < "$capture_dir/err" || exit 74
+printf ':\n'
+'''
 _ACK = b'yuj-container-start-v1\n'
-_RAW_CAPTURE = ("IFS= read -r startup_ack || exit 74\n"
-                "[[ $startup_ack == yuj-container-start-v1 ]] || exit 74\n" + _RAW_CAPTURE)
+
+
+def _startup_resources(output):
+    """Decode connection-owned paths without trusting shell interpolation."""
+    try:
+        header, encoded = output.decode('ascii').split('\n', 1)
+        capture, encoder, tail = encoded.split(':\n')
+        if header != 'YUJ_CONTAINER_RESOURCES_V1' or tail:
+            raise ValueError
+        values = [base64.b64decode(''.join(value.splitlines()), validate=True)
+                  for value in (capture, encoder)]
+        if any(not value or b'\0' in value for value in values):
+            raise ValueError
+    except (UnicodeDecodeError, ValueError, binascii.Error) as exc:
+        raise RuntimeError('invalid retained container startup response') from exc
+    return tuple(os.fsdecode(value) for value in values)
 
 
 def _remaining(deadline, command, timeout):
@@ -98,6 +138,8 @@ class PersistentContainerSession:
         self._call_group = None
         self._verification = None
         self._verification_bytes = b''
+        self._capture_dir = None
+        self._encoder = None
         self._unsupported = False
         self._closed = False
 
@@ -171,8 +213,9 @@ class PersistentContainerSession:
         verifier = ProcessVerification(argv)
         try:
             output, code = self._exchange(request, marker, deadline, command, timeout, verifier)
-            if output or code:
+            if code:
                 raise RuntimeError('invalid retained container startup response')
+            self._capture_dir, self._encoder = _startup_resources(output)
         except (_ConnectionClosed, ProcessIdentityError) as error:
             try:
                 status = self._process.wait(timeout=1)
@@ -216,11 +259,14 @@ class PersistentContainerSession:
                 raise TypeError('persistent container input must be bytes')
             if self._process is None:
                 self._start(deadline, argv, timeout)
+            if self._capture_dir is None or self._encoder is None:
+                raise RuntimeError('retained container capture is unavailable')
             prepared = GuardedProcessArgv(argv)
             first_argument = marker_index + 1 + len(FIELDS)
             prepared[first_argument:] = [
                 'bash', '--noprofile', '--norc', '-p', '-c', _RAW_CAPTURE,
-                'yuj-container-capture', str(len(data)), *prepared[first_argument:],
+                'yuj-container-capture', self._capture_dir, self._encoder,
+                str(len(data)), *prepared[first_argument:],
             ]
             prepared = with_container_deadline(
                 prepared, _remaining(deadline, argv, timeout), cancellable=True)
@@ -328,6 +374,7 @@ class PersistentContainerSession:
                 process.stdout.close()
             self._process = self._group = self._call_group = self._verification = None
             self._verification_bytes = b''
+            self._capture_dir = self._encoder = None
         if error is not None:
             raise error
 
