@@ -134,6 +134,87 @@ def test_observation_uses_native_view(bwrap, tmp_path):
     assert (host / "hidden").read_text() == "host"
 
 
+@pytest.mark.parametrize('reuse_enabled', [False, True])
+def test_inventory_comparison_keeps_entry_changes_and_reuse_inputs(bwrap, tmp_path, monkeypatch, reuse_enabled):
+    from types import SimpleNamespace
+    from scripts.llm_solver.harness import read_reuse
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / '.git').mkdir()
+    (source / '.git/config').write_text('original config')
+    (source / '.git/index').write_bytes(b'original index')
+    (source / '.gitignore').write_text('*.cache\n')
+    (source / 'mode').write_text('same bytes')
+    (source / 'deleted').write_text('remove me')
+    (source / 'alias').symlink_to('mode')
+    (source / 'directory').mkdir()
+    snapshots = []
+    if reuse_enabled:
+        reuse = SimpleNamespace()
+        stamp = read_reuse.inventory_stamp
+        def record_stamp(entries, binding):
+            snapshots.append(dict(entries))
+            return stamp(entries, binding)
+        monkeypatch.setattr(read_reuse, 'active_reuse', lambda: reuse)
+        monkeypatch.setattr(read_reuse, 'inventory_stamp', record_stamp)
+    metadata = {}
+
+    @observed_dispatch
+    def execute(name, arguments, **kwargs):
+        result = files.run('chmod 700 mode; rm deleted; ln -sfn absent alias; '
+                           'printf ignored > generated.cache; printf new > untracked; '
+                           'printf changed > .git/config; printf changed > .git/index', [], None)
+        assert result.returncode == 0
+        kwargs['execution_metadata'].update(executed=True, exit_status_known=True, exit_status=0)
+
+    with activate_task_files(files, host_root=source):
+        execute('bash', {'cmd': 'grep mode mode'}, cwd=str(source), cfg=make_config(),
+                execution_metadata=metadata)
+    record = metadata['file_changes']
+    assert record['changed_paths'] == ['alias', 'deleted', 'generated.cache', 'mode', 'untracked']
+    assert record['created_paths'] == ['generated.cache', 'untracked']
+    if reuse_enabled:
+        assert len(snapshots) == 2
+        assert snapshots[0]['directory'][0] == snapshots[1]['directory'][0] == b'd'
+        assert snapshots[0]['.git/config'] != snapshots[1]['.git/config']
+        assert snapshots[0]['.git/index'] != snapshots[1]['.git/index']
+
+
+@pytest.mark.parametrize('transition', ['created_owned', 'lost_identity'])
+def test_inventory_comparison_uses_fresh_owned_exclusions(bwrap, tmp_path, transition):
+    import os
+    from pathlib import Path
+
+    source, files = namespace_files(bwrap, tmp_path)
+    host = source
+    if transition == 'lost_identity':
+        host = Path(files.root)
+        (source / '.tool_output').write_text('old retained bytes')
+        os.link(source / '.tool_output', host / '.tool_output')
+        command = 'rm .tool_output; printf new > .tool_output'
+    else:
+        command = 'mkdir .tool_output; printf retained > .tool_output/new'
+    metadata = {}
+
+    @observed_dispatch
+    def execute(name, arguments, **kwargs):
+        assert files.run(command, [], None).returncode == 0
+        kwargs['execution_metadata'].update(executed=True, exit_status_known=True, exit_status=0)
+
+    with activate_task_files(files, host_root=host):
+        execute('bash', {'cmd': 'fixture'}, cwd=str(host), cfg=make_config(), execution_metadata=metadata)
+    record = metadata['file_changes']
+    if transition == 'created_owned':
+        assert record['status'] == 'unchanged_metadata'
+        assert record['changed_paths'] == []
+        assert '.tool_output' in record['excluded_paths']
+    else:
+        assert record['changed_paths'] == ['.tool_output']
+        assert record['created_paths'] == ['.tool_output']
+        assert '.tool_output' not in record['excluded_paths']
+        assert (host / '.tool_output').read_text() == 'old retained bytes'
+
+
 def test_unavailable_observation_does_not_invent_no_change(tmp_path, monkeypatch):
     from scripts.llm_solver.harness import file_changes
 

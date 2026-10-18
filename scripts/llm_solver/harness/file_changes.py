@@ -143,8 +143,9 @@ def observed_dispatch(function):
                 if (contained_search_paths(paths, (str(files.root), cwd), excluded)
                         and (name != 'bash' or search and search.directory in ('.', str(files.root), cwd))):
                     reuse.before = inventory_stamp(before, files.binding)
-            before = {path: entry for path, entry in before.items()
-                      if entry[0] != b'd' and path not in {'.git/config', '.git/info/exclude'}}
+                # Only reuse inventories include directories and Git policy inputs.
+                before = {path: entry for path, entry in before.items()
+                          if entry[0] != b'd' and path not in {'.git/config', '.git/info/exclude'}}
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             record["error_kind"] = type(error).__name__
         try:
@@ -164,14 +165,15 @@ def observed_dispatch(function):
                         {'include_directories': True} if reuse is not None else {}))
                     if reuse is not None:
                         reuse.after = inventory_stamp(after, files.binding)
-                    after = {path: entry for path, entry in after.items()
-                             if entry[0] != b'd' and path not in {'.git/config', '.git/info/exclude'}}
+                        after = {path: entry for path, entry in after.items()
+                                 if entry[0] != b'd' and path not in {'.git/config', '.git/info/exclude'}}
                     # A registered artifact may first be created by this call.
                     def admitted(path):
                         return not any(path == p or path.startswith(p + "/")
                                        for p in excluded)
-                    changed = sorted(path for path in before.keys() | after.keys()
-                                     if admitted(path) and before.get(path) != after.get(path))
+                    changed = ([] if before == after else sorted(
+                        path for path in before.keys() | after.keys()
+                        if before.get(path) != after.get(path) and admitted(path)))
                     record.update(status="changed" if changed else "unchanged_metadata",
                                   changed_paths=changed, excluded_paths=excluded)
                     record['created_paths'] = [path for path in changed if path not in before]
