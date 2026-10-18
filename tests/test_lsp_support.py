@@ -235,6 +235,181 @@ def test_guarded_lsp_startup_preserves_rpc_and_refuses_changed_credentials(tmp_p
         manager.close()
 
 
+def test_rejected_lsp_verification_precedes_rpc_write(tmp_path, native_process_identity, monkeypatch):
+    from dataclasses import replace
+    from scripts.llm_solver.harness import lsp_support
+    from scripts.llm_solver.harness.process_identity import guarded_process_argv
+
+    identity = replace(native_process_identity, uids=(native_process_identity.uids[0] + 1,) * 4)
+    spec = fake_spec(tmp_path)
+    started = tmp_path / 'server-started'
+    Path(spec.command[-1]).write_text(
+        f'from pathlib import Path\nPath({str(started)!r}).touch()\n' + _FAKE_SERVER)
+    (tmp_path / 'app.py').write_text('bad\ncode\n')
+    popen = CountingPopen()
+
+    def rejected_before_client(argv, **kwargs):
+        process = popen(argv, **kwargs)
+        assert process.wait(timeout=2) == 77
+        return process
+
+    sends = []
+    original_send = lsp_support._RpcClient._send
+
+    def record_send(client, message):
+        sends.append(message)
+        return original_send(client, message)
+
+    monkeypatch.setattr(lsp_support._RpcClient, '_send', record_send)
+    manager, _, _, warnings = make_manager(tmp_path, spec=spec, popen=rejected_before_client)
+    manager.argv_builder = lambda server, root: guarded_process_argv([], server.command, identity)
+    try:
+        assert manager.after_edit('app.py').status == 'unavailable'
+        assert len(warnings) == 1 and 'verified process credentials' in warnings[0]
+        assert not sends and not started.exists()
+        assert manager.after_edit('app.py').status == 'unavailable'
+        assert len(warnings) == 1 and len(popen.processes) == 1
+    finally:
+        manager.close()
+
+
+def test_lsp_waits_for_delayed_verification_before_first_request(tmp_path, native_process_identity, monkeypatch):
+    import queue
+    import threading
+    from scripts.llm_solver.harness import lsp_support
+    from scripts.llm_solver.harness.process_identity import ProcessVerification, guarded_process_argv
+
+    spec = fake_spec(tmp_path)
+    argv = guarded_process_argv([], spec.command, native_process_identity)
+    verification = ProcessVerification(argv)
+    entered, release, admitted, sent = (threading.Event() for _ in range(4))
+    original_read = verification.read
+
+    def delayed_read(stream):
+        entered.set()
+        assert release.wait(2)
+        original_read(stream)
+        admitted.set()
+
+    monkeypatch.setattr(verification, 'read', delayed_read)
+    original_send = lsp_support._RpcClient._send
+
+    def verified_send(client, message):
+        sent.set()
+        assert admitted.is_set()
+        return original_send(client, message)
+
+    monkeypatch.setattr(lsp_support._RpcClient, '_send', verified_send)
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    client = lsp_support._RpcClient(process, request_timeout_s=1, process_verification=verification)
+    results = queue.Queue()
+
+    def initialize():
+        try:
+            results.put(client.request('initialize', {}))
+        except BaseException as error:
+            results.put(error)
+
+    request = threading.Thread(target=initialize)
+    try:
+        assert entered.wait(1)
+        request.start()
+        assert not sent.wait(0.05)
+        release.set()
+        request.join(2)
+        assert not request.is_alive()
+        assert results.get_nowait() == {'capabilities': {}}
+        client.notify('initialized', {})
+        assert client.request('textDocument/references', {}) == []
+    finally:
+        release.set()
+        client.close()
+        if request.ident is not None:
+            request.join(2)
+
+
+@pytest.mark.parametrize('operation', ['request', 'notify'])
+def test_lsp_missing_verification_times_out_without_rpc_or_shutdown_wait(monkeypatch, operation):
+    import time
+    from scripts.llm_solver.harness import lsp_support
+    from scripts.llm_solver.harness.process_identity import GuardedProcessArgv, ProcessVerification
+
+    argv = GuardedProcessArgv([sys.executable, '-c', 'import time; time.sleep(30)'])
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    client = lsp_support._RpcClient(process, request_timeout_s=0.05,
+                                   process_verification=ProcessVerification(argv))
+    sends = MagicMock(side_effect=AssertionError('RPC sent before verification'))
+    monkeypatch.setattr(client, '_send', sends)
+    start = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError, match='LSP response timed out'):
+            getattr(client, operation)('initialize', {})
+    finally:
+        client.close()
+    assert time.monotonic() - start < 0.75
+    assert process.poll() is not None
+    sends.assert_not_called()
+
+
+def test_lsp_startup_and_response_share_deadline_and_queued_ready_can_expire(monkeypatch):
+    from io import BytesIO
+    from types import SimpleNamespace
+    from scripts.llm_solver.harness import lsp_support
+
+    monkeypatch.setattr(lsp_support.threading, 'Thread', MagicMock())
+    process = SimpleNamespace(stdin=BytesIO(), stdout=BytesIO())
+    client = lsp_support._RpcClient(process, request_timeout_s=1,
+                                   process_verification=SimpleNamespace(verified=False))
+    client._messages.put(client._STARTUP_READY)
+    monotonic = MagicMock(side_effect=[10.0, 10.5, 10.8, 10.9])
+    monkeypatch.setattr(lsp_support.time, 'monotonic', monotonic)
+    receive = MagicMock(wraps=client._receive)
+    monkeypatch.setattr(client, '_receive', receive)
+    with pytest.raises(TimeoutError, match='LSP response timed out'):
+        client.request('initialize', {})
+    assert [call.args[0] for call in receive.call_args_list] == pytest.approx([0.5, 0.1])
+    assert b'initialize' in process.stdin.getvalue()
+
+    process.stdin = BytesIO()
+    client = lsp_support._RpcClient(process, request_timeout_s=1,
+                                   process_verification=SimpleNamespace(verified=False))
+    client._messages.put(client._STARTUP_READY)
+    monotonic.side_effect = [20.0, 20.5, 21.1]
+    with pytest.raises(TimeoutError, match='LSP response timed out'):
+        client.request('initialize', {})
+    assert not process.stdin.getvalue()
+
+
+def test_lsp_drain_retains_startup_readiness_and_failure(monkeypatch):
+    from io import BytesIO
+    from types import SimpleNamespace
+    from scripts.llm_solver.harness import lsp_support
+    from scripts.llm_solver.harness.process_identity import ProcessIdentityError
+
+    monkeypatch.setattr(lsp_support.threading, 'Thread', MagicMock())
+    process = SimpleNamespace(stdin=BytesIO(), stdout=BytesIO())
+    client = lsp_support._RpcClient(process, request_timeout_s=1,
+                                   process_verification=SimpleNamespace(verified=False))
+    client._messages.put(client._STARTUP_READY)
+    client.drain()
+    client.notify('initialized', {})
+    assert b'initialized' in process.stdin.getvalue()
+
+    process.stdin = BytesIO()
+    client = lsp_support._RpcClient(process, request_timeout_s=1,
+                                   process_verification=SimpleNamespace(verified=False))
+    error = ProcessIdentityError('task command did not start with verified process credentials')
+    client._messages.put(lsp_support._ReaderFailure(error))
+    for operation in (client.drain, lambda: client.request('initialize', {}),
+                      lambda: client.notify('initialized', {})):
+        with pytest.raises(LspSupportError, match='verified process credentials') as caught:
+            operation()
+        assert caught.value.__cause__ is error
+    assert not process.stdin.getvalue()
+
+
 def test_lazy_server_collects_diagnostics_and_emits_trace(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     target = tmp_path / "pkg" / "app.py"

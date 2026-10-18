@@ -261,6 +261,8 @@ def _read_rpc_message(stream) -> dict[str, object] | None:
 
 
 class _RpcClient:
+    _STARTUP_READY = object()
+
     def __init__(self, process, *, request_timeout_s: float, process_verification=None) -> None:
         if process.stdin is None or process.stdout is None:
             raise LspSupportError("LSP process needs stdin and stdout pipes")
@@ -269,6 +271,8 @@ class _RpcClient:
         self.stdout = process.stdout
         self.request_timeout_s = request_timeout_s
         self._process_verification = process_verification
+        self._startup_ready = process_verification is None or process_verification.verified
+        self._startup_failure: BaseException | None = None
         self._messages: queue.Queue[object] = queue.Queue()
         self._write_lock = threading.Lock()
         self._next_id = 1
@@ -282,6 +286,8 @@ class _RpcClient:
         try:
             if self._process_verification is not None:
                 self._process_verification.read(self.stdout)
+            if not self._startup_ready:
+                self._messages.put(self._STARTUP_READY)
             while True:
                 message = _read_rpc_message(self.stdout)
                 if message is None:
@@ -298,7 +304,20 @@ class _RpcClient:
             self.stdin.flush()
 
     def notify(self, method: str, params: Mapping[str, object]) -> None:
+        if not self._startup_ready:
+            self._wait_for_startup(time.monotonic() + self.request_timeout_s)
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def _wait_for_startup(self, deadline: float) -> None:
+        if self._startup_failure is not None:
+            raise LspSupportError(str(self._startup_failure)) from self._startup_failure
+        while not self._startup_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("LSP response timed out")
+            self._receive(remaining)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("LSP response timed out")
 
     def _route(self, message: Mapping[str, object]) -> None:
         method = message.get("method")
@@ -325,9 +344,16 @@ class _RpcClient:
             message = self._messages.get(timeout=max(0.0, timeout))
         except queue.Empty as exc:
             raise TimeoutError("LSP response timed out") from exc
-        if isinstance(message, _ReaderFailure):
+        self._handle_message(message)
+
+    def _handle_message(self, message: object) -> None:
+        if message is self._STARTUP_READY:
+            self._startup_ready = True
+        elif isinstance(message, _ReaderFailure):
+            if not self._startup_ready:
+                self._startup_failure = message.error
             raise LspSupportError(str(message.error)) from message.error
-        if isinstance(message, Mapping):
+        elif isinstance(message, Mapping):
             self._route(message)
 
     def drain(self) -> None:
@@ -337,19 +363,18 @@ class _RpcClient:
                 message = self._messages.get_nowait()
             except queue.Empty:
                 return
-            if isinstance(message, _ReaderFailure):
-                raise LspSupportError(str(message.error)) from message.error
-            if isinstance(message, Mapping):
-                self._route(message)
+            self._handle_message(message)
 
     def request(self, method: str, params: Mapping[str, object], *, timeout_s=None):
+        timeout = self.request_timeout_s if timeout_s is None else float(timeout_s)
+        deadline = time.monotonic() + timeout
+        if not self._startup_ready:
+            self._wait_for_startup(deadline)
         request_id = self._next_id
         self._next_id += 1
         self._send({
             "jsonrpc": "2.0", "id": request_id, "method": method, "params": params,
         })
-        timeout = self.request_timeout_s if timeout_s is None else float(timeout_s)
-        deadline = time.monotonic() + timeout
         while request_id not in self._responses:
             self._receive(deadline - time.monotonic())
         response = self._responses.pop(request_id)
@@ -373,11 +398,12 @@ class _RpcClient:
 
     def close(self) -> None:
         if self.process.poll() is None:
-            try:
-                self.request("shutdown", {}, timeout_s=min(1.0, self.request_timeout_s))
-                self.notify("exit", {})
-            except Exception:
-                pass
+            if self._startup_ready:
+                try:
+                    self.request("shutdown", {}, timeout_s=min(1.0, self.request_timeout_s))
+                    self.notify("exit", {})
+                except Exception:
+                    pass
             try:
                 try:
                     os.killpg(self.process.pid, signal.SIGTERM)
