@@ -1,4 +1,5 @@
 """Task file primitives must observe real namespace mounts and permissions."""
+import os
 import shutil
 import shlex
 import hashlib
@@ -350,6 +351,94 @@ def test_binary_roundtrip_metadata_and_literal_paths(bwrap, tmp_path):
     assert info.is_file and not info.is_dir and info.size == len(data)
     assert files.resolve(name) == files.root / name
     assert files.iterdir() == [files.root / name]
+
+
+@pytest.mark.parametrize('padding', [0, 260])
+def test_file_states_preserve_native_kinds_aliases_and_literal_names(bwrap, tmp_path, padding):
+    source, files = namespace_files(bwrap, tmp_path)
+    name = 'literal[*]\n雪\udcff'
+    (source / name).write_bytes(b'native bytes')
+    (source / 'alias').symlink_to(name)
+    (source / 'directory').mkdir()
+    (source / 'dangling').symlink_to('absent')
+    (source / 'outside').symlink_to(tmp_path)
+    os.mkfifo(source / 'fifo')
+    # The same host spelling has a different type from the mounted task entry.
+    (Path(files.root) / name).mkdir()
+    expected = {
+        name: (name, 'file'), 'alias': (name, 'file'),
+        'directory': ('directory', 'directory'), '.': ('.', 'directory'),
+        'dangling': ('absent', 'missing'),
+        'absent/a/b/c': ('absent/a/b/c', 'missing'),
+        name + '/child': (name + '/child', 'missing'),
+        'fifo': ('fifo', 'other'), 'outside': ('', 'unknown'),
+    }
+    for index in range(padding):
+        extra = f'padding-{index}'
+        (source / extra).write_bytes(b'current')
+        expected[extra] = (extra, 'file')
+    expected = {str(files.root / key): (str(files.root / target) if target else '', kind)
+                for key, (target, kind) in expected.items()}
+    assert files.resolve_file_states(expected) == expected
+
+
+def test_file_states_reobserve_permissions_missing_parents_and_type_changes(bwrap, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip('permission predicates require an unprivileged task')
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'unreadable').write_bytes(b'private')
+    (source / 'unreadable').chmod(0)
+    for parent, mode in (('closed', 0), ('search-only', 0o100)):
+        (source / parent).mkdir()
+        (source / parent / 'present').write_bytes(b'current')
+        (source / parent).chmod(mode)
+    names = ['unreadable', 'closed', 'closed/present', 'closed/absent/deep',
+             'search-only/present', 'search-only/absent/deep']
+    try:
+        states = files.resolve_file_states(names)
+        assert [states[str(files.root / name)][1] for name in names] == [
+            'unreadable', 'directory', 'unknown', 'unknown', 'file', 'missing']
+        (source / 'closed').chmod(0o700)
+        states = files.resolve_file_states(names)
+        assert states[str(files.root / 'closed/present')][1] == 'file'
+        assert states[str(files.root / 'closed/absent/deep')][1] == 'missing'
+        (source / 'unreadable').chmod(0o600)
+        assert files.resolve_file_states(['unreadable'])[str(files.root / 'unreadable')][1] == 'file'
+        (source / 'unreadable').unlink()
+        (source / 'unreadable').mkdir()
+        assert files.resolve_file_states(['unreadable'])[str(files.root / 'unreadable')][1] == 'directory'
+        (source / 'unreadable').rmdir()
+        assert files.resolve_file_states(['unreadable'])[str(files.root / 'unreadable')][1] == 'missing'
+    finally:
+        for parent in ('closed', 'search-only'):
+            (source / parent).chmod(0o700)
+        if (source / 'unreadable').exists():
+            (source / 'unreadable').chmod(0o700)
+
+
+def test_file_states_report_disappearance_after_initial_existence_check(bwrap, tmp_path):
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'changing').write_bytes(b'initial')
+    (source / 'alias').symlink_to('changing')
+    native = files.run
+    marker = '                        if [[ -e "$target" || -L "$target" ]]; then\n'
+
+    def remove_before_type_checks(script, args, data):
+        if len(args) > 5 and args[3] == 'resolve_files' and args[5] == 'states':
+            assert script.count(marker) == 1
+            script = script.replace(marker, marker +
+                '                            if [[ $index == 0 ]]; then unlink "$target"; fi\n')
+        return native(script, args, data)
+
+    files.run = remove_before_type_checks
+    try:
+        expected = {str(files.root / name): (str(files.root / 'changing'), 'missing')
+                    for name in ('changing', 'alias')}
+        assert files.resolve_file_states(['changing', 'alias']) == expected
+    finally:
+        files.run = native
+    assert not (source / 'changing').exists()
+    assert files.resolve_file_states(['changing'])[str(files.root / 'changing')][1] == 'missing'
 
 
 def test_directory_metadata_is_batched_and_does_not_follow_links(bwrap, tmp_path):

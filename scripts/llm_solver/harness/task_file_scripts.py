@@ -121,17 +121,21 @@ resolve_files() {
                 kind=unknown
                 case "$target" in
                     "$root"|"${root%/}/"*)
-                        ancestor=$target
-                        while [[ ! -e "$ancestor" && ! -L "$ancestor" && "$ancestor" != / ]]; do
-                            ancestor=${ancestor%/*}; [[ -n "$ancestor" ]] || ancestor=/
-                        done
-                        # Preserve absence versus inaccessible-parent semantics.
-                        if [[ -d "$ancestor" && ! -x "$ancestor" && "$ancestor" != "$target" ]]; then :
-                        elif [[ -f "$target" ]]; then
-                            if [[ -r "$target" ]]; then kind=file; else kind=unreadable; fi
-                        elif [[ -d "$target" ]]; then kind=directory
-                        elif [[ ! -e "$target" && ! -L "$target" ]]; then kind=missing
-                        else kind=other; fi
+                        if [[ -e "$target" || -L "$target" ]]; then
+                            if [[ -f "$target" ]]; then
+                                if [[ -r "$target" ]]; then kind=file; else kind=unreadable; fi
+                            elif [[ -d "$target" ]]; then kind=directory
+                            elif [[ ! -e "$target" && ! -L "$target" ]]; then kind=missing
+                            else kind=other; fi
+                        else
+                            ancestor=${target%/*}; [[ -n "$ancestor" ]] || ancestor=/
+                            while [[ ! -e "$ancestor" && ! -L "$ancestor" && "$ancestor" != / ]]; do
+                                ancestor=${ancestor%/*}; [[ -n "$ancestor" ]] || ancestor=/
+                            done
+                            # Preserve absence versus inaccessible-parent semantics.
+                            if [[ -d "$ancestor" && ! -x "$ancestor" && "$ancestor" != "$target" ]]; then :
+                            else kind=missing; fi
+                        fi
                         ;;
                     *) target='' ;;
                 esac
