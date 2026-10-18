@@ -441,6 +441,55 @@ def test_file_states_report_disappearance_after_initial_existence_check(bwrap, t
     assert files.resolve_file_states(['changing'])[str(files.root / 'changing')][1] == 'missing'
 
 
+@pytest.mark.parametrize(('count', 'task_python', 'worker_expected'), [
+    (4095, True, False),
+    (4096, False, False),
+    (4096, True, True),
+])
+def test_large_file_states_select_optional_task_python_worker(
+        bwrap, tmp_path, count, task_python, worker_expected):
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'absent/a/b/c/d/e/file-{index}' for index in range(count)]
+    native = files.run
+    selection = '                classifier_enabled=true\n'
+
+    def observed(script, args, data):
+        if len(args) > 5 and args[3] == 'resolve_files' and args[5] == 'states':
+            assert script.count(selection) == 1
+            script = script.replace(
+                selection,
+                '                printf selected > "$root/worker-selected"\n' + selection,
+            )
+            if not task_python:
+                script = 'PATH=' + shlex.quote(str(tmp_path / 'missing-bin')) + '\n' + script
+        return native(script, args, data)
+
+    files.run = observed
+    states = files.resolve_file_states(names)
+    assert all(target == str(files.root / name) and kind == 'missing'
+               for name, (target, kind) in zip(names, states.values()))
+    assert (source / 'worker-selected').exists() is worker_expected
+
+
+def test_large_file_state_worker_failure_is_an_operation_error(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_file_scripts import _FILE_STATE_CLASSIFIER
+
+    _, files = namespace_files(bwrap, tmp_path)
+    names = [f'absent/a/b/c/d/e/file-{index}' for index in range(4096)]
+    native = files.run
+
+    def fail_worker(script, args, data):
+        if len(args) > 5 and args[3] == 'resolve_files' and args[5] == 'states':
+            payload = shlex.quote(_FILE_STATE_CLASSIFIER)
+            assert script.count(payload) == 1
+            script = script.replace(payload, shlex.quote('raise SystemExit(9)'))
+        return native(script, args, data)
+
+    files.run = fail_worker
+    with pytest.raises(TaskFileError):
+        files.resolve_file_states(names)
+
+
 def test_directory_metadata_is_batched_and_does_not_follow_links(bwrap, tmp_path):
     source, files = namespace_files(bwrap, tmp_path)
     (source / 'directory').mkdir()

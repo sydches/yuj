@@ -1,5 +1,7 @@
 """Static task-file programs executed only through the selected namespace."""
 
+import shlex
+
 _DISCOVER = r'''
 for utility in "$@"; do
     location=$(type -P -- "$utility") || location=''
@@ -84,13 +86,130 @@ digest_batch() {
 }
 '''
 
+_FILE_STATE_CLASSIFIER = r'''
+import errno
+import os
+import stat
+import sys
+
+
+def info(path, follow=True):
+    try:
+        return os.stat(path, follow_symlinks=follow)
+    except OSError:
+        return None
+
+
+def exists(path):
+    return info(path) is not None
+
+
+def link(path):
+    value = info(path, False)
+    return value is not None and stat.S_ISLNK(value.st_mode)
+
+
+def directory(path):
+    value = info(path)
+    return value is not None and stat.S_ISDIR(value.st_mode)
+
+
+def accessible(path, mode):
+    return os.access(path, mode, effective_ids=True)
+
+
+def exceptional(path):
+    if exists(path) or link(path):
+        value = info(path)
+        if value is not None and stat.S_ISREG(value.st_mode):
+            return b'file' if accessible(path, os.R_OK) else b'unreadable'
+        if directory(path):
+            return b'directory'
+        return b'missing' if not exists(path) and not link(path) else b'other'
+    ancestor = path.rsplit(b'/', 1)[0] or b'/'
+    while not exists(ancestor) and not link(ancestor) and ancestor != b'/':
+        ancestor = ancestor.rsplit(b'/', 1)[0] or b'/'
+    if directory(ancestor) and not accessible(ancestor, os.X_OK) and ancestor != path:
+        return b'unknown'
+    return b'missing'
+
+
+def classify(path):
+    if not path:
+        return b'unknown'
+    try:
+        value = os.stat(path)
+    except OSError as error:
+        if error.errno in (errno.ENOENT, errno.ENOTDIR):
+            try:
+                value = os.lstat(path)
+            except OSError as link_error:
+                if link_error.errno not in (errno.ENOENT, errno.ENOTDIR):
+                    return exceptional(path)
+                return b'missing'
+            return b'other' if stat.S_ISLNK(value.st_mode) else b'missing'
+        return exceptional(path)
+    if stat.S_ISREG(value.st_mode):
+        return b'file' if accessible(path, os.R_OK) else b'unreadable'
+    if stat.S_ISDIR(value.st_mode):
+        return b'directory'
+    return b'other'
+
+
+pending = b''
+label = None
+output = sys.stdout.buffer
+while True:
+    block = os.read(0, 65536)
+    if not block:
+        break
+    fields = (pending + block).split(b'\0')
+    pending = fields.pop()
+    for field in fields:
+        if label is None:
+            label = field
+        else:
+            output.write(label + b'\0' + field + b'\0' + classify(field) + b'\0')
+            label = None
+if pending or label is not None:
+    raise ValueError('truncated native classifier input')
+output.flush()
+'''
+
+_FILE_STATE_CLASSIFIER_PROBE = r'''
+import os
+import sys
+assert os.access in os.supports_effective_ids
+assert callable(os.read) and hasattr(sys.stdout, 'buffer')
+os.access('/', os.R_OK, effective_ids=True)
+'''
+
+
 _RESOLVE_FILES = r'''
 resolve_files() {
     local index target ancestor kind partial=${1:-} offset
     local batch_limit=64 batch_bulk=false
     local -a batch resolved chunk recovered
+    local classifier_python='' classifier_fd classifier_pid classifier_previous_pid
+    local classifier_enabled=false producer_status=0 worker_status
     if (( ${2:-0} >= 256 )) && [[ -n "$batch_xargs_bin" ]]; then
         batch_bulk=true; batch_limit=1024
+    fi
+    if [[ "$partial" == states ]] && (( ${2:-0} >= 4096 )); then
+        classifier_python=$(type -P python3) || classifier_python=''
+        if [[ -n "$classifier_python" ]] &&
+           "$classifier_python" -I -S -c ''' + shlex.quote(_FILE_STATE_CLASSIFIER_PROBE) + r''' </dev/null >/dev/null 2>&1; then
+            classifier_previous_pid=${!:-}
+            if exec {classifier_fd}> >("$classifier_python" -I -S -c ''' + shlex.quote(_FILE_STATE_CLASSIFIER) + r'''); then
+                classifier_pid=${!:-}
+                classifier_enabled=true
+            else
+                classifier_pid=${!:-}
+                if [[ -n "$classifier_pid" && "$classifier_pid" != "$classifier_previous_pid" ]]; then
+                    wait "$classifier_pid" || :
+                fi
+            fi
+        fi
     fi
     while :; do
         mapfile -d '' -n "$batch_limit" -t batch
@@ -118,9 +237,20 @@ resolve_files() {
         for index in "${!batch[@]}"; do
             target=${resolved[$index]}
             if [[ "$partial" == states ]]; then
-                kind=unknown
                 case "$target" in
-                    "$root"|"${root%/}/"*)
+                    "$root"|"${root%/}/"*) ;;
+                    *) target='' ;;
+                esac
+                if [[ "$classifier_enabled" == true ]]; then
+                    if ! printf '%s\0%s\0' "${batch[$index]}" "$target" >&"$classifier_fd"; then
+                        producer_status=74
+                        break 2
+                    fi
+                else
+                    kind=unknown
+                    case "$target" in
+                        '') ;;
+                        *)
                         if [[ -e "$target" || -L "$target" ]]; then
                             if [[ -f "$target" ]]; then
                                 if [[ -r "$target" ]]; then kind=file; else kind=unreadable; fi
@@ -136,10 +266,10 @@ resolve_files() {
                             if [[ -d "$ancestor" && ! -x "$ancestor" && "$ancestor" != "$target" ]]; then :
                             else kind=missing; fi
                         fi
-                        ;;
-                    *) target='' ;;
-                esac
-                printf '%s\0%s\0%s\0' "${batch[$index]}" "$target" "$kind"
+                            ;;
+                    esac
+                    printf '%s\0%s\0%s\0' "${batch[$index]}" "$target" "$kind"
+                fi
                 continue
             fi
             case "$target" in
@@ -153,6 +283,13 @@ resolve_files() {
             printf '%s\0%s\0' "${batch[$index]}" "$target"
         done
     done
+    if [[ "$classifier_enabled" == true ]]; then
+        exec {classifier_fd}>&-
+        wait "$classifier_pid"
+        worker_status=$?
+        (( producer_status == 0 )) || return "$producer_status"
+        (( worker_status == 0 )) || return 74
+    fi
 }
 '''
 
