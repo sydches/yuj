@@ -58,8 +58,12 @@ def maybe_install_persistent_bash(
         return None
     if mode is not None:
         from ..task_environment import discover_task_environment
+        from ..task_path import active_task_host_root
+        # Match dispatch's captured root, including a host alias retained by
+        # the file scope. Resolving the live alias could select another task.
+        cwd = active_task_host_root(session.cwd) or session.cwd
         runner = PersistentContainerSession(
-            session.cwd, discover_task_environment(session.cwd),
+            cwd, discover_task_environment(cwd),
             effective_env=session._effective_env,
         )
     else:

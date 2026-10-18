@@ -300,3 +300,57 @@ def test_binding_and_credential_mismatch_do_not_run_task(native, tmp_path):
     with pytest.raises(ProcessIdentityError):
         execute('printf wrong > started')
     assert not (tmp_path / 'started').exists()
+
+
+@pytest.mark.parametrize('retarget', [False, True])
+def test_session_connection_uses_captured_host_root(native, tmp_path, monkeypatch, retarget):
+    from types import SimpleNamespace
+    from tests._config_helpers import make_config
+    from scripts.llm_solver.harness._loop.persistent_bash import (
+        maybe_install_persistent_bash, teardown_persistent_bash,
+    )
+    from scripts.llm_solver.harness._tools._run_in_sandbox import _run_in_sandbox
+    from scripts.llm_solver.harness.operation_timing import operation_profile
+    from scripts.llm_solver.harness.task_environment import use_task_environment
+    from scripts.llm_solver.harness.task_file_runtime import task_file_scope
+
+    _, environment, effective = native
+    alias = tmp_path / 'alias'
+    alias.symlink_to(tmp_path, target_is_directory=True)
+    other = tmp_path / 'other'
+    other.mkdir()
+    (tmp_path / 'result').write_text('selected task')
+    (other / 'result').write_text('wrong task')
+    monkeypatch.setenv('YUJ_CONTAINER', 'fixture')
+    monkeypatch.setenv('YUJ_PERSISTENT_BASH', '1')
+    cfg = make_config(sandbox_bash=True)
+    session = SimpleNamespace(cwd=str(alias), cfg=cfg, _effective_env=effective)
+
+    with use_task_environment(environment), task_file_scope(
+            str(alias), cfg, environment=effective, allow_login_shell=False):
+        if retarget:
+            alias.unlink()
+            alias.symlink_to(other, target_is_directory=True)
+        runner = maybe_install_persistent_bash(session)
+        try:
+            assert runner.supports(environment, str(tmp_path))
+            assert not runner.supports(environment, str(other))
+            assert not runner.supports(replace(environment, container_id='other'), str(tmp_path))
+            with operation_profile() as timings:
+                for _ in range(2):
+                    result = _run_in_sandbox(
+                        'cat result', cwd=str(alias), timeout=3, sandbox=True,
+                        bwrap_bin='', effective_env=effective, raw_result=True,
+                    )
+                    assert (result.stdout, result.stderr, result.returncode) == (b'selected task', b'', 0)
+            rows = timings.take()
+            assert sum(row['calls'] for row in rows
+                       if row['operation'][-1] == 'process.container_exchange') == 2
+            assert sum(row['calls'] for row in rows
+                       if row['operation'][-1] == 'process.container_start') == 1
+            assert not any(row['operation'][-1] == 'process.container_exec' for row in rows)
+            process = runner._process
+            assert process is not None
+        finally:
+            teardown_persistent_bash(runner)
+        assert process.poll() is not None
