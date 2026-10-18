@@ -340,6 +340,14 @@ advisor work outside that call and raw tool dispatch fall under `harness_ms`.
 Use their own records for finer attribution. Do not interpret this split as
 CPU usage or total inference-server time.
 
+From runtime 8.1.41, `next_model_preparation_ms` starts at post-turn completion
+when that point was recorded. If an early continuation skips it, preparation
+starts at the next loop entry, before injections and preflight. The field is
+null when no next model call is reached or neither start was observed. Other
+timing fields keep their existing boundaries and missing-anchor fallbacks.
+When tool or post anchors are missing, the phase fields do not necessarily
+partition `duration_ms`.
+
 From runtime 8.1.20, `turn_timing` also carries
 `operation_timing_version = 1` and an `operations` array. Read each row as
 one aggregate for an operation path and `tool_call_id` within that boundary.

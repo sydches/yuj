@@ -101,6 +101,7 @@ class TurnTiming:
     tools_finished: float | None = None
     post_finished: float | None = None
     dispatches: dict = field(default_factory=dict)
+    next_preparation_started: float | None = None
 
     def finish(self, session, *, next_turn=None):
         ready = time.perf_counter()
@@ -109,6 +110,8 @@ class TurnTiming:
         tools_started = self.tools_started if self.tools_started is not None else ready
         tools_finished = self.tools_finished if self.tools_finished is not None else ready
         post_finished = self.post_finished if self.post_finished is not None else ready
+        preparation_started = (self.post_finished if self.post_finished is not None
+                               else self.next_preparation_started)
         chat_ms = ((self.model_finished if self.model_finished is not None else ready)
                    - self.model_started) * 1000
         tool_ms = dispatch_union_ms(self.dispatches.values())
@@ -126,8 +129,9 @@ class TurnTiming:
                 duration_ms=round((ready - tools_started) * 1000, 2),
                 tool_phase_ms=round((tools_finished - tools_started) * 1000, 2),
                 post_turn_ms=round((post_finished - tools_finished) * 1000, 2),
-                next_model_preparation_ms=(round((ready - post_finished) * 1000, 2)
-                                           if next_turn is not None else None),
+                next_model_preparation_ms=(round((ready - preparation_started) * 1000, 2)
+                                           if next_turn is not None and preparation_started is not None
+                                           else None),
                 turn_total_ms=round((ready - self.turn_started) * 1000, 2),
                 chat_call_ms=round(chat_ms, 2), tool_ms=round(tool_ms, 2),
                 post_ms=round((ready - last_dispatch) * 1000, 2) if last_dispatch is not None else None,

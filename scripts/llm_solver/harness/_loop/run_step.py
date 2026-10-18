@@ -627,6 +627,8 @@ def run_session_loop(session: "Session") -> "SessionResult":
             total_completion_tokens=0,
         )
     for local_turn in range(session.cfg.max_turns):
+        if session._pending_turn_timing is not None:
+            session._pending_turn_timing.next_preparation_started = time.perf_counter()
         clear_request_count_reuse()
         consumed_turns = local_turn + 1
         turn = turn_start + local_turn

@@ -95,7 +95,7 @@ def test_missing_call_id_cannot_inherit_previous_dispatch_time():
     assert timing.dispatch_trace_fields(session, {}) == {"duration_ms": 0, "dispatch_executed": False}
 
 
-@pytest.mark.parametrize("branch", ["narration_discarded", "intent_block"])
+@pytest.mark.parametrize("branch", ["narration_discarded", "intent_block", "advisor_continue"])
 def test_early_continue_records_each_model_turn_without_inventing_dispatch(tmp_path, monkeypatch, branch):
     from scripts.llm_solver.harness.guardrails import build_guardrail_registry, Decision, PASS
     registry = build_guardrail_registry(turn_pre_overrides={
@@ -113,8 +113,26 @@ def test_early_continue_records_each_model_turn_without_inventing_dispatch(tmp_p
     session = loop.Session(make_config(max_turns=2), client, "system", "task", str(tmp_path),
                            guardrail_registry=registry)
     from types import SimpleNamespace
+    from scripts.llm_solver.harness._loop import run_step
     from scripts.llm_solver.harness.operation_timing import take_operations
-    session._tokenizer = SimpleNamespace(count=lambda messages, tools=None: 100)
+    clock = [10.0]
+    monkeypatch.setattr(timing.time, 'perf_counter', lambda: clock[0])
+    original_clear = run_step.clear_request_count_reuse
+    def clear_reuse():
+        clock[0] += 0.001
+        return original_clear()
+    original_deliver = session._deliver_pending_user_turn_injections
+    def deliver():
+        clock[0] += 0.003
+        return original_deliver()
+    def count(messages, tools=None):
+        clock[0] += 0.004
+        return 100
+    monkeypatch.setattr(run_step, 'clear_request_count_reuse', clear_reuse)
+    monkeypatch.setattr(session, '_deliver_pending_user_turn_injections', deliver)
+    session._tokenizer = SimpleNamespace(count=count)
+    if branch == 'advisor_continue':
+        monkeypatch.setattr(session, '_maybe_run_advisor', lambda turn: turn == 1)
     session._turn_start_offset = 1
     monkeypatch.setattr(loop, "dispatch", lambda *a, **k: pytest.fail("blocked call dispatched"))
     assert session.run().done
@@ -122,6 +140,15 @@ def test_early_continue_records_each_model_turn_without_inventing_dispatch(tmp_p
     assert [row["turn_number"] for row in rows] == [1, 2]
     assert [row["boundary"] for row in rows] == ["next_model_call_entry", "session_end"]
     assert all(row["tool_ms"] == 0 and row["post_ms"] is None and not row["dispatch_executed"] for row in rows)
+    assert rows[0]['next_model_preparation_ms'] == 8
+    assert rows[1]['next_model_preparation_ms'] is None
+    for row in rows:
+        assert row['duration_ms'] == row['tool_phase_ms'] == row['post_turn_ms'] == 0
+        assert all(row[field] >= 0 for field in ('chat_call_ms', 'tool_ms', 'harness_ms', 'model_to_boundary_ms'))
+        assert row['model_to_boundary_ms'] == pytest.approx(
+            row['chat_call_ms'] + row['tool_ms'] + row['harness_ms'], abs=0.02)
+    if branch == 'advisor_continue':
+        assert not any(item['operation'] == ['turn.post_hooks'] for item in rows[0]['operations'])
     preparation = [item for row in rows for item in row['operations']
                    if item['operation'] in (['request.initial_preflight'], ['request.preflight'])]
     assert [(item['operation'], item['calls']) for item in preparation] == [
@@ -131,6 +158,37 @@ def test_early_continue_records_each_model_turn_without_inventing_dispatch(tmp_p
         result = next(row for row in session._trace_events if row["event"] == "tool_call")
         assert result["tool_call_id"] == "blocked"
         assert result["duration_ms"] == 0 and not result["dispatch_executed"]
+
+
+@pytest.mark.parametrize(('post_finished', 'next_preparation_started', 'expected'), [
+    (None, None, None), (None, 8.0, 2000), (7.0, 8.0, 3000),
+])
+def test_preparation_anchor_preserves_other_fields_and_positional_dispatches(
+    monkeypatch, post_finished, next_preparation_started, expected,
+):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(timing.time, 'perf_counter', lambda: 10.0)
+    rows, dispatches = [], {}
+    session = SimpleNamespace(_session_number=1, _emit=lambda event, **fields: rows.append(fields))
+    record = timing.TurnTiming(0, 1.0, 2.0, 3.0, 4.0, 6.0, post_finished, dispatches)
+    assert record.dispatches is dispatches and record.next_preparation_started is None
+    record.next_preparation_started = next_preparation_started
+    record.finish(session, next_turn=1)
+    assert rows[0]['next_model_preparation_ms'] == expected
+    assert {field: rows[0][field] for field in (
+        'duration_ms', 'tool_phase_ms', 'post_turn_ms', 'turn_total_ms',
+        'chat_call_ms', 'tool_ms', 'harness_ms', 'model_to_boundary_ms',
+    )} == {
+        'duration_ms': 6000, 'tool_phase_ms': 2000,
+        'post_turn_ms': 1000 if post_finished is not None else 4000,
+        'turn_total_ms': 9000, 'chat_call_ms': 1000, 'tool_ms': 0,
+        'harness_ms': 7000, 'model_to_boundary_ms': 8000,
+    }
+    record.finish(session)
+    assert rows[1]['next_model_preparation_ms'] is None
+    assert all(rows[1][field] == value for field, value in rows[0].items()
+               if field not in ('next_turn_number', 'scope', 'boundary', 'next_model_preparation_ms'))
 
 
 def test_preflight_and_post_hooks_close_before_each_turn_drain(tmp_path, monkeypatch):
@@ -196,6 +254,7 @@ def test_preflight_exception_keeps_completed_spans_without_inventing_initial_tur
     assert len(rows) == abort_at - 1 and client.chat.call_count == abort_at - 1
     if rows:
         assert rows[0]['boundary'] == 'session_end'
+        assert rows[0]['next_model_preparation_ms'] is None
         operations = {tuple(item['operation']): item for item in rows[0]['operations']}
         assert operations[('request.initial_preflight',)]['raised'] == 0
         assert operations[('request.preflight',)]['raised'] == 1
