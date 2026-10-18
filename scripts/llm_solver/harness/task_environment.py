@@ -33,7 +33,12 @@ class TaskEnvironment:
     process_identity: ProcessIdentity | None = None
 
     def relative_path(self, path: str) -> str:
-        for root in sorted(set((self.host_root, *self.aliases)), key=len, reverse=True):
+        roots = (self.host_root, *self.aliases)
+        if (type(path) is str and not path.startswith('/')
+                and all(type(root) is str and root.startswith('/')
+                        for root in roots)):
+            return path
+        for root in sorted(set(roots), key=len, reverse=True):
             try:
                 return str(PurePosixPath(path).relative_to(root))
             except ValueError:

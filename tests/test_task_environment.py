@@ -1,5 +1,6 @@
 """Task paths come from container mounts, and remain consistent across tools."""
 import json
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -80,6 +81,62 @@ def test_multiple_mount_aliases_use_declared_workdir(tmp_path):
     assert discovered.working_directory == "/worktree"
     assert discovered.relative_path("/app/main.go") == "main.go"
     assert discovered.relative_path("/worktree/main.go") == "main.go"
+
+
+@pytest.mark.parametrize('path', ['./src//file.py', 'src/../file.py', r'src\file.py', ''])
+def test_relative_spelling_stays_unchanged_with_absolute_roots(path):
+    mapping = env.TaskEnvironment('/host/task', '/task', ('/task', '/project'))
+    assert mapping.relative_path(path) is path
+
+
+@pytest.mark.parametrize(('path', 'expected'), [
+    ('/task/deep/file.py', 'file.py'),
+    ('/task/deeper/file.py', 'deeper/file.py'),
+    ('/task/deep', '.'),
+    ('/outside/file.py', '/outside/file.py'),
+])
+def test_relative_path_keeps_longest_root_and_component_boundaries(path, expected):
+    mapping = env.TaskEnvironment('/host/task', '/task', ('/task', '/task/deep', '/task'))
+    assert mapping.relative_path(path) == expected
+
+
+@pytest.mark.parametrize(('host', 'aliases'), [
+    ('relative/root', ()),
+    ('/host/task', ('relative/root', '/task')),
+])
+def test_relative_roots_still_map_relative_inputs(host, aliases):
+    mapping = env.TaskEnvironment(host, host, aliases)
+    assert mapping.relative_path('relative/root/file.py') == 'file.py'
+
+
+def test_relative_path_preserves_subclass_pathlike_and_invalid_input_behavior():
+    class PrefixTrap(str):
+        def startswith(self, *args, **kwargs):
+            raise AssertionError('string subclass startswith must not be called')
+
+    mapping = env.TaskEnvironment('/host/task', '/task', ('/task',))
+    relative = PrefixTrap('nested/file.py')
+    assert mapping.relative_path(relative) is relative
+    absolute = mapping.relative_path(PrefixTrap('/task/file.py'))
+    assert absolute == 'file.py' and type(absolute) is str
+    plain_relative = 'nested/file.py'
+    for host, aliases in ((PrefixTrap('/host/task'), ('/task',)),
+                          ('/host/task', (PrefixTrap('/task'),))):
+        subclass_roots = env.TaskEnvironment(host, '/task', aliases)
+        assert subclass_roots.relative_path(plain_relative) is plain_relative
+    relative_path = PurePosixPath('nested/file.py')
+    assert mapping.relative_path(relative_path) is relative_path
+    absolute_path = mapping.relative_path(PurePosixPath('/task/file.py'))
+    assert absolute_path == 'file.py' and type(absolute_path) is str
+    with pytest.raises(TypeError):
+        mapping.relative_path(None)
+    with pytest.raises(TypeError):
+        env.TaskEnvironment('/host/task', '/task', (None,)).relative_path('file.py')
+
+
+def test_relative_path_consumes_iterator_aliases_once():
+    mapping = env.TaskEnvironment('/host/task', '/task', iter(('relative/root', '/task')))
+    assert mapping.relative_path('relative/root/file.py') == 'file.py'
 
 
 def test_task_can_be_a_subdirectory_of_a_bind_mount(tmp_path):
