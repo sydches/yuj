@@ -122,7 +122,7 @@ def glob_files(pattern: str, path: str = ".", *, cwd: str,
         root = _resolve(cwd, ".")
         base = _resolve(cwd, path)
         policy = active_ignore_policy(cwd)
-        if policy is not None and policy.is_model_hidden(
+        if policy is not None and policy.has_rules and policy.is_model_hidden(
             base, is_dir=base.is_dir()
         ):
             return "No files found."

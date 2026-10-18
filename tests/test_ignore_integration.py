@@ -14,6 +14,94 @@ from scripts.llm_solver.harness.tools import dispatch
 from scripts.llm_solver.server.types import TurnResult, Usage
 
 from _config_helpers import make_config
+from tests.test_task_files import bwrap, namespace_files
+
+
+@pytest.mark.parametrize('text,enabled', [(None, True), ('# no rules\n', True), ('*\n', False)])
+def test_empty_policy_tools_keep_native_results_without_ignore_only_stats(
+    bwrap, tmp_path, text, enabled,
+):
+    from scripts.llm_solver.harness._guardrails.state import GuardrailState
+    from scripts.llm_solver.harness._guardrails.test_inspection import _workspace_coverage
+    from scripts.llm_solver.harness.lsp_support import LspManager
+    from scripts.llm_solver.harness.operation_timing import operation_profile
+    from scripts.llm_solver.harness.sandbox.ignore_policy import activate_ignore_policy
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'src').mkdir()
+    (source / 'src/code.py').write_text('def native_marker():\n    return 1\n')
+    (Path(files.root) / 'src').mkdir()
+    (Path(files.root) / 'src/code.py').write_text('HOST_SHADOW')
+    if text is not None:
+        (source / '.yujignore').write_text(text)
+    cfg = make_config(sandbox_bash=True, sandbox_required=True,
+                      tools_list_definitions_enabled=True)
+    with activate_task_files(files, host_root=source):
+        policy = load_ignore_policy(source, enabled=enabled)
+        assert not policy.has_rules
+        common = dict(cwd=str(source), cfg=cfg, ignore_policy=policy,
+                      effective_env={'PATH': '/usr/bin:/bin'}, allow_login_shell=False)
+        for name, args, expected, stats in (
+            ('grep', {'pattern': 'native_marker', 'path': 'src'}, 'native_marker', 0),
+            ('glob', {'pattern': '*.py', 'path': 'src'}, 'src/code.py', 0),
+            ('list_definitions', {'path': 'src/code.py'}, 'native_marker', 1),
+            ('bash', {'cmd': 'cat src/code.py'}, 'native_marker', 0),
+            ('bash', {'cmd': 'head src/code.py'}, 'native_marker', 0),
+            ('bash', {'cmd': 'ls src'}, 'code.py', 3 if enabled and text is not None else 0),
+        ):
+            with operation_profile() as profile:
+                result = dispatch(name, args, **common)
+            assert expected in result and 'HOST_SHADOW' not in result
+            assert sum(row['calls'] for row in profile.take()
+                       if row['operation'][-1] == 'files.stat') == stats
+        with activate_ignore_policy(policy):
+            manager = LspManager(cwd=str(source), servers=(), argv_builder=lambda *_: [],
+                                 tool_enabled=True, task_files=files)
+            with operation_profile() as profile:
+                assert manager.query('symbols', path='src/code.py', ignore_policy=policy).status == 'unmatched'
+            assert not any(row['operation'][-1] == 'files.stat' for row in profile.take())
+            request = dict(workspace_cwd=str(source), workspace_namespace='task_execution',
+                           workspace_task_view=files.binding)
+            with operation_profile() as profile:
+                coverage = _workspace_coverage(GuardrailState(), cfg, str(source), request, 'src/code.py')
+            assert coverage[0] == 'file spelling'
+            assert sum(row['calls'] for row in profile.take()
+                       if row['operation'][-1] == 'files.stat') == 2
+
+
+def test_native_tool_ignore_checks_observe_current_type_and_reject_escape(bwrap, tmp_path):
+    from scripts.llm_solver.harness.task_path import activate_task_files
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / '.yujignore').write_text('change.py/\n')
+    target = source / 'change.py'
+    target.write_text('def visible_marker():\n    pass\n')
+    (source / 'escape.py').symlink_to(tmp_path / 'outside.py')
+    (tmp_path / 'outside.py').write_text('OUTSIDE_MARKER')
+    cfg = make_config(sandbox_bash=True, sandbox_required=True, tools_list_definitions_enabled=True)
+    with activate_task_files(files, host_root=source):
+        policy = load_ignore_policy(source)
+        common = dict(cwd=str(source), cfg=cfg, ignore_policy=policy,
+                      effective_env={'PATH': '/usr/bin:/bin'}, allow_login_shell=False)
+        for name, args in (('grep', {'pattern': 'visible_marker', 'path': 'change.py'}),
+                           ('list_definitions', {'path': 'change.py'}),
+                           ('bash', {'cmd': 'cat change.py'}), ('bash', {'cmd': 'head change.py'})):
+            assert 'visible_marker' in dispatch(name, args, **common)
+        target.unlink()
+        target.mkdir()
+        (target / 'visible_marker.py').write_text('def visible_marker():\n    pass\n')
+        for name, args in (('grep', {'pattern': 'visible_marker', 'path': 'change.py'}),
+                           ('glob', {'pattern': '*', 'path': 'change.py'}),
+                           ('list_definitions', {'path': 'change.py'}),
+                           ('bash', {'cmd': 'cat change.py'}), ('bash', {'cmd': 'head change.py'}),
+                           ('bash', {'cmd': 'ls change.py'})):
+            assert 'visible_marker' not in dispatch(name, args, **common)
+        for name, args in (('grep', {'pattern': 'OUTSIDE_MARKER', 'path': 'escape.py'}),
+                           ('list_definitions', {'path': 'escape.py'}),
+                           ('bash', {'cmd': 'cat escape.py'})):
+            with pytest.raises(PermissionError, match='path escapes task root'):
+                dispatch(name, args, **common)
 
 
 def _fixture_policy(root: Path):

@@ -80,7 +80,7 @@ def list_definitions(
     ).blocks(abs_path):
         return _list_definitions_error(path, "not_found", f"file not found: {path}")
     policy = active_ignore_policy(cwd)
-    if policy is not None and policy.is_ignored(
+    if policy is not None and policy.has_rules and policy.is_ignored(
         abs_path, is_dir=abs_path.is_dir()
     ):
         return _list_definitions_error(

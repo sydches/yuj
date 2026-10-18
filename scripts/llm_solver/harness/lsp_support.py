@@ -786,7 +786,7 @@ class LspManager:
         if line < 0 or character < 0:
             raise LspSupportError("line and character must be >= 0")
         target, relative = self._path(path)
-        if ignore_policy is not None:
+        if ignore_policy is not None and ignore_policy.has_rules:
             ignore_policy.require_visible(target, is_dir=target.is_dir())
         spec = self._select(target)
         if spec is None:

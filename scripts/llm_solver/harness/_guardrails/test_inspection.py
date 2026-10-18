@@ -72,7 +72,7 @@ def _workspace_coverage(state, cfg, cwd, request, target):
         if matcher(root, _bash_unreadable_paths(cwd, cfg)).blocks(path):
             return "unknown", "selector is not permitted for inspection", "", False
         policy = active_ignore_policy(cwd)
-        if policy is not None:
+        if policy is not None and policy.has_rules:
             policy.require_visible(path, is_dir=path.is_dir())
         if path.is_dir():
             return "directory spelling", "file excerpts do not establish suite coverage", "", False

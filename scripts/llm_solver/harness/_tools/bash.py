@@ -157,7 +157,7 @@ def _read_ls(
         _require_external_readable(
             cwd, target, unreadable_paths=unreadable_paths,
         )
-        if inside_project and ignore_policy.is_model_hidden(
+        if inside_project and ignore_policy.has_rules and ignore_policy.is_model_hidden(
             target, is_dir=target.is_dir(),
         ):
             raise FileNotFoundError(display)

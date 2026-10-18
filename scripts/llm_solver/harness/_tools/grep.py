@@ -147,7 +147,7 @@ def grep_files(
     except ValueError as e:
         return f"ERROR: {e}"
     policy = active_ignore_policy(cwd)
-    if policy is not None and policy.is_model_hidden(
+    if policy is not None and policy.has_rules and policy.is_model_hidden(
         resolved, is_dir=resolved.is_dir()
     ):
         return "No matches found."

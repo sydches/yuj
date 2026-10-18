@@ -15,7 +15,7 @@ def _read_cat(
         _require_external_readable(
             cwd, target, unreadable_paths=unreadable_paths,
         )
-        if ignore_policy is not None and ignore_policy.contains(target):
+        if ignore_policy is not None and ignore_policy.has_rules and ignore_policy.contains(target):
             ignore_policy.require_visible(target, is_dir=target.is_dir())
     except ValueError:
         return f"cat: {path}: No such file or directory\n", 1, False
@@ -52,7 +52,7 @@ def _read_head(
         _require_external_readable(
             cwd, target, unreadable_paths=unreadable_paths,
         )
-        if ignore_policy is not None and ignore_policy.contains(target):
+        if ignore_policy is not None and ignore_policy.has_rules and ignore_policy.contains(target):
             ignore_policy.require_visible(target, is_dir=target.is_dir())
     except ValueError:
         return (
