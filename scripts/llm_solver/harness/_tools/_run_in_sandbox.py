@@ -19,11 +19,14 @@ from ..sandbox.env_policy import (
     build_bash_argv,
     build_subprocess_env,
 )
+from ..sandbox._persistent_container import (
+    PersistentContainerSession, UnsupportedPersistentContainer,
+)
 from ..task_environment import TaskEnvironmentUnavailable
 from ..process_identity import ProcessIdentityError
 from ..operation_timing import measured
 from ..time_budget import (
-    BudgetExhausted, command_timeout, command_is_scoped,
+    BudgetExhausted, command_timeout, command_is_scoped, command_time_budget,
     execution_deadline, remaining_before,
 )
 
@@ -272,7 +275,6 @@ def _run_in_sandbox(
                 )
             from ..sandbox.container_backend import ContainerBackend
 
-            from ..time_budget import command_time_budget
             with command_time_budget(0 if timeout is None else timeout):
                 backend = ContainerBackend(
                     runtime=container_runtime, image=container_image,
@@ -311,9 +313,10 @@ def _run_in_sandbox(
             # boundary. Probe failure must never act as that opt-out.
             result = _run_host(_ambient_network_prefix())
         elif mode is not None:
-            # docker-exec container mode (FB testbed shape).
+            # Reuse only the caller's observed named-container binding.
             from ..task_environment import discover_task_environment
-            legacy_target = discover_task_environment(cwd, timeout=timeout).container_id
+            environment = discover_task_environment(cwd, timeout=timeout)
+            legacy_target = environment.container_id
             argv = _build_bwrap_argv(
                 cmd, cwd, bwrap_bin,
                 unreadable_paths=unreadable_paths,
@@ -324,9 +327,18 @@ def _run_in_sandbox(
             )
             if raw_result:
                 argv.insert(2, '-i')
-            result = _execute(
-                argv, timeout=timeout, **execution_options,
-            )
+            runner = get_persistent_runner() if use_persistent else None
+            if (isinstance(runner, PersistentContainerSession)
+                    and runner.supports(environment, cwd)):
+                with command_time_budget(0 if timeout is None else timeout):
+                    try:
+                        result = runner.execute(argv, timeout=timeout, **execution_options)
+                    except UnsupportedPersistentContainer:
+                        # Only pre-command admission can select the original path.
+                        # A failed or interrupted task command is never replayed.
+                        result = _execute(argv, timeout=timeout, **execution_options)
+            else:
+                result = _execute(argv, timeout=timeout, **execution_options)
         elif sandbox and Path(bwrap_bin).is_file():
             # Persistent bash fast path: a Session has installed a
             # long-lived bwrap+bash subprocess in the current context,
@@ -340,6 +352,8 @@ def _run_in_sandbox(
             # practice — Session.cwd is fixed for a session's
             # lifetime. Read workers inherit the runner and serialize its I/O.
             runner = get_persistent_runner() if use_persistent else None
+            if isinstance(runner, PersistentContainerSession):
+                runner = None
             if runner is not None and runner.cwd == cwd:
                 from ..task_path import capture_host_task_root
                 from ..sandbox._filesystem import (

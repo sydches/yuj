@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -253,6 +254,134 @@ def test_container_backend_disables_persistent_bwrap(tmp_path: Path) -> None:
         ),
     )
     assert maybe_install_persistent_bash(session) is None
+
+
+def test_named_container_session_owns_one_lazy_connection(monkeypatch, tmp_path):
+    from scripts.llm_solver.harness._loop import persistent_bash as lifecycle
+    from scripts.llm_solver.harness.process_identity import ProcessIdentity
+    from scripts.llm_solver.harness.task_environment import TaskEnvironment
+
+    environment = TaskEnvironment(str(tmp_path), '/workspace', ('/workspace',),
+                                  container='selected', container_id='immutable-id',
+                                  process_identity=ProcessIdentity((1000,) * 4, (1000,) * 4,
+                                                                   (1000,), ('0' * 16,) * 5))
+    installed = []
+    monkeypatch.setenv('YUJ_PERSISTENT_BASH', '1')
+    monkeypatch.setattr(lifecycle, 'container_mode', lambda: 'selected')
+    monkeypatch.setattr(lifecycle, 'get_persistent_runner', lambda: None)
+    monkeypatch.setattr(lifecycle, 'set_persistent_runner', installed.append)
+    monkeypatch.setattr('scripts.llm_solver.harness.task_environment.discover_task_environment',
+                        lambda cwd: environment)
+    monkeypatch.setattr(subprocess, 'Popen',
+                        lambda *a, **kw: pytest.fail('connection must start lazily'))
+    session = SimpleNamespace(cwd=str(tmp_path), _effective_env={'PATH': '/usr/bin:/bin'},
+                              cfg=make_config(sandbox_bash=True, bwrap_bin=MISSING_BWRAP))
+    runner = lifecycle.maybe_install_persistent_bash(session)
+    assert runner is not None and runner.supports(environment, str(tmp_path))
+    assert installed == [runner]
+    closed = []
+    monkeypatch.setattr(runner, 'close', lambda: closed.append(True))
+    lifecycle.teardown_persistent_bash(runner)
+    assert installed == [runner, None] and closed == [True]
+
+
+@pytest.mark.parametrize('mode', ['ambient', 'nested', 'disabled'])
+def test_persistent_container_admission_preserves_other_session_modes(monkeypatch, tmp_path, mode):
+    from scripts.llm_solver.harness._loop import persistent_bash as lifecycle
+
+    monkeypatch.setattr(lifecycle, 'container_mode',
+                        lambda: lifecycle.AMBIENT_CONTAINER if mode == 'ambient' else 'selected')
+    monkeypatch.setattr(lifecycle, 'get_persistent_runner',
+                        lambda: object() if mode == 'nested' else None)
+    monkeypatch.setenv('YUJ_PERSISTENT_BASH', '0' if mode == 'disabled' else '1')
+    monkeypatch.setattr(lifecycle, 'PersistentContainerSession',
+                        lambda *a, **kw: pytest.fail('ineligible session constructed a runner'))
+    session = SimpleNamespace(cwd=str(tmp_path),
+                              cfg=make_config(sandbox_bash=True, bwrap_bin=MISSING_BWRAP))
+    assert lifecycle.maybe_install_persistent_bash(session) is None
+
+
+def test_bwrap_call_cannot_borrow_a_container_connection(monkeypatch, tmp_path):
+    runner_module = importlib.import_module('scripts.llm_solver.harness._tools._run_in_sandbox')
+    binary = tmp_path / 'bwrap'
+    binary.touch()
+
+    class ContainerRunner:
+        cwd = str(tmp_path)
+
+    calls = []
+    monkeypatch.setattr(runner_module, 'container_mode', lambda: None)
+    monkeypatch.setattr(runner_module, 'PersistentContainerSession', ContainerRunner)
+    monkeypatch.setattr(runner_module, 'get_persistent_runner', lambda: ContainerRunner())
+    monkeypatch.setattr(runner_module, '_build_bwrap_argv', lambda *a, **kw: ['own-bwrap'])
+
+    def execute(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, 'own-view', '')
+
+    monkeypatch.setattr(runner_module, '_execute', execute)
+    assert _run_in_sandbox(':', cwd=str(tmp_path), timeout=3, sandbox=True,
+                           bwrap_bin=str(binary)) == ('own-view', 0, False)
+    assert calls == [['own-bwrap']]
+
+
+@pytest.mark.parametrize('scenario', ['reuse', 'other_binding', 'opt_out', 'unsupported', 'failed', 'timeout'])
+def test_named_container_dispatch_reuses_only_admitted_calls(monkeypatch, tmp_path, scenario):
+    runner_module = importlib.import_module('scripts.llm_solver.harness._tools._run_in_sandbox')
+    from scripts.llm_solver.harness import time_budget
+    from scripts.llm_solver.harness.task_environment import TaskEnvironment
+
+    environment = TaskEnvironment(str(tmp_path), '/workspace', ('/workspace',),
+                                  container='selected', container_id='immutable-id')
+    argv = ['docker', 'exec', '--workdir', '/workspace', 'immutable-id', 'prepared-command']
+    result = subprocess.CompletedProcess(argv, 0, b'raw\0output', b'diagnostic\r\n')
+    retained, original = [], []
+    clock = [10.0]
+    monkeypatch.setattr(time_budget.time, 'monotonic', lambda: clock[0])
+
+    class Runner:
+        def supports(self, selected, cwd):
+            assert selected is environment and cwd == str(tmp_path)
+            return scenario != 'other_binding'
+
+        def execute(self, prepared, **kwargs):
+            retained.append((prepared, kwargs))
+            if scenario == 'unsupported':
+                clock[0] += 2
+                raise runner_module.UnsupportedPersistentContainer('missing optional transport utility')
+            if scenario == 'failed':
+                raise RuntimeError('connection ended after command started')
+            if scenario == 'timeout':
+                raise subprocess.TimeoutExpired(prepared, kwargs['timeout'])
+            return result
+
+    def one_shot(prepared, **kwargs):
+        if scenario == 'unsupported':
+            assert time_budget.command_timeout(kwargs['timeout']) == 1
+        original.append((prepared, kwargs))
+        return result
+
+    monkeypatch.setattr(runner_module, 'container_mode', lambda: 'selected')
+    monkeypatch.setattr(runner_module, 'PersistentContainerSession', Runner)
+    monkeypatch.setattr(runner_module, 'get_persistent_runner', lambda: Runner())
+    monkeypatch.setattr(runner_module, '_build_bwrap_argv', lambda *a, **kw: list(argv))
+    monkeypatch.setattr(runner_module, '_execute', one_shot)
+    monkeypatch.setattr('scripts.llm_solver.harness.task_environment.discover_task_environment',
+                        lambda *a, **kw: environment)
+    options = dict(cwd=str(tmp_path), timeout=3, sandbox=True, bwrap_bin=MISSING_BWRAP,
+                   raw_result=True, input_bytes=b'input\0bytes', use_persistent=scenario != 'opt_out')
+    if scenario in {'failed', 'timeout'}:
+        error = RuntimeError if scenario == 'failed' else subprocess.TimeoutExpired
+        with pytest.raises(error):
+            _run_in_sandbox('task-command', **options)
+        assert len(retained) == 1 and original == []
+    else:
+        assert _run_in_sandbox('task-command', **options) is result
+        assert len(retained) == (0 if scenario in {'other_binding', 'opt_out'} else 1)
+        assert len(original) == (0 if scenario == 'reuse' else 1)
+    for prepared, kwargs in retained + original:
+        assert prepared == [*argv[:2], '-i', *argv[2:]]
+        assert kwargs == {'timeout': 3, 'binary': True, 'input_bytes': b'input\0bytes'}
 
 
 def test_container_runtime_envelope_inspects_local_image_once(

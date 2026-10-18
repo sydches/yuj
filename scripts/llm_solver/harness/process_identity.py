@@ -80,15 +80,71 @@ class GuardedProcessArgv(list):
     """An argv whose stdout starts with an entry-process verification frame."""
 
 
-def with_container_deadline(argv, timeout):
+_DEADLINE_GROUP = r'''
+allowance=$1; shift
+trap 'trap "" TERM; while :; do sleep 3600; done' TERM
+coproc TIMER {
+    trap '' TERM
+    if ! IFS= read -r -t "$allowance"; then
+        kill -TERM -- "-$$"
+        IFS= read -r -t 0.1 || :
+        kill -KILL -- "-$$"
+    fi
+}
+timer=$TIMER_PID
+exec {timer_input}>&"${TIMER[1]}"
+"$@" <&0 &
+child=$!
+wait "$child"
+status=$?
+printf '\n' >&"$timer_input"
+exec {timer_input}>&-
+wait "$timer"
+exit "$status"
+'''
+
+
+_REPORT_PROCESS_GROUP = r'''
+IFS= read -r status < /proc/self/stat || exit 77
+read -ra fields <<< "${status##*) }"
+group=${fields[2]}
+IFS= read -r status < "/proc/$group/stat" || exit 77
+read -ra fields <<< "${status##*) }"
+[[ "${fields[2]}" == "$group" && "${fields[3]}" == "$group" ]] || exit 77
+printf '\0yuj-task-process-v1\0%020d:%020d\0' "$group" "${fields[19]}"
+'''
+
+
+def with_container_deadline(argv, timeout, *, cancellable=False):
     """Enforce an exec deadline where the command and its children run."""
-    if not isinstance(argv, GuardedProcessArgv) or timeout is None or argv[:2] != ['docker', 'exec']:
+    if not isinstance(argv, GuardedProcessArgv) or argv[:2] != ['docker', 'exec']:
         return argv
+    if timeout is None:
+        return with_container_process_group(argv, portable=True) if cancellable else argv
     # This position belongs to our constant entry shell, not task arguments.
     entry = argv.index('yuj-process-guard') - 6
     result = GuardedProcessArgv(argv)
+    if cancellable:
+        marker = argv.index('yuj-process-guard')
+        script = argv[marker - 1]
+        if not script.startswith(_VERIFY_IDENTITY + '\n'):
+            raise ProcessIdentityError('unknown guarded task entry script')
+        result[marker - 1] = (_VERIFY_IDENTITY + '\n' + _REPORT_PROCESS_GROUP
+                              + script[len(_VERIFY_IDENTITY) + 1:])
+        result.container_process_group = ContainerProcessGroup(_group_cleanup_argv(argv, stable_cwd=True))
     allowance = max(timeout * 0.9, timeout - 0.25)
-    result[entry:entry] = ['timeout', '--signal=TERM', '--kill-after=0.1', f'{allowance:.6f}s']
+    # Fork before setsid so its child is not a group leader. This preserves
+    # exit status without GNU-only setsid --wait or timeout options. Bash's
+    # timed read needs no sleeper process and supports fractional seconds.
+    if cancellable:
+        result[entry:entry] = [
+            'bash', '--noprofile', '--norc', '-p', '-c',
+            'setsid "$@" <&0 & child=$!; wait "$child"', 'yuj-deadline-entry',
+            'bash', '--noprofile', '--norc', '-p', '-c', _DEADLINE_GROUP,
+            'yuj-deadline-group', f'{allowance:.6f}',
+        ]
+    else:
+        result[entry:entry] = ['timeout', '--signal=TERM', '--kill-after=0.1', f'{allowance:.6f}s']
     result.container_deadline = True
     return result
 
@@ -150,7 +206,18 @@ class ContainerProcessGroup:
             raise ProcessIdentityError('task process group termination was not confirmed')
 
 
-def with_container_process_group(argv):
+def _group_cleanup_argv(argv, *, stable_cwd=False):
+    marker = argv.index('yuj-process-guard')
+    cleanup = [*argv[:marker - 1], _VERIFY_IDENTITY + '\n' + _CANCEL_GROUP,
+               *argv[marker:marker + 1 + len(FIELDS)]]
+    # Cleanup must still enter when a task removes or replaces its working
+    # directory. This command uses only absolute /proc paths and its identity.
+    if stable_cwd and '--workdir' in cleanup:
+        cleanup[cleanup.index('--workdir') + 1] = '/'
+    return cleanup
+
+
+def with_container_process_group(argv, *, portable=False):
     """Keep a cancellable group leader for legacy Docker background/cell work."""
     if not isinstance(argv, GuardedProcessArgv) or argv[:2] != ['docker', 'exec']:
         return argv
@@ -160,12 +227,14 @@ def with_container_process_group(argv):
     if not script.startswith(_VERIFY_IDENTITY + '\n'):
         raise ProcessIdentityError('unknown guarded task entry script')
     result = GuardedProcessArgv(argv)
-    cleanup = [*argv[:marker - 1], _VERIFY_IDENTITY + '\n' + _CANCEL_GROUP,
-               *argv[marker:marker + 1 + len(FIELDS)]]
+    cleanup = _group_cleanup_argv(argv, stable_cwd=portable)
     result.container_process_group = ContainerProcessGroup(cleanup)
     result[marker - 1] = _VERIFY_IDENTITY + '\n' + _SUPERVISE_GROUP
     result.insert(marker + 1 + len(FIELDS), script[len(_VERIFY_IDENTITY) + 1:])
-    result[entry:entry] = ['setsid', '--wait']
+    result[entry:entry] = ([
+        'bash', '--noprofile', '--norc', '-p', '-c',
+        'setsid "$@" <&0 & child=$!; wait "$child"', 'yuj-process-group-entry',
+    ] if portable else ['setsid', '--wait'])
     return result
 
 

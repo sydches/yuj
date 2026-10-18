@@ -11,9 +11,8 @@ context variable by ``Session.run()`` and cleared on session end. Read-only
 dispatch workers inherit that context and serialize access to its pipe.
 Unrelated threads receive no runner.
 
-Bwrap-mode only: ambient and docker-exec sandboxes use the per-call
-path (different process model — ambient is just ``subprocess.run``,
-docker-exec round-trips through ``docker exec``).
+This class owns bwrap only. The named-container connection shares its
+context-local registry and owns its transport in ``_persistent_container``.
 
 Extracted from the legacy ``sandbox.py``; see ``sandbox/__init__`` for
 the argv builder this class wraps.
@@ -31,17 +30,21 @@ import subprocess
 import threading
 from collections.abc import Mapping
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._persistent_container import PersistentContainerSession
 
 
 _persistent_runner = ContextVar('persistent_bash_runner', default=None)
 
 
-def get_persistent_runner() -> "PersistentBashSession | None":
+def get_persistent_runner() -> "PersistentBashSession | PersistentContainerSession | None":
     """Return the runner admitted to this execution context, or None."""
     return _persistent_runner.get()
 
 
-def set_persistent_runner(runner: "PersistentBashSession | None") -> None:
+def set_persistent_runner(runner: "PersistentBashSession | PersistentContainerSession | None") -> None:
     """Install or clear the runner in the current execution context."""
     _persistent_runner.set(runner)
 

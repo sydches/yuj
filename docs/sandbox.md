@@ -50,6 +50,19 @@ integrate it without losing that speed to harness overhead. Check the
 [complete operation](harness_artifacts.html#tool-and-turn-timing), including
 required transformations and logging, while preserving its behavior and scope.
 
+For a named container, retain one connection per Session and reuse it only
+for the same observed container and task binding. Each command starts in a
+fresh child with its declared environment, shell settings and working
+directory. The connection preserves separate byte streams, exit status and
+the native deadline. Lock waits and input transfer share that time allowance.
+Cancellation confirms native command cleanup before releasing the connection.
+
+If optional framing utilities are unavailable before task code starts, use
+the ordinary per-call launch. A command that may have started is never retried.
+The connection closes when the Session ends. Set `YUJ_PERSISTENT_BASH=0` to
+select the per-call path. Ambient mode and the image-backed container backend
+keep their existing execution paths.
+
 ## Choose a mode
 
 | Your situation | What to do |

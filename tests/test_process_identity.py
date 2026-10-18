@@ -184,3 +184,40 @@ def test_native_group_cancellation_stops_term_resistant_descendant(tmp_path):
         if process.poll() is None:
             group.terminate(grace=0)
             process.wait(timeout=2)
+
+
+@pytest.mark.parametrize('seconds', [None, 3])
+@pytest.mark.parametrize('busybox', [False, True])
+def test_cancellable_deadline_reports_the_owned_native_group(tmp_path, seconds, busybox):
+    from scripts.llm_solver.harness.process_identity import ProcessVerification, with_container_deadline
+    import shutil
+    environment = os.environ.copy()
+    if busybox:
+        binary = shutil.which('busybox')
+        if binary is None:
+            pytest.skip('BusyBox is unavailable')
+        tools = tmp_path / 'bin'
+        tools.mkdir()
+        (tools / 'setsid').symlink_to(binary)
+        environment['PATH'] = str(tools) + os.pathsep + environment['PATH']
+    ready, late = tmp_path / 'ready', tmp_path / 'late'
+    argv = with_container_deadline(guarded_process_argv(['docker', 'exec', 'fixture'],
+        ['bash', '-c', 'trap "" TERM; printf ready > "$1"; sleep .4; printf late > "$2"',
+         'task', str(ready), str(late)], observed()), seconds, cancellable=True)
+    group = argv.container_process_group
+    group.cleanup_argv = group.cleanup_argv[3:]
+    process = subprocess.Popen(argv[3:], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+    try:
+        ProcessVerification(argv).read(process.stdout)
+        deadline = time.monotonic() + 1
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.001)
+        assert ready.exists()
+        group.terminate(grace=0)
+        process.wait(timeout=1)
+        time.sleep(.45)
+        assert not late.exists()
+    finally:
+        if process.poll() is None:
+            group.terminate(grace=0)
+            process.wait(timeout=1)

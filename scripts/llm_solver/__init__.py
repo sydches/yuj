@@ -1,3 +1,3 @@
 """Yuj harness package."""
 
-__version__ = "8.1.37"
+__version__ = "8.1.38"
