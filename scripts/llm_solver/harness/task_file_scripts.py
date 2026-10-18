@@ -37,6 +37,7 @@ canonical_many() {
 _DIGEST_BATCH = r'''
 digest_batch() {
     local readlink_bin=$1 input_fd code target index record descriptor
+    local source_mode=${3:-requested}
     local batch_limit=64 batch_bulk=false descriptor_limit
     local -a batch targets inputs opened
     local -A labels
@@ -51,12 +52,17 @@ digest_batch() {
         fi
         (( batch_limit > 0 )) || return 74
     fi
+    [[ "$source_mode" == requested || "$source_mode" == resolved ]] || return 74
     while :; do
         mapfile -d '' -n "$batch_limit" -t batch
         (( ${#batch[@]} )) || break
-        mapfile -d '' -t targets < <(canonical_many "${batch[@]}")
-        wait "$!" || return 74
-        (( ${#targets[@]} == ${#batch[@]} )) || return 74
+        if [[ "$source_mode" == resolved ]]; then
+            targets=("${batch[@]}")
+        else
+            mapfile -d '' -t targets < <(canonical_many "${batch[@]}")
+            wait "$!" || return 74
+            (( ${#targets[@]} == ${#batch[@]} )) || return 74
+        fi
         inputs=(); labels=()
         for index in "${!targets[@]}"; do
             target=${targets[$index]}

@@ -41,21 +41,28 @@ def _file_revision(cwd: str | Path, path: str) -> str:
         return ""
 
 
-def _native_digests(files, cwd, visible):
+def _native_digests(files, cwd, visible, *, reuse_resolved=True):
     """Keep a read failure confined to its paths, retaining checked reads."""
     if not visible:
         return {}
     try:
-        digests = files.sha256_many(visible.values())
+        digest = files._sha256_resolved_many if reuse_resolved else files.sha256_many
+        digests = digest(visible.values())
         return {path: digests[target] for path, target in visible.items()}
     except (OSError, RuntimeError, ValueError):
+        if reuse_resolved:
+            # Discard a failed shortcut call and retain the established
+            # canonical hashing and per-path exceptional results.
+            return _native_digests(files, cwd, visible, reuse_resolved=False)
         if len(visible) == 1:
             path = next(iter(visible))
             return {path: _file_revision(cwd, path)}
         names = list(visible)
         middle = len(names) // 2
-        return {**_native_digests(files, cwd, {p: visible[p] for p in names[:middle]}),
-                **_native_digests(files, cwd, {p: visible[p] for p in names[middle:]})}
+        return {**_native_digests(files, cwd, {p: visible[p] for p in names[:middle]},
+                                  reuse_resolved=False),
+                **_native_digests(files, cwd, {p: visible[p] for p in names[middle:]},
+                                  reuse_resolved=False)}
 
 
 @measured("verification.file_revisions")

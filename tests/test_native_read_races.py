@@ -124,3 +124,47 @@ def test_batch_hashes_validate_opened_files_during_parent_changes(bwrap, tmp_pat
         assert files.sha256_many(names) == {path: hashlib.sha256(b'SELECTED').hexdigest() for path in names}
     assert (source / 'folder').is_symlink()
     assert (outside / 'file').read_bytes() == b'OUTSIDE'
+
+
+@pytest.mark.parametrize('change_at', ['before_open', 'after_open'])
+def test_resolved_batch_hashes_keep_descriptor_containment_during_parent_changes(
+        bwrap, tmp_path, change_at):
+    import hashlib
+
+    source, files = namespace_files(bwrap, tmp_path)
+    (source / 'folder').mkdir()
+    (source / 'folder/file').write_bytes(b'SELECTED')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'file').write_bytes(b'OUTSIDE')
+    target, kind = next(iter(files.resolve_file_states(['folder/file']).values()))
+    assert kind == 'file'
+    native = files.run
+    swap = (f'mv -- {shlex.quote(str(files.root / "folder"))} '
+            f'{shlex.quote(str(files.root / "saved"))}\n'
+            f'ln -s -- {shlex.quote(str(outside))} '
+            f'{shlex.quote(str(files.root / "folder"))}')
+    marker = ('            exec {input_fd}< "$target" || return 74'
+              if change_at == 'before_open'
+              else '            inputs+=("/proc/self/fd/$input_fd")')
+
+    def replace_parent(script, args, data):
+        if len(args) > 7 and args[3] == 'digest_batch' and args[-1] == 'resolved':
+            assert script.count(marker) == 1
+            script = script.replace(
+                marker,
+                swap + '\n' + marker if change_at == 'before_open'
+                else marker + '\n' + swap,
+            )
+        return native(script, args, data)
+
+    files.run = replace_parent
+    if change_at == 'before_open':
+        with pytest.raises(PermissionError):
+            files._sha256_resolved_many([target])
+    else:
+        assert files._sha256_resolved_many([target]) == {
+            target: hashlib.sha256(b'SELECTED').hexdigest(),
+        }
+    assert (source / 'folder').is_symlink()
+    assert (outside / 'file').read_bytes() == b'OUTSIDE'

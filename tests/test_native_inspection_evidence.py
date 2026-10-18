@@ -203,7 +203,7 @@ def test_one_file_removed_during_hashing_does_not_discard_the_batch(bwrap, tmp_p
     names = [f'file-{i}.py' for i in range(128)]
     for name in names:
         (source / name).write_bytes(name.encode())
-    original_digest = files.sha256_many
+    original_digest = files._sha256_resolved_many
     removed = False
     def digest(paths):
         nonlocal removed
@@ -211,12 +211,66 @@ def test_one_file_removed_during_hashing_does_not_discard_the_batch(bwrap, tmp_p
             (source / names[57]).unlink()
             removed = True
         return original_digest(paths)
-    with activate_task_files(files, host_root=source), patch.object(files, 'sha256_many', digest), patch.object(
+    with activate_task_files(files, host_root=source), patch.object(
+        files, '_sha256_resolved_many', digest,
+    ), patch.object(
         verification, '_file_revision', wraps=verification._file_revision) as scalar:
         result = verification._file_revisions(str(source), names)
     assert result == {name: ('missing' if name == names[57] else hashlib.sha256(name.encode()).hexdigest())
                       for name in names}
     assert scalar.call_count == 1
+
+
+def test_failed_resolved_digest_retries_established_canonical_hashing(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails import verification
+    from scripts.llm_solver.harness.task_files import TaskFileError
+
+    source, files = namespace_files(bwrap, tmp_path)
+    names = ['first.py', 'second.py']
+    for name in names:
+        (source / name).write_bytes(name.encode())
+    with activate_task_files(files, host_root=source), patch.object(
+        files, '_sha256_resolved_many', side_effect=TaskFileError('candidate failed'),
+    ), patch.object(files, 'sha256_many', wraps=files.sha256_many) as established:
+        result = verification._file_revisions(str(source), names)
+    assert result == {
+        name: hashlib.sha256(name.encode()).hexdigest() for name in names
+    }
+    established.assert_called_once()
+
+
+def test_partial_resolved_digest_output_is_discarded_before_canonical_retry(bwrap, tmp_path):
+    from scripts.llm_solver.harness._guardrails import verification
+
+    source, files = namespace_files(bwrap, tmp_path)
+    names = [f'file-{index}.py' for index in range(270)]
+    for name in names:
+        (source / name).write_bytes(name.encode())
+    native = files.run
+    candidate_calls = 0
+    marker = '        (( ${#batch[@]} )) || break\n'
+
+    def fail_second_candidate_batch(script, args, data):
+        nonlocal candidate_calls
+        if len(args) > 7 and args[3] == 'digest_batch' and args[-1] == 'resolved':
+            candidate_calls += 1
+            assert script.count(marker) == 1
+            script = 'yuj_test_batch=0\n' + script.replace(
+                marker,
+                marker + '        (( ++yuj_test_batch == 2 )) && return 74\n',
+            )
+        return native(script, args, data)
+
+    files.run = fail_second_candidate_batch
+    with activate_task_files(files, host_root=source), patch.object(
+        files, 'sha256_many', wraps=files.sha256_many,
+    ) as established:
+        result = verification._file_revisions(str(source), names)
+    assert result == {
+        name: hashlib.sha256(name.encode()).hexdigest() for name in names
+    }
+    assert candidate_calls == 1
+    established.assert_called_once()
 
 
 @pytest.mark.parametrize('spelling', ['relative', 'host', 'native'])

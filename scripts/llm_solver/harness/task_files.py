@@ -376,10 +376,30 @@ class NamespaceFiles:
     def sha256_many(self, paths):
         """Hash current bytes through checked descriptors, in bounded batches."""
         names = tuple(dict.fromkeys(str(self.root / self._relative(path)) for path in paths))
+        return self._sha256_names(names)
+
+    def _sha256_resolved_many(self, paths):
+        """Hash canonical targets returned by this namespace without resolving twice."""
+        names = []
+        for path in paths:
+            value = os.fspath(path)
+            if not isinstance(value, str) or '\0' in value:
+                raise ValueError('resolved task path must be a NUL-free string')
+            parsed = PurePosixPath(value)
+            relative = _relative_posix_parts(parsed, self.root)
+            if not parsed.is_absolute() or relative is None or '..' in relative:
+                raise ValueError(f'resolved path escapes task root: {value}')
+            names.append(str(parsed))
+        return self._sha256_names(tuple(dict.fromkeys(names)), resolved=True)
+
+    def _sha256_names(self, names, *, resolved=False):
         if not names:
             return {}
+        args = (self._utility('readlink'), str(len(names)))
+        if resolved:
+            args += ('resolved',)
         output = self._call('digest_batch', self.root, utility='sha256sum',
-                            args=(self._utility('readlink'), str(len(names))),
+                            args=args,
                             data=b''.join(os.fsencode(name) + b'\0' for name in names),
                             script_prefix=self._batch_program(_DIGEST_BATCH, len(names)))
         fields = output.split(b'\0')

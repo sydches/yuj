@@ -682,6 +682,34 @@ def test_batch_hashes_read_current_bytes_and_preserve_literal_paths(bwrap, tmp_p
         files.sha256_many([*names, 'escape'])
 
 
+def test_resolved_batch_hashes_reuse_canonical_targets_and_reject_other_names(bwrap, tmp_path):
+    import hashlib
+
+    source, files = namespace_files(bwrap, tmp_path)
+    name = 'literal\n雪\udcff'
+    (source / name).write_bytes(b'current bytes')
+    (source / 'alias').symlink_to(name)
+    states = files.resolve_file_states([name, 'alias'])
+    targets = [target for target, kind in states.values() if kind == 'file']
+    calls = []
+    native = files.run
+
+    def observed(script, args, data):
+        calls.append(args)
+        return native(script, args, data)
+
+    files.run = observed
+    expected_name = str(files.root / name)
+    assert files._sha256_resolved_many(targets) == {
+        expected_name: hashlib.sha256(b'current bytes').hexdigest(),
+    }
+    digest_args = [args for args in calls if len(args) > 3 and args[3] == 'digest_batch']
+    assert len(digest_args) == 1 and digest_args[0][-1] == 'resolved'
+    for invalid in ('relative', str(files.root / '..' / 'outside'), str(tmp_path / 'outside')):
+        with pytest.raises(ValueError):
+            files._sha256_resolved_many([invalid])
+
+
 def test_nested_mount_hides_host_source_for_read_stat_and_listing(bwrap, tmp_path):
     overlay = tmp_path / 'overlay'
     overlay.mkdir()
