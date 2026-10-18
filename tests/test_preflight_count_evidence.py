@@ -149,14 +149,23 @@ def _native_tokenizer(kind="wordlevel", cls=None):
 
 
 def _observe_encodings(monkeypatch):
+    from scripts.llm_solver.harness import local_tokenizer
+
     base = pytest.importorskip("transformers").PreTrainedTokenizerBase
-    original, calls = base.__call__, []
+    original_wrapper = base.__call__
+    original_fast = local_tokenizer._encode_rendered
+    calls = []
 
     def observed(self, text, *args, **kwargs):
         calls.append((text, kwargs.copy()))
-        return original(self, text, *args, **kwargs)
+        return original_wrapper(self, text, *args, **kwargs)
+
+    def observed_fast(tokenizer, backend, text):
+        calls.append((text, {"add_special_tokens": False, "offsets": False}))
+        return original_fast(tokenizer, backend, text)
 
     monkeypatch.setattr(base, "__call__", observed)
+    monkeypatch.setattr(local_tokenizer, "_encode_rendered", observed_fast)
     return calls
 
 
@@ -175,7 +184,124 @@ def test_local_native_models_reuse_exact_rendered_encoding(monkeypatch, kind):
     assert rows[('tokenizer.encode',)]['calls'] == 1
     assert len(calls) == 1  # admission must work, not merely preserve counts via fallback
     assert calls[0][1]["add_special_tokens"] is False
+    assert calls[0][1]["offsets"] is False
     assert counter.last_basis == "local_tokenizer_estimate"
+
+
+@pytest.mark.parametrize("kind", ["wordlevel", "wordpiece", "unigram", "bpe"])
+@pytest.mark.parametrize("split_special_tokens", [False, True])
+def test_local_native_offset_free_encoding_matches_wrapper_state(kind, split_special_tokens):
+    from scripts.llm_solver.harness.local_tokenizer import _encode_rendered
+
+    baseline = _native_tokenizer(kind)
+    candidate = _native_tokenizer(kind)
+    for tokenizer in (baseline, candidate):
+        tokenizer.add_tokens(["unseen phrase"])
+        tokenizer.split_special_tokens = split_special_tokens
+        tokenizer.backend_tokenizer.enable_truncation(max_length=1)
+        tokenizer.backend_tokenizer.enable_padding(length=40)
+    for rendered in (
+        "<s> user unseen phrase λ </s>",
+        "cafe\N{COMBINING ACUTE ACCENT}\nemoji \N{ROCKET}\n",
+        "ab" * 100 + " unseen phrase",
+    ):
+        expected = baseline(
+            rendered, padding=False, truncation=False, max_length=None,
+            add_special_tokens=False, return_tensors=None,
+        )["input_ids"]
+        actual = _encode_rendered(candidate, candidate.backend_tokenizer, rendered)
+        assert actual == expected
+    assert candidate.backend_tokenizer.truncation is None
+    assert candidate.backend_tokenizer.padding is None
+    assert candidate.backend_tokenizer.encode_special_tokens is split_special_tokens
+
+
+@pytest.mark.parametrize("hook", ["convert", "padding", "strategy", "input_mode"])
+def test_local_overridden_wrapper_hooks_keep_original_path(monkeypatch, hook):
+    hf = pytest.importorskip("transformers")
+    from transformers.tokenization_utils_base import TruncationStrategy
+
+    from scripts.llm_solver.harness.local_tokenizer import _deterministic_encoding_binding
+
+    class CustomConverter(hf.PreTrainedTokenizerFast):
+        def _convert_encoding(self, *args, **kwargs):
+            values, encodings = super()._convert_encoding(*args, **kwargs)
+            values["input_ids"][0].append(0)
+            return values, encodings
+
+    class CustomPadding(hf.PreTrainedTokenizerFast):
+        def set_truncation_and_padding(self, *args, **kwargs):
+            super().set_truncation_and_padding(*args, **kwargs)
+            self.backend_tokenizer.enable_truncation(max_length=1)
+
+    class CustomStrategy(hf.PreTrainedTokenizerFast):
+        def _get_padding_truncation_strategies(self, *args, **kwargs):
+            padding, _, _, remaining = super()._get_padding_truncation_strategies(
+                *args, **kwargs,
+            )
+            return padding, TruncationStrategy.LONGEST_FIRST, 1, remaining
+
+    class CustomInputMode(hf.PreTrainedTokenizerFast):
+        def _switch_to_input_mode(self):
+            self.input_switches = getattr(self, "input_switches", 0) + 1
+
+    cls = {
+        "convert": CustomConverter,
+        "padding": CustomPadding,
+        "strategy": CustomStrategy,
+        "input_mode": CustomInputMode,
+    }[hook]
+    tokenizer = _native_tokenizer(cls=cls)
+    counter = _local_counter(tokenizer)
+    expected = counter.count(_LOCAL_MESSAGES)
+    assert _deterministic_encoding_binding(tokenizer) is None
+    monkeypatch.setattr(
+        "scripts.llm_solver.harness.local_tokenizer._encode_rendered",
+        lambda *args: pytest.fail("overridden wrappers must not use the native shortcut"),
+    )
+
+    with request_count_reuse():
+        assert counter.count(_LOCAL_MESSAGES) == expected
+        assert _request_count_reuse.get() == ()
+    if hook == "input_mode":
+        assert tokenizer.input_switches >= 2
+
+
+def test_local_offset_free_encoding_failure_uses_wrapper():
+    from scripts.llm_solver.harness.local_tokenizer import _encode_rendered
+
+    class Backend:
+        encode_special_tokens = False
+        truncation = None
+        padding = None
+
+        def no_truncation(self):
+            pass
+
+        def no_padding(self):
+            pass
+
+        def encode_batch_fast(self, values, *, add_special_tokens):
+            raise RuntimeError("optional fast path unavailable")
+
+    class Tokenizer:
+        split_special_tokens = False
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, text, **kwargs):
+            self.calls.append((text, kwargs))
+            return {"input_ids": [1, 2, 3]}
+
+    tokenizer = Tokenizer()
+    result = _encode_rendered(tokenizer, Backend(), "rendered")
+
+    assert result == {"input_ids": [1, 2, 3]}
+    assert tokenizer.calls[0][1] == {
+        "padding": False, "truncation": False, "max_length": None,
+        "add_special_tokens": False, "return_tensors": None,
+    }
 
 
 @pytest.mark.parametrize("shape", ["list", "dict", "batch_encoding"])

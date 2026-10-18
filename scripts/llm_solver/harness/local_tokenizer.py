@@ -28,14 +28,28 @@ def _deterministic_encoding_binding(tokenizer):
 
         if not isinstance(tokenizer, PreTrainedTokenizerFast):
             return None
-        for name, expected in (
-            ("apply_chat_template", PreTrainedTokenizerBase.apply_chat_template),
-            ("__call__", PreTrainedTokenizerBase.__call__),
-            ("_encode_plus", PreTrainedTokenizerFast._encode_plus),
-            ("_batch_encode_plus", getattr(PreTrainedTokenizerFast, "_batch_encode_plus", None)),
+        for name, owner in (
+            ("apply_chat_template", PreTrainedTokenizerBase),
+            ("__call__", PreTrainedTokenizerBase),
+            ("_call_one", PreTrainedTokenizerBase),
+            ("encode_plus", PreTrainedTokenizerBase),
+            ("batch_encode_plus", PreTrainedTokenizerBase),
+            ("_get_padding_truncation_strategies", PreTrainedTokenizerBase),
+            ("_encode_plus", PreTrainedTokenizerFast),
+            ("_batch_encode_plus", PreTrainedTokenizerFast),
+            ("set_truncation_and_padding", PreTrainedTokenizerFast),
+            ("_convert_encoding", PreTrainedTokenizerFast),
         ):
-            if getattr(getattr(tokenizer, name, None), "__func__", None) is not expected:
+            expected = getattr(owner, name, None)
+            actual = getattr(tokenizer, name, None)
+            if ((expected is None and callable(actual))
+                    or (expected is not None
+                        and getattr(actual, "__func__", None) is not expected)):
                 return None
+        # The wrapper conditionally calls a model-specific input-mode hook.
+        # Direct backend encoding cannot safely reproduce an arbitrary hook.
+        if callable(getattr(tokenizer, "_switch_to_input_mode", None)):
+            return None
         backend = tokenizer.backend_tokenizer
         model = backend.model
         if type(model) not in (BPE, Unigram, WordLevel, WordPiece):
@@ -49,6 +63,34 @@ def _deterministic_encoding_binding(tokenizer):
                 tokenizer.split_special_tokens)
     except (ImportError, AttributeError, TypeError, ValueError):
         return None
+
+
+def _encode_rendered(tokenizer, backend, rendered: str):
+    """Encode one rendered request without materializing unused offsets."""
+    try:
+        # PreTrainedTokenizerFast disables these for the arguments below before
+        # calling the same native backend. Mirror that state, including the
+        # mutable special-token mode, then use the backend's offset-free API.
+        if backend.truncation is not None:
+            backend.no_truncation()
+        if backend.padding is not None:
+            backend.no_padding()
+        if backend.encode_special_tokens != tokenizer.split_special_tokens:
+            backend.encode_special_tokens = tokenizer.split_special_tokens
+        encoding = backend.encode_batch_fast(
+            [rendered], add_special_tokens=False,
+        )[0]
+        tokenizer._eventual_warn_about_too_long_sequence(
+            encoding.ids, max_length=None, verbose=True,
+        )
+        return encoding.ids
+    except Exception:
+        # A compatible-looking optional dependency may still lack this exact
+        # operation. Preserve the established wrapper behavior in that case.
+        return tokenizer(
+            rendered, padding=False, truncation=False, max_length=None,
+            add_special_tokens=False, return_tensors=None,
+        )
 
 
 def _parse_tool_call_args(messages: list[dict]) -> list[dict]:
@@ -160,10 +202,7 @@ class LocalTokenizer:
                 if reused and reused[0] == reuse_key:
                     return reused[1]
                 with operation("tokenizer.encode"):
-                    result = self._tok(
-                        rendered, padding=False, truncation=False, max_length=None,
-                        add_special_tokens=False, return_tensors=None,
-                    )
+                    result = _encode_rendered(self._tok, binding[1], rendered)
             # Newer transformers (≥4.42 or so) return a BatchEncoding /
             # dict {input_ids: [...], attention_mask: [...]} instead of
             # a flat list when tokenize=True. Older versions returned a
